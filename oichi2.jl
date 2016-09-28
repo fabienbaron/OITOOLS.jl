@@ -13,16 +13,36 @@ function cvis_to_t3(cvis, indx1, indx2, indx3)
   return t3, t3amp, t3phi
 end
 
-function imdisp(image)
-  nx=Int64(sqrt(length(image)))
- #ax = gca()
- imshow(rotl90(reshape(image,nx,nx)), ColorMap("hot")); # uses Monnier's orientation
- #divider = axgrid.make_axes_locatable(ax)
- #cax = divider[:append_axes]("right", size="5%", pad=0.05)
- #colorbar(image, cax=cax)
+#fig = figure("Image",figsize=(10,10));imshow(rotl90(image));PyPlot.draw();PyPlot.pause(1);
+
+function image_to_cvis(x, dft)
+  flux = sum(x);
+  nuv = size(dft, 1)
+  cvis_model = zeros(Complex{Float64},data.nuv);
+  cvis_model = dft * x / flux;
 end
 
-#fig = figure("Image",figsize=(10,10));imshow(rotl90(image));PyPlot.draw();PyPlot.pause(1);
+
+function chi2(x, dft, data, verbose = true)
+nx2 = length(x)
+flux = sum(x);
+cvis_model = zeros(Complex{Float64},div(data.nuv,data.nw),data.nw);
+cvis_model[:,1] = dft * x / flux;
+# compute observables from all cvis
+v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+chi2_v2 = sum( ((v2_model - data.v2_data)./data.v2_data_err).^2);
+chi2_t3amp = sum( ((t3amp_model - data.t3amp_data)./data.t3amp_data_err).^2);
+chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi_data)./data.t3phi_data_err).^2);
+if verbose == true
+  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+end
+return chi2_v2 + chi2_t3amp + chi2_t3phi
+end
+
+
+
+
 
 function crit_fg(x, g, dft, data, rho, x0)
 nx2 = length(x)

@@ -37,7 +37,7 @@ function v2plot(baseline_v2,v2_data,v2_data_err) # plots v2 data only
   title("V2 data")
   xlabel("Baseline")
   ylabel("V2")
-  PyPlot.show();PyPlot.pause(1);  # this is used to see plots when running code in batch mode
+  PyPlot.show();PyPlot.pause(0.5);  # this is used to see plots when running code in batch mode
 end
 
 
@@ -47,5 +47,17 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   title("Closure phase data")
   xlabel("Baseline")
   ylabel("Closure phase (degrees)")
-  PyPlot.show();PyPlot.pause(1);  # this is used to see plots when running code in batch mode
+  PyPlot.show();PyPlot.pause(0.5);  # this is used to see plots when running code in batch mode
+end
+
+
+function imdisp(image, pixellation = -1)
+# if pixellation < 0 -> no pixellation entered -> do not draw in milliarcseconds
+ nx=Int64(sqrt(length(image)))
+ #ax = gca()
+ imshow(rotl90(reshape(image,nx,nx)), ColorMap("hot")); # uses Monnier's orientation
+ #divider = axgrid.make_axes_locatable(ax)
+ #cax = divider[:append_axes]("right", size="5%", pad=0.05)
+ #colorbar(image, cax=cax)
+ PyPlot.show();PyPlot.pause(0.5);
 end

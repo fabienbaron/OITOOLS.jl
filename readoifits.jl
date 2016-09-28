@@ -43,7 +43,7 @@ for u=1:nuvcoord
 end
 nv2 = length(v2_data);
 v2_uv = hcat(vec(v2_u), vec(v2_v))' ; #need under this form for nfft
-baseline_v2 = sqrt(v2_u.^2+v2_v.^2);
+baseline_v2 = vec(sqrt(v2_u.^2+v2_v.^2));
 
 t3table = OIFITS.select(tables,"OI_T3");
 t3amp_data = vec(t3table[1][:t3amp]);
@@ -73,7 +73,7 @@ for u=1:nuvcoord_t3
 end
 nt3amp = length(t3amp_data);
 nt3phi = length(t3phi_data);
-baseline_t3 = (sqrt(t3_u1.^2+t3_v1.^2).*sqrt(t3_u2.^2+t3_v2.^2).*sqrt(t3_u3.^2+t3_v3.^2)).^(1./3.);
+baseline_t3 = vec((sqrt(t3_u1.^2+t3_v1.^2).*sqrt(t3_u2.^2+t3_v2.^2).*sqrt(t3_u3.^2+t3_v3.^2)).^(1./3.));
 t3_uv = hcat(vcat(t3_u1, t3_u2, t3_u3), vcat(t3_v1, t3_v2, t3_v3))'; #need under this form for nfft
 
 # Merge observable uv points -- TBD: test for uniqueness
