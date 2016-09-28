@@ -1,32 +1,32 @@
 using FITSIO
-using PyPlot,PyCall
-PyPlot.show()
-#@pyimport mpl_toolkits.axes_grid1 as axgrid
-
 include("readoifits.jl")
 include("setupft.jl")
 include("oichi2.jl")
 include("oiplot.jl")
-##########################################
-##########################################
+
 #
-# Code actually starts
+# Main
 #
+
+#read model fits file
 pixellation = 0.1; # in mas
 fitsfile = "2004true.fits";
-oifitsfile = "2004-data1.oifits";
-nw = 1;# monochromatic mode
-#read model fits file
+
 scale_rad = pixellation * (pi / 180.0) / 3600000.0;
 x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true);
 
+oifitsfile = "2004-data1.oifits";
 data = read_oifits(oifitsfile);
+
+# setup DFT (nfft also possible soon)
 dft = setup_ft(data, nx);
-#init required because of OptimPack way
+
+# this computes the complete chi2
 f_true = chi2(x_true, dft, data);
 
-# now plot some stuff
 
+# now plot some stuff
+PyPlot.show()
 #uv plot
 uvplot(data.uv[1,:],data.uv[2,:])
 

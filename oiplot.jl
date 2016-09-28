@@ -1,5 +1,10 @@
 # gather common display tasks
 
+
+using PyPlot,PyCall
+
+#@pyimport mpl_toolkits.axes_grid1 as axgrid
+
 # double check by plotting uv coverage
 
 function uvplot(u,v)
