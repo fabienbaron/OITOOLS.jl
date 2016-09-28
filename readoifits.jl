@@ -84,5 +84,5 @@ indx_t3_1 = nv2+(1:nt3amp);
 indx_t3_2 = nv2+(nt3amp+1:2*nt3amp);
 indx_t3_3 = nv2+(2*nt3amp+1:3*nt3amp);
 
-data = OIdata(nuv, full_uv, nw,indx_v2,indx_t3_1,indx_t3_2,indx_t3_3,nv2,nt3amp,nt3phi,v2_data,v2_data_err,t3amp_data,t3amp_data_err,t3phi_data,t3phi_data_err, baseline_v2,baseline_t3);
+data = OIdata(nuv, full_uv, nw_eff,indx_v2,indx_t3_1,indx_t3_2,indx_t3_3,nv2,nt3amp,nt3phi,v2_data,v2_data_err,t3amp_data,t3amp_data_err,t3phi_data,t3phi_data_err, baseline_v2,baseline_t3);
 end
