@@ -57,6 +57,7 @@ end
 
 
 function imdisp(image, pixellation = -1)
+ fig = figure("Image",figsize=(10,10))
 # if pixellation < 0 -> no pixellation entered -> do not draw in milliarcseconds
  nx=Int64(sqrt(length(image)))
  #ax = gca()
