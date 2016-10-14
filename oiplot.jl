@@ -61,7 +61,7 @@ function imdisp(image, pixellation = -1)
 # if pixellation < 0 -> no pixellation entered -> do not draw in milliarcseconds
  nx=Int64(sqrt(length(image)))
  #ax = gca()
- imshow(rotl90(reshape(image,nx,nx)), ColorMap("hot")); # uses Monnier's orientation
+ imshow(rotl90(reshape(image,nx,nx)), ColorMap("hot"), interpolation="none"); # uses Monnier's orientation
  #divider = axgrid.make_axes_locatable(ax)
  #cax = divider[:append_axes]("right", size="5%", pad=0.05)
  #colorbar(image, cax=cax)

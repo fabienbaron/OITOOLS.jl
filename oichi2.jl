@@ -40,10 +40,6 @@ end
 return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-
-
-
-
 function crit_fg(x, g, dft, data, rho, x0)
 nx2 = length(x)
 flux = sum(x);
@@ -73,20 +69,16 @@ g_t3amp[ii] = 2*sum(((t3amp_model-data.t3amp_data)./data.t3amp_data_err.^2).*
                     + real( conj(cvis_model[data.indx_t3_3]./abs(cvis_model[data.indx_t3_3])).*dft[data.indx_t3_3,ii]).*abs(cvis_model[data.indx_t3_1]).*abs(cvis_model[data.indx_t3_2]))
                    );
 t3model_der = dft[data.indx_t3_1,ii].*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3] + dft[data.indx_t3_2,ii].*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3] + dft[data.indx_t3_3,ii].*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2];
-g_t3phi[ii] = sum(2*((mod360(t3phi_model-data.t3phi_data)./data.t3phi_data_err.^2)./abs2(t3_model)).*(-imag(t3_model).*real(t3model_der)+real(t3_model).*imag(t3model_der));
+g_t3phi[ii] = sum(360./pi*((mod360(t3phi_model-data.t3phi_data)./data.t3phi_data_err.^2)./abs2(t3_model)).*(-imag(t3_model).*real(t3model_der)+real(t3_model).*imag(t3model_der));
 );
 end
-g[1:end] = g_v2 + g_t3amp + g_t3phi +  rho * reg_der;
-
-g[1:end] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-
+g[1:nx2] = g_v2 + g_t3amp + g_t3phi +  rho * reg_der;
+g[1:nx2] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
 println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
 #println("GV2: ", sum(abs2(g_v2))," GT3A: ", sum(abs2(g_t3amp)), " GT3P: ",sum(abs2(g_t3phi)))
 
 return chi2_v2 + chi2_t3amp + chi2_t3phi + rho *reg
 end
-
-
 
 function proj_positivity(ztilde)
 z = copy(ztilde)
