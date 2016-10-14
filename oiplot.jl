@@ -1,6 +1,4 @@
 # gather common display tasks
-
-
 using PyPlot,PyCall
 
 #@pyimport mpl_toolkits.axes_grid1 as axgrid
@@ -65,5 +63,5 @@ function imdisp(image, pixellation = -1)
  #divider = axgrid.make_axes_locatable(ax)
  #cax = divider[:append_axes]("right", size="5%", pad=0.05)
  #colorbar(image, cax=cax)
- PyPlot.show();PyPlot.pause(0.5);
+ PyPlot.draw();PyPlot.pause(0.05);
 end
