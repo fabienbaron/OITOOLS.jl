@@ -6,7 +6,7 @@ using PyPlot,PyCall
 # double check by plotting uv coverage
 
 function uvplot(u,v)
-fig = figure("UV plot",figsize=(10,10))
+fig = figure("UV plot",figsize=(10,10),facecolor="White")
 ax = axes()
 scatter(u, v,alpha=0.5)
 scatter(-u, -v,alpha=0.5)
@@ -19,7 +19,7 @@ end
 
 
 function v2plot_modelvsdata(baseline_v2,v2_data,v2_data_err, v2_model) #plots V2 data vs v2 model
-fig = figure("V2 plot - Model vs Data",figsize=(10,10))
+fig = figure("V2 plot - Model vs Data",figsize=(10,10),facecolor="White")
 subplot(211)
 errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", color="Red")
 scatter(baseline_v2, v2_model, color="Blue")
@@ -35,7 +35,7 @@ end
 
 
 function v2plot(baseline_v2,v2_data,v2_data_err) # plots v2 data only
-  fig = figure("V2 data",figsize=(10,10))
+  fig = figure("V2 data",figsize=(10,10),facecolor="White")
   errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", color="Red")
   title("V2 data")
   xlabel("Baseline")
@@ -45,7 +45,7 @@ end
 
 
 function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
-  fig = figure("Closure phase data",figsize=(10,10))
+  fig = figure("Closure phase data",figsize=(10,10),facecolor="White")
   errorbar(baseline_t3,t3phi_data,yerr=t3phi_data_err,fmt="o", color="Red")
   title("Closure phase data")
   xlabel("Baseline")
@@ -55,7 +55,7 @@ end
 
 
 function imdisp(image, pixellation = -1)
- fig = figure("Image",figsize=(10,10))
+ fig = figure("Image",figsize=(10,10),facecolor="White")
 # if pixellation < 0 -> no pixellation entered -> do not draw in milliarcseconds
  nx=Int64(sqrt(length(image)))
  #ax = gca()

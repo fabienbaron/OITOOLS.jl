@@ -81,12 +81,24 @@ g2d = [exp(-((X-(m/2)).^2+(Y-n/2).^2)/(2*sigma.^2)) for X=1:m, Y=1:n]
 return g2d
 end
 
-function cdg(x) #note: takes a 2D array
+function cdg(x) #note: this takes a 2D array
 xvals=[i for i=1:size(x,1)]
-return [sum(xvals'*x) sum(x_true*xvals)]/sum(x)
+return [sum(xvals'*x) sum(x*xvals)]/sum(x)
 end
 
-function crit_fgreg(x, g, dft, data, rho, x0) # criterion with regularization
+function reg_centering(x,g) # takes a 1D array
+nx = Int(sqrt(length(x)))
+flux= sum(x)
+c = cdg(reshape(x,nx,nx))
+f = (c[1]-(nx+1)/2)^2+(c[2]-(nx+1)/2)^2
+xx = [mod(i-1,nx)+1 for i=1:nx*nx]
+yy = [div(i-1,nx)+1 for i=1:nx*nx]
+g[1:nx*nx] = 2*(c[1]-(nx+1)/2)*xx + 2*(c[2]-(nx+1)/2)*yy
+g[1:nx*nx] = (g - sum(x.*g) / flux ) / flux;
+return f
+end
+
+function crit_fgreg(x, g, dft, data) # criterion with regularization
 nx2 = length(x)
 flux = sum(x);
 cvis_model = zeros(Complex{Float64},div(data.nuv,data.nw),data.nw);
@@ -101,13 +113,9 @@ g_v2 = Array(Float64, nx2);
 g_t3amp = Array(Float64, nx2);
 g_t3phi = Array(Float64, nx2);
 
-# regularization
-reg = mu*sum( (x-x0).^2);
-reg_der = 2*mu*sum(x-x0);
-
-#spatial_grad = [x_true[1:end-1]-x_true[2:end];0]
-#reg_f = 1e6*sum(abs(spatial_grad));
-#reg_g = 1e6*sum(convert(Array{Float64,1},spatial_grad.>0)-convert(Array{Float64,1},spatial_grad.<0));
+rho = 1e5
+reg_der = zeros(size(x))
+reg = reg_centering(x, reg_der)
 
 # note: this is correct but slower
 #g = sum(4*((v2_model-v2_data)./v2_data_err.^2).*real(conj(cvis_model[indx_v2]).*dft[indx_v2,:]),1)
@@ -122,9 +130,10 @@ t3model_der = dft[data.indx_t3_1,ii].*cvis_model[data.indx_t3_2].*cvis_model[dat
 g_t3phi[ii] = sum(360./pi*((mod360(t3phi_model-data.t3phi_data)./data.t3phi_data_err.^2)./abs2(t3_model)).*(-imag(t3_model).*real(t3model_der)+real(t3_model).*imag(t3model_der));
 );
 end
+imdisp(x)
 g[1:end] = g_v2 + g_t3amp + g_t3phi +  rho * reg_der;
 g[1:end] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux, " CDG ", cdg(reshape(x,nx,nx)))
 return chi2_v2 + chi2_t3amp + chi2_t3phi + rho *reg
 end
 
