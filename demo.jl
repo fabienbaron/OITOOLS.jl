@@ -10,12 +10,13 @@ include("oiplot.jl")
 
 #read model fits file
 pixellation = 0.1; # in mas
-fitsfile = "2004true.fits";
-
+fitsfile = "azcyg2014mean_mean.fits";
+#fitsfile = "2004true.fits";
 scale_rad = pixellation * (pi / 180.0) / 3600000.0;
 x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true);
 
-oifitsfile = "2004-data1.oifits";
+oifitsfile = "azcyg2014.oifits";
+#oifitsfile="2004-data1.oifits";
 data = read_oifits(oifitsfile);
 
 # setup DFT (nfft also possible soon)
@@ -41,3 +42,4 @@ v2plot_modelvsdata(data.baseline_v2,data.v2_data,data.v2_data_err, v2_model);
 
 # the image
 imdisp(x_true)
+readline()
