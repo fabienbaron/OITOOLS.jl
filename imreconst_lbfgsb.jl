@@ -16,27 +16,26 @@
   nw = 1;# monochromatic mode
   #read model fits file
   scale_rad = pixellation * (pi / 180.0) / 3600000.0;
-  x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true)/sum(x_true);
 
+#  x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true)/sum(x_true);
+
+
+
+nx = 64;
   data = read_oifits(oifitsfile);
   dft = setup_ft(data, nx);
-  #init required because of OptimPack way
 
-  # initial values: Z, rho, U, mu
-  x_start =  rand(size(x_true));
+  #initial image is a simple Gaussian
+  x_start = Array(Float64, nx, nx)
+  for i=1:nx
+    for j=1:nx
+      x_start[i,j] = exp(-((i-(nx+1)/2)^2+(j-(nx+1)/2)^2)/(2*(nx/6)^2))
+    end
+  end
   x_start = vec(x_start)/sum(x_start);
 
-  #regularization param
-  crit = (x,g)->crit_fgreg(x, g , dft,data);
-#  f, x, numCall, numIter, status = lbfgsb( crit, x_start, lb=zeros(size(x_start)), ub=ones(size(x_start)), iprint=1);
-   f, x, numCall, numIter, status = lbfgsb( crit, x_start, lb=zeros(size(x_start)), ub=ones(size(x_start)), iprint=1);
 
 
 
-
-#x_start = x_true
-#x_start /= sum(x_start)
-#g = zeros(size(x_true)); f_true = crit_fg(x_true, g, dft, data);
-
-#x = OptimPack.nlcg(cost!, start_x, OptimPack.NLCG_HAGER_ZHANG)
-#println(crit_fg(x, g, dft, data));
+crit = (x,g)->crit_fgreg(x, g , dft, data);
+f, x, numCall, numIter, status = lbfgsb( crit, x_start, lb=zeros(size(x_start)), ub=ones(size(x_start)), iprint=1);
