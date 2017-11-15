@@ -7,8 +7,9 @@ if Pkg.installed("NearestNeighbors")==nothing
 end
 
 if Pkg.installed("OIFITS")==nothing
+    println("OIFITS package is not installed... Installing now");
     Pkg.add("OIFITS")
     Pkg.checkout("OIFITS","master")
     println("Adding fixes to OIFITS.jl for OIFITS v2")
-    cp("./fixes/oifile.jl",string(Pkg.dir("OIFITS"),"/src/"))
+    cp("./fixes/oifile.jl",string(Pkg.dir("OIFITS"),"/src"),remove_destination=true)
 end
