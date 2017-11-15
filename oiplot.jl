@@ -44,17 +44,20 @@ PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code
 end
 
 
-function v2plot(baseline_v2,v2_data,v2_data_err) # plots v2 data only
+function v2plot(baseline_v2,v2_data,v2_data_err; logplot = false) # plots v2 data only
 fig = figure("V2 data",figsize=(15,8),facecolor="White")
-  errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", color="Red")
-  title("V2 data")
-  xlabel("Baseline")
-  ylabel("V2")
-  grid("on")
-  tight_layout()
-  PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
+ax = gca()
+if logplot==true
+ax[:set_yscale]("log")
 end
-
+errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
+title("V2 data")
+xlabel("Baseline")
+ylabel("V2")
+grid("on")
+tight_layout()
+PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
+end
 
 function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   fig = figure("Closure phase data",figsize=(10,10),facecolor="White")
