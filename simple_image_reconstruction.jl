@@ -1,15 +1,8 @@
 #
 # Very Basic Image reconstruction code
 #
-using FITSIO
-using NFFT
 
-#FFTW.set_num_threads(8);
-using OptimPack
-include("readoifits.jl")
-include("oichi2.jl")
-include("oiplot.jl")
-PyPlot.show()
+include("oitools.jl")
 nw = 1;# monochromatic mode
 oifitsfile = "2004-data1.oifits"
 pixsize = 0.1
