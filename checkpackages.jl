@@ -3,6 +3,10 @@ if Pkg.installed("NFFT")==nothing
     Pkg.add("NFFT")
 end
 
+if Pkg.installed("SpecialFunctions")==nothing
+    Pkg.add("SpecialFunctions")
+end
+
 if Pkg.installed("NearestNeighbors")==nothing
     Pkg.add("NearestNeighbors")
 end
