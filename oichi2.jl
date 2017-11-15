@@ -51,9 +51,9 @@ function chi2(x, dft, data, verbose = true)
   # compute observables from all cvis
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = sum( ((v2_model - data.v2_data)./data.v2_data_err).^2);
-  chi2_t3amp = sum( ((t3amp_model - data.t3amp_data)./data.t3amp_data_err).^2);
-  chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi_data)./data.t3phi_data_err).^2);
+  chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2);
+  chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2);
+  chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2);
   if verbose == true
     flux = sum(x);
     println("V2: ", chi2_v2, " T3A: ", chi2_t3amp, " T3P: ", chi2_t3phi," Flux: ", flux)

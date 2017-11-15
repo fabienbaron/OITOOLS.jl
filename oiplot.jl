@@ -9,6 +9,7 @@ function uvplot(uv)
 u = uv[1,:]
 v = uv[2,:]
 fig = figure("UV plot",figsize=(10,10),facecolor="White")
+clf();
 ax = axes()
 scatter(u, v,alpha=0.5, color="Black")
 scatter(-u, -v,alpha=0.5, color="Black")
@@ -23,19 +24,20 @@ end
 
 function v2plot_modelvsdata(baseline_v2,v2_data,v2_data_err, v2_model; logplot = false) #plots V2 data vs v2 model
 fig = figure("V2 plot - Model vs Data",figsize=(10,10),facecolor="White")
+clf();
 subplot(211)
-ax = gca()
+ax = gca();
 if logplot==true
 ax[:set_yscale]("log")
 end
 errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
-plot(baseline_v2, v2_model, color="Red", linestyle="none", marker="o", markersize=2)
+plot(baseline_v2, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
 title("V2 - Model vs data plot")
 xlabel("Baseline")
 ylabel("V2")
 grid("on")
 subplot(212)
-plot(baseline_v2, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=2)
+plot(baseline_v2, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
 xlabel("Baseline")
 ylabel("Residuals (number of sigma)")
 grid("on");
@@ -45,12 +47,13 @@ end
 
 
 function v2plot(baseline_v2,v2_data,v2_data_err; logplot = false) # plots v2 data only
-fig = figure("V2 data",figsize=(15,8),facecolor="White")
-ax = gca()
+fig = figure("V2 data",figsize=(10,5),facecolor="White");
+clf();
+ax = gca();
 if logplot==true
 ax[:set_yscale]("log")
 end
-errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
+errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color="Black")
 title("V2 data")
 xlabel("Baseline")
 ylabel("V2")
@@ -60,18 +63,20 @@ PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code
 end
 
 function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
-  fig = figure("Closure phase data",figsize=(10,10),facecolor="White")
-  errorbar(baseline_t3,t3phi_data,yerr=t3phi_data_err,fmt="o", color="Red")
+  fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
+  clf();
+  errorbar(baseline_t3,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color="Black")
   title("Closure phase data")
   xlabel("Baseline")
   ylabel("Closure phase (degrees)")
+  grid("on")
   tight_layout()
   PyPlot.show();PyPlot.pause(0.5);  # this is used to see plots when running code in batch mode
 end
 
 
 function imdisp(image, pixellation = -1)
- fig = figure("Image",figsize=(10,10),facecolor="White")
+ fig = figure("Image",figsize=(5,5),facecolor="White")
 # if pixellation < 0 -> no pixellation entered -> do not draw in milliarcseconds
  nx=Int64(sqrt(length(image)))
  #ax = gca()
