@@ -1,21 +1,38 @@
 # gather common display tasks
 using PyPlot,PyCall
-
+PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
+#PyDict(pyimport("matplotlib")["rcParams"])["mathtext.fontset"]=["custom"]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["lines.markeredgewidth"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
+#PyDict(pyimport("matplotlib")["rcParams"])["legend.frameon"]=["False"]
+PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
 #@pyimport mpl_toolkits.axes_grid1 as axgrid
 
 # double check by plotting uv coverage
 
 function uvplot(uv)
-u = uv[1,:]
-v = uv[2,:]
+u = uv[1,:]/1e6
+v = uv[2,:]/1e6
 fig = figure("UV plot",figsize=(10,10),facecolor="White")
 clf();
 ax = axes()
+minorticks_on
+markeredgewidth=0.1
+ax[:locator_params](axis ="y", nbins=20)
+ax[:locator_params](axis ="x", nbins=20)
 scatter(u, v,alpha=0.5, color="Black")
 scatter(-u, -v,alpha=0.5, color="Black")
 title("UV coverage")
-xlabel("U")
-ylabel("V")
+xlabel(L"U (M$\lambda$)")
+ylabel(L"V (M$\lambda$)")
 grid("on")
 tight_layout();
 PyPlot.draw();PyPlot.pause(0.5); # this is used to see plots when running code in batch mode
@@ -30,15 +47,15 @@ ax = gca();
 if logplot==true
 ax[:set_yscale]("log")
 end
-errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
-plot(baseline_v2, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
-title("V2 - Model vs data plot")
-xlabel("Baseline")
-ylabel("V2")
+errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
+plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
+title("Squared Visbility Amplitudes - Model vs data plot")
+#xlabel(L"Baseline (M$\lambda$)")
+ylabel("Squared Visibility Amplitudes")
 grid("on")
 subplot(212)
-plot(baseline_v2, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
-xlabel("Baseline")
+plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
+xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
 grid("on");
 tight_layout()
@@ -53,10 +70,10 @@ ax = gca();
 if logplot==true
 ax[:set_yscale]("log")
 end
-errorbar(baseline_v2,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color="Black")
-title("V2 data")
-xlabel("Baseline")
-ylabel("V2")
+errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color="Black")
+title("Squared Visibility Amplitude Data")
+xlabel(L"Baseline (M$\lambda$)")
+ylabel("Squared Visibility Amplitudes")
 grid("on")
 tight_layout()
 PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
@@ -65,9 +82,9 @@ end
 function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
   clf();
-  errorbar(baseline_t3,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color="Black")
+  errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color="Black")
   title("Closure phase data")
-  xlabel("Baseline")
+  xlabel(L"Maximum Baseline (M$\lambda$)")
   ylabel("Closure phase (degrees)")
   grid("on")
   tight_layout()
