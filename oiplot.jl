@@ -17,8 +17,11 @@ PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
 #@pyimport mpl_toolkits.axes_grid1 as axgrid
 
 # double check by plotting uv coverage
+function uvplot(data::OIdata)
+uvplot(data.uv)
+end
 
-function uvplot(uv)
+function uvplot(uv::Array{Float64,2})
 u = uv[1,:]/1e6
 v = uv[2,:]/1e6
 fig = figure("UV plot",figsize=(10,10),facecolor="White")
@@ -39,7 +42,8 @@ PyPlot.draw();PyPlot.pause(0.5); # this is used to see plots when running code i
 end
 
 
-function v2plot_modelvsdata(baseline_v2,v2_data,v2_data_err, v2_model; logplot = false) #plots V2 data vs v2 model
+
+function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
 fig = figure("V2 plot - Model vs Data",figsize=(10,10),facecolor="White")
 clf();
 subplot(211)
@@ -63,7 +67,12 @@ PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code
 end
 
 
-function v2plot(baseline_v2,v2_data,v2_data_err; logplot = false) # plots v2 data only
+function v2plot(data::OIdata;logplot=false)
+v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
+end
+
+
+function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}; logplot = false) # plots v2 data only
 fig = figure("V2 data",figsize=(10,5),facecolor="White");
 clf();
 ax = gca();
@@ -79,6 +88,11 @@ tight_layout()
 PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
+
+function t3phiplot(data::OIdata)
+t3phiplot(data.t3_baseline,data.t3phi,data.t3phi_err);
+end
+
 function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
   clf();
@@ -92,15 +106,22 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
 end
 
 
-function imdisp(image, pixellation = -1)
+function imdisp(image; cmap = "hot", pixscale = -1.0)
  fig = figure("Image",figsize=(5,5),facecolor="White")
-# if pixellation < 0 -> no pixellation entered -> do not draw in milliarcseconds
- nx=Int64(sqrt(length(image)))
- #ax = gca()
- imshow(rotl90(reshape(image,nx,nx)), ColorMap("hot"), interpolation="none"); # uses Monnier's orientation
- #divider = axgrid.make_axes_locatable(ax)
- #cax = divider[:append_axes]("right", size="5%", pad=0.05)
- #colorbar(image, cax=cax)
+ nx=ny=-1;
+ if ndims(image) ==1
+   ny=nx=Int64(sqrt(length(image)))
+   imshow(rotl90(reshape(image,nx,nx)), ColorMap("hot"), interpolation="none"); # uses Monnier's orientation
+ else
+   nx,ny = size(image);
+   imshow(rotl90(image), ColorMap(cmap), interpolation="none"); # uses Monnier's orientation
+ end
+ if pixscale > 0
+   ax = gca()
+   divider = axgrid.make_axes_locatable(ax)
+   cax = divider[:append_axes]("right", size="5%", pad=0.05)
+   colorbar(image, cax=cax)
+ end
  tight_layout()
  PyPlot.draw();PyPlot.pause(0.05);
 end
