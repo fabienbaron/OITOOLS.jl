@@ -90,7 +90,7 @@ end
 
 
 function t3phiplot(data::OIdata)
-t3phiplot(data.t3_baseline,data.t3phi,data.t3phi_err);
+t3phiplot(data.t3_maxbaseline,data.t3phi,data.t3phi_err);
 end
 
 function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only

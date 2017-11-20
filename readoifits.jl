@@ -15,6 +15,7 @@ mutable struct OIdata
   t3phi::Array{Float64,1}
   t3phi_err::Array{Float64,1}
   t3_baseline::Array{Float64,1}
+  t3_maxbaseline::Array{Float64,1}
   t3_mjd::Array{Float64,1}
   t3_lam::Array{Float64,1}
   t3_dlam::Array{Float64,1}
@@ -140,6 +141,7 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   t3_v3_old = Array{Array{Float64,1}}(t3_ntables);
   t3_uv_old = Array{Array{Float64,2}}(t3_ntables);
   t3_baseline_old = Array{Array{Float64,1}}(t3_ntables);
+  t3_maxbaseline_old = Array{Array{Float64,1}}(t3_ntables);
 
   for itable = 1:t3_ntables
     t3amp_old[itable] = t3table[itable][:t3amp];
@@ -190,6 +192,11 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
       sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2).*
       sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2).*
       sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)).^(1./3.));
+    t3_maxbaseline_old[itable] = vec(max.(
+    sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2),
+    sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2),
+    sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)));
+
   end
 
   # combine all data into one
@@ -227,6 +234,7 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   #t3_v3_new = fill((Float64[]),nspecbin,ntimebin);
   t3_uv_all = vcat(Float64[]',Float64[]');
   t3_baseline_all = Float64[];
+  t3_maxbaseline_all = Float64[];
 
   for i = 1:v2_ntables
     v2_all = vcat(v2_all,vec(v2_old[i]));
@@ -250,6 +258,7 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
     t3_flag_all = vcat(t3_flag_all,vec(t3_flag_old[i]));
     t3_uv_all = hcat(t3_uv_all,t3_uv_old[i]'); # Must have in this form for Fourier transform
     t3_baseline_all = vcat(t3_baseline_all,vec(t3_baseline_old[i]));
+    t3_maxbaseline_all = vcat(t3_maxbaseline_all,vec(t3_maxbaseline_old[i]));
   end
 
   # calculate default timebin if user picks timebin = [[]]
@@ -325,6 +334,7 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   #t3_v3_new = fill((Float64[]),nspecbin,ntimebin);
   t3_uv_new = fill((vcat(Float64[]',Float64[]')),nspecbin,ntimebin);
   t3_baseline_new = fill((Float64[]),nspecbin,ntimebin);
+  t3_maxbaseline_new = fill((Float64[]),nspecbin,ntimebin);
   mean_mjd = Array{Float64}(nspecbin,ntimebin);
   full_uv = Array{Array{Float64,2}}(nspecbin,ntimebin);
   nv2 = Array{Int64}(nspecbin,ntimebin);
@@ -419,6 +429,8 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
       t3_flag_new[ispecbin,itimebin] = vcat(t3_flag_new[ispecbin,itimebin],t3_flag_all[filter_t3]);
       t3_uv_new[ispecbin,itimebin] = hcat(t3_uv_new[ispecbin,itimebin],vcat(t3_uv_all[1,:][filter_t3uv]',t3_uv_all[2,:][filter_t3uv]'));
       t3_baseline_new[ispecbin,itimebin] = vcat(t3_baseline_new[ispecbin,itimebin],t3_baseline_all[filter_t3]);
+      t3_maxbaseline_new[ispecbin,itimebin] = vcat(t3_maxbaseline_new[ispecbin,itimebin],t3_maxbaseline_all[filter_t3]);
+
 
       mean_mjd[ispecbin,itimebin] = mean(v2_mjd_new[ispecbin,itimebin]);
       full_uv[ispecbin,itimebin] = hcat(v2_uv_new[ispecbin,itimebin],t3_uv_new[ispecbin,itimebin]);
@@ -442,7 +454,7 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
 
       OIdataArr[ispecbin,itimebin] = OIdata(v2_new[ispecbin,itimebin], v2_err_new[ispecbin,itimebin], v2_baseline_new[ispecbin,itimebin], v2_mjd_new[ispecbin,itimebin],
         mean_mjd[ispecbin,itimebin], v2_lam_new[ispecbin,itimebin], v2_dlam_new[ispecbin,itimebin], v2_flag_new[ispecbin,itimebin], t3amp_new[ispecbin,itimebin],
-        t3amp_err_new[ispecbin,itimebin], t3phi_new[ispecbin,itimebin], t3phi_err_new[ispecbin,itimebin], t3_baseline_new[ispecbin,itimebin],
+        t3amp_err_new[ispecbin,itimebin], t3phi_new[ispecbin,itimebin], t3phi_err_new[ispecbin,itimebin], t3_baseline_new[ispecbin,itimebin],t3_maxbaseline_new[ispecbin,itimebin],
         t3_mjd_new[ispecbin,itimebin], t3_lam_new[ispecbin,itimebin], t3_dlam_new[ispecbin,itimebin], t3_flag_new[ispecbin,itimebin], full_uv[ispecbin,itimebin],
         nv2[ispecbin,itimebin], nt3amp[ispecbin,itimebin], nt3phi[ispecbin,itimebin], nuv[ispecbin,itimebin], indx_v2[ispecbin,itimebin],
         indx_t3_1[ispecbin,itimebin], indx_t3_2[ispecbin,itimebin], indx_t3_3[ispecbin,itimebin]);
