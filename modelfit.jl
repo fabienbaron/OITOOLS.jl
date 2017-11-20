@@ -5,7 +5,7 @@ function fit_model_v2(data, visfunc, init_param)
   indx= data.indx_v2
   nv2 = length(data.v2[indx]);
   r=data.v2_baseline
-  chisq=param->sum(((abs2.(visfunc(param,r))-data.v2[indx])./data.v2_err[indx]).^2)/nv2;
+  chisq=(param,g)->sum(((abs2.(visfunc(param,r))-data.v2[indx])./data.v2_err[indx]).^2)/nv2;
   opt = Opt(:LN_NELDERMEAD, nparams);
   #opt = Opt(:LD_MMA, nparams);
   min_objective!(opt, chisq)
