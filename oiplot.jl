@@ -111,7 +111,7 @@ function imdisp(image; cmap = "hot", pixscale = -1.0)
  nx=ny=-1;
  if ndims(image) ==1
    ny=nx=Int64(sqrt(length(image)))
-   imshow(rotl90(reshape(image,nx,nx)), ColorMap("hot"), interpolation="none"); # uses Monnier's orientation
+   imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none"); # uses Monnier's orientation
  else
    nx,ny = size(image);
    imshow(rotl90(image), ColorMap(cmap), interpolation="none"); # uses Monnier's orientation
