@@ -38,7 +38,7 @@ xlabel(L"U (M$\lambda$)")
 ylabel(L"V (M$\lambda$)")
 grid("on")
 tight_layout();
-PyPlot.draw();PyPlot.pause(0.5); # this is used to see plots when running code in batch mode
+#PyPlot.draw();PyPlot.pause(0.5); # this is used to see plots when running code in batch mode
 end
 
 
@@ -63,7 +63,7 @@ xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
 grid("on");
 tight_layout()
-PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
+#PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
 
@@ -85,7 +85,7 @@ xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
 grid("on")
 tight_layout()
-PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
+#PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
 
@@ -102,7 +102,7 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   ylabel("Closure phase (degrees)")
   grid("on")
   tight_layout()
-  PyPlot.show();PyPlot.pause(0.5);  # this is used to see plots when running code in batch mode
+#  PyPlot.show();PyPlot.pause(0.5);  # this is used to see plots when running code in batch mode
 end
 
 
@@ -123,5 +123,5 @@ function imdisp(image; cmap = "hot", pixscale = -1.0)
    colorbar(image, cax=cax)
  end
  tight_layout()
- PyPlot.draw();PyPlot.pause(0.05);
+ #PyPlot.draw();PyPlot.pause(0.05);
 end

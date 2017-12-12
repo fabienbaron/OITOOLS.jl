@@ -9,6 +9,9 @@ uvplot(data)
 v2plot(data,logplot=true);
 t3phiplot(data);
 
+# Example of visibilities, here for Hestroffer with limb-darkening parameter 0.1
+cvis = visibility_ldpow([8.0,0.1], data.v2_baseline);
+
 # Fit uniform disc and plot
 f_chi2, params, cvis_model = fit_model_v2(data, visibility_ud, [8.0]);# diameter is the parameter
 v2_model = cvis_to_v2(cvis_model, data.indx_v2);
