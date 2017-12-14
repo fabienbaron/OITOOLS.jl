@@ -1,5 +1,10 @@
 # OITOOLS: Modeling Tools for Optical Interferometry
 
+# Requirements
+
+The OIFITS, NFFT, SpecialFunctions and NearestNeighbors packages are required and will be installed if missing by checkpackage.jl.
+Optional packages used for model fitting are NLopt (derivative-free local and global optimizers) and Multinest (model selection). DNest4 is likely to replace Multinest soon.
+
 # Installation
 
 Just clone the directory:
