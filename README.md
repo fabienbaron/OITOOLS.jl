@@ -2,8 +2,11 @@
 
 # Requirements
 
-The ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages are required and will be installed if missing by ```checkpackage.jl```.
-Optional packages used for model fitting are ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection). ```DNest4``` is likely to replace ```Multinest``` soon.
+The ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages are required and will be automatically installed the first time running OITOOLS if they are missing.
+
+We use two optional packages for model fitting are ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection). ```DNest4``` is likely to replace ```Multinest``` soon.
+
+For image reconstruction, we use ```OptimPack```.
 
 # Installation
 
