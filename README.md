@@ -1,11 +1,11 @@
-# OITOOLS: Modeling tools for Optical Interferometry
+# OITOOLS: Modeling Tools for Optical Interferometry
 
 # Installation
 
-Just clone the directory
+Just clone the directory:
 ``` git clone https://github.com/fabienbaron/OITOOLS.jl.git```
 
-You can use ```include("oitools.jl");``` to start using the OITOOLS functions.
+You can use ```include("oitools.jl")``` to start using the OITOOLS functions.
 
 # Usage
 
