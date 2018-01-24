@@ -1,3 +1,4 @@
+using FITSIO
 using OIFITS
 include("remove_redundance.jl")
 mutable struct OIdata
