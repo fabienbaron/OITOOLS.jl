@@ -1,4 +1,3 @@
-using FITSIO
 using OIFITS
 include("remove_redundance.jl")
 mutable struct OIdata
@@ -25,10 +24,10 @@ mutable struct OIdata
   nt3amp::Int64
   nt3phi::Int64
   nuv::Int64
-  indx_v2::Array{Int64,1}
-  indx_t3_1::Array{Int64,1}
-  indx_t3_2::Array{Int64,1}
-  indx_t3_3::Array{Int64,1}
+  indx_v2::UnitRange{Int64}
+  indx_t3_1::UnitRange{Int64}
+  indx_t3_2::UnitRange{Int64}
+  indx_t3_3::UnitRange{Int64}
 end
 
 """
@@ -139,7 +138,7 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   t3_v2_old = Array{Array{Float64,1}}(t3_ntables);
   t3_u3_old = Array{Array{Float64,1}}(t3_ntables);
   t3_v3_old = Array{Array{Float64,1}}(t3_ntables);
-  t3_uv_old = Array{Array{Float64,2}}(t3_ntables);
+  #t3_uv_old = Array{Array{Float64,2}}(t3_ntables);
   t3_baseline_old = Array{Array{Float64,1}}(t3_ntables);
   t3_maxbaseline_old = Array{Array{Float64,1}}(t3_ntables);
 
@@ -171,27 +170,19 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
     t3_u3_old[itable] = t3_u3coord_old[itable][1]./t3_lam_old[itable][:,1];
     t3_v3_old[itable] = t3_v3coord_old[itable][1]./t3_lam_old[itable][:,1];
     for u = 2:length(t3_u1coord_old[itable])
-      t3_u1_old[itable] = vcat(t3_u1_old[itable],
-        t3_u1coord_old[itable][u]./t3_lam_old[itable][:,1]);
-      t3_v1_old[itable] = vcat(t3_v1_old[itable],
-        t3_v1coord_old[itable][u]./t3_lam_old[itable][:,1]);
-      t3_u2_old[itable] = vcat(t3_u2_old[itable],
-        t3_u2coord_old[itable][u]./t3_lam_old[itable][:,1]);
-      t3_v2_old[itable] = vcat(t3_v2_old[itable],
-      	t3_v2coord_old[itable][u]./t3_lam_old[itable][:,1]);
-      t3_u3_old[itable] = vcat(t3_u3_old[itable],
-      	t3_u3coord_old[itable][u]./t3_lam_old[itable][:,1]);
-      t3_v3_old[itable] = vcat(t3_v3_old[itable],
-      	t3_v3coord_old[itable][u]./t3_lam_old[itable][:,1]);
+      t3_u1_old[itable] = vcat(t3_u1_old[itable],t3_u1coord_old[itable][u]./t3_lam_old[itable][:,1]);
+      t3_v1_old[itable] = vcat(t3_v1_old[itable],t3_v1coord_old[itable][u]./t3_lam_old[itable][:,1]);
+      t3_u2_old[itable] = vcat(t3_u2_old[itable],t3_u2coord_old[itable][u]./t3_lam_old[itable][:,1]);
+      t3_v2_old[itable] = vcat(t3_v2_old[itable],t3_v2coord_old[itable][u]./t3_lam_old[itable][:,1]);
+      t3_u3_old[itable] = vcat(t3_u3_old[itable],t3_u3coord_old[itable][u]./t3_lam_old[itable][:,1]);
+      t3_v3_old[itable] = vcat(t3_v3_old[itable],t3_v3coord_old[itable][u]./t3_lam_old[itable][:,1]);
     end
 
-    t3_uv_old[itable] = hcat(vcat(t3_u1_old[itable],
-      t3_u2_old[itable],t3_u3_old[itable]), vcat(t3_v1_old[itable],
-      t3_v2_old[itable],t3_v3_old[itable]));
-    t3_baseline_old[itable] = vec((
-      sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2).*
-      sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2).*
-      sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)).^(1./3.));
+    #t3_uv_old[itable] = hcat(vcat(t3_u1_old[itable],t3_u2_old[itable],t3_u3_old[itable]),
+    #    vcat(t3_v1_old[itable],t3_v2_old[itable],t3_v3_old[itable]));
+    t3_baseline_old[itable] = vec((sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2).*
+        sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2).*
+        sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)).^(1./3.));
     t3_maxbaseline_old[itable] = vec(max.(
     sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2),
     sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2),
@@ -226,12 +217,12 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   t3_lam_all = Float64[];
   t3_dlam_all = Float64[];
   t3_flag_all = Float64[];
-  #t3_u1_new = fill((Float64[]),nspecbin,ntimebin);
-  #t3_v1_new = fill((Float64[]),nspecbin,ntimebin);
-  #t3_u2_new = fill((Float64[]),nspecbin,ntimebin);
-  #t3_v2_new = fill((Float64[]),nspecbin,ntimebin);
-  #t3_u3_new = fill((Float64[]),nspecbin,ntimebin);
-  #t3_v3_new = fill((Float64[]),nspecbin,ntimebin);
+  t3_u1_all = Float64[];
+  t3_v1_all = Float64[];
+  t3_u2_all = Float64[];
+  t3_v2_all = Float64[];
+  t3_u3_all = Float64[];
+  t3_v3_all = Float64[];
   t3_uv_all = vcat(Float64[]',Float64[]');
   t3_baseline_all = Float64[];
   t3_maxbaseline_all = Float64[];
@@ -256,10 +247,17 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
     t3_lam_all = vcat(t3_lam_all,vec(t3_lam_old[i]));
     t3_dlam_all = vcat(t3_dlam_all,vec(t3_dlam_old[i]));
     t3_flag_all = vcat(t3_flag_all,vec(t3_flag_old[i]));
-    t3_uv_all = hcat(t3_uv_all,t3_uv_old[i]'); # Must have in this form for Fourier transform
+    t3_u1_all = vcat(t3_u1_all,vec(t3_u1_old[i]));
+    t3_v1_all = vcat(t3_v1_all,vec(t3_v1_old[i]));
+    t3_u2_all = vcat(t3_u2_all,vec(t3_u2_old[i]));
+    t3_v2_all = vcat(t3_v2_all,vec(t3_v2_old[i]));
+    t3_u3_all = vcat(t3_u3_all,vec(t3_u3_old[i]));
+    t3_v3_all = vcat(t3_v3_all,vec(t3_v3_old[i]));
+    #t3_uv_all = hcat(t3_uv_all,t3_uv_old[i]'); # Must have in this form for Fourier transform
     t3_baseline_all = vcat(t3_baseline_all,vec(t3_baseline_old[i]));
     t3_maxbaseline_all = vcat(t3_maxbaseline_all,vec(t3_maxbaseline_old[i]));
   end
+  t3_uv_all = hcat(vcat(t3_u1_all,t3_u2_all,t3_u3_all),vcat(t3_v1_all,t3_v2_all,t3_v3_all))';
 
   # calculate default timebin if user picks timebin = [[]]
   if ((temporalbin == [[]]) && (get_timebin_file == true))
@@ -341,10 +339,10 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   nt3amp = Array{Int64}(nspecbin,ntimebin);
   nt3phi = Array{Int64}(nspecbin,ntimebin);
   nuv = Array{Int64}(nspecbin,ntimebin);
-  indx_v2 = Array{Array{Int64,1}}(nspecbin,ntimebin);
-  indx_t3_1 = Array{Array{Int64,1}}(nspecbin,ntimebin);
-  indx_t3_2 = Array{Array{Int64,1}}(nspecbin,ntimebin);
-  indx_t3_3 = Array{Array{Int64,1}}(nspecbin,ntimebin);
+  indx_v2 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
+  indx_t3_1 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
+  indx_t3_2 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
+  indx_t3_3 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
 
   iter_mjd = 0; iter_wav = 0;
   t3_uv_mjd = zeros(length(t3_mjd_all)*3);
@@ -438,12 +436,12 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
       nt3amp[ispecbin,itimebin] = length(t3amp_new[ispecbin,itimebin]);
       nt3phi[ispecbin,itimebin] = length(t3phi_new[ispecbin,itimebin]);
       nuv[ispecbin,itimebin] = size(full_uv[ispecbin,itimebin],2);
-      indx_v2[ispecbin,itimebin] = collect(1:nv2[ispecbin,itimebin]);
-      indx_t3_1[ispecbin,itimebin] = collect(nv2[ispecbin,itimebin]+(1:nt3amp[ispecbin,itimebin]));
-      indx_t3_2[ispecbin,itimebin] = collect(nv2[ispecbin,itimebin]+(nt3amp[ispecbin,itimebin]+1:2*nt3amp[ispecbin,itimebin]));
-      indx_t3_3[ispecbin,itimebin] = collect(nv2[ispecbin,itimebin]+(2*nt3amp[ispecbin,itimebin]+1:3*nt3amp[ispecbin,itimebin]));
+      indx_v2[ispecbin,itimebin] = 1:nv2[ispecbin,itimebin];
+      indx_t3_1[ispecbin,itimebin] = nv2[ispecbin,itimebin]+(1:nt3amp[ispecbin,itimebin]);
+      indx_t3_2[ispecbin,itimebin] = nv2[ispecbin,itimebin]+(nt3amp[ispecbin,itimebin]+1:2*nt3amp[ispecbin,itimebin]);
+      indx_t3_3[ispecbin,itimebin] = nv2[ispecbin,itimebin]+(2*nt3amp[ispecbin,itimebin]+1:3*nt3amp[ispecbin,itimebin]);
 
-      if (redundance_chk == true)
+      if (redundance_chk == true) # temp fix?
         full_uv[ispecbin,itimebin], indx_redun = rm_redundance_kdtree(full_uv[ispecbin,itimebin],uvtol);
         nuv[ispecbin,itimebin] = size(full_uv[ispecbin,itimebin],2);
         indx_v2[ispecbin,itimebin] = indx_redun[indx_v2[ispecbin,itimebin]];
@@ -465,13 +463,25 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   return OIdataArr;
 end
 
+function readoifits_multiepochs(oifitsfiles)
+nepochs = length(oifitsfiles);
+tepochs = Array{Float64}(nepochs);
+data = Array{OIdata}(nepochs);
+for i=1:nepochs
+  data[i] = readoifits(oifitsfiles[i])[1,1];
+  tepochs[i] = data[i].mean_mjd;
+  println(oifitsfiles[i], "\t MJD: ", tepochs[i], "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi);
+end
+return nepochs, tepochs, data
+end
+
 # period in days
 function time_split(mjd,period;mjd_start=mjd[1])
   timebins = (maximum(mjd) - mjd_start)/(period);
   itimebin = Int(ceil(timebins));
-  temporalbin = [[],[]]
-  temporalbin[1] = [mjd_start,mjd_start+period]
-  temporalbin[2] = [mjd_start+period,mjd_start+2*period]
+  temporalbin = [[],[]];
+  temporalbin[1] = [mjd_start,mjd_start+period];
+  temporalbin[2] = [mjd_start+period,mjd_start+2*period];
   for i = 3:itimebin
     temporalbin[2] = vcat(temporalbin[2],mjd_start+(i-1)*period);
     temporalbin[2] = vcat(temporalbin[2],mjd_start+(i)*period);
