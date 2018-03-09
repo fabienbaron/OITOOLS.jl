@@ -6,7 +6,7 @@ include("oitools.jl");
 
 # read the image file
 fitsfile = "2004true.fits";
-pixsize = 0.1; # in mas/pixel
+pixsize = 0.101; # in mas/pixel
 x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true);
 
 # display the image
@@ -24,11 +24,11 @@ t3phiplot(data);
 
 # Compare data to image
 #
-
 # Setup Fourier transform via DFT (NFFT also possible)
 dft = setup_dft(data, nx, pixsize);
 # This computes the complete chi2
 f_chi2 = chi2(x_true, dft, data);
+
 
 # Compute |V|^2 observables and plot
 cvis_model = image_to_cvis_dft(x_true, dft);

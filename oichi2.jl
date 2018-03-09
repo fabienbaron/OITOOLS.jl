@@ -9,9 +9,10 @@ end
 return dft
 end
 
-function setup_nfft(data, nx, pixsize)
+using NFFT
+function setup_nfft(uv, nx, pixsize)
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-  nfft_plan = NFFTPlan(data.uv*scale_rad, (nx,nx), 4, 2.0);
+  nfft_plan = NFFTPlan(uv*scale_rad, (nx,nx), 4, 2.0);
   return nfft_plan
 end
 
