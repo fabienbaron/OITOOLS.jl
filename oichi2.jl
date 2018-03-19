@@ -1,10 +1,11 @@
-function setup_dft(data, nx, pixsize)
+function setup_dft(uv, nx, pixsize)
 scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-dft = zeros(Complex{Float64}, data.nuv, nx*nx);
+nuv = size(uv,2)
+dft = zeros(Complex{Float64}, nuv, nx*nx);
 xvals = -2 * pi * scale_rad * ([(mod(i-1,nx)+1) for i=1:nx*nx] - (nx+1)/2);
 yvals=  -2 * pi * scale_rad * ([(div(i-1,nx)+1) for i=1:nx*nx] - (nx+1)/2);
-for uu=1:data.nuv
-    dft[uu,:] = cis.( (data.uv[1,uu] * xvals + data.uv[2,uu] * yvals));
+for uu=1:nuv
+    dft[uu,:] = cis.( (uv[1,uu] * xvals + uv[2,uu] * yvals));
 end
 return dft
 end

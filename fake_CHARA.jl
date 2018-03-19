@@ -1,4 +1,4 @@
-include("oitools.jl")
+include("../OITOOLS.jl/oitools.jl")
 include("write_oifits_ha.jl")
 PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
 #PyDict(pyimport("matplotlib")["rcParams"])["mathtext.fontset"]=["custom"]
@@ -15,7 +15,6 @@ PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
 #PyDict(pyimport("matplotlib")["rcParams"])["legend.frameon"]=["False"]
 PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
 using NFFT
-
 function cvis_to_t3(cvis, indx1, indx2, indx3)
   t3 = cvis[indx1].*cvis[indx2].*conj(cvis[indx3]);
   t3amp = abs.(t3);
@@ -23,14 +22,17 @@ function cvis_to_t3(cvis, indx1, indx2, indx3)
   return t3, t3amp, t3phi
 end
 
+
+
+
 δ=+18.594234/180*pi #ce tau 10 mas 32w 0.37 pix
-#δ=δ/180*pi # mu cep 20 mas 0.37 pixsize
 hour_angles=collect(linspace(-6,6,10)) #[-]'
 #hour_angles=collect(linspace(-3,3,6)) #[-]'
 name = "CHARA"
 lat = 34.2243836944
 lon = -118.0570313111
 alt = 1731.264
+
 
 N = 6
 tel_diams = ones(Float64, N)
@@ -43,6 +45,7 @@ station_xyz = [[0  ,  0 ,  0 ],
 [70.3891451 , 269.7146871  ,  -2.8025644],
 [-175.0684101 , 216.3272464  ,  -10.7975261],
 [-69.0845925, 199.3424346, 0.4706086]]
+
 
 staxyz=Array{Float64}(3,N)
 for i=1:N
@@ -145,27 +148,23 @@ v2_indx_w = vec(repmat(vec(v2_indx_M),1,nw)+repmat(Int64.(collect(linspace(0,nuv
 t3_indx_1_w = vec(repmat(vec(t3_indx_1_M),1,nw)+repmat(Int64.(collect(linspace(0,nuv*nhours*(nw-1),nw)))',nt3*nhours))
 t3_indx_2_w = vec(repmat(vec(t3_indx_2_M),1,nw)+repmat(Int64.(collect(linspace(0,nuv*nhours*(nw-1),nw)))',nt3*nhours))
 t3_indx_3_w = vec(repmat(vec(t3_indx_3_M),1,nw)+repmat(Int64.(collect(linspace(0,nuv*nhours*(nw-1),nw)))',nt3*nhours))
-
-
-
-# Load file
-# Monochromatic monotemporal image
-
-fitsfile = "2004true137.fits";
-pixsize=0.1
-#fitsfile = "oifits-sim-test_64.fits"
-
-x = (read((FITS(fitsfile))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x);
-
-nfft_plan = setup_nfft(-uv, nx, pixsize)
-cvis_model = image_to_cvis_nfft(x, nfft_plan)
-v2_model = cvis_to_v2(cvis_model, v2_indx_w);
-t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
-
-
 t3_baseline = (sqrt.(uv[1,t3_indx_1_w].^2 + uv[2,t3_indx_1_w].^2).*
     sqrt.(uv[1,t3_indx_2_w].^2 + uv[2,t3_indx_2_w].^2).*
     sqrt.(uv[1,t3_indx_3_w].^2 + uv[2,t3_indx_3_w].^2)).^(1./3.);
+
+
+fitsfile = "2004true137.fits";
+pixsize=0.1
+x = (read((FITS(fitsfile))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x);
+
+
+#nfft_plan = setup_nfft(-uv, nx, pixsize)
+#cvis_model = image_to_cvis_nfft(x, nfft_plan)
+
+dft = setup_dft(-uv, nx, pixsize);
+cvis_model = image_to_cvis_dft(x, dft);
+v2_model = cvis_to_v2(cvis_model, v2_indx_w);
+t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
 
 #Add noise
 
@@ -177,21 +176,6 @@ t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
 
 t3phi_model_err = zeros(length(t3phi_model))+0.5 # degree  -- there is another way of setting this with Haniff formula
 t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
-#=
-v2_model_err = 1e-8
-
-t3amp_model_err = abs(0.1*t3amp_model)
-
-
-t3phi_model_err = 1. # degree  -- there is another way of setting this with Haniff formula
-=#
-
-#=
- v2_baselines=sqrt.(uv[1,:].^2+uv[2,:].^2)
- v2_baselines_new=reshape(v2_baselines,(nv2,nhours,nw))
-
-v2_model=reshape(v2_model,(nv2,nhours,nw))
-=#
 
 telnames=tel_names
 sta_names=telnames
@@ -249,8 +233,6 @@ t3phi_model_err=reshape(reshape(t3phi_model_err,(nhours,nt3,nw)),(nhours*nt3,nw)
 
 v2_model_stations=repmat(v2_stations,1,nhours)
 t3_model_stations=repmat(t3_stations,1,nhours)
-
-#v2_model=collect(linspace(1,0,length(v2_model)))
 v2_model=transpose(v2_model)
 v2_model_err=transpose(v2_model_err)
 t3amp_model=transpose(t3amp_model)
@@ -264,8 +246,8 @@ wave_array=[eff_wave,eff_band];
 vis2_array=[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2];
 t3_array=[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3];
 
-outfilename ="!2004fake137.oifits"
 
+outfilename ="!2004fake137.oifits"
 f = fits_create_file(outfilename);
 write_oi_header(f,1);
 write_oi_array(f,oi_array);
@@ -275,102 +257,39 @@ write_oi_vis2(f,vis2_array);
 write_oi_t3(f,t3_array);
 fits_close_file(f);
 
-
-
-getchar();
-
-
-staxyzplot=Array{Float64}(3,N)
-for i=1:N
-        staxyzplot[:,i]=station_xyzplot[i][:]
-end
-
-
-#tel_names =["S1","S3","S2","E1","W1","W2","E2"]
-#tel_names =["S1","S2","E1","W1","W2","E2"]
-
-fig = figure("Telescope Configuration",figsize=(32,20),facecolor="White")
-clf();
-ax=gca()
-minorticks_on
-ax[:locator_params](axis ="y", nbins=20)
-ax[:locator_params](axis ="x", nbins=20)
-axis("equal")
-plot(staxyzplot[1,:],staxyzplot[2,:],markersize=20,marker="o",linestyle="None",markeredgecolor="green",markerfacecolor="green")
-ax[:set_ylim](-30)
-title("Telescope Configuration")
-xlabel("Meters")
-ylabel("Meters")
-grid("on")
-for i=1:N
-    annotate(telnames[i],(staxyzplot[1,i]+10,staxyzplot[2,i]+3),size=17,color="Black")
-end
-annotate("",xy=[200,100],xytext=[200,25],arrowprops=Dict("facecolor"=>"black","arrowstyle"=>"simple"))
-annotate("N",(195,110),size=20,color="Black")
-savefig(telconfigfile)
+#
+# Double check
 #
 
-#----------------------------------------------------------------------
+include("readoifits.jl")
+include("oichi2.jl")
+include("oiplot.jl")
+PyPlot.show()
+oifitsfile = "2004fake137.oifits"
+pixsize = 0.1
+nx = 137
+data = readoifits(oifitsfile)[1,1];
+dft = setup_dft(data.uv, nx, pixsize);
 
-for i=1:nv2
-    baseline_list[i]=string(tel_names[v2_stations[1,i]],"-",tel_names[v2_stations[2,i]])
-end
-
-
-colors=["black","darkgreen","firebrick","forestgreen","peru","navy","gray","darkorange","lime","orange",
-"fuchsia","saddlebrown","red","darkslateblue","blueviolet","indigo","blue","dodgerblue",
-"sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen"]
-
-
-fig = figure("UV plot",figsize=(32,20),facecolor="White")
-clf();
-ax = axes()
-minorticks_on
-markeredgewidth=0.1
-ax[:locator_params](axis ="y", nbins=20)
-ax[:locator_params](axis ="x", nbins=20)
-axis("equal")
-for i=1:nv2
-    #for j=1:length(λ)
-        scatter(u[i,:,:]/1e6,v[i,:,:]/1e6,color=colors[i],label=baseline_list[i])
-        scatter(-u[i,:,:]/1e6,-v[i,:,:]/1e6,color=colors[i])
-        println,i
-
-end
-ax[:legend](bbox_to_anchor=[1.01,1.0],loc=2,borderaxespad=0)
-title("UV coverage")
-xlabel(L"U (M$\lambda$)")
-ylabel(L"V (M$\lambda$)")
-grid("on")
-savefig(uvfigfile)
-
-#-----------------------------------------
-v2baseline_plot=sqrt.(uv[1,:].^2+uv[2,:].^2)
-v2baseline_plot=reshape(v2baseline_plot,(nv2, nhours, nw))
-v2_plot=reshape(v2_model',(nv2, nhours, nw))
-v2_err_plot=reshape(v2_model_err',(nv2, nhours, nw))
-
-for i=1:nv2
-    baseline_list[i]=string(tel_names[v2_stations[1,i]],"-",tel_names[v2_stations[2,i]])
-end
+fitsfile = "2004true137.fits";
+x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true);
+f_chi2 = chi2(x_true, dft, data);
 
 
-fig = figure("V2 data",figsize=(30,15),facecolor="White");
-clf();
-ax = gca();
-ax[:set_yscale]("log")
-ax[:set_ylim](1e-8,3.0)
-minorticks_on
-markeredgewidth=0.1
-    for i=1:nv2
-     errorbar(vec(v2baseline_plot[i,:,:])/1E6,vec(v2_plot[i,:,:]),yerr=vec(v2_err_plot[i,:,:]),fmt="o", fillstyle="full",markersize=4,ecolor="gainsboro",color=colors[i],markeredgecolor=colors[i],label=baseline_list[i])
-    end
-    ax[:legend](loc=0,borderaxespad=0,markerscale=3)
+#
+# Imaging
+#
+using OptimPack
+pixsize = 0.2
+nx = 64
+dft = setup_dft(data.uv, nx, pixsize);
 
-title("Squared Visibility Amplitude Data")
-xlabel(L"Baseline (M$\lambda$)")
-ylabel("Squared Visibility Amplitudes")
-grid("on")
-savefig(v2figfile)
-
-end
+x_start = Array{Float64}(nx, nx);
+     for i=1:nx
+       for j=1:nx
+         x_start[i,j] = exp(-((i-(nx+1)/2)^2+(j-(nx+1)/2)^2)/(2*(nx/6)^2));
+       end
+     end
+ x_start = vec(x_start)/sum(x_start);
+crit = (x,g)->chi2_centered_fg(x, g, dft, data);
+x_sol = OptimPack.vmlmb(crit, x_start, verb=true, lower=0, maxiter=80, blmvm=false);

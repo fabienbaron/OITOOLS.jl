@@ -25,7 +25,7 @@ t3phiplot(data);
 # Compare data to image
 #
 # Setup Fourier transform via DFT (NFFT also possible)
-dft = setup_dft(data, nx, pixsize);
+dft = setup_dft(data.uv, nx, pixsize);
 # This computes the complete chi2
 f_chi2 = chi2(x_true, dft, data);
 
