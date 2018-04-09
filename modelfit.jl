@@ -57,7 +57,7 @@ end
              ceff = false,  # run in constant efficiency mode?
              nlive = 1000,  # number of live points
              efr = 0.8,  # set the required efficiency
-             tol = 1.0,  # tol, defines the stopping criteria
+             tol = .1,  # tol, defines the stopping criteria
              npar = npar,   # total no. of parameters including free & derived parameters
              nclspar = npar, # no. of parameters to do mode separation on
              updint = 100, # after how many iterations feedback is required & the output files should be updated

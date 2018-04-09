@@ -30,6 +30,15 @@ V = ((1.0-param[2]-param[3])*(besselj1.(zeta)./zeta)+((theta+2*param[3])/sqrt(2/
 return V
 end
 
+#linear law
+function visibility_ldlin(param,v_r)
+theta = param[1]/2.0626480624709636e8;
+zeta = (pi*v_r*theta);
+V = ((1.0-param[2])*(besselj1.(zeta)./zeta)+theta/sqrt(2/pi)*(
+(sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2)))./(0.5-param[2]/6)
+return V
+end
+
 # visibility of an annulus of unit flux
 function visibility_annulus(r_in, r_out, v_r)
 if r_out == r_in
