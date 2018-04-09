@@ -1,6 +1,5 @@
 using FITSIO.Libcfitsio;
 using OIFITS;
-include("oitools.jl");
 
 #=
 function get_extname(filein)

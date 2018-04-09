@@ -1,19 +1,4 @@
 include("../OITOOLS.jl/oitools.jl")
-include("write_oifits_ha.jl")
-PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
-#PyDict(pyimport("matplotlib")["rcParams"])["mathtext.fontset"]=["custom"]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["lines.markeredgewidth"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
-#PyDict(pyimport("matplotlib")["rcParams"])["legend.frameon"]=["False"]
-PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
 using NFFT
 function cvis_to_t3(cvis, indx1, indx2, indx3)
   t3 = cvis[indx1].*cvis[indx2].*conj(cvis[indx3]);
@@ -22,44 +7,24 @@ function cvis_to_t3(cvis, indx1, indx2, indx3)
   return t3, t3amp, t3phi
 end
 
-
-
-
 δ=+18.594234/180*pi #ce tau 10 mas 32w 0.37 pix
-hour_angles=collect(linspace(-6,6,10)) #[-]'
-#hour_angles=collect(linspace(-3,3,6)) #[-]'
-name = "CHARA"
-lat = 34.2243836944
-lon = -118.0570313111
-alt = 1731.264
 
-
-N = 6
-tel_diams = ones(Float64, N)
-#tel_names =["S1","S3","S2","E1","E2","W3","W1","W2"]
-tel_names =["S1","S2","E1","E2","W1","W2"]
-#extra w
-station_xyz = [[0  ,  0 ,  0 ],
-[-5.744414576 , 33.585327515 ,  0.634532856],
-[ 125.3331333, 305.9284973  ,  -5.9190997],
-[70.3891451 , 269.7146871  ,  -2.8025644],
-[-175.0684101 , 216.3272464  ,  -10.7975261],
-[-69.0845925, 199.3424346, 0.4706086]]
-
+#include("chara_config.jl")
+include("npoi_config.jl")
+hour_angles = linspace(-3.75,3.75,13);
 
 staxyz=Array{Float64}(3,N)
 for i=1:N
-        staxyz[:,i]=station_xyz[i][:]
+        staxyz[:,i]=station_xyz[i][:];
 end
-
 
 # V2 Baselines
 nv2 = Int64(N*(N-1)/2);
-v2_baselines = Array{Float64}(3,nv2)
-v2_stations  = Array{Int64}(2,nv2)
-v2_stations_nonredun=Array{Int64}(2,nv2)
-v2_indx      = Array{Int64}(nv2)
-baseline_list = Array{String}(nv2)
+v2_baselines = Array{Float64}(3,nv2);
+v2_stations  = Array{Int64}(2,nv2);
+v2_stations_nonredun=Array{Int64}(2,nv2);
+v2_indx      = Array{Int64}(nv2);
+baseline_list = Array{String}(nv2);
 indx = 1
 for i=1:N
   for j=i+1:N
@@ -77,7 +42,7 @@ nt3 = binomial(N,3);# V2 Baselines
 function v2mapt3(i,j)
     # really dumb way of doing this
     # there is probably an analytic formula for this
-    listi = find(v2_stations[1,:].==i)
+    listi = find(v2_stations[1,:].==i);
     return listi[findfirst(v2_stations[2,listi].==j)]
 end
 
@@ -114,10 +79,6 @@ nuv = size(vis_baselines, 2);
 # Baselines to proj Baselines (uv m)
 # Now compute the UV coordinates, again according to the APIS++ standards.
 #δ=+46.4668383/180*pi
-
-
-#hour_angles = linspace(-5,-1.8,)'
-
 nhours = length(hour_angles);
 l=lat/180*pi
 h = hour_angles' * pi / 12;
@@ -134,10 +95,6 @@ t3_indx_2_M = repmat(t3_indx_2,1,nhours)+repmat(Int64.(collect(linspace(0,nuv*(n
 t3_indx_3_M = repmat(t3_indx_3,1,nhours)+repmat(Int64.(collect(linspace(0,nuv*(nhours-1),nhours)))',nt3)
 
 # proj baselines to (uv wav)
-# add spectral info
-#λ = collect(linspace(6.4E-7,9.4E-7,16))
-λ = [1.745909E-06, 1.717131E-06, 1.684602E-06, 1.650831E-06 ,1.615819E-06,  1.579565E-06,1.542070E-06 , 1.508262E-06];
-#λ = [1.745909E-06, 1.717131E-06]
 nw=length(λ)
 u = reshape((1./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
 v = reshape((1./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
@@ -168,13 +125,13 @@ t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, t3_indx_1_w, t3_indx
 
 #Add noise
 
-v2_model_err = 0.01*v2_model+1e-5
+v2_model_err = 0.00333*v2_model+1e-5
 v2_model += v2_model_err.*randn(length(v2_model))
 
-t3amp_model_err =0.05*t3amp_model+1e-6
+t3amp_model_err =0.007*t3amp_model+1e-6
 t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
 
-t3phi_model_err = zeros(length(t3phi_model))+0.5 # degree  -- there is another way of setting this with Haniff formula
+t3phi_model_err = zeros(length(t3phi_model))+2. # degree  -- there is another way of setting this with Haniff formula
 t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
 
 telnames=tel_names
@@ -199,8 +156,8 @@ parallax=-1;
 para_err=-1;
 spectyp="Unknown";
 
-eff_wave= λ #[1.1e-6,1.2e-6,1.3e-6]#, 1.684602E-06, 1.650831E-06, 1.615819E-06, 1.579565E-06, 1.542070E-06, 1.508262E-06]
-eff_band=[2.877857E-08, 3.252876E-08, 3.377056E-08, 3.501202E-08, 3.625382E-08, 3.749551E-08, 3.749551E-08, 3.380819E-08]
+eff_wave= λ
+eff_band = δλ
 
 target_id_vis2=ones(nv2*nhours)
 time_vis2=ones(nv2*nhours) #change
@@ -222,23 +179,23 @@ v1coord = v_M[t3_indx_1_M]
 u2coord = u_M[t3_indx_2_M]
 v2coord = v_M[t3_indx_2_M]
 
-v2_model=reshape(reshape(v2_model,(nhours,nv2,nw)),(nhours*nv2,nw))
-v2_model_err=reshape(reshape(v2_model_err,(nhours,nv2,nw)),(nhours*nv2,nw))
+v2_model=reshape(reshape(v2_model,(nhours,nv2,nw)),(nhours*nv2,nw));
+v2_model_err=reshape(reshape(v2_model_err,(nhours,nv2,nw)),(nhours*nv2,nw));
 
-t3amp_model=reshape(reshape(t3amp_model,(nhours,nt3,nw)),(nhours*nt3,nw))
-t3amp_model_err=reshape(reshape(t3amp_model_err,(nhours,nt3,nw)),(nhours*nt3,nw))
+t3amp_model=reshape(reshape(t3amp_model,(nhours,nt3,nw)),(nhours*nt3,nw));
+t3amp_model_err=reshape(reshape(t3amp_model_err,(nhours,nt3,nw)),(nhours*nt3,nw));
 
-t3phi_model=reshape(reshape(t3phi_model,(nhours,nt3,nw)),(nhours*nt3,nw))
-t3phi_model_err=reshape(reshape(t3phi_model_err,(nhours,nt3,nw)),(nhours*nt3,nw))
+t3phi_model=reshape(reshape(t3phi_model,(nhours,nt3,nw)),(nhours*nt3,nw));
+t3phi_model_err=reshape(reshape(t3phi_model_err,(nhours,nt3,nw)),(nhours*nt3,nw));
 
-v2_model_stations=repmat(v2_stations,1,nhours)
-t3_model_stations=repmat(t3_stations,1,nhours)
-v2_model=transpose(v2_model)
-v2_model_err=transpose(v2_model_err)
-t3amp_model=transpose(t3amp_model)
-t3amp_model_err=transpose(t3amp_model_err)
-t3phi_model=transpose(t3phi_model)
-t3phi_model_err=transpose(t3phi_model_err)
+v2_model_stations=repmat(v2_stations,1,nhours);
+t3_model_stations=repmat(t3_stations,1,nhours);
+v2_model=transpose(v2_model);
+v2_model_err=transpose(v2_model_err);
+t3amp_model=transpose(t3amp_model);
+t3amp_model_err=transpose(t3amp_model_err);
+t3phi_model=transpose(t3phi_model);
+t3phi_model_err=transpose(t3phi_model_err);
 
 oi_array=[telnames,sta_names,sta_index,tel_diams,staxyz];
 target_array=[target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp];
@@ -260,19 +217,19 @@ fits_close_file(f);
 #
 # Double check
 #
-
-include("readoifits.jl")
-include("oichi2.jl")
-include("oiplot.jl")
-PyPlot.show()
+function cvis_to_t3(cvis, indx1, indx2, indx3)
+  t3 = cvis[indx1].*cvis[indx2].*cvis[indx3];
+  t3amp = abs.(t3);
+  t3phi = angle.(t3)*180./pi;
+  return t3, t3amp, t3phi
+end
 oifitsfile = "2004fake137.oifits"
-pixsize = 0.1
-nx = 137
 data = readoifits(oifitsfile)[1,1];
-dft = setup_dft(data.uv, nx, pixsize);
 
 fitsfile = "2004true137.fits";
+pixsize = 0.1
 x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true);
+dft = setup_dft(data.uv, nx, pixsize);
 f_chi2 = chi2(x_true, dft, data);
 
 
@@ -291,5 +248,8 @@ x_start = Array{Float64}(nx, nx);
        end
      end
  x_start = vec(x_start)/sum(x_start);
-crit = (x,g)->chi2_centered_fg(x, g, dft, data);
+#crit = (x,g)->chi2_centered_fg(x, g, dft, data);
+crit = (x,g)->chi2_centered_l2_fg(x, g, 1e0, dft, data );
+crit = (x,g)->chi2_TVSQ_fg(x, g, 1e0, dft, data );
+
 x_sol = OptimPack.vmlmb(crit, x_start, verb=true, lower=0, maxiter=80, blmvm=false);

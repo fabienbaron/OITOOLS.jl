@@ -15,7 +15,7 @@ function visibility_ldpow(param, v_r)
 maxk=200;
 theta = param[1]/2.0626480624709636e8;
 #f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*theta*v_r).^2).^k; # note: can lead to NaN due to typical gamma blow up
-f=k->(-1)^k*exp(lgamma(param[2]/2+2)-lgamma(param[2]/2+k+2)-lgamma(k+1)+2k*log(0.5*pi*theta*v_r));
+f=k->(-1)^k*exp.(lgamma(param[2]/2+2)-lgamma(param[2]/2+k+2)-lgamma(k+1)+2k*log.(0.5*pi*theta*v_r));
 V = sum(map(f,collect(0:maxk)));
 return V
 end
