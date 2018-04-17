@@ -23,19 +23,17 @@ end
 #
  if Pkg.installed("MultiNest") != nothing
        using MultiNest
-       function fit_model_v2_nest(data::OIdata, visfunc, init_param::Array{Float64,1})
-             npar = length(init_param);
-             v2_context = [npar*1.0; init_param; data.v2_baseline;data.v2;data.v2_err]
+
+ function fit_model_v2_nest(data::OIdata, visfunc, bounds::Array{StepRangeLen{Float64,Base.TwicePrecision{Float64},Base.TwicePrecision{Float64}},1})
+             npar = size(bounds,1);
+             v2_context = [npar*1.0; minimum.(bounds); maximum.(bounds); data.v2_baseline;data.v2;data.v2_err]; # should be const ?
              function loglike_v2(cube::Vector{Cdouble}, context::Array{Float64, 1})
                    npar = Int.(context[1])
-                   nv2 = Int.((length(context)-npar-1)/3)
-                   diameter = cube[1]*context[2]
-                   cube[1] = diameter
-                   # cube[2] and possibly cube[3] are limb-darkening coefficients
-                   #v2_baseline = context[2:nv2+1];
-                   #v2 = context[nv2+2:2*nv2+1];
-                   #v2_err = context[2*nv2+2:end];
-                   return -0.5 * nv2 * log(2*pi) - 0.5*sum(log.(context[2*nv2+npar+2:end])) - 0.5 * norm( (abs2.(visfunc(cube,context[npar+2:nv2+npar+1]))-context[nv2+npar+2:2*nv2+npar+1])./context[2*nv2+npar+2:end])^2;
+                   nv2 = Int.((length(context)-2*npar-1)/3)
+                   sampledparam = cube[1:npar].*(context[2+npar:1+2*npar]-context[2:1+npar])+context[2:1+npar]
+                   cube[1:npar] = sampledparam[:]
+                   #v2_baseline = context[2:nv2+1]; v2 = context[nv2+2:2*nv2+1]; v2_err = context[2*nv2+2:end];
+                   return -0.5 * nv2 * log(2*pi) - 0.5*sum(log.(context[2*nv2+2*npar+2:end]))-0.5 * norm( (abs2.(visfunc(cube,context[2*npar+2:nv2+2*npar+1]))-context[nv2+2*npar+2:2*nv2+2*npar+1])./context[2*nv2+2*npar+2:end])^2;
              end
 
              function dumper(physlive::Array{Cdouble, 2},posterior::Array{Cdouble, 2}, paramconstr::Array{Cdouble, 2},

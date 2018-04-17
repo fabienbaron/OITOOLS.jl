@@ -58,8 +58,8 @@ function chi2(x, dft, data, verbose = true)
   chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2);
   if verbose == true
     flux = sum(x);
-    println("V2: ", chi2_v2, " T3A: ", chi2_t3amp, " T3P: ", chi2_t3phi," Flux: ", flux)
-    println("chi2V2: ", chi2_v2/data.nv2, " chi2T3A: ", chi2_t3amp/data.nt3amp, " chi2T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+    println("Chi2  -  Total: ", chi2_v2 + chi2_t3amp + chi2_t3phi, " V2: ", chi2_v2, " T3A: ", chi2_t3amp, " T3P: ", chi2_t3phi," Flux: ", flux)
+    println("Chi2r -  Total:", (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+ data.nt3amp+ data.nt3phi), " V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
   end
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
