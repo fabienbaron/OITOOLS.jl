@@ -27,6 +27,7 @@ end
  function fit_model_v2_nest(data::OIdata, visfunc, bounds::Array{StepRangeLen{Float64,Base.TwicePrecision{Float64},Base.TwicePrecision{Float64}},1})
              npar = size(bounds,1);
              v2_context = [npar*1.0; minimum.(bounds); maximum.(bounds); data.v2_baseline;data.v2;data.v2_err]; # should be const ?
+             minx = NaN*zeros(npar);
              function loglike_v2(cube::Vector{Cdouble}, context::Array{Float64, 1})
                    npar = Int.(context[1])
                    nv2 = Int.((length(context)-2*npar-1)/3)
@@ -42,11 +43,7 @@ end
                    println("Mean parameters: ", paramconstr[:,1], " +/- ", paramconstr[:,2]);
                    println("Best parameters: ", paramconstr[:,3]);
                    println("MAP parameters:  ", paramconstr[:,4]);
-                   #	 paramConstr(4*nPar):
-                   #   paramConstr(1) to paramConstr(nPar)	     	= mean values of the parameters
-                   #   paramConstr(nPar+1) to paramConstr(2*nPar)    	= standard deviation of the parameters
-                   #   paramConstr(nPar*2+1) to paramConstr(3*nPar)  	= best-fit (maxlike) parameters
-                   #   paramConstr(nPar*4+1) to paramConstr(4*nPar)  	= MAP (maximum-a-posteriori) parameters
+                   minx = paramconstr[:,1];
              end
 
              nest = nested(loglike_v2, npar, "chains/eggbox_context_jl-",
@@ -73,7 +70,9 @@ end
              dumper = dumper,
              context = v2_context);
              # run MultiNest
-             run(nest)
-             return (0.0,0.0,[])
-       end
+             run(nest);
+             minf =norm( (abs2.(visfunc(minx,data.v2_baseline))-data.v2)./data.v2_err)^2;
+             cvis_model = visfunc(minx,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
+             return (minf,minx,cvis_model)
+             end
  end
