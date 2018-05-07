@@ -2,6 +2,10 @@ using FITSIO
 using OIFITS
 include("remove_redundance.jl")
 mutable struct OIdata
+  visamp::Array{Float64,1}
+  visamp_err::Array{Float64,1}
+  visphi::Array{Float64,1}
+  visphi_err::Array{Float64,1}
   v2::Array{Float64,1}
   v2_err::Array{Float64,1}
   v2_baseline::Array{Float64,1}
@@ -21,6 +25,8 @@ mutable struct OIdata
   t3_dlam::Array{Float64,1}
   t3_flag::Array{Bool,1}
   uv::Array{Float64,2}
+  nvisamp::Int64
+  nvisphi::Int64
   nv2::Int64
   nt3amp::Int64
   nt3phi::Int64
@@ -65,6 +71,7 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   tables = OIFITS.load(oifitsfile);
   wavtable = OIFITS.select(tables,"OI_WAVELENGTH");
   wavtableref = [wavtable[i][:insname] for i=1:length(wavtable)];
+
   v2table = OIFITS.select(tables,"OI_VIS2");
   v2_ntables = length(v2table);
 
@@ -451,11 +458,11 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
         indx_t3_3[ispecbin,itimebin] = indx_redun[indx_t3_3[ispecbin,itimebin]];
       end
 
-      OIdataArr[ispecbin,itimebin] = OIdata(v2_new[ispecbin,itimebin], v2_err_new[ispecbin,itimebin], v2_baseline_new[ispecbin,itimebin], v2_mjd_new[ispecbin,itimebin],
+      OIdataArr[ispecbin,itimebin] = OIdata([],[], [], [], v2_new[ispecbin,itimebin], v2_err_new[ispecbin,itimebin], v2_baseline_new[ispecbin,itimebin], v2_mjd_new[ispecbin,itimebin],
         mean_mjd[ispecbin,itimebin], v2_lam_new[ispecbin,itimebin], v2_dlam_new[ispecbin,itimebin], v2_flag_new[ispecbin,itimebin], t3amp_new[ispecbin,itimebin],
         t3amp_err_new[ispecbin,itimebin], t3phi_new[ispecbin,itimebin], t3phi_err_new[ispecbin,itimebin], t3_baseline_new[ispecbin,itimebin],t3_maxbaseline_new[ispecbin,itimebin],
         t3_mjd_new[ispecbin,itimebin], t3_lam_new[ispecbin,itimebin], t3_dlam_new[ispecbin,itimebin], t3_flag_new[ispecbin,itimebin], full_uv[ispecbin,itimebin],
-        nv2[ispecbin,itimebin], nt3amp[ispecbin,itimebin], nt3phi[ispecbin,itimebin], nuv[ispecbin,itimebin], indx_v2[ispecbin,itimebin],
+        0, 0, nv2[ispecbin,itimebin], nt3amp[ispecbin,itimebin], nt3phi[ispecbin,itimebin], nuv[ispecbin,itimebin], indx_v2[ispecbin,itimebin],
         indx_t3_1[ispecbin,itimebin], indx_t3_2[ispecbin,itimebin], indx_t3_3[ispecbin,itimebin]);
     end
     iter_wav = 0;
