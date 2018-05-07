@@ -3,10 +3,8 @@ if Pkg.installed("NLopt") != nothing
 
       function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1})
             nparams=length(init_param)
-            indx= data.indx_v2
-            nv2 = length(data.v2[indx]);
-            r=data.v2_baseline
-            chisq=(param,g)->norm( (abs2.(visfunc(param,r))-data.v2[indx])./data.v2_err[indx])^2/nv2;
+            nv2 = length(data.v2);
+            chisq=(param,g)->norm( (abs2.(visfunc(param,data.v2_baseline))-data.v2)./data.v2_err)^2/nv2;
             opt = Opt(:LN_NELDERMEAD, nparams);
             min_objective!(opt, chisq)
             xtol_rel!(opt,1e-5)
