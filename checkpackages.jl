@@ -18,6 +18,11 @@ if Pkg.installed("OIFITS")==nothing
     print_with_color(:red, "Adding fixes to OIFITS.jl for OIFITS v2\n");
     cp("./fixes/oifile.jl",string(Pkg.dir("OIFITS"),"/src/oifile.jl"),remove_destination=true)
 end
+
+if Pkg.installed("NLopt")==nothing
+Pkg.add("NLopt")
+end
+
 end
 
 check_packages()
