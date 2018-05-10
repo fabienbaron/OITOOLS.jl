@@ -464,6 +464,21 @@ function readoifits_filter(oifitsfile; targetname ="", spectralbin=[[]], tempora
         good_uv_t3_1 = OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]
         good_uv_t3_2 = OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]
         good_uv_t3_3 = OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]
+
+        OIdataArr[ispecbin,itimebin].t3amp = OIdataArr[ispecbin,itimebin].t3amp[t3_good]
+        OIdataArr[ispecbin,itimebin].t3amp_err = OIdataArr[ispecbin,itimebin].t3amp_err[t3_good]
+        OIdataArr[ispecbin,itimebin].t3phi = OIdataArr[ispecbin,itimebin].t3phi[t3_good]
+        OIdataArr[ispecbin,itimebin].t3phi_err = OIdataArr[ispecbin,itimebin].t3phi_err[t3_good]
+        OIdataArr[ispecbin,itimebin].nt3amp = length(OIdataArr[ispecbin,itimebin].t3amp)
+        OIdataArr[ispecbin,itimebin].nt3phi = length(OIdataArr[ispecbin,itimebin].t3phi)
+        OIdataArr[ispecbin,itimebin].t3_baseline  = OIdataArr[ispecbin,itimebin].t3_baseline[t3_good]
+        OIdataArr[ispecbin,itimebin].t3_maxbaseline  = OIdataArr[ispecbin,itimebin].t3_maxbaseline[t3_good]
+        OIdataArr[ispecbin,itimebin].t3_mjd  = OIdataArr[ispecbin,itimebin].t3_mjd[t3_good]
+        OIdataArr[ispecbin,itimebin].t3_lam  = OIdataArr[ispecbin,itimebin].t3_lam[t3_good]
+        OIdataArr[ispecbin,itimebin].t3_dlam = OIdataArr[ispecbin,itimebin].t3_dlam[t3_good]
+        OIdataArr[ispecbin,itimebin].t3_flag = OIdataArr[ispecbin,itimebin].t3_flag[t3_good]
+
+        # uv points filtering
         uv_select  = Array{Bool}(length(OIdataArr[ispecbin,itimebin].uv))
         uv_select[:]  = false;
         uv_select[good_uv_v2]= true
