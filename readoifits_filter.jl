@@ -32,15 +32,18 @@ function readoifits_filter(oifitsfile; targetname ="", spectralbin=[[]], tempora
 
   # In case of multiple targets (NPOI !), select only the corresponding data
   targetid_filter = [];
+  targettables = OIFITS.select(tables, "OI_TARGET");
   if(targetname !="")
-    targettable = OIFITS.select(tables, "OI_TARGET");
-    if length(targettable)>1
+    if length(targettables)>1
       error("The OIFITS file has several target tables -- import not implemented yet for this case");
     else
-      targettable = targettable[1];
+      targettables = targettables[1];
     end
-  targetid_filter = targettable[:target_id][find(targettable[:target].==targetname)]; # match target ids to target name
+    targetid_filter = targettables[:target_id][find(targettables[:target].==targetname)]; # match target ids to target name
+  else
+    targetid_filter = [targettables[i][:target_id] for i=1:length(targettables)];
   end
+
 
   v2table = OIFITS.select(tables,"OI_VIS2");
   v2_ntables = length(v2table);
