@@ -441,7 +441,7 @@ function readoifits_filter(oifitsfile; targetname ="", spectralbin=[[]], tempora
          good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
                     .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
                     .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
-                    .& (abs.(OIdataArr[ispecbin,itimebin].v2/OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
+                    .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
          OIdataArr[ispecbin,itimebin].v2 = OIdataArr[ispecbin,itimebin].v2[good]
          OIdataArr[ispecbin,itimebin].v2_err = OIdataArr[ispecbin,itimebin].v2_err[good]
          OIdataArr[ispecbin,itimebin].v2_baseline = OIdataArr[ispecbin,itimebin].v2_baseline[good]
