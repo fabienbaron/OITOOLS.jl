@@ -74,10 +74,6 @@ mutable struct OIdata
   indx_t3_3::Array{Int64,1}
 end
 
-
-
-
-
 """
 Last updated on September 6, 2017
 Made by Arturo O. Martinez
@@ -388,10 +384,10 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   nt3amp = Array{Int64}(nspecbin,ntimebin);
   nt3phi = Array{Int64}(nspecbin,ntimebin);
   nuv = Array{Int64}(nspecbin,ntimebin);
-  indx_v2 = Array{Int64}(nspecbin,ntimebin);
-  indx_t3_1 = Array{Int64}(nspecbin,ntimebin);
-  indx_t3_2 = Array{Int64}(nspecbin,ntimebin);
-  indx_t3_3 = Array{Int64}(nspecbin,ntimebin);
+  indx_v2 = Array{Array{Int64,1}}(nspecbin,ntimebin);
+  indx_t3_1 = Array{Array{Int64,1}}(nspecbin,ntimebin);
+  indx_t3_2 = Array{Array{Int64,1}}(nspecbin,ntimebin);
+  indx_t3_3 = Array{Array{Int64,1}}(nspecbin,ntimebin);
 
   iter_mjd = 0; iter_wav = 0;
   t3_uv_mjd = zeros(length(t3_mjd_all)*3);
@@ -485,10 +481,10 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
       nt3amp[ispecbin,itimebin] = length(t3amp_new[ispecbin,itimebin]);
       nt3phi[ispecbin,itimebin] = length(t3phi_new[ispecbin,itimebin]);
       nuv[ispecbin,itimebin] = size(full_uv[ispecbin,itimebin],2);
-      indx_v2[ispecbin,itimebin] = 1:nv2[ispecbin,itimebin];
-      indx_t3_1[ispecbin,itimebin] = nv2[ispecbin,itimebin]+(1:nt3amp[ispecbin,itimebin]);
-      indx_t3_2[ispecbin,itimebin] = nv2[ispecbin,itimebin]+(nt3amp[ispecbin,itimebin]+1:2*nt3amp[ispecbin,itimebin]);
-      indx_t3_3[ispecbin,itimebin] = nv2[ispecbin,itimebin]+(2*nt3amp[ispecbin,itimebin]+1:3*nt3amp[ispecbin,itimebin]);
+      indx_v2[ispecbin,itimebin] = collect(1:nv2[ispecbin,itimebin]);
+      indx_t3_1[ispecbin,itimebin] = collect(nv2[ispecbin,itimebin]+(1:nt3amp[ispecbin,itimebin]));
+      indx_t3_2[ispecbin,itimebin] = collect(nv2[ispecbin,itimebin]+(nt3amp[ispecbin,itimebin]+1:2*nt3amp[ispecbin,itimebin]));
+      indx_t3_3[ispecbin,itimebin] = collect(nv2[ispecbin,itimebin]+(2*nt3amp[ispecbin,itimebin]+1:3*nt3amp[ispecbin,itimebin]));
 
       if (redundance_chk == true) # temp fix?
         full_uv[ispecbin,itimebin], indx_redun = rm_redundance_kdtree(full_uv[ispecbin,itimebin],uvtol);
