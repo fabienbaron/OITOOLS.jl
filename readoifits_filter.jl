@@ -438,19 +438,44 @@ function readoifits_filter(oifitsfile; targetname ="", spectralbin=[[]], tempora
 
         if (filter_bad_data==true)
         # Filter OBVIOUSLY bad V2 data
-         good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
+        v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
                     .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
                     .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
                     .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
-         OIdataArr[ispecbin,itimebin].v2 = OIdataArr[ispecbin,itimebin].v2[good]
-         OIdataArr[ispecbin,itimebin].v2_err = OIdataArr[ispecbin,itimebin].v2_err[good]
-         OIdataArr[ispecbin,itimebin].v2_baseline = OIdataArr[ispecbin,itimebin].v2_baseline[good]
-         OIdataArr[ispecbin,itimebin].nv2 = length(OIdataArr[ispecbin,itimebin].v2)
-         OIdataArr[ispecbin,itimebin].v2_mjd  = OIdataArr[ispecbin,itimebin].v2_mjd[good]
-         OIdataArr[ispecbin,itimebin].v2_lam  = OIdataArr[ispecbin,itimebin].v2_lam[good]
-         OIdataArr[ispecbin,itimebin].v2_dlam = OIdataArr[ispecbin,itimebin].v2_dlam[good]
-         OIdataArr[ispecbin,itimebin].v2_flag = OIdataArr[ispecbin,itimebin].v2_flag[good]
-         OIdataArr[ispecbin,itimebin].indx_v2 = OIdataArr[ispecbin,itimebin].indx_v2[good]
+        #
+        # v2_bad = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==true) .| (OIdataArr[ispecbin,itimebin].v2_err.<0)
+        #              .| (OIdataArr[ispecbin,itimebin].v2_err.>1.0) .& (OIdataArr[ispecbin,itimebin].v2.<-0.2)
+        #              .| (OIdataArr[ispecbin,itimebin].v2.>1.2)
+        #              .| (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).<filter_v2_snr_threshold))
+
+        good_uv_v2 = OIdataArr[ispecbin,itimebin].indx_v2[v2_good]
+
+        OIdataArr[ispecbin,itimebin].v2 = OIdataArr[ispecbin,itimebin].v2[v2_good]
+        OIdataArr[ispecbin,itimebin].v2_err = OIdataArr[ispecbin,itimebin].v2_err[v2_good]
+        OIdataArr[ispecbin,itimebin].v2_baseline = OIdataArr[ispecbin,itimebin].v2_baseline[v2_good]
+        OIdataArr[ispecbin,itimebin].nv2 = length(OIdataArr[ispecbin,itimebin].v2)
+        OIdataArr[ispecbin,itimebin].v2_mjd  = OIdataArr[ispecbin,itimebin].v2_mjd[v2_good]
+        OIdataArr[ispecbin,itimebin].v2_lam  = OIdataArr[ispecbin,itimebin].v2_lam[v2_good]
+        OIdataArr[ispecbin,itimebin].v2_dlam = OIdataArr[ispecbin,itimebin].v2_dlam[v2_good]
+        OIdataArr[ispecbin,itimebin].v2_flag = OIdataArr[ispecbin,itimebin].v2_flag[v2_good]
+
+        # TODO: filter T3
+        t3_good = find(  (OIdataArr[ispecbin,itimebin].t3_flag.==false))
+        good_uv_t3_1 = OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]
+        good_uv_t3_2 = OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]
+        good_uv_t3_3 = OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]
+        uv_select  = Array{Bool}(length(OIdataArr[ispecbin,itimebin].uv))
+        uv_select[:]  = false;
+        uv_select[good_uv_v2]= true
+        uv_select[good_uv_t3_1] =true
+        uv_select[good_uv_t3_2] =true
+        uv_select[good_uv_t3_2] =true
+        indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)]
+        OIdataArr[ispecbin,itimebin].uv = OIdataArr[ispecbin,itimebin].uv[:,find(uv_select.==true)]
+        OIdataArr[ispecbin,itimebin].indx_v2 = indx_conv[OIdataArr[ispecbin,itimebin].indx_v2[v2_good]]
+        OIdataArr[ispecbin,itimebin].indx_t3_1 = indx_conv[OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]]
+        OIdataArr[ispecbin,itimebin].indx_t3_2 = indx_conv[OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]]
+        OIdataArr[ispecbin,itimebin].indx_t3_3 = indx_conv[OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]]
         end
 
     end
