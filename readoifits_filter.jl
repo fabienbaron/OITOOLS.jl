@@ -23,7 +23,7 @@ readoifits_timespec second run though. This is in the range of [start, end).
 """
 
 function readoifits_filter(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]],
-  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3)
+  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, filter_v2_snr_threshold=0.5)
 
   # oifitsfile="AlphaCenA.oifits";spectralbin=[[]]; temporalbin=[[]];  get_specbin_file=false; get_timebin_file=true;redundance_chk=true;uvtol=1.e3;
   tables = OIFITS.load(oifitsfile);
@@ -435,9 +435,28 @@ function readoifits_filter(oifitsfile; targetname ="", spectralbin=[[]], tempora
         t3_mjd_new[ispecbin,itimebin], t3_lam_new[ispecbin,itimebin], t3_dlam_new[ispecbin,itimebin], t3_flag_new[ispecbin,itimebin], full_uv[ispecbin,itimebin],
         0, 0, nv2[ispecbin,itimebin], nt3amp[ispecbin,itimebin], nt3phi[ispecbin,itimebin], nuv[ispecbin,itimebin], indx_v2[ispecbin,itimebin],
         indx_t3_1[ispecbin,itimebin], indx_t3_2[ispecbin,itimebin], indx_t3_3[ispecbin,itimebin]);
+
+        if (filter_bad_data==true)
+        # Filter OBVIOUSLY bad V2 data
+         good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
+                    .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
+                    .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
+                    .& (abs.(OIdataArr[ispecbin,itimebin].v2/OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
+         OIdataArr[ispecbin,itimebin].v2 = OIdataArr[ispecbin,itimebin].v2[good]
+         OIdataArr[ispecbin,itimebin].v2_err = OIdataArr[ispecbin,itimebin].v2_err[good]
+         OIdataArr[ispecbin,itimebin].v2_baseline = OIdataArr[ispecbin,itimebin].v2_baseline[good]
+         OIdataArr[ispecbin,itimebin].nv2 = length(OIdataArr[ispecbin,itimebin].v2)
+         OIdataArr[ispecbin,itimebin].v2_mjd  = OIdataArr[ispecbin,itimebin].v2_mjd[good]
+         OIdataArr[ispecbin,itimebin].v2_lam  = OIdataArr[ispecbin,itimebin].v2_lam[good]
+         OIdataArr[ispecbin,itimebin].v2_dlam = OIdataArr[ispecbin,itimebin].v2_dlam[good]
+         OIdataArr[ispecbin,itimebin].v2_flag = OIdataArr[ispecbin,itimebin].v2_flag[good]
+        end
+
     end
     iter_wav = 0;
   end
+
+
 
   return OIdataArr;
 end
