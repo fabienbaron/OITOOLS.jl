@@ -1,6 +1,43 @@
 using FITSIO
 using OIFITS
 include("remove_redundance.jl")
+# mutable struct OIdata
+#   visamp::Array{Float64,1}
+#   visamp_err::Array{Float64,1}
+#   visphi::Array{Float64,1}
+#   visphi_err::Array{Float64,1}
+#   v2::Array{Float64,1}
+#   v2_err::Array{Float64,1}
+#   v2_baseline::Array{Float64,1}
+#   v2_mjd::Array{Float64,1}
+#   mean_mjd::Float64
+#   v2_lam::Array{Float64,1}
+#   v2_dlam::Array{Float64,1}
+#   v2_flag::Array{Bool,1}
+#   t3amp::Array{Float64,1}
+#   t3amp_err::Array{Float64,1}
+#   t3phi::Array{Float64,1}
+#   t3phi_err::Array{Float64,1}
+#   t3_baseline::Array{Float64,1}
+#   t3_maxbaseline::Array{Float64,1}
+#   t3_mjd::Array{Float64,1}
+#   t3_lam::Array{Float64,1}
+#   t3_dlam::Array{Float64,1}
+#   t3_flag::Array{Bool,1}
+#   uv::Array{Float64,2}
+#   nvisamp::Int64
+#   nvisphi::Int64
+#   nv2::Int64
+#   nt3amp::Int64
+#   nt3phi::Int64
+#   nuv::Int64
+#   indx_v2::UnitRange{Int64}
+#   indx_t3_1::UnitRange{Int64}
+#   indx_t3_2::UnitRange{Int64}
+#   indx_t3_3::UnitRange{Int64}
+# end
+
+
 mutable struct OIdata
   visamp::Array{Float64,1}
   visamp_err::Array{Float64,1}
@@ -31,11 +68,15 @@ mutable struct OIdata
   nt3amp::Int64
   nt3phi::Int64
   nuv::Int64
-  indx_v2::UnitRange{Int64}
-  indx_t3_1::UnitRange{Int64}
-  indx_t3_2::UnitRange{Int64}
-  indx_t3_3::UnitRange{Int64}
+  indx_v2::Array{Int64,1}
+  indx_t3_1::Array{Int64,1}
+  indx_t3_2::Array{Int64,1}
+  indx_t3_3::Array{Int64,1}
 end
+
+
+
+
 
 """
 Last updated on September 6, 2017
@@ -347,10 +388,10 @@ function readoifits(oifitsfile; spectralbin=[[]], temporalbin=[[]],
   nt3amp = Array{Int64}(nspecbin,ntimebin);
   nt3phi = Array{Int64}(nspecbin,ntimebin);
   nuv = Array{Int64}(nspecbin,ntimebin);
-  indx_v2 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
-  indx_t3_1 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
-  indx_t3_2 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
-  indx_t3_3 = Array{UnitRange{Int64}}(nspecbin,ntimebin);
+  indx_v2 = Array{Int64}(nspecbin,ntimebin);
+  indx_t3_1 = Array{Int64}(nspecbin,ntimebin);
+  indx_t3_2 = Array{Int64}(nspecbin,ntimebin);
+  indx_t3_3 = Array{Int64}(nspecbin,ntimebin);
 
   iter_mjd = 0; iter_wav = 0;
   t3_uv_mjd = zeros(length(t3_mjd_all)*3);
