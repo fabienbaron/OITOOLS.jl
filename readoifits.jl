@@ -258,8 +258,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   end
   t3_uv_all = hcat(vcat(t3_u1_all,t3_u2_all,t3_u3_all),vcat(t3_v1_all,t3_v2_all,t3_v3_all))';
 
+#
+# Binning logic
+#
 
-  if (get_timebin_file == true)||(get_specbin_file == true)||(temporalbin != [[]])||(spectralbin != [[]])
+  if (temporalbin != [[]])||(spectralbin != [[]])
     nobin = false
   end
 
@@ -272,9 +275,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
   # get spectralbin if get_spectralbin_from_file == true
   if ((spectralbin == [[]]) && (get_specbin_file == true))
-    spectralbin[1] = vcat(spectralbin[1],
-    minimum(v2_lam_all)-minimum(v2_dlam_all[indmin(v2_lam_all)])*0.5,
-    maximum(v2_lam_all)+maximum(v2_dlam_all[indmax(v2_lam_all)])*0.5);
+    spectralbin[1] = vcat(spectralbin[1], minimum(v2_lam_all)-minimum(v2_dlam_all[indmin(v2_lam_all)])*0.5, maximum(v2_lam_all)+maximum(v2_dlam_all[indmax(v2_lam_all)])*0.5);
   end
 
   # count how many spectral bins user input into file
@@ -395,17 +396,17 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
       # Binning filter
       bin_v2=Bool[];bin_t3=Bool[]; bin_t3uv=Bool[]
       if nobin == false
-        bin_v2 = (v2_mjd_all.<hi_time[iter_mjd]).&(v2_mjd_all.>=lo_time[iter_mjd]).&(v2_lam_all.<hi_wav[iter_wav]).&(v2_lam_all.>lo_wav[iter_wav]);
-        bin_t3 = (t3_mjd_all.<hi_time[iter_mjd]).&(t3_mjd_all.>=lo_time[iter_mjd]).&(t3_lam_all.<hi_wav[iter_wav]).&(t3_lam_all.>lo_wav[iter_wav]);
-        bin_t3uv = (t3_uv_mjd.<hi_time[iter_mjd]).&(t3_uv_mjd.>=lo_time[iter_mjd]).&(t3_uv_lam.<hi_wav[iter_wav]).&(t3_uv_lam.>lo_wav[iter_wav]);
+        bin_v2 = (v2_mjd_all.<=hi_time[iter_mjd]).&(v2_mjd_all.>=lo_time[iter_mjd]).&(v2_lam_all.<=hi_wav[iter_wav]).&(v2_lam_all.>=lo_wav[iter_wav]);
+        bin_t3 = (t3_mjd_all.<=hi_time[iter_mjd]).&(t3_mjd_all.>=lo_time[iter_mjd]).&(t3_lam_all.<=hi_wav[iter_wav]).&(t3_lam_all.>=lo_wav[iter_wav]);
+        bin_t3uv = (t3_uv_mjd.<=hi_time[iter_mjd]).&(t3_uv_mjd.>=lo_time[iter_mjd]).&(t3_uv_lam.<=hi_wav[iter_wav]).&(t3_uv_lam.>=lo_wav[iter_wav]);
         if length(find(bin_v2.==false))>0
-          print_with_color("Some V2 points were filtered during binning");
+          print_with_color(:red, "$(length(find(bin_v2.==false))) V2 points were filtered out during binning\n");
         end
         if length(find(bin_t3.==false))>0
-          print_with_color("Some T3 points were filtered during binning");
+          print_with_color(:red, "$(length(find(bin_t3.==false))) T3 points were filtered out during binning\n");
         end
         if length(find(bin_t3uv.==false))>0
-          print_with_color("Some T3UV points were filtered during binning");
+          print_with_color(:red, "$(length(find(bin_t3uv.==false))) T3UV points were filtered out during binning\n");
         end
       else
         bin_v2 = Bool.(ones(length(v2_all)))
@@ -468,11 +469,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
         .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
         .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>bin_v2_snr_threshold))
-        #
-        # v2_bad = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==true) .| (OIdataArr[ispecbin,itimebin].v2_err.<0)
-        #              .| (OIdataArr[ispecbin,itimebin].v2_err.>1.0) .& (OIdataArr[ispecbin,itimebin].v2.<-0.2)
-        #              .| (OIdataArr[ispecbin,itimebin].v2.>1.2)
-        #              .| (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).<bin_v2_snr_threshold))
 
         good_uv_v2 = OIdataArr[ispecbin,itimebin].indx_v2[v2_good]
 
