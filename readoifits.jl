@@ -61,7 +61,7 @@ Experimental version with target fitering for NPOI
 """
 
 function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], nobin = true,
-  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, filter_v2_snr_threshold=0.5)
+  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, bin_v2_snr_threshold=0.5)
 
   # oifitsfile="AlphaCenA.oifits";spectralbin=[[]]; temporalbin=[[]];  get_specbin_file=false; get_timebin_file=true;redundance_chk=true;uvtol=1.e3;
   tables = OIFITS.load(oifitsfile);
@@ -393,46 +393,46 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
 
       # Binning filter
-      filter_v2=Bool[];filter_t3=Bool[]; filter_t3uv=Bool[]
+      bin_v2=Bool[];bin_t3=Bool[]; bin_t3uv=Bool[]
       if nobin == false
-        filter_v2 = (v2_mjd_all.<hi_time[iter_mjd]).&(v2_mjd_all.>=lo_time[iter_mjd]).&(v2_lam_all.<hi_wav[iter_wav]).&(v2_lam_all.>lo_wav[iter_wav]);
-        filter_t3 = (t3_mjd_all.<hi_time[iter_mjd]).&(t3_mjd_all.>=lo_time[iter_mjd]).&(t3_lam_all.<hi_wav[iter_wav]).&(t3_lam_all.>lo_wav[iter_wav]);
-        filter_t3uv = (t3_uv_mjd.<hi_time[iter_mjd]).&(t3_uv_mjd.>=lo_time[iter_mjd]).&(t3_uv_lam.<hi_wav[iter_wav]).&(t3_uv_lam.>lo_wav[iter_wav]);
-        if length(find(filter_v2.==false))>0
+        bin_v2 = (v2_mjd_all.<hi_time[iter_mjd]).&(v2_mjd_all.>=lo_time[iter_mjd]).&(v2_lam_all.<hi_wav[iter_wav]).&(v2_lam_all.>lo_wav[iter_wav]);
+        bin_t3 = (t3_mjd_all.<hi_time[iter_mjd]).&(t3_mjd_all.>=lo_time[iter_mjd]).&(t3_lam_all.<hi_wav[iter_wav]).&(t3_lam_all.>lo_wav[iter_wav]);
+        bin_t3uv = (t3_uv_mjd.<hi_time[iter_mjd]).&(t3_uv_mjd.>=lo_time[iter_mjd]).&(t3_uv_lam.<hi_wav[iter_wav]).&(t3_uv_lam.>lo_wav[iter_wav]);
+        if length(find(bin_v2.==false))>0
           print_with_color("Some V2 points were filtered during binning");
         end
-        if length(find(filter_t3.==false))>0
+        if length(find(bin_t3.==false))>0
           print_with_color("Some T3 points were filtered during binning");
         end
-        if length(find(filter_t3uv.==false))>0
+        if length(find(bin_t3uv.==false))>0
           print_with_color("Some T3UV points were filtered during binning");
         end
       else
-        filter_v2 = Bool.(ones(length(v2_all)))
-        filter_t3 = Bool.(ones(length(t3amp_all)))
-        filter_t3uv = Bool.(ones(size(t3_uv_all,2)))
+        bin_v2 = Bool.(ones(length(v2_all)))
+        bin_t3 = Bool.(ones(length(t3amp_all)))
+        bin_t3uv = Bool.(ones(size(t3_uv_all,2)))
       end
 
-      v2_new[ispecbin,itimebin] = vcat(v2_new[ispecbin,itimebin],v2_all[filter_v2]);
-      v2_err_new[ispecbin,itimebin] = vcat(v2_err_new[ispecbin,itimebin],v2_err_all[filter_v2]);
-      v2_mjd_new[ispecbin,itimebin] = vcat(v2_mjd_new[ispecbin,itimebin],v2_mjd_all[filter_v2]);
-      v2_lam_new[ispecbin,itimebin] = vcat(v2_lam_new[ispecbin,itimebin],v2_lam_all[filter_v2]);
-      v2_dlam_new[ispecbin,itimebin] = vcat(v2_dlam_new[ispecbin,itimebin],v2_dlam_all[filter_v2]);
-      v2_flag_new[ispecbin,itimebin] = vcat(v2_flag_new[ispecbin,itimebin],v2_flag_all[filter_v2]);
-      v2_uv_new[ispecbin,itimebin] = hcat(v2_uv_new[ispecbin,itimebin],vcat(v2_uv_all[1,:][filter_v2]',v2_uv_all[2,:][filter_v2]'));
-      v2_baseline_new[ispecbin,itimebin] = vcat(v2_baseline_new[ispecbin,itimebin],v2_baseline_all[filter_v2]);
+      v2_new[ispecbin,itimebin] = vcat(v2_new[ispecbin,itimebin],v2_all[bin_v2]);
+      v2_err_new[ispecbin,itimebin] = vcat(v2_err_new[ispecbin,itimebin],v2_err_all[bin_v2]);
+      v2_mjd_new[ispecbin,itimebin] = vcat(v2_mjd_new[ispecbin,itimebin],v2_mjd_all[bin_v2]);
+      v2_lam_new[ispecbin,itimebin] = vcat(v2_lam_new[ispecbin,itimebin],v2_lam_all[bin_v2]);
+      v2_dlam_new[ispecbin,itimebin] = vcat(v2_dlam_new[ispecbin,itimebin],v2_dlam_all[bin_v2]);
+      v2_flag_new[ispecbin,itimebin] = vcat(v2_flag_new[ispecbin,itimebin],v2_flag_all[bin_v2]);
+      v2_uv_new[ispecbin,itimebin] = hcat(v2_uv_new[ispecbin,itimebin],vcat(v2_uv_all[1,:][bin_v2]',v2_uv_all[2,:][bin_v2]'));
+      v2_baseline_new[ispecbin,itimebin] = vcat(v2_baseline_new[ispecbin,itimebin],v2_baseline_all[bin_v2]);
 
-      t3amp_new[ispecbin,itimebin] = vcat(t3amp_new[ispecbin,itimebin],t3amp_all[filter_t3]);
-      t3amp_err_new[ispecbin,itimebin] = vcat(t3amp_err_new[ispecbin,itimebin],t3amp_err_all[filter_t3]);
-      t3phi_new[ispecbin,itimebin] = vcat(t3phi_new[ispecbin,itimebin],t3phi_all[filter_t3]);
-      t3phi_err_new[ispecbin,itimebin] = vcat(t3phi_err_new[ispecbin,itimebin],t3phi_err_all[filter_t3]);
-      t3_mjd_new[ispecbin,itimebin] = vcat(t3_mjd_new[ispecbin,itimebin],t3_mjd_all[filter_t3]);
-      t3_lam_new[ispecbin,itimebin] = vcat(t3_lam_new[ispecbin,itimebin],t3_lam_all[filter_t3]);
-      t3_dlam_new[ispecbin,itimebin] = vcat(t3_dlam_new[ispecbin,itimebin],t3_dlam_all[filter_t3]);
-      t3_flag_new[ispecbin,itimebin] = vcat(t3_flag_new[ispecbin,itimebin],t3_flag_all[filter_t3]);
-      t3_uv_new[ispecbin,itimebin] = hcat(t3_uv_new[ispecbin,itimebin],vcat(t3_uv_all[1,:][filter_t3uv]',t3_uv_all[2,:][filter_t3uv]'));
-      t3_baseline_new[ispecbin,itimebin] = vcat(t3_baseline_new[ispecbin,itimebin],t3_baseline_all[filter_t3]);
-      t3_maxbaseline_new[ispecbin,itimebin] = vcat(t3_maxbaseline_new[ispecbin,itimebin],t3_maxbaseline_all[filter_t3]);
+      t3amp_new[ispecbin,itimebin] = vcat(t3amp_new[ispecbin,itimebin],t3amp_all[bin_t3]);
+      t3amp_err_new[ispecbin,itimebin] = vcat(t3amp_err_new[ispecbin,itimebin],t3amp_err_all[bin_t3]);
+      t3phi_new[ispecbin,itimebin] = vcat(t3phi_new[ispecbin,itimebin],t3phi_all[bin_t3]);
+      t3phi_err_new[ispecbin,itimebin] = vcat(t3phi_err_new[ispecbin,itimebin],t3phi_err_all[bin_t3]);
+      t3_mjd_new[ispecbin,itimebin] = vcat(t3_mjd_new[ispecbin,itimebin],t3_mjd_all[bin_t3]);
+      t3_lam_new[ispecbin,itimebin] = vcat(t3_lam_new[ispecbin,itimebin],t3_lam_all[bin_t3]);
+      t3_dlam_new[ispecbin,itimebin] = vcat(t3_dlam_new[ispecbin,itimebin],t3_dlam_all[bin_t3]);
+      t3_flag_new[ispecbin,itimebin] = vcat(t3_flag_new[ispecbin,itimebin],t3_flag_all[bin_t3]);
+      t3_uv_new[ispecbin,itimebin] = hcat(t3_uv_new[ispecbin,itimebin],vcat(t3_uv_all[1,:][bin_t3uv]',t3_uv_all[2,:][bin_t3uv]'));
+      t3_baseline_new[ispecbin,itimebin] = vcat(t3_baseline_new[ispecbin,itimebin],t3_baseline_all[bin_t3]);
+      t3_maxbaseline_new[ispecbin,itimebin] = vcat(t3_maxbaseline_new[ispecbin,itimebin],t3_maxbaseline_all[bin_t3]);
 
 
       mean_mjd[ispecbin,itimebin] = mean(v2_mjd_new[ispecbin,itimebin]);
@@ -467,12 +467,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
         .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
         .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
-        .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
+        .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>bin_v2_snr_threshold))
         #
         # v2_bad = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==true) .| (OIdataArr[ispecbin,itimebin].v2_err.<0)
         #              .| (OIdataArr[ispecbin,itimebin].v2_err.>1.0) .& (OIdataArr[ispecbin,itimebin].v2.<-0.2)
         #              .| (OIdataArr[ispecbin,itimebin].v2.>1.2)
-        #              .| (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).<filter_v2_snr_threshold))
+        #              .| (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).<bin_v2_snr_threshold))
 
         good_uv_v2 = OIdataArr[ispecbin,itimebin].indx_v2[v2_good]
 
