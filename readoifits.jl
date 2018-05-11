@@ -60,7 +60,7 @@ Experimental version with target fitering for NPOI
     readoifits_timespec second run though. This is in the range of [start, end).
 """
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], nobin = true,
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], binning = false,
   get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, bin_v2_snr_threshold=0.5)
 
   # oifitsfile="AlphaCenA.oifits";spectralbin=[[]]; temporalbin=[[]];  get_specbin_file=false; get_timebin_file=true;redundance_chk=true;uvtol=1.e3;
@@ -263,7 +263,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 #
 
   if (temporalbin != [[]])||(spectralbin != [[]])
-    nobin = false
+    binning = true
   end
 
   # calculate default timebin if user picks timebin = [[]]
@@ -395,7 +395,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
       # Binning filter
       bin_v2=Bool[];bin_t3=Bool[]; bin_t3uv=Bool[]
-      if nobin == false
+      if binning == true
         bin_v2 = (v2_mjd_all.<=hi_time[iter_mjd]).&(v2_mjd_all.>=lo_time[iter_mjd]).&(v2_lam_all.<=hi_wav[iter_wav]).&(v2_lam_all.>=lo_wav[iter_wav]);
         bin_t3 = (t3_mjd_all.<=hi_time[iter_mjd]).&(t3_mjd_all.>=lo_time[iter_mjd]).&(t3_lam_all.<=hi_wav[iter_wav]).&(t3_lam_all.>=lo_wav[iter_wav]);
         bin_t3uv = (t3_uv_mjd.<=hi_time[iter_mjd]).&(t3_uv_mjd.>=lo_time[iter_mjd]).&(t3_uv_lam.<=hi_wav[iter_wav]).&(t3_uv_lam.>=lo_wav[iter_wav]);
