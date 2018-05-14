@@ -61,7 +61,7 @@ Experimental version with target fitering for NPOI
 """
 
 function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], binning = false,
-  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, bin_v2_snr_threshold=0.5)
+  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, filter_v2_snr_threshold=0.5)
 
   # oifitsfile="AlphaCenA.oifits";spectralbin=[[]]; temporalbin=[[]];  get_specbin_file=false; get_timebin_file=true;redundance_chk=true;uvtol=1.e3;
   tables = OIFITS.load(oifitsfile);
@@ -468,7 +468,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
         .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
         .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
-        .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>bin_v2_snr_threshold))
+        .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
 
         good_uv_v2 = OIdataArr[ispecbin,itimebin].indx_v2[v2_good]
 
