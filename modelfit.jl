@@ -13,11 +13,11 @@ bounds = zeros(size(init_param)); # note: this enforces positivity on radius and
 lower_bounds!(opt, bounds);
 (minf,minx,ret) = optimize(opt, init_param);
 if verbose == true
-                                                    println("Chi2: $minf \t parameters:$minx \t \t $ret")
+        println("Chi2: $minf \t parameters:$minx \t \t $ret")
 end
 cvis_model = [];
 if calculate_vis == true
-                                                    cvis_model = visfunc(minx,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2))
+        cvis_model = visfunc(minx,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2))
 end
 return (minf,minx,cvis_model)
 end
@@ -34,8 +34,8 @@ for k=1:nbootstraps
     if(k% Int.(ceil.(nbootstraps/100)) == 0)
         println("Boostrap $(k) out of $(nbootstraps)");
     end
-     f_chi2, paropt, ~ = fit_model_v2(resample_v2_data(data), visfunc, init_param, verbose = false, calculate_vis = false);#diameter, ld1, ld2 coeffs
- params[:, k]= paropt;
+     f_chi2, paropt, ~ = fit_model_v2(resample_v2_data(data), visfunc, params_mode, verbose = false, calculate_vis = false);#diameter, ld1, ld2 coeffs
+     params[:, k]= paropt;
 end
 for i=1:npars
     fig  = figure("Histogram $(i)",figsize=(5,5))
