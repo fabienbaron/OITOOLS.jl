@@ -38,7 +38,8 @@ for k=1:nbootstraps
      params[:, k]= paropt;
 end
 for i=1:npars
-    fig  = figure("Histogram $(i)",figsize=(5,5))
+    fig  = figure("Histogram $(i)",figsize=(5,5));
+    clf();
     plt[:hist](params[i,:],50);
     title("Bootstrap for parameter $(i)");
     xlabel("Value of parameter $(i)");
