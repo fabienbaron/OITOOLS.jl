@@ -24,7 +24,7 @@ end
 function uvplot(uv::Array{Float64,2})
 u = uv[1,:]/1e6
 v = uv[2,:]/1e6
-fig = figure("UV plot",figsize=(10,10),facecolor="White")
+fig = figure("UV plot",figsize=(8,8),facecolor="White")
 clf();
 ax = axes()
 minorticks_on
@@ -44,7 +44,7 @@ end
 
 
 function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
-fig = figure("V2 plot - Model vs Data",figsize=(10,10),facecolor="White")
+fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
 clf();
 subplot(211)
 ax = gca();
