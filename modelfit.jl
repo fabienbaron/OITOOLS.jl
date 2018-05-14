@@ -22,6 +22,32 @@ end
 return (minf,minx,cvis_model)
 end
 
+
+function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{Float64,1})
+npars=length(init_param)
+println("Finding mode...")
+f_chi2, params_mode, cvis_model = fit_model_v2(data, visfunc, init_param);#diameter, ld1, ld2 coeffs
+println("Nominal value: $(params_mode)")
+params = zeros(Float64, npars , nbootstraps)
+println("Now boostraping to estimate errors...")
+for k=1:nbootstraps
+    if(k% Int.(ceil.(nbootstraps/100)) == 0)
+        println("Boostrap $(k) out of $(nbootstraps)");
+    end
+     f_chi2, paropt, ~ = fit_model_v2(resample_v2_data(data), visfunc, init_param, verbose = false, calculate_vis = false);#diameter, ld1, ld2 coeffs
+ params[:, k]= paropt;
+end
+for i=1:npars
+    plt[:hist](params[i,:],50);
+end
+params_err = std(params, corrected=false)
+println("Error bar: $(params_err)")
+return params,params_err
+end
+
+
+
+
 end
 #
 if Pkg.installed("MultiNest") != nothing
@@ -85,7 +111,7 @@ end
 #
 
 
-function bootstrap_v2_data(data_input)
+function resample_v2_data(data_input)
     # returns a new sample
 data_out = deepcopy(data_input);
 indx_resampling = Int.(ceil.(length(data_input.v2)*rand(length(data_input.v2))));
