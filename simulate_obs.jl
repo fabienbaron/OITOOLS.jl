@@ -1,11 +1,12 @@
 using FITSIO.Libcfitsio;
 using OIFITS
-include("../OITOOLS.jl/oitools.jl");
 using NFFT;
+include("oitools.jl");
+
 
 
 #NEED TO ADD ABILTY TO HAVE DIFFERENT INSNAME IN OUTPUT IF IN PUT HAS DIFFERENT INSNAME...basically just copy and pass header.
-oifitsin="AZCYG2014FINALMOD.oifits";
+oifitsin="../AZCYG2014FINALMOD.oifits";
 
 
 #oifitsin="test1.oifits";
@@ -112,9 +113,9 @@ end
 #GET V2 INFO
 
 
-v2_model = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
-#v2_model_err=data.v2_err
-v2_model_err=v2_model/(data.v2/data.v2_errß)
+v2_model_true = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
+v2_model_err=data.v2_err
+#v2_model_err = v2_model_true./abs.(data.v2./data.v2_err)
 v2_model += v2_model_err.*randn(length(v2_model))
 #Now to fill the tables_
 #uvis_lam=[];
@@ -156,12 +157,12 @@ t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data
 
 #t3amp_model_err =0.007*t3amp_model+1e-6
 #t3amp_model_err=data.t3amp_err
-t3amp_model_err=t3amp_model/(data.t3amp/data.t3amp_err)
+t3amp_model_err=abs.(t3amp_model./(data.t3amp./data.t3amp_err))
 t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
 
 #t3phi_model_err = zeros(length(t3phi_model))+2. # degree  -- there is another way of setting this with Haniff formula
-#t3phi_model_err=data.t3phi_err
-t3phi_model_err=t3phi_model/(data.t3phi/data.t3phi_err)
+t3phi_model_err=data.t3phi_err
+#t3phi_model_err=abs.(t3phi_model./(data.t3phi./data.t3phi_err))
 t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
 
 t3indxstart=1
