@@ -38,9 +38,13 @@ for k=1:nbootstraps
  params[:, k]= paropt;
 end
 for i=1:npars
+    fig  = figure("Histogram $(i)",figsize=(5,5))
     plt[:hist](params[i,:],50);
+    title("Bootstrap for parameter $(i)");
+    xlabel("Value of parameter $(i)");
+    ylabel("Boostrap samples");
 end
-params_err = std(params, corrected=false)
+params_err = std(params, 2, corrected=false)
 println("Error bar: $(params_err)")
 return params,params_err
 end
