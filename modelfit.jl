@@ -1,11 +1,11 @@
 if Pkg.installed("NLopt") != nothing
 using NLopt
 
-function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; verbose = true, calculate_vis = true)
+function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD, verbose = true, calculate_vis = true)
 nparams=length(init_param)
 nv2 = length(data.v2);
 chisq=(param,g)->norm( (abs2.(visfunc(param,data.v2_baseline))-data.v2)./data.v2_err)^2/nv2;
-opt = Opt(:LN_NELDERMEAD, nparams);
+opt = Opt(fitter, nparams);
 min_objective!(opt, chisq)
 xtol_rel!(opt,1e-5)
 bounds = zeros(size(init_param)); # note: this enforces positivity on radius and coefficients
@@ -23,7 +23,7 @@ return (minf,minx,cvis_model)
 end
 
 
-function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{Float64,1})
+function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD)
 npars=length(init_param)
 println("Finding mode...")
 f_chi2, params_mode, cvis_model = fit_model_v2(data, visfunc, init_param);#diameter, ld1, ld2 coeffs
@@ -34,7 +34,7 @@ for k=1:nbootstraps
     if(k% Int.(ceil.(nbootstraps/100)) == 0)
         println("Boostrap $(k) out of $(nbootstraps)");
     end
-     f_chi2, paropt, ~ = fit_model_v2(resample_v2_data(data), visfunc, params_mode, verbose = false, calculate_vis = false);#diameter, ld1, ld2 coeffs
+     f_chi2, paropt, ~ = fit_model_v2(resample_v2_data(data), visfunc, params_mode, fitter= fitter, verbose = false, calculate_vis = false);#diameter, ld1, ld2 coeffs
      params[:, k]= paropt;
 end
 for i=1:npars
