@@ -27,7 +27,7 @@ function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{
 npars=length(init_param)
 println("Finding mode...")
 f_chi2, params_mode, cvis_model = fit_model_v2(data, visfunc, init_param);#diameter, ld1, ld2 coeffs
-println("Nominal value: $(params_mode)")
+println("Mode (maximum likelihood) value: $(params_mode)")
 params = zeros(Float64, npars , nbootstraps)
 println("Now boostraping to estimate errors...")
 for k=1:nbootstraps
@@ -45,9 +45,11 @@ for i=1:npars
     xlabel("Value of parameter $(i)");
     ylabel("Boostrap samples");
 end
+params_mean = mean(params, 2)
 params_err = std(params, 2, corrected=false)
-println("Error bar: $(params_err)")
-return params,params_err
+println("Boostrap mean: $(params_mean)");
+println("Bootstrap standard deviation: $(params_err)");
+return params_mode, params_mean,params_err
 end
 
 
