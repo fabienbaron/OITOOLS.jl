@@ -468,7 +468,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
         .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
         .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
-        .& (isnan(OIdataArr[ispecbin,itimebin].v2) == false) .& (isnan(OIdataArr[ispecbin,itimebin].v2_err)==false)
+#        .& (isnan.(OIdataArr[ispecbin,itimebin].v2) == false) .& (isnan.(OIdataArr[ispecbin,itimebin].v2_err)==false)
         .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
 
         good_uv_v2 = OIdataArr[ispecbin,itimebin].indx_v2[v2_good]
