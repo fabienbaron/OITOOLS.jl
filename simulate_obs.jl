@@ -6,7 +6,7 @@ include("oitools.jl");
 
 
 #NEED TO ADD ABILTY TO HAVE DIFFERENT INSNAME IN OUTPUT IF IN PUT HAS DIFFERENT INSNAME...basically just copy and pass header.
-oifitsin="../AZCYG2014FINALMOD.oifits";
+oifitsin="AZCYG2014FINALMOD.oifits";
 
 
 #oifitsin="test1.oifits";
@@ -18,8 +18,8 @@ oifits=FITS(oifitsin);
 #setup simulation
 
 nuv = data.nuv
-fitsfile = "simtest.fits";
-pixsize=0.1
+fitsfile = "spie_ldd_sim.fits";
+pixsize=0.2
 x = (read((FITS(fitsfile))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x);
 
 
@@ -31,7 +31,7 @@ cvis_model = image_to_cvis_dft(x, dft);
 
 
 #setup new file
-outfilename ="!testcopy.oifits"
+outfilename ="!spie_ldd_sim.oifits"
 f = fits_create_file(outfilename);
 copy_oi_header(f,oifits[1]);
 
@@ -113,10 +113,11 @@ end
 #GET V2 INFO
 
 
-v2_model_true = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
+v2_model = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
 v2_model_err=data.v2_err
 #v2_model_err = v2_model_true./abs.(data.v2./data.v2_err)
-v2_model += v2_model_err.*randn(length(v2_model_true))
+
+v2_model += v2_model_err.*randn(length(v2_model))
 #Now to fill the tables_
 #uvis_lam=[];
 #vvis_lam=[];
