@@ -67,6 +67,69 @@ tight_layout()
 end
 
 
+
+# This draws a continuous line based on the analytic function
+function v2plot_modelvsfunc(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, visfunc, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
+# Compute model points (discrete)
+cvis_model = visfunc(params,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
+v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
+# Compute model curve (continous)
+r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
+range = linspace(minimum(r),maximum(r),1000);
+cvis_func = visfunc(params,range);
+v2_func = abs2.(cvis_func);
+
+
+fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
+clf();
+subplot(211)
+ax = gca();
+if logplot==true
+ax[:set_yscale]("log")
+end
+
+if yrange !=[]
+ylim((yrange[1], yrange[2]))
+end
+
+errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
+if drawpoints == true
+plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
+end
+
+if drawfunc == true
+plot(range/1e6, v2_func, color="Red", linestyle="-", markersize=3)
+end
+
+title("Squared Visbility Amplitudes - Model vs data plot")
+#xlabel(L"Baseline (M$\lambda$)")
+ylabel("Squared Visibility Amplitudes")
+grid("on")
+subplot(212)
+plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
+xlabel(L"Baseline (M$\lambda$)")
+ylabel("Residuals (number of sigma)")
+grid("on");
+tight_layout()
+#PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 function v2plot(data::OIdata;logplot=false)
 v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
 end
