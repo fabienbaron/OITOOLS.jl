@@ -153,7 +153,8 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
 end
 
 @pyimport mpl_toolkits.axes_grid1 as axgrid
-function imdisp(image; cmap = "hot", pixscale = -1.0, colorbar = false)
+@pyimport matplotlib.patches as patch
+function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false)
  fig = figure("Image",figsize=(6,6),facecolor="White")
  nx=ny=-1;
  pixmode = false;
@@ -174,16 +175,26 @@ function imdisp(image; cmap = "hot", pixscale = -1.0, colorbar = false)
 end
 
  ax = gca()
- mx = matplotlib[:ticker][:MultipleLocator](5) # Define interval of minor ticks
-ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
-ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
-
+ ax[:set_aspect]("equal")
+ mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
+ ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
+ ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
+ ax[:xaxis][:set_tick_params](which="major",length=10,width=2)
+ ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
+ ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
+ ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
 
  if colorbar == true
    divider = axgrid.make_axes_locatable(ax)
    cax = divider[:append_axes]("right", size="5%", pad=0.05)
    colorbar(image, cax=cax)
  end
+# beamsize = 2.0
+#  if beamsize != -1
+#   c = patch.Circle([5,5],5,fc="white",ec="white",linewidth=.5,zorder=0)
+#   ax[:add_artist](c)
+#  end
  tight_layout()
+
  #PyPlot.draw();PyPlot.pause(0.05);
 end
