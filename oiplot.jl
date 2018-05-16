@@ -114,22 +114,6 @@ tight_layout()
 #PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 function v2plot(data::OIdata;logplot=false)
 v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
 end
@@ -168,19 +152,34 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
 #  PyPlot.show();PyPlot.pause(0.5);  # this is used to see plots when running code in batch mode
 end
 
-
-function imdisp(image; cmap = "hot", pixscale = -1.0)
- fig = figure("Image",figsize=(5,5),facecolor="White")
+@pyimport mpl_toolkits.axes_grid1 as axgrid
+function imdisp(image; cmap = "hot", pixscale = -1.0, colorbar = false)
+ fig = figure("Image",figsize=(6,6),facecolor="White")
  nx=ny=-1;
+ pixmode = false;
+ if pixscale == -1
+     pixmode = true;
+     pixscale = 1
+ end
  if ndims(image) ==1
    ny=nx=Int64(sqrt(length(image)))
-   imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none"); # uses Monnier's orientation
+   imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-nx*pixscale,nx*pixscale,-ny*pixscale,ny*pixscale]); # uses Monnier's orientation
  else
    nx,ny = size(image);
-   imshow(rotl90(image), ColorMap(cmap), interpolation="none"); # uses Monnier's orientation
+   imshow(rotl90(image), ColorMap(cmap), interpolation="none", extent=[-nx*pixscale,nx*pixscale,-ny*pixscale,ny*pixscale]); # uses Monnier's orientation
  end
- if pixscale > 0
-   ax = gca()
+ if pixmode == false
+ xlabel("RA (mas)")
+ ylabel("DEC (mas)")
+end
+
+ ax = gca()
+ mx = matplotlib[:ticker][:MultipleLocator](5) # Define interval of minor ticks
+ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
+ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
+
+
+ if colorbar == true
    divider = axgrid.make_axes_locatable(ax)
    cax = divider[:append_axes]("right", size="5%", pad=0.05)
    colorbar(image, cax=cax)
