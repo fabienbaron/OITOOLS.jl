@@ -1,7 +1,8 @@
 using FITSIO.Libcfitsio;
 using OIFITS
-include("../OITOOLS.jl/oitools.jl");
 using NFFT;
+include("oitools.jl");
+
 
 
 #NEED TO ADD ABILTY TO HAVE DIFFERENT INSNAME IN OUTPUT IF IN PUT HAS DIFFERENT INSNAME...basically just copy and pass header.
@@ -17,8 +18,8 @@ oifits=FITS(oifitsin);
 #setup simulation
 
 nuv = data.nuv
-fitsfile = "simtest.fits";
-pixsize=0.1
+fitsfile = "spie_ldd_sim.fits";
+pixsize=0.2
 x = (read((FITS(fitsfile))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x);
 
 
@@ -30,7 +31,7 @@ cvis_model = image_to_cvis_dft(x, dft);
 
 
 #setup new file
-outfilename ="!testcopy.oifits"
+outfilename ="!spie_ldd_sim.oifits"
 f = fits_create_file(outfilename);
 copy_oi_header(f,oifits[1]);
 
@@ -113,8 +114,9 @@ end
 
 
 v2_model = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
-#v2_model_err=data.v2_err
-v2_model_err=v2_model/(data.v2/data.v2_errß)
+v2_model_err=data.v2_err
+#v2_model_err = v2_model_true./abs.(data.v2./data.v2_err)
+
 v2_model += v2_model_err.*randn(length(v2_model))
 #Now to fill the tables_
 #uvis_lam=[];
@@ -155,13 +157,13 @@ t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data
 
 
 #t3amp_model_err =0.007*t3amp_model+1e-6
-#t3amp_model_err=data.t3amp_err
-t3amp_model_err=t3amp_model/(data.t3amp/data.t3amp_err)
+t3amp_model_err=data.t3amp_err
+#t3amp_model_err=abs.(t3amp_model./(data.t3amp./data.t3amp_err))
 t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
 
 #t3phi_model_err = zeros(length(t3phi_model))+2. # degree  -- there is another way of setting this with Haniff formula
-#t3phi_model_err=data.t3phi_err
-t3phi_model_err=t3phi_model/(data.t3phi/data.t3phi_err)
+t3phi_model_err=data.t3phi_err
+#t3phi_model_err=abs.(t3phi_model./(data.t3phi./data.t3phi_err))
 t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
 
 t3indxstart=1
