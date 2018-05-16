@@ -154,7 +154,7 @@ end
 
 @pyimport mpl_toolkits.axes_grid1 as axgrid
 @pyimport matplotlib.patches as patch
-function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false)
+function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure("Image",figsize=(6,6),facecolor="White")
  nx=ny=-1;
  pixmode = false;
@@ -189,11 +189,11 @@ end
    cax = divider[:append_axes]("right", size="5%", pad=0.05)
    colorbar(image, cax=cax)
  end
-# beamsize = 2.0
-#  if beamsize != -1
-#   c = patch.Circle([5,5],5,fc="white",ec="white",linewidth=.5,zorder=0)
-#   ax[:add_artist](c)
-#  end
+
+  if beamsize > 0
+   c = patch.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+   ax[:add_artist](c)
+  end
  tight_layout()
 
  #PyPlot.draw();PyPlot.pause(0.05);
