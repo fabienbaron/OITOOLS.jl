@@ -163,10 +163,10 @@ function imdisp(image; cmap = "hot", pixscale = -1.0, colorbar = false)
  end
  if ndims(image) ==1
    ny=nx=Int64(sqrt(length(image)))
-   imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-nx*pixscale,nx*pixscale,-ny*pixscale,ny*pixscale]); # uses Monnier's orientation
+   imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  else
    nx,ny = size(image);
-   imshow(rotl90(image), ColorMap(cmap), interpolation="none", extent=[-nx*pixscale,nx*pixscale,-ny*pixscale,ny*pixscale]); # uses Monnier's orientation
+   imshow(rotl90(image), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  end
  if pixmode == false
  xlabel("RA (mas)")
