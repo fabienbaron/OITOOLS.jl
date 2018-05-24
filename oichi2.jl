@@ -96,8 +96,8 @@ function chi2_vis_dft_fg(x, g, dft, data ) # criterion function plus its gradien
   # compute observables from all cvis
   visamp_model = abs.(cvis_model);
   visphi_model = angle.(cvis_model)*(180./pi);
-  chi2_visamp = sum( ((visamp_model - data.visamp)./data.visamp_err).^2);
-  chi2_visphi = sum( (mod360(visphi_model - data.visphi)./data.visphi_err).^2);
+  chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
+  chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
   # Original formulas
   # g_visamp = 2*sum(((visamp_model-data.visamp)./data.visamp_err.^2).*real( conj(cvis_model./visamp_model).*dft),1);
   # g_visphi = 360./pi*sum(((mod360(visphi_model-data.visphi)./data.visphi_err.^2)./abs2.(cvis_model)).*(-imag(cvis_model).*real(dft)+real(cvis_model).*imag(dft)),1);
@@ -117,9 +117,9 @@ function chi2_vis_nfft_fg(x, g, fftplan, data ) # criterion function plus its gr
   # compute observables from all cvis
   visamp_model = abs.(cvis_model);
   visphi_model = angle.(cvis_model)*(180./pi);
-  chi2_visamp = sum( ((visamp_model - data.visamp)./data.visamp_err).^2);
-  chi2_visphi = sum( (mod360(visphi_model - data.visphi)./data.visphi_err).^2);
-  g_visamp = 2.0*real(nfft_adjoint(fftplan,(cvis_model./visamp_model.*(visamp_model-data.visamp)./data.visamp_err.^2)))
+  chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
+  chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
+  g_visamp = 2.0*real(nfft_adjoint(fftplan,(cvis_model./visamp_model.*(visamp_model-data.visamp)./data.visamp_err.^2)));
   g_visphi = 360./pi*-imag(nfft_adjoint(fftplan,cvis_model.*((mod360(visphi_model-data.visphi)./data.visphi_err.^2)./visamp_model.^2)));
   g[:] = vec(g_visamp + g_visphi);
   flux = sum(x);

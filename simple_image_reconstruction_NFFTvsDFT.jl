@@ -17,9 +17,6 @@ data.visphi = angle.(cvis_true)*180./pi + data.visphi_err.*randn(size(cvis_true)
 # Setup both DFT and NFFT for reconstruction
 nx = 256
 pixsize = 0.025
-dft = setup_dft(data.uv, nx, pixsize);
-fftplan = setup_nfft(data.uv, nx, pixsize);
-
 
 #initial image is a simple Gaussian
 x_start = Array{Float64}(nx, nx);
@@ -31,12 +28,17 @@ x_start = Array{Float64}(nx, nx);
  x_start = vec(x_start)/sum(x_start);
 
 using OptimPack
+
+#DFT reconstruction
+dft = setup_dft(data.uv, nx, pixsize);
 tic();
 crit = (x,g)->chi2_vis_dft_fg(x, g, dft, data);
 x_sol = OptimPack.vmlmb(crit, x_start, verb=true, lower=0, maxiter=80, blmvm=false);
 toc();
 imdisp(x_sol)
 
+# NFFT reconstruction
+fftplan = setup_nfft(data.uv, nx, pixsize);
 tic();
 crit = (x,g)->chi2_vis_nfft_fg(x, g, fftplan, data);
 x_sol = OptimPack.vmlmb(crit, x_start, verb=true, lower=0, maxiter=80, blmvm=false);
