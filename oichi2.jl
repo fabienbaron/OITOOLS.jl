@@ -11,6 +11,7 @@ return dft
 end
 
 using NFFT
+FFTW.set_num_threads(8);
 function setup_nfft(uv, nx, pixsize)
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
   nfft_plan = NFFTPlan(uv*scale_rad, (nx,nx), 4, 2.0);
@@ -64,6 +65,7 @@ function chi2(x, dft, data, verbose = true)
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
+
 function chi2_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
   #nx2 = length(x);
   cvis_model = image_to_cvis_dft(x, dft);
@@ -87,6 +89,43 @@ function chi2_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
   g[:] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
   println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
   return chi2_v2 + chi2_t3amp + chi2_t3phi
+end
+
+function chi2_vis_dft_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
+  cvis_model = image_to_cvis_dft(x, dft);
+  # compute observables from all cvis
+  visamp_model = abs.(cvis_model);
+  visphi_model = angle.(cvis_model)*(180./pi);
+  chi2_visamp = sum( ((visamp_model - data.visamp)./data.visamp_err).^2);
+  chi2_visphi = sum( (mod360(visphi_model - data.visphi)./data.visphi_err).^2);
+  # Original formulas
+  # g_visamp = 2*sum(((visamp_model-data.visamp)./data.visamp_err.^2).*real( conj(cvis_model./visamp_model).*dft),1);
+  # g_visphi = 360./pi*sum(((mod360(visphi_model-data.visphi)./data.visphi_err.^2)./abs2.(cvis_model)).*(-imag(cvis_model).*real(dft)+real(cvis_model).*imag(dft)),1);
+  # Improved formulas
+  g_visamp = 2.0*real(transpose(dft)*(conj(cvis_model./visamp_model).*(visamp_model-data.visamp)./data.visamp_err.^2))
+  g_visphi = 360./pi*imag(transpose(dft)*((mod360(visphi_model-data.visphi)./data.visphi_err.^2)./visamp_model.^2.*conj(cvis_model)));
+  g[:] = g_visamp + g_visphi;
+  flux = sum(x);
+  g[:] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+#  imdisp(x);
+  println("VISAMP: ", chi2_visamp/data.nvisamp, " VISPHI: ", chi2_visphi/data.nvisphi, " Flux: ", flux)
+  return chi2_visamp + chi2_visphi
+end
+
+function chi2_vis_nfft_fg(x, g, fftplan, data ) # criterion function plus its gradient w/r x
+  cvis_model = image_to_cvis_nfft(x, fftplan);
+  # compute observables from all cvis
+  visamp_model = abs.(cvis_model);
+  visphi_model = angle.(cvis_model)*(180./pi);
+  chi2_visamp = sum( ((visamp_model - data.visamp)./data.visamp_err).^2);
+  chi2_visphi = sum( (mod360(visphi_model - data.visphi)./data.visphi_err).^2);
+  g_visamp = 2.0*real(nfft_adjoint(fftplan,(cvis_model./visamp_model.*(visamp_model-data.visamp)./data.visamp_err.^2)))
+  g_visphi = 360./pi*-imag(nfft_adjoint(fftplan,cvis_model.*((mod360(visphi_model-data.visphi)./data.visphi_err.^2)./visamp_model.^2)));
+  g[:] = vec(g_visamp + g_visphi);
+  flux = sum(x);
+  g[:] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+  println("VISAMP: ", chi2_visamp/data.nvisamp, " VISPHI: ", chi2_visphi/data.nvisphi, " Flux: ", flux)
+  return chi2_visamp + chi2_visphi
 end
 
 function gaussian2d(n,m,sigma)
