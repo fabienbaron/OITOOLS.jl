@@ -23,6 +23,10 @@ if Pkg.installed("NLopt")==nothing
 Pkg.add("NLopt")
 end
 
+if Pkg.installed("OptimPack")==nothing
+Pkg.add("OptimPack")
+end
+
 end
 
 check_packages()
