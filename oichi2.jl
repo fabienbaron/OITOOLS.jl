@@ -19,6 +19,7 @@ fftplan_t3_3
 end
 
 using NFFT
+using SpecialFunctions
 FFTW.set_num_threads(8);
 function setup_nfft(data, nx, pixsize)
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
@@ -61,7 +62,7 @@ function image_to_cvis_nfft(x, nfft_plan)
   end
 end
 
-function chi2(x, dft, data, verbose = true)
+function chi2_dft_f(x, dft, data, verbose = true)
   cvis_model = image_to_cvis_dft(x, dft);
   # compute observables from all cvis
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
@@ -78,7 +79,7 @@ function chi2(x, dft, data, verbose = true)
 end
 
 
-function chi2_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
+function chi2_dft_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
   cvis_model = image_to_cvis_dft(x, dft);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
@@ -126,7 +127,7 @@ function chi2_vis_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function plus i
   chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
   chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
   println("VISAMP: ", chi2_visamp/data.nvisamp, " VISPHI: ", chi2_visphi/data.nvisphi)
-  return
+  return chi2_visamp+chi2_visphi
 end
 
 
@@ -153,12 +154,15 @@ end
 
 function chi2_vis_nfft_fg(x, g, fftplan::FFTPLAN, data; mu = 1e7 ) # criterion function plus its gradient w/r x
   # Total squared variation
+  # Total variation
+    ϵ=1e-10
     nx = Int(sqrt(length(x)))
     y = reshape(x, nx, nx);
-    dx = circshift(y,(0,1))-y;
-    dy = circshift(y,(1,0))-y;
-    tv_f = vecnorm(dx)^2+vecnorm(dy)^2
-    tv_g = 2*vec((dx+dy))
+    yx = circshift(y,(0,-1));
+    yy = circshift(y,(-1,0));
+    tv_f = sum(sqrt.((y-yx).^2+(y-yy).^2+ϵ))
+    tv_g =  vec((2*y-yx-yy)./(sqrt.((y-yx).^2+(y-yy).^2+ϵ)));
+
 
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
   # compute observables from all cvis
@@ -288,7 +292,7 @@ function chi2_centered_tv_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftp
 # centering
   cent_g = zeros(size(x))
   cent_f = reg_centering(x, cent_g)
-# Total squared variation
+# Total variation
   ϵ=1e-10
   nx = Int(sqrt(length(x)))
   y = reshape(x, nx, nx);
@@ -372,4 +376,33 @@ function chi2_centered_wav_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fft
   return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f + mu * wav_f
 end
 
+end
+
+
+function chi2_centered_EPLL_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN,data::OIdata, dict; rho = 1e4, mu = 1e6)
+  flux = sum(x);
+# centering
+  cent_g = zeros(size(x))
+  cent_f = reg_centering(x, cent_g)
+# Wavelet regularization
+  reg_g = zeros(Float64, (nx, nx));
+  reg_f = EPLL_fg(reshape(x, (nx,nx)), reg_g, dict);
+
+# Likelihood
+  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
+  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
+  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+  g_v2 = real(nfft_adjoint(fftplan.fftplan_v2, (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
+  g_t3amp = real(nfft_adjoint(fftplan.fftplan_t3_1, (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(fftplan.fftplan_t3_2,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(fftplan.fftplan_t3_3,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
+  g_t3phi = -360./pi*imag(nfft_adjoint(fftplan.fftplan_t3_1, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
+                        +nfft_adjoint(fftplan.fftplan_t3_2, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
+                        +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
+  g[:] = vec(g_v2 + g_t3amp + g_t3phi) +  rho * cent_g +  mu * vec(reg_g);
+  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," TOTCHINR: ", chi2_v2 + chi2_t3amp + chi2_t3phi, " Flux: ", flux, " CENT: ", cent_f, " CDG ", cdg(reshape(x,nx,nx)), " EPLL: ", mu*reg_f)
+  imdisp(x)
+  return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f + mu * reg_f
 end

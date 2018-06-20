@@ -17,6 +17,6 @@ fftplan = setup_nfft(data, nx, pixsize);
      end
  x_start = vec(x_start)/sum(x_start);
 crit = (x,g)->chi2_centered_tv_nfft_fg(x, g, fftplan, data, mu = 7e3);
-@time x_sol = OptimPack.vmlmb(crit, x_start, verb=true, lower=0, maxiter=200, blmvm=false, gtol=(1e-8,1e-8));
+@time x_sol = OptimPack.vmlmb(crit, x_start, verb=true, lower=0, maxiter=2000, blmvm=false, gtol=(1e-8,1e-8));
 imdisp(x_sol,pixscale=pixsize)
 #f = FITS("reconst.fits", "w"); write(f, reshape(x_sol,(nx,nx))); close(f);

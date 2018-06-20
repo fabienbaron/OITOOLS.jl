@@ -1,6 +1,7 @@
 function check_packages()
 if Pkg.installed("NFFT")==nothing
     Pkg.add("NFFT")
+    Pkg.checkout("NFFT","master")
 end
 
 if Pkg.installed("SpecialFunctions")==nothing
@@ -25,6 +26,7 @@ end
 
 if Pkg.installed("OptimPack")==nothing
 Pkg.add("OptimPack")
+Pkg.checkout("OptimPack","nextgen")
 end
 
 end
