@@ -502,18 +502,18 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         OIdataArr[ispecbin,itimebin].t3_flag = OIdataArr[ispecbin,itimebin].t3_flag[t3_good]
 
         # uv points filtering
-        uv_select  = Array{Bool}(length(OIdataArr[ispecbin,itimebin].uv))
+        uv_select  = Array{Bool}(size(OIdataArr[ispecbin,itimebin].uv,2))
         uv_select[:]  = false;
         uv_select[good_uv_v2]= true
         uv_select[good_uv_t3_1] =true
         uv_select[good_uv_t3_2] =true
-        uv_select[good_uv_t3_2] =true
+        uv_select[good_uv_t3_3] =true
         indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)]
         OIdataArr[ispecbin,itimebin].uv = OIdataArr[ispecbin,itimebin].uv[:,find(uv_select.==true)]
-        OIdataArr[ispecbin,itimebin].indx_v2 = indx_conv[OIdataArr[ispecbin,itimebin].indx_v2[v2_good]]
-        OIdataArr[ispecbin,itimebin].indx_t3_1 = indx_conv[OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]]
-        OIdataArr[ispecbin,itimebin].indx_t3_2 = indx_conv[OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]]
-        OIdataArr[ispecbin,itimebin].indx_t3_3 = indx_conv[OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]]
+        OIdataArr[ispecbin,itimebin].indx_v2 =   indx_conv[good_uv_v2]
+        OIdataArr[ispecbin,itimebin].indx_t3_1 = indx_conv[good_uv_t3_1]
+        OIdataArr[ispecbin,itimebin].indx_t3_2 = indx_conv[good_uv_t3_2]
+        OIdataArr[ispecbin,itimebin].indx_t3_3 = indx_conv[good_uv_t3_3]
       end
 
     end
@@ -551,4 +551,14 @@ function time_split(mjd,period;mjd_start=mjd[1])
     temporalbin[2] = vcat(temporalbin[2],mjd_start+(i)*period);
   end
   return temporalbin
+end
+
+function readfits(fitsfile)
+return (read((FITS(fitsfile))[1]));
+end
+
+function writefits(data, fitsfile)
+f = FITS(fitsfile, "w");
+write(f, data);
+close(f);
 end

@@ -78,7 +78,7 @@ function chi2(x, dft, data, verbose = true)
 end
 
 
-function chi2_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
+function chi2_dft_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
   cvis_model = image_to_cvis_dft(x, dft);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
@@ -116,6 +116,19 @@ function chi2_nfft_fg(x, g, fftplan::FFTPLAN, data ) # criterion function plus i
   println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
+
+
+function chi2_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function for nfft
+  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
+  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
+  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+  return chi2_v2 + chi2_t3amp + chi2_t3phi
+end
+
 
 
 function chi2_vis_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function plus its gradient w/r x
