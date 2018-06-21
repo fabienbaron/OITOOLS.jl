@@ -154,6 +154,17 @@ function gaussian2d(n,m,sigma)
   return g2d
 end
 
+# function create_start_image(type, nx, ... )
+#   if type="gaussian"
+#   gaussian2d(n,m,sigma)
+#   elseif type="disc"
+#     x = 
+
+#   end
+# return 
+# end
+
+
 function cdg(x) #note: this takes a 2D array
   xvals=[i for i=1:size(x,1)]
   return [sum(xvals'*x) sum(x*xvals)]/sum(x)
@@ -271,13 +282,13 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN
 end
 
 
-function reconstruct(x_start::Array{Float64,1}, ft = []; verb = true, maxiter = 100, regularizers =[])
+function reconstruct(x_start::Array{Float64,1}, ft; verb = true, maxiter = 100, regularizers =[])
   x_sol = []
   if typeof(ft) == FFTPLAN
-    crit = (x,g)->crit_nfft_fg(x, g, fftplan, data, regularizers=regularizers)
+    crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers)
     x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   else 
-    crit = (x,g)->crit_dft_fg(x, g, fftplan, data, regularizers=regularizers)
+    crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers)
     x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   end
 return x_sol
