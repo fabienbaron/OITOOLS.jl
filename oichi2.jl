@@ -78,47 +78,6 @@ function chi2_dft_f(x, dft, data, verbose = true)
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-
-function chi2_dft_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
-  cvis_model = image_to_cvis_dft(x, dft);
-  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
-  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  g_v2 = real(transpose(dft[data.indx_v2,:])*(4*((v2_model-data.v2)./data.v2_err.^2).*conj(cvis_model[data.indx_v2])));
-  g_t3amp = real(transpose(dft[data.indx_t3_1,:])*(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*conj(cvis_model[data.indx_t3_1])./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))+real(transpose(dft[data.indx_t3_2,:])*(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*conj(cvis_model[data.indx_t3_2])./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))+real(transpose(dft[data.indx_t3_3,:])*(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*conj(cvis_model[data.indx_t3_3])./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) ))
-  g_t3phi = 360./pi*imag(transpose(dft[data.indx_t3_1,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3].*conj(t3_model))
-                        +transpose(dft[data.indx_t3_2,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3].*conj(t3_model))
-                        +transpose(dft[data.indx_t3_3,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*conj(t3_model)))
-
-  g[:] = g_v2 + g_t3amp+ g_t3phi;
-  flux = sum(x);
-  g[:] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
-  return chi2_v2 + chi2_t3amp + chi2_t3phi
-end
-
-function chi2_nfft_fg(x, g, fftplan::FFTPLAN, data ) # criterion function plus its gradient w/r x
-  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
-  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
-  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  g_v2 = real(nfft_adjoint(fftplan.fftplan_v2, (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
-  g_t3amp = real(nfft_adjoint(fftplan.fftplan_t3_1, (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(fftplan.fftplan_t3_2,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(fftplan.fftplan_t3_3,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
-  g_t3phi = -360./pi*imag(nfft_adjoint(fftplan.fftplan_t3_1, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_2, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-  g[:] = vec(g_v2 + g_t3amp + g_t3phi)
-  flux = sum(x);
-  g[:] = (g - sum(x.*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
-  return chi2_v2 + chi2_t3amp + chi2_t3phi
-end
-
-
 function chi2_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function for nfft
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
@@ -129,8 +88,6 @@ function chi2_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function for nfft
   println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
-
-
 
 function chi2_vis_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function plus its gradient w/r x
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
@@ -209,23 +166,75 @@ function reg_centering(x,g) # takes a 1D array
   f = (c[1]-(nx+1)/2)^2+(c[2]-(nx+1)/2)^2
   xx = [mod(i-1,nx)+1 for i=1:nx*nx]
   yy = [div(i-1,nx)+1 for i=1:nx*nx]
-  g[1:nx*nx] = 2*(c[1]-(nx+1)/2)*xx + 2*(c[2]-(nx+1)/2)*yy
+  g[:] = 2*(c[1]-(nx+1)/2)*xx + 2*(c[2]-(nx+1)/2)*yy
+  print(" COG:", c);
   return f
 end
 
-function chi2_centered_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata)
+function tvsq(x,tvsq_g)
+  # Total squared variation
+  nx = Int(sqrt(length(x)))
+  y = reshape(x, nx, nx);
+  dx = circshift(y,(0,1))-y;
+  dy = circshift(y,(1,0))-y;
+  tvsq_f = vecnorm(dx)^2+vecnorm(dy)^2
+  tvsq_g[:] = 2*vec((dx+dy))
+  print(" TVSQ:", tvsq_f);
+return tvsq_f
+end
+
+function tv(x,tv_g)
+ϵ=1e-10
+nx = Int(sqrt(length(x)))
+y = reshape(x, nx, nx);
+yx = circshift(y,(0,-1));
+yy = circshift(y,(-1,0));
+tv_f = sum(sqrt.((y-yx).^2+(y-yy).^2+ϵ))
+tv_g[:] =  vec((2*y-yx-yy)./(sqrt.((y-yx).^2+(y-yy).^2+ϵ)));
+print(" TV:", tv_f);
+return tv_f
+end
+
+
+function regularization(x, reg_g; regularizers=[]) # compound regularization
+  reg_f = 0.0;
+  for ireg =1:length(regularizers)
+    temp_g = Array{Float64}(length(x))
+    if regularizers[ireg][1] == "centering"
+      reg_f += regularizers[ireg][2]*reg_centering(x, temp_g)
+    elseif regularizers[ireg][1] == "tv"
+      reg_f += regularizers[ireg][2]*tv(x,temp_g)
+    elseif regularizers[ireg][1] == "tvsq"
+      reg_f += regularizers[ireg][2]*tvsq(x,temp_g)
+    end
+    reg_g[:] += regularizers[ireg][2]*temp_g
+  end
+  println("\n");
+  return reg_f
+end
+
+function crit_dft_fg(x, g, dft, data; regularizers=[]) # regularization + negloglikelihood
+  chi2_f = chi2_dft_fg(x,  g, dft, data); # this resets g
+  reg_f = regularization(x, g, regularizers=regularizers) ;# this adds to g
+  flux = sum(x)
+  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+  return chi2_f + reg_f;
+end
+
+function crit_nfft_fg(x,g, fftplan, data;regularizers=[])
+  chi2_f = chi2_nfft_fg(x, g, fftplan, data);
+  reg_f = regularization(x,g, regularizers=regularizers);
+  flux = sum(x)
+  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+  return chi2_f + reg_f;
+end
+
+
+function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata)
   flux = sum(x);
   cvis_model = image_to_cvis_dft(x, dft);
-# cvis_model = image_to_cvis_nfft(x, fft);
-  # compute observables from all cvis
-  #tic();
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-
-# centering
-  rho = 1e4
-  cent_g = zeros(size(x))
-  cent_f = reg_centering(x, cent_g)
   # note: this is correct but slower
   chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
   chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
@@ -235,21 +244,14 @@ function chi2_centered_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{C
   g_t3phi = 360./pi*imag(transpose(dft[data.indx_t3_1,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3].*conj(t3_model))
                          +transpose(dft[data.indx_t3_2,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3].*conj(t3_model))
                          +transpose(dft[data.indx_t3_3,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*conj(t3_model)))
-  g[:] = g_v2 + g_t3amp + g_t3phi +  rho * cent_g;
-  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux, " CENT: ", cent_f, " CDG ", cdg(reshape(x,nx,nx)))
-  return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f
+  g[:] = g_v2 + g_t3amp + g_t3phi
+ # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+ print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+ return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-
-
-
-function chi2_centered_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN,data::OIdata)
+function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN, data::OIdata)
   flux = sum(x);
-# centering
-  rho = 1e4
-  cent_g = zeros(size(x))
-  cent_f = reg_centering(x, cent_g)
 # Likelihood
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
@@ -262,160 +264,58 @@ function chi2_centered_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan
   g_t3phi = -360./pi*imag(nfft_adjoint(fftplan.fftplan_t3_1, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
                         +nfft_adjoint(fftplan.fftplan_t3_2, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
                         +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-  g[:] = vec(g_v2 + g_t3amp + g_t3phi) +  rho * cent_g;
-  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux, " CENT: ", cent_f, " CDG ", cdg(reshape(x,nx,nx)))
-  return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f
+  g[:] = vec(g_v2 + g_t3amp + g_t3phi)
+  # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+  print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+  return chi2_v2 + chi2_t3amp + chi2_t3phi 
 end
 
 
-function chi2_centered_tv2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN,data::OIdata; rho = 1e5, mu = 1e6)
-  flux = sum(x);
-# centering
-  cent_g = zeros(size(x))
-  cent_f = reg_centering(x, cent_g)
-# Total squared variation
-  nx = Int(sqrt(length(x)))
-  y = reshape(x, nx, nx);
-  dx = circshift(y,(0,1))-y;
-  dy = circshift(y,(1,0))-y;
-  tv_f = vecnorm(dx)^2+vecnorm(dy)^2
-  tv_g = 2*vec((dx+dy))
-# Likelihood
-  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
-  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
-  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  g_v2 = real(nfft_adjoint(fftplan.fftplan_v2, (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
-  g_t3amp = real(nfft_adjoint(fftplan.fftplan_t3_1, (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(fftplan.fftplan_t3_2,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(fftplan.fftplan_t3_3,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
-  g_t3phi = -360./pi*imag(nfft_adjoint(fftplan.fftplan_t3_1, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_2, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-  g[:] = vec(g_v2 + g_t3amp + g_t3phi) +  rho * cent_g +  mu * tv_g;
-  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux, " CENT: ", cent_f, " CDG ", cdg(reshape(x,nx,nx)))
-  return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f + mu * tv_f
+function reconstruct(x_start::Array{Float64,1}, ft = []; verb = true, maxiter = 100, regularizers =[])
+  x_sol = []
+  if typeof(ft) == FFTPLAN
+    crit = (x,g)->crit_nfft_fg(x, g, fftplan, data, regularizers=regularizers)
+    x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+  else 
+    crit = (x,g)->crit_dft_fg(x, g, fftplan, data, regularizers=regularizers)
+    x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+  end
+return x_sol
 end
-
-
-function chi2_centered_tv_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN,data::OIdata; rho = 1e5, mu = 1e6)
-  flux = sum(x);
-# centering
-  cent_g = zeros(size(x))
-  cent_f = reg_centering(x, cent_g)
-# Total variation
-  ϵ=1e-10
-  nx = Int(sqrt(length(x)))
-  y = reshape(x, nx, nx);
-  yx = circshift(y,(0,-1));
-  yy = circshift(y,(-1,0));
-  tv_f = sum(sqrt.((y-yx).^2+(y-yy).^2+ϵ))
-  tv_g =  vec((2*y-yx-yy)./(sqrt.((y-yx).^2+(y-yy).^2+ϵ)));
-
-# Likelihood
-  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
-  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
-  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  g_v2 = real(nfft_adjoint(fftplan.fftplan_v2, (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
-  g_t3amp = real(nfft_adjoint(fftplan.fftplan_t3_1, (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(fftplan.fftplan_t3_2,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(fftplan.fftplan_t3_3,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
-  g_t3phi = -360./pi*imag(nfft_adjoint(fftplan.fftplan_t3_1, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_2, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-  g[:] = vec(g_v2 + g_t3amp + g_t3phi) +  rho * cent_g +  mu * tv_g;
-  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux, " CENT: ", cent_f, " CDG ", cdg(reshape(x,nx,nx)))
-  return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f + mu * tv_f
+  
+function EPLL(x, g, dict)
+  reg_f = EPLL_fg(reshape(x, (nx,nx)), g, dict);
+  return reg_f;  
 end
-
 
 if Pkg.installed("Wavelets") !=nothing
-using Wavelets
-function W(mat; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
-      nx = Int(sqrt(length(mat)))
-    Wx = Array{Float64}(nx*nx,length(wavelet_bases));
-      for i=1:length(wavelet_bases)
-          Wx[:, i]=vec(dwt(reshape(mat,nx,nx), wavelet(wavelet_bases[i])));
+  using Wavelets
+  function W(mat; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
+        nx = Int(sqrt(length(mat)))
+      Wx = Array{Float64}(nx*nx,length(wavelet_bases));
+        for i=1:length(wavelet_bases)
+            Wx[:, i]=vec(dwt(reshape(mat,nx,nx), wavelet(wavelet_bases[i])));
+        end
+        return Wx;
+  end
+  
+  function Wt(mat; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
+    nx = size(mat,2)
+    IWx = Array{Float64}(nx*nx,length(wavelet_bases));
+     for i=1:length(wavelet_bases)
+         IWx[:,i] = vec(idwt(reshape(mat[:,i],(nx,nx)), wavelet(wavelet_bases[i])));
       end
-      return Wx;
-end
-
-function Wt(mat; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
-  nx = size(mat,2)
-  IWx = Array{Float64}(nx*nx,length(wavelet_bases));
-   for i=1:length(wavelet_bases)
-       IWx[:,i] = vec(idwt(reshape(mat[:,i],(nx,nx)), wavelet(wavelet_bases[i])));
-    end
- return sum(IWx,2);#/length(wavelet_bases);
-end
-
-function chi2_centered_wav_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN,data::OIdata; wavelet_bases =[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar], rho = 1e4, mu = 1e6)
-  flux = sum(x);
-# centering
-  cent_g = zeros(size(x))
-  cent_f = reg_centering(x, cent_g)
-# Wavelet regularization
-  wav_f = vecnorm(W(x,wavelet_bases))^2
-  wav_g = 2*length(wavelet_bases)*x
-#
-# gnum = zeros(4096)
-#   y = deepcopy(x_sol)
-#   for i=1:4096
-#     y[i] = x_sol[i] + 1e-13
-#     gnum[i] = (vecnorm(W(y))^2 - wav_f)/1e-13
-#     y[i] = x_sol[i]
-# end
-#
-
-# Likelihood
-  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
-  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
-  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  g_v2 = real(nfft_adjoint(fftplan.fftplan_v2, (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
-  g_t3amp = real(nfft_adjoint(fftplan.fftplan_t3_1, (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(fftplan.fftplan_t3_2,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(fftplan.fftplan_t3_3,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
-  g_t3phi = -360./pi*imag(nfft_adjoint(fftplan.fftplan_t3_1, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_2, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-  g[:] = vec(g_v2 + g_t3amp + g_t3phi) +  rho * cent_g +  mu * wav_g;
-  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux, " CENT: ", cent_f, " CDG ", cdg(reshape(x,nx,nx)))
-  return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f + mu * wav_f
-end
-
-end
+   return sum(IWx,2);#/length(wavelet_bases);
+  end
+  
+  
+  function regwav(x,wav_g; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
+    wav_f = vecnorm(W(x,wavelet_bases))^2
+    wav_g[:] = 2*length(wavelet_bases)*x
+    return tv_f
+  end
+  end
+  
 
 
-function chi2_centered_EPLL_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN,data::OIdata, dict; rho = 1e4, mu = 1e6)
-  flux = sum(x);
-# centering
-  cent_g = zeros(size(x))
-  cent_f = reg_centering(x, cent_g)
-# Wavelet regularization
-  reg_g = zeros(Float64, (nx, nx));
-  reg_f = EPLL_fg(reshape(x, (nx,nx)), reg_g, dict);
 
-# Likelihood
-  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
-  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
-  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  g_v2 = real(nfft_adjoint(fftplan.fftplan_v2, (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
-  g_t3amp = real(nfft_adjoint(fftplan.fftplan_t3_1, (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(fftplan.fftplan_t3_2,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(fftplan.fftplan_t3_3,(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
-  g_t3phi = -360./pi*imag(nfft_adjoint(fftplan.fftplan_t3_1, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_2, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
-                        +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-  g[:] = vec(g_v2 + g_t3amp + g_t3phi) +  rho * cent_g +  mu * vec(reg_g);
-  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," TOTCHINR: ", chi2_v2 + chi2_t3amp + chi2_t3phi, " Flux: ", flux, " CENT: ", cent_f, " CDG ", cdg(reshape(x,nx,nx)), " EPLL: ", mu*reg_f)
-  imdisp(x)
-  return chi2_v2 + chi2_t3amp + chi2_t3phi + rho * cent_f + mu * reg_f
-end
