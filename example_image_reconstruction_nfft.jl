@@ -20,5 +20,5 @@ x_start = Array{Float64}(nx, nx);
 
 regularizers = [["centering", 1e4], ["tv", 7e3]];
 x = reconstruct(x_start, fftplan, regularizers = regularizers);
-
+writefits(x,"reconstruction.fits")
 imdisp(x,pixscale=pixsize)

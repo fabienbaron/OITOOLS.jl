@@ -154,9 +154,9 @@ function gaussian2d(n,m,sigma)
   return g2d
 end
 
-# function create_start_image(type, nx, ... )
+# function create_start_image(type, nx, pixsize, param)
 #   if type="gaussian"
-#   gaussian2d(n,m,sigma)
+#   gaussian2d(nx,nx,sigma)
 #   elseif type="disc"
 #     x = 
 
@@ -170,7 +170,7 @@ function cdg(x) #note: this takes a 2D array
   return [sum(xvals'*x) sum(x*xvals)]/sum(x)
 end
 
-function reg_centering(x,g) # takes a 1D array
+function reg_centering(x,g; verb = verb) # takes a 1D array
   nx = Int(sqrt(length(x)))
   flux= sum(x)
   c = cdg(reshape(x,nx,nx))
@@ -178,11 +178,13 @@ function reg_centering(x,g) # takes a 1D array
   xx = [mod(i-1,nx)+1 for i=1:nx*nx]
   yy = [div(i-1,nx)+1 for i=1:nx*nx]
   g[:] = 2*(c[1]-(nx+1)/2)*xx + 2*(c[2]-(nx+1)/2)*yy
-  print(" COG:", c);
-  return f
+  if verb == true
+    print(" COG:", c, " REGC: ", f);
+  end
+    return f
 end
 
-function tvsq(x,tvsq_g)
+function tvsq(x,tvsq_g; verb = verb)
   # Total squared variation
   nx = Int(sqrt(length(x)))
   y = reshape(x, nx, nx);
@@ -190,11 +192,13 @@ function tvsq(x,tvsq_g)
   dy = circshift(y,(1,0))-y;
   tvsq_f = vecnorm(dx)^2+vecnorm(dy)^2
   tvsq_g[:] = 2*vec((dx+dy))
+  if verb == true
   print(" TVSQ:", tvsq_f);
+  end
 return tvsq_f
 end
 
-function tv(x,tv_g)
+function tv(x,tv_g; verb = verb)
 ϵ=1e-10
 nx = Int(sqrt(length(x)))
 y = reshape(x, nx, nx);
@@ -202,46 +206,52 @@ yx = circshift(y,(0,-1));
 yy = circshift(y,(-1,0));
 tv_f = sum(sqrt.((y-yx).^2+(y-yy).^2+ϵ))
 tv_g[:] =  vec((2*y-yx-yy)./(sqrt.((y-yx).^2+(y-yy).^2+ϵ)));
-print(" TV:", tv_f);
-return tv_f
+if verb == true
+  print(" TV:", tv_f);
+end
+  return tv_f
 end
 
 
-function regularization(x, reg_g; regularizers=[]) # compound regularization
+function regularization(x, reg_g; regularizers=[], verb=true) # compound regularization
   reg_f = 0.0;
   for ireg =1:length(regularizers)
     temp_g = Array{Float64}(length(x))
     if regularizers[ireg][1] == "centering"
-      reg_f += regularizers[ireg][2]*reg_centering(x, temp_g)
+      reg_f += regularizers[ireg][2]*reg_centering(x, temp_g, verb = verb)
     elseif regularizers[ireg][1] == "tv"
-      reg_f += regularizers[ireg][2]*tv(x,temp_g)
+      reg_f += regularizers[ireg][2]*tv(x,temp_g, verb = verb)
     elseif regularizers[ireg][1] == "tvsq"
-      reg_f += regularizers[ireg][2]*tvsq(x,temp_g)
+      reg_f += regularizers[ireg][2]*tvsq(x,temp_g, verb = verb)
+    elseif regularizers[ireg][1] == "EPLL"
+      reg_f += regularizers[ireg][2]*EPLL_fg(x,temp_g, regularizers[ireg][3])
     end
     reg_g[:] += regularizers[ireg][2]*temp_g
   end
-  println("\n");
+  if verb == true 
+    println("\n");
+  end
   return reg_f
 end
 
-function crit_dft_fg(x, g, dft, data; regularizers=[]) # regularization + negloglikelihood
-  chi2_f = chi2_dft_fg(x,  g, dft, data); # this resets g
-  reg_f = regularization(x, g, regularizers=regularizers) ;# this adds to g
+function crit_dft_fg(x, g, dft, data; regularizers=[], verb = true) # regularization + negloglikelihood
+  chi2_f = chi2_dft_fg(x,  g, dft, data, verb = verb); # this resets g
+  reg_f = regularization(x, g, regularizers=regularizers, verb = verb) ;# this adds to g
   flux = sum(x)
   g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
   return chi2_f + reg_f;
 end
 
-function crit_nfft_fg(x,g, fftplan, data;regularizers=[])
-  chi2_f = chi2_nfft_fg(x, g, fftplan, data);
-  reg_f = regularization(x,g, regularizers=regularizers);
+function crit_nfft_fg(x,g, fftplan, data;regularizers=[], verb = true)
+  chi2_f = chi2_nfft_fg(x, g, fftplan, data, verb = verb);
+  reg_f = regularization(x,g, regularizers=regularizers, verb = verb);
   flux = sum(x)
   g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
   return chi2_f + reg_f;
 end
 
 
-function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata)
+function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata; verb=true)
   flux = sum(x);
   cvis_model = image_to_cvis_dft(x, dft);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
@@ -257,11 +267,13 @@ function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Comple
                          +transpose(dft[data.indx_t3_3,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*conj(t3_model)))
   g[:] = g_v2 + g_t3amp + g_t3phi
  # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
- print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
- return chi2_v2 + chi2_t3amp + chi2_t3phi
+ if verb==true
+   print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+ end
+   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN, data::OIdata)
+function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN, data::OIdata; verb = false)
   flux = sum(x);
 # Likelihood
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
@@ -277,27 +289,25 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN
                         +nfft_adjoint(fftplan.fftplan_t3_3, ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
   g[:] = vec(g_v2 + g_t3amp + g_t3phi)
   # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
-  return chi2_v2 + chi2_t3amp + chi2_t3phi 
+ if verb==true
+   print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+ end
+   return chi2_v2 + chi2_t3amp + chi2_t3phi 
 end
 
 
 function reconstruct(x_start::Array{Float64,1}, ft; verb = true, maxiter = 100, regularizers =[])
   x_sol = []
   if typeof(ft) == FFTPLAN
-    crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers)
+    crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
     x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   else 
-    crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers)
+    crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
     x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   end
 return x_sol
 end
-  
-function EPLL(x, g, dict)
-  reg_f = EPLL_fg(reshape(x, (nx,nx)), g, dict);
-  return reg_f;  
-end
+
 
 if Pkg.installed("Wavelets") !=nothing
   using Wavelets
