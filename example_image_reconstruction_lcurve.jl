@@ -1,11 +1,11 @@
 #
-# Very Basic Image reconstruction code
+# Image reconstruction using total variation and l-curve
 #
 include("oitools.jl");
 using OptimPack;
 oifitsfile = "2004-data1.oifits"
-pixsize = 0.2
-nx = 64
+pixsize = 0.1
+nx = 137
 data = readoifits(oifitsfile)[1,1];
 fftplan = setup_nfft(data, nx, pixsize);
 #initial image is a simple Gaussian
@@ -22,14 +22,14 @@ x_start = Array{Float64}(nx, nx);
 # L-CURVE
 # in this example we're looking for the best total variation weight value
 #
-tv_weights = [1e2, 1e3, 2e3, 3e3, 5e3, 6e3, 7e3, 8e3, 1e4, 1e5]
+tv_weights = [1e1, 1e2, 1e3, 2e3, 5e3, 1e4]
 lcurve_chi2 = zeros(length(tv_weights))
 lcurve_reg = zeros(length(tv_weights))
 for i=1:length(tv_weights)
    regularizers = [["centering", 1e4], ["tv", tv_weights[i]]];
    x = reconstruct(x_start, fftplan, regularizers = regularizers, verb = false);
    g = Array{Float64}(size(x));
-   for t=1:10 # make sure we converged
+   for t=1:3 # make sure we converged
        x = reconstruct(x, fftplan, regularizers = regularizers, verb = false);
    end
    lcurve_chi2[i] = chi2_nfft_fg(x, g, fftplan, data);

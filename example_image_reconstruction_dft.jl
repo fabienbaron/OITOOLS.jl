@@ -19,4 +19,4 @@ dft = setup_dft(data.uv, nx, pixsize);
 regularizers = [["centering", 1e4], ["tv", 7e3]];
 x = reconstruct(x_start, dft, regularizers = regularizers);
 imdisp(x,pixscale=pixsize)
-writefits(x,"reconstruction.fits")
+writefits(reshape(x,nx,nx),"reconstruction.fits")
