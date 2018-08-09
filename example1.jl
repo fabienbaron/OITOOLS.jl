@@ -10,7 +10,7 @@ pixsize = 0.101; # in mas/pixel
 x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true);
 
 # display the image
-imdisp(x_true)
+imdisp(x_true, pixscale = pixsize, tickinterval = 1.0, beamsize = 1.0, beamlocation = [0.85, 0.85])
 
 # read the data file
 oifitsfile = "2004-data1.oifits";
