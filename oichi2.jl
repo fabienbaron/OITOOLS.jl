@@ -31,6 +31,25 @@ function setup_nfft(data, nx, pixsize)
   return FFTPLAN(fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3)
 end
 
+
+
+function setup_nfft_multiepochs(data, nx, pixsize)
+  nepochs = size(data,1);
+  scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+  fftplan_multi = Array{FFTPLAN}(nepochs);
+  for i=1:nepochs
+    fftplan_uv  = NFFTPlan(scale_rad*data[i].uv, (nx,nx), 4, 2.0);
+    fftplan_v2   = NFFTPlan(scale_rad*data[i].uv[:, data[i].indx_v2], (nx,nx), 4, 2.0);
+    fftplan_t3_1 = NFFTPlan(scale_rad*data[i].uv[:, data[i].indx_t3_1], (nx,nx), 4, 2.0);
+    fftplan_t3_2 = NFFTPlan(scale_rad*data[i].uv[:, data[i].indx_t3_2], (nx,nx), 4, 2.0);
+    fftplan_t3_3 = NFFTPlan(scale_rad*data[i].uv[:, data[i].indx_t3_3], (nx,nx), 4, 2.0);
+    fftplan_multi[i]=FFTPLAN(fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3)
+  end
+return fftplan_multi
+end
+
+
+
 function mod360(x)
   mod.(mod.(x+180,360.)+360., 360.) - 180.
 end
@@ -78,7 +97,7 @@ function chi2_dft_f(x, dft, data, verbose = true)
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function for nfft
+function chi2_nfft_f(x::Array{Float64,1}, fftplan::FFTPLAN, data::OIdata ) # criterion function for nfft
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
@@ -170,7 +189,7 @@ function cdg(x) #note: this takes a 2D array
   return [sum(xvals'*x) sum(x*xvals)]/sum(x)
 end
 
-function reg_centering(x,g; verb = verb) # takes a 1D array
+function reg_centering(x,g; verb = false) # takes a 1D array
   nx = Int(sqrt(length(x)))
   flux= sum(x)
   c = cdg(reshape(x,nx,nx))
@@ -184,7 +203,7 @@ function reg_centering(x,g; verb = verb) # takes a 1D array
     return f
 end
 
-function tvsq(x,tvsq_g; verb = verb)
+function tvsq(x,tvsq_g; verb = false)
   # Total squared variation
   nx = Int(sqrt(length(x)))
   y = reshape(x, nx, nx);
@@ -198,7 +217,7 @@ function tvsq(x,tvsq_g; verb = verb)
 return tvsq_f
 end
 
-function tv(x,tv_g; verb = verb)
+function tv(x,tv_g; verb = false)
 ϵ=1e-10
 nx = Int(sqrt(length(x)))
 y = reshape(x, nx, nx);
@@ -308,6 +327,32 @@ function reconstruct(x_start::Array{Float64,1}, ft; verb = true, maxiter = 100, 
 return x_sol
 end
 
+function chi2_multitemporal_tv_fg(x::Array{Float64,1}, g::Array{Float64,1}, mu::Float64, epochs_weights::Array{Float64,1}, fftplan_multi::Array{FFTPLAN,1}, data::Array{OIdata,1}; verb = false)
+  f = 0.0;
+  g[:] = 0.0;
+  nepochs = length(epochs_weights);
+  npix = div(length(x),nepochs);
+  singleepoch_g = zeros(Float64, npix);
+  tv_g = zeros(Float64, npix);
+  for i=1:nepochs # weighted sum -- should probably do the computation in parallel
+    tslice = 1+(i-1)*npix:i*npix; # temporal slice
+    tv_f = tv(x[tslice], tv_g);
+    f += epochs_weights[i]*chi2_nfft_fg(x[tslice], singleepoch_g, fftplan_multi[i], data[i], verb = true) + mu*tv_f;
+    g[tslice] += epochs_weights[i]*singleepoch_g + mu * tv_g;
+    
+    print("\n");
+    if verb==true
+      print("Epoch $i : TV: ", tv_f, "   mu*TV: ", mu*tv_f, "\n");
+    end
+  
+
+  end
+  if verb==true
+    println("All epochs, weighted chi2: ", f);
+  end
+  return f;
+end
+
 
 if Pkg.installed("Wavelets") !=nothing
   using Wavelets
@@ -337,6 +382,9 @@ if Pkg.installed("Wavelets") !=nothing
   end
   end
   
+
+
+
 
 
 

@@ -468,7 +468,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
         .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
         .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
-#        .& (isnan.(OIdataArr[ispecbin,itimebin].v2) == false) .& (isnan.(OIdataArr[ispecbin,itimebin].v2_err)==false)
+        .& .!isnan.(OIdataArr[ispecbin,itimebin].v2) .& .!isnan.(OIdataArr[ispecbin,itimebin].v2_err)
         .& (abs.(OIdataArr[ispecbin,itimebin].v2./OIdataArr[ispecbin,itimebin].v2_err).>filter_v2_snr_threshold))
 
         good_uv_v2 = OIdataArr[ispecbin,itimebin].indx_v2[v2_good]
@@ -482,8 +482,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         OIdataArr[ispecbin,itimebin].v2_dlam = OIdataArr[ispecbin,itimebin].v2_dlam[v2_good]
         OIdataArr[ispecbin,itimebin].v2_flag = OIdataArr[ispecbin,itimebin].v2_flag[v2_good]
 
-        # TODO: filter T3
-        t3_good = find(  (OIdataArr[ispecbin,itimebin].t3_flag.==false))
+        # TODO: filter T3.t3amp
+        t3amp_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp )) .& (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp_err ))
+        t3phi_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi ) ).& (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi_err ))
+        
+        t3_good = find(OIdataArr[ispecbin,itimebin].t3_flag.==false .& (t3amp_good .| t3phi_good) )
         good_uv_t3_1 = OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]
         good_uv_t3_2 = OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]
         good_uv_t3_3 = OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]
@@ -525,14 +528,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   return OIdataArr;
 end
 
-
-
-function readoifits_multiepochs(oifitsfiles)
+function readoifits_multiepochs(oifitsfiles; filter_bad_data=false)
   nepochs = length(oifitsfiles);
   tepochs = Array{Float64}(nepochs);
   data = Array{OIdata}(nepochs);
   for i=1:nepochs
-    data[i] = readoifits(oifitsfiles[i])[1,1];
+    data[i] = readoifits(oifitsfiles[i], filter_bad_data=filter_bad_data)[1,1];
     tepochs[i] = data[i].mean_mjd;
     println(oifitsfiles[i], "\t MJD: ", tepochs[i], "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi);
   end
