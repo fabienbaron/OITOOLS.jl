@@ -19,6 +19,6 @@ x_start = Array{Float64}(nx, nx);
  x_start = vec(x_start)/sum(x_start);
 
 regularizers = [["centering", 1e4], ["tv", 7e3]];
-x = reconstruct(x_start, fftplan, regularizers = regularizers);
+x = reconstruct(x_start, data, fftplan, regularizers = regularizers);
 imdisp(x,pixscale=pixsize)
 writefits(reshape(x,nx,nx),"reconstruction.fits")
