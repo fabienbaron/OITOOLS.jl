@@ -61,7 +61,7 @@ Experimental version with target fitering for NPOI
 """
 
 function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], binning = false,
-  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, filter_v2_snr_threshold=0.5)
+  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, force_full_t3 = false, filter_v2_snr_threshold=0.5)
 
   # oifitsfile="AlphaCenA.oifits";spectralbin=[[]]; temporalbin=[[]];  get_specbin_file=false; get_timebin_file=true;redundance_chk=true;uvtol=1.e3;
   tables = OIFITS.load(oifitsfile);
@@ -483,10 +483,18 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         OIdataArr[ispecbin,itimebin].v2_flag = OIdataArr[ispecbin,itimebin].v2_flag[v2_good]
 
         # TODO: filter T3.t3amp
+        
+        
         t3amp_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp )) .& (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp_err ))
         t3phi_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi ) ).& (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi_err ))
         
+        #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
+        if force_full_t3 == false
         t3_good = find(OIdataArr[ispecbin,itimebin].t3_flag.==false .& (t3amp_good .| t3phi_good) )
+        else
+          t3_good = find(OIdataArr[ispecbin,itimebin].t3_flag.==false .& (t3amp_good .& t3phi_good) )
+        end
+
         good_uv_t3_1 = OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]
         good_uv_t3_2 = OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]
         good_uv_t3_3 = OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]
@@ -528,12 +536,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   return OIdataArr;
 end
 
-function readoifits_multiepochs(oifitsfiles; filter_bad_data=false)
+function readoifits_multiepochs(oifitsfiles; filter_bad_data=false,  force_full_t3 = false)
   nepochs = length(oifitsfiles);
   tepochs = Array{Float64}(nepochs);
   data = Array{OIdata}(nepochs);
   for i=1:nepochs
-    data[i] = readoifits(oifitsfiles[i], filter_bad_data=filter_bad_data)[1,1];
+    data[i] = readoifits(oifitsfiles[i], filter_bad_data=filter_bad_data, force_full_t3 =force_full_t3 )[1,1];
     tepochs[i] = data[i].mean_mjd;
     println(oifitsfiles[i], "\t MJD: ", tepochs[i], "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi);
   end
