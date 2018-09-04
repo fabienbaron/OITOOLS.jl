@@ -328,7 +328,7 @@ return x_sol
 end
 
 
-function crit_nfft_fg(x,g, fftplan, data;printcolor = :black, regularizers=[], verb = true)
+function crit_nfft_fg(x,g, fftplan, data; printcolor = :black, regularizers=[], verb = true)
   chi2_f = chi2_nfft_fg(x, g, fftplan, data, verb = verb);
   reg_f = regularization(x,g, regularizers=regularizers, printcolor = printcolor, verb = verb);
   flux = sum(x)
@@ -336,7 +336,7 @@ function crit_nfft_fg(x,g, fftplan, data;printcolor = :black, regularizers=[], v
   return chi2_f + reg_f;
 end
 
-function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; epochs_weights =[], printcolor= [], verb = false, maxiter = 100, regularizers =[])
+function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[])
   x_sol = []
   if typeof(ft) == Array{FFTPLAN,1}
     crit = (x,g)->crit_multitemporal_nfft_fg(x, g, ft, data, printcolor=printcolor, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
@@ -364,13 +364,31 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
   for i=1:nepochs # weighted sum -- should probably do the computation in parallel
     tslice = 1+(i-1)*npix:i*npix; # temporal slice
     subg = Array{Float64}(npix);
+    print_with_color(printcolor[i], "Epoch $i ");
     f += epochs_weights[i]*crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=[], printcolor = printcolor[i], verb = verb);
     g[tslice] = epochs_weights[i]*subg
   end
+
   # cross temporal regularization
-#  regularizers[nepochs+1]
-  
-  return f;
+   if length(regularizers)>nepochs
+     if (regularizers[nepochs+1][1][1] == "temporal_tvsq")  & (nepochs>1)
+      y = reshape(x,(npix,nepochs))
+      temporalf = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
+      tv_g = Array{Float64}(npix,nepochs)
+      if nepochs>2
+         tv_g[:,1] = 2*(y[:,1] - y[:,2])
+         tv_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
+         tv_g[:,end] = 2*(y[:,end] - y[:,end-1])
+      else
+         tv_g[:,1] = 2*(y[:,1]-y[:,2]);
+         tv_g[:,2] = 2*(y[:,2]-y[:,1]);
+      end
+      f+= temporalf
+      g[:] += regularizers[nepochs+1][1][2]*vec(tv_g);
+      print_with_color(:yellow,"Temporal regularization: $temporalf\n")
+     end
+    end
+   return f;
 end
 
 

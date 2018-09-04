@@ -1,11 +1,10 @@
 #
-# Very Basic Image reconstruction code
+# Image reconstruction code with temporal regularization
 #
 include("oitools.jl");
 using OptimPack
 oifitsfiles = ["AZCYG_JUN01_2018.oifits","AZCYG_JUL_2018.oifits","AZCYG_AUG25_2018.oifits"]
-#epochs_weights = [1.0, 1.0, 1.0];
-#oifitsfiles = ["AZCYG_JUN01_2018.oifits"]
+printcolors = [:red, :green, :blue];
 nepochs, tepochs, data = readoifits_multiepochs(oifitsfiles, filter_bad_data=true, force_full_t3 = true);
 pixsize = 0.2;
 nx = 64;
@@ -21,7 +20,7 @@ regularizers = [   [ ["centering", 1e4], ["tv", 7e3] ],  #epoch 1
                    [ ["tv", 7e3] ], #epoch 3 
                    [ ["temporal_tvsq", 1e2] ] ]; #transtemporal
 
-x = reconstruct_multitemporal(x_start, data, fftplan, regularizers = []);
+x = reconstruct_multitemporal(x_start, data, fftplan, printcolor= printcolors, regularizers = regularizers);
 
 imdisp_temporal(x, nepochs, pixscale=pixsize)
 writefits(reshape(x,nx,nx),"reconstruction.fits")
