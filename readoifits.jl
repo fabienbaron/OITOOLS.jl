@@ -465,7 +465,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
       if (filter_bad_data==true)
         # Filter OBVIOUSLY bad V2 data
-        v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0)
+        v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0.0)
         .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
         .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
         .& .!isnan.(OIdataArr[ispecbin,itimebin].v2) .& .!isnan.(OIdataArr[ispecbin,itimebin].v2_err)
@@ -483,18 +483,18 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         OIdataArr[ispecbin,itimebin].v2_flag = OIdataArr[ispecbin,itimebin].v2_flag[v2_good]
 
         # TODO: filter T3.t3amp
-        
-        
-        t3amp_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp )) .& (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp_err ))
-        t3phi_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi ) ).& (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi_err ))
+          
+        t3amp_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp )) .& (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp_err )) .& (OIdataArr[ispecbin,itimebin].t3amp_err.>0.0)
+        t3phi_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi ) ).& (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi_err )) .& (OIdataArr[ispecbin,itimebin].t3phi_err.>0.0)
         
         #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
+        t3_good = []
         if force_full_t3 == false
-        t3_good = find(OIdataArr[ispecbin,itimebin].t3_flag.==false .& (t3amp_good .| t3phi_good) )
+          t3_good = find(.!OIdataArr[ispecbin,itimebin].t3_flag .& (t3amp_good .| t3phi_good) )
         else
-          t3_good = find(OIdataArr[ispecbin,itimebin].t3_flag.==false .& (t3amp_good .& t3phi_good) )
+          t3_good = find(.!OIdataArr[ispecbin,itimebin].t3_flag .& (t3amp_good .& t3phi_good) )
         end
-
+        
         good_uv_t3_1 = OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]
         good_uv_t3_2 = OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]
         good_uv_t3_3 = OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]
