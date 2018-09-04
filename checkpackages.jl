@@ -1,3 +1,4 @@
+#using Pkg
 function check_packages()
 if Pkg.installed("NFFT")==nothing
     Pkg.add("NFFT")
