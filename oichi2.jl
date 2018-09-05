@@ -232,7 +232,7 @@ end
 end
 
 
-function regularization(x, reg_g; regularizers=[], verb=true) # compound regularization
+function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
   reg_f = 0.0;
   for ireg =1:length(regularizers)
     temp_g = Array{Float64}(length(x))
@@ -247,8 +247,8 @@ function regularization(x, reg_g; regularizers=[], verb=true) # compound regular
     end
     reg_g[:] += regularizers[ireg][2]*temp_g
   end
-  if verb == true 
-    println("\n");
+  if (verb==true)
+   print("\n");
   end
   return reg_f
 end
@@ -270,7 +270,7 @@ function crit_nfft_fg(x,g, fftplan, data;regularizers=[], verb = true)
 end
 
 
-function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata; verb=true)
+function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata; printcolor =:black, verb=true)
   flux = sum(x);
   cvis_model = image_to_cvis_dft(x, dft);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
@@ -287,12 +287,12 @@ function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Comple
   g[:] = g_v2 + g_t3amp + g_t3phi
  # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
  if verb==true
-   print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+  print_with_color(printcolor, "V2: $(chi2_v2/data.nv2) T3A: $(chi2_t3amp/data.nt3amp) T3P: $(chi2_t3phi/data.nt3phi)  Flux: $(flux) ");
  end
    return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN, data::OIdata; verb = false)
+function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN, data::OIdata; printcolor =:black,  verb = false)
   flux = sum(x);
 # Likelihood
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
@@ -309,13 +309,13 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN
   g[:] = vec(g_v2 + g_t3amp + g_t3phi)
   # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
  if verb==true
-   print("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+   print_with_color(printcolor, "V2: $(chi2_v2/data.nv2) T3A: $(chi2_t3amp/data.nt3amp) T3P: $(chi2_t3phi/data.nt3phi)  Flux: $(flux) ")
  end
    return chi2_v2 + chi2_t3amp + chi2_t3phi 
 end
 
 
-function reconstruct(x_start::Array{Float64,1}, ft; verb = true, maxiter = 100, regularizers =[])
+function reconstruct(x_start::Array{Float64,1}, data, ft; printcolor = :black, verb = true, maxiter = 100, regularizers =[])
   x_sol = []
   if typeof(ft) == FFTPLAN
     crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
@@ -327,30 +327,68 @@ function reconstruct(x_start::Array{Float64,1}, ft; verb = true, maxiter = 100, 
 return x_sol
 end
 
-function chi2_multitemporal_tv_fg(x::Array{Float64,1}, g::Array{Float64,1}, mu::Float64, epochs_weights::Array{Float64,1}, fftplan_multi::Array{FFTPLAN,1}, data::Array{OIdata,1}; verb = false)
-  f = 0.0;
-  g[:] = 0.0;
-  nepochs = length(epochs_weights);
+
+function crit_nfft_fg(x,g, fftplan, data; printcolor = :black, regularizers=[], verb = true)
+  chi2_f = chi2_nfft_fg(x, g, fftplan, data, verb = verb);
+  reg_f = regularization(x,g, regularizers=regularizers, printcolor = printcolor, verb = verb);
+  flux = sum(x)
+  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+  return chi2_f + reg_f;
+end
+
+function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[])
+  x_sol = []
+  if typeof(ft) == Array{FFTPLAN,1}
+    crit = (x,g)->crit_multitemporal_nfft_fg(x, g, ft, data, printcolor=printcolor, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
+    x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+  else 
+    error("Sorry, polytemporal DFT methods not implemented yet");
+    #crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
+    #x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+  end
+return x_sol
+end
+
+
+function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{FFTPLAN,1}, data::Array{OIdata,1};printcolor= [], epochs_weights=[],regularizers=[], verb = false)
+  nepochs = length(ft);
+  if epochs_weights == []
+    epochs_weights=ones(Float64, nepochs);
+  end
+  if printcolor == []
+    printcolor=Array{Symbol}(nepochs);
+    printcolor[:]=:black
+  end
   npix = div(length(x),nepochs);
-  singleepoch_g = zeros(Float64, npix);
-  tv_g = zeros(Float64, npix);
+  f = 0.0;
   for i=1:nepochs # weighted sum -- should probably do the computation in parallel
     tslice = 1+(i-1)*npix:i*npix; # temporal slice
-    tv_f = tv(x[tslice], tv_g);
-    f += epochs_weights[i]*chi2_nfft_fg(x[tslice], singleepoch_g, fftplan_multi[i], data[i], verb = true) + mu*tv_f;
-    g[tslice] += epochs_weights[i]*singleepoch_g + mu * tv_g;
-    
-    print("\n");
-    if verb==true
-      print("Epoch $i : TV: ", tv_f, "   mu*TV: ", mu*tv_f, "\n");
-    end
-  
+    subg = Array{Float64}(npix);
+    print_with_color(printcolor[i], "Epoch $i ");
+    f += epochs_weights[i]*crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=[], printcolor = printcolor[i], verb = verb);
+    g[tslice] = epochs_weights[i]*subg
+  end
 
-  end
-  if verb==true
-    println("All epochs, weighted chi2: ", f);
-  end
-  return f;
+  # cross temporal regularization
+   if length(regularizers)>nepochs
+     if (regularizers[nepochs+1][1][1] == "temporal_tvsq")  & (nepochs>1)
+      y = reshape(x,(npix,nepochs))
+      temporalf = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
+      tv_g = Array{Float64}(npix,nepochs)
+      if nepochs>2
+         tv_g[:,1] = 2*(y[:,1] - y[:,2])
+         tv_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
+         tv_g[:,end] = 2*(y[:,end] - y[:,end-1])
+      else
+         tv_g[:,1] = 2*(y[:,1]-y[:,2]);
+         tv_g[:,2] = 2*(y[:,2]-y[:,1]);
+      end
+      f+= temporalf
+      g[:] += regularizers[nepochs+1][1][2]*vec(tv_g);
+      print_with_color(:yellow,"Temporal regularization: $temporalf\n")
+     end
+    end
+   return f;
 end
 
 

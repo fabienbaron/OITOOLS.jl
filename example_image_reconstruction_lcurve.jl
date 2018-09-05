@@ -27,10 +27,10 @@ lcurve_chi2 = zeros(length(tv_weights))
 lcurve_reg = zeros(length(tv_weights))
 for i=1:length(tv_weights)
    regularizers = [["centering", 1e4], ["tv", tv_weights[i]]];
-   x = reconstruct(x_start, fftplan, regularizers = regularizers, verb = false);
+   x = reconstruct(x_start, data, fftplan, regularizers = regularizers, verb = false);
    g = Array{Float64}(size(x));
    for t=1:3 # make sure we converged
-       x = reconstruct(x, fftplan, regularizers = regularizers, verb = false);
+       x = reconstruct(x, data, fftplan, regularizers = regularizers, verb = false);
    end
    lcurve_chi2[i] = chi2_nfft_fg(x, g, fftplan, data);
    lcurve_reg[i] = regularization(x,g, regularizers=regularizers);
