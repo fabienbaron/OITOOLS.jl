@@ -1,28 +1,14 @@
-using FITSIO.Libcfitsio;
-using OIFITS
-using NFFT;
 include("oitools.jl");
-
-
-
 #NEED TO ADD ABILTY TO HAVE DIFFERENT INSNAME IN OUTPUT IF IN PUT HAS DIFFERENT INSNAME...basically just copy and pass header.
 oifitsin="AZCYG2014FINALMOD.oifits";
-
-
 #oifitsin="test1.oifits";
 data = (readoifits(oifitsin))[1,1]; # data can be split by wavelength, time, etc.
 oifits=FITS(oifitsin);
-
-
-
 #setup simulation
-
 nuv = data.nuv
 fitsfile = "spie_ldd_sim.fits";
 pixsize=0.2
 x = (read((FITS(fitsfile))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x);
-
-
 #nfft_plan = setup_nfft(-uv, nx, pixsize)
 #cvis_model = image_to_cvis_nfft(x, nfft_plan)
 
