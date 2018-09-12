@@ -1,8 +1,5 @@
-include("../OITOOLS.jl/oitools.jl")
-using NFFT
+include("oitools.jl")
 #Functions used in main Functions
-
-
 function cvis_to_t3_conj(cvis, indx1, indx2, indx3)
     #get t3 from caculated visibilities
     #because of ordering of v_ij j>i we need to use conjugate (we use conj(t3_13), rather than t3_31)
