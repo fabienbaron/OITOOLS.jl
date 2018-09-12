@@ -64,7 +64,7 @@ end
 
 
 function mod360(x)
-  mod.(mod.(x+180,360.)+360., 360.) - 180.
+  mod.(mod.(x+180.0,360.0)+360.0, 360.0) - 180.0
 end
 
 function cvis_to_v2(cvis, indx)
@@ -74,7 +74,7 @@ end
 function cvis_to_t3(cvis, indx1, indx2, indx3)
   t3 = cvis[indx1].*cvis[indx2].*cvis[indx3];
   t3amp = abs.(t3);
-  t3phi = angle.(t3)*180./pi;
+  t3phi = angle.(t3)*180.0/pi;
   return t3, t3amp, t3phi
 end
 
@@ -88,9 +88,9 @@ function image_to_cvis_nfft(x, nfft_plan)
   flux = sum(x)
   if (ndims(x) == 1)
     nx = Int64(sqrt(length(x)))
-    cvis_model = nfft(nfft_plan, reshape(x,(nx,nx)) + 0. * im) / flux;
+    cvis_model = nfft(nfft_plan.fftplan_uv, reshape(x,(nx,nx)) + 0. * im) / flux;
   else
-    cvis_model = nfft(nfft_plan, x + 0. * im) / flux;
+    cvis_model = nfft(nfft_plan.fftplan_uv, x + 0. * im) / flux;
   end
 end
 
@@ -125,7 +125,7 @@ function chi2_vis_nfft_f(x, fftplan::FFTPLAN, data ) # criterion function plus i
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
   # compute observables from all cvis
   visamp_model = abs.(cvis_model);
-  visphi_model = angle.(cvis_model)*(180./pi);
+  visphi_model = angle.(cvis_model)*(180.0/pi);
   chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
   chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
   println("VISAMP: ", chi2_visamp/data.nvisamp, " VISPHI: ", chi2_visphi/data.nvisphi)
@@ -169,7 +169,7 @@ function chi2_vis_nfft_fg(x, g, fftplan::FFTPLAN, data; mu = 1e7 ) # criterion f
   cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
   # compute observables from all cvis
   visamp_model = abs.(cvis_model);
-  visphi_model = angle.(cvis_model)*(180./pi);
+  visphi_model = angle.(cvis_model)*(180.0/pi);
   chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
   chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
   g_visamp = 2.0*real(nfft_adjoint(fftplan.fftplan_uv,(cvis_model./visamp_model.*(visamp_model-data.visamp)./data.visamp_err.^2)));
