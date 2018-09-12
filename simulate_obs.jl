@@ -26,7 +26,7 @@ x = (read((FITS(fitsfile))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/su
 #nfft_plan = setup_nfft(-uv, nx, pixsize)
 #cvis_model = image_to_cvis_nfft(x, nfft_plan)
 
-dft = setup_dft(data.uv, nx, pixsize);
+dft = setup_dft(data, nx, pixsize);
 cvis_model = image_to_cvis_dft(x, dft);
 
 
