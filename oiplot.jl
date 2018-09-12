@@ -16,6 +16,56 @@ PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
 PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
 #@pyimport mpl_toolkits.axes_grid1 as axgrid
 
+edit_oifits_remove_point_button=1
+edit_oifits_remove_point_double_click=true
+edit_oifits_remove_point_cancel_button=3
+edit_oifits_remove_point_finish_and_save_button=2
+delete_x=[]
+delete_y=[]
+delete_err=[]
+#allow removing of numpoints
+function onclickv2(event)
+    clicktype=event[:button]
+    xdat=deepcopy(data.v2_baseline)./1e6
+    ydat=deepcopy(data.v2)
+    errdat=deepcopy(data.v2_err)
+    if clicktype == edit_oifits_remove_point_button    #if not a left click
+        if event[:dblclick] == edit_oifits_remove_point_double_click
+            ax=axes()
+            ymin,ymax=ax[:get_ylim]()
+            xmin,xmax=ax[:get_xlim]()
+            normfactor=abs(xmax-xmin)/abs(ymax-ymin)
+            xclick=event[:xdata]
+            yclick=event[:ydata]
+            diffx=abs.(xdat.-xclick)
+            diffy=abs.(ydat.-yclick)
+            diffr=sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2)
+            indx_remove=indmin(diffr)
+            closestx=xdat[indx_remove]
+            closesty=ydat[indx_remove]
+            closesterr=errdat[indx_remove]
+            println(closestx," ",xclick," ",closesty," ",yclick)
+            errorbar(closestx,closesty,yerr=closesterr,fmt="o", markersize=3,color="Red")
+            push!(delete_x,closestx)
+            push!(delete_y,closesty)
+            push!(delete_err,closesterr)
+            println(delete_x)
+        end
+    elseif clicktype == edit_oifits_remove_point_cancel_button
+        println("Cancelling!")
+        clf()
+        errorbar(xdat,ydat,yerr=errdat,fmt="o", markersize=3,color="Black")
+    elseif clicktype == edit_oifits_remove_point_finish_and_save_button
+        filter!(a->a∉delete_x,xdat)
+        filter!(a->a∉delete_y,ydat)
+        filter!(a->a∉delete_err,errdat)
+        clf()
+        errorbar(xdat,ydat,yerr=errdat,fmt="o", markersize=3,color="Black")
+        # save
+
+    end
+end
+
 # double check by plotting uv coverage
 function uvplot(data::OIdata)
 uvplot(data.uv)
@@ -114,17 +164,20 @@ tight_layout()
 #PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
-function v2plot(data::OIdata;logplot=false)
-v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
+function v2plot(data::OIdata;logplot=false,remove=false)
+v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true,remove=true);
 end
 
 
-function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}; logplot = false) # plots v2 data only
+function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}; logplot = false, remove = false ) # plots v2 data only
 fig = figure("V2 data",figsize=(10,5),facecolor="White");
 clf();
 ax = gca();
 if logplot==true
 ax[:set_yscale]("log")
+end
+if remove == true
+fig[:canvas][:mpl_connect]("button_press_event",onclickv2)
 end
 errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color="Black")
 title("Squared Visibility Amplitude Data")
