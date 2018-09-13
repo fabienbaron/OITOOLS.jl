@@ -4,7 +4,7 @@ using SpecialFunctions
 #v_r = radius
 function visibility_ud(param, v_r;tol=1e-7)
 theta = param[1]/2.0626480624709636e8;
-V = 2.*(besselj1.(pi*theta*v_r))./(pi*theta*v_r)
+V = 2.0*(besselj1.(pi*theta*v_r))./(pi*theta*v_r)
 indx= find(abs.(theta*v_r).<tol)
 V[indx]=1;
 return V

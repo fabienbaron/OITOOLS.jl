@@ -76,7 +76,7 @@ u = uv[1,:]/1e6
 v = uv[2,:]/1e6
 fig = figure("UV plot",figsize=(8,8),facecolor="White")
 clf();
-ax = axes()
+ax = gca()
 minorticks_on
 markeredgewidth=0.1
 ax[:locator_params](axis ="y", nbins=20)

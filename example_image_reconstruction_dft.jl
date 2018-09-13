@@ -2,14 +2,13 @@
 # Very Basic Image reconstruction code
 #
 include("oitools.jl")
-using OptimPack
 oifitsfile = "2004-data1.oifits"
 pixsize = 0.2
 nx = 64
 data = readoifits(oifitsfile)[1,1];
 dft = setup_dft(data.uv, nx, pixsize);
 #initial image is a simple Gaussian
- x_start = Array{Float64}(nx, nx);
+ x_start = Array{Float64}(undef, nx, nx);
      for i=1:nx
        for j=1:nx
          x_start[i,j] = exp(-((i-(nx+1)/2)^2+(j-(nx+1)/2)^2)/(2*(nx/6)^2));

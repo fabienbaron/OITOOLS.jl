@@ -1,10 +1,4 @@
 using NearestNeighbors
-"""
-Last updated on September 6, 2017
-Made by Arturo O. Martinez
-In order to use the kdtree, use the package from:
-https://github.com/KristofferC/NearestNeighbors.jl.git
-"""
 
 function rm_redundance_slow(uv,uvtol)
   new_uv = uv[:,1];
