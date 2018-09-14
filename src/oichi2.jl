@@ -1,4 +1,7 @@
 using LinearAlgebra
+using SpecialFunctions
+using NFFT
+
 function setup_dft(data::OIdata, nx, pixsize)
 scale_rad = pixsize * (pi / 180.0) / 3600000.0;
 nuv = size(data.uv,2)
@@ -23,8 +26,6 @@ function setup_dft(uv::Array{Float64,2}, nx, pixsize)
   return dft
 end
 
-using SpecialFunctions
-using NFFT
 
 mutable struct FFTPLAN
 fftplan_uv
@@ -86,8 +87,8 @@ function image_to_cvis_dft(x, dft)
   cvis_model = dft * vec(x) / sum(x);
 end
 
-function image_to_cvis_nfft(x, nfft_plan)
-  flux = sum(x)
+function image_to_cvis_nfft(x, nfft_plan::NFFTPlan)
+  flux = sum(x);
   if (ndims(x) == 1)
     nx = Int64(sqrt(length(x)))
     cvis_model = nfft(nfft_plan, Complex{Float64}.(reshape(x,(nx,nx)))) / flux;
