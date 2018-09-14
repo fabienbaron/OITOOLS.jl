@@ -83,7 +83,7 @@ scatter(-u, -v,alpha=0.5, color="Black")
 title("UV coverage")
 xlabel(L"U (M$\lambda$)")
 ylabel(L"V (M$\lambda$)")
-grid("on")
+ax[:grid](true);
 tight_layout();
 end
 
@@ -102,12 +102,12 @@ plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", marke
 title("Squared Visbility Amplitudes - Model vs data plot")
 #xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
-grid("on")
+ax[:grid](true);
 subplot(212)
 plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
-grid("on");
+ax[:grid](true);
 tight_layout()
 end
 
@@ -149,12 +149,12 @@ end
 title("Squared Visbility Amplitudes - Model vs data plot")
 #xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
-grid("on")
+ax[:grid](true);
 subplot(212)
 plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
-grid("on");
+ax[:grid](true);
 tight_layout()
 end
 
@@ -177,7 +177,7 @@ errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color="B
 title("Squared Visibility Amplitude Data")
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
-grid("on")
+ax[:grid](true)
 tight_layout()
 end
 
@@ -193,7 +193,8 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   title("Closure phase data")
   xlabel(L"Maximum Baseline (M$\lambda$)")
   ylabel("Closure phase (degrees)")
-  grid("on")
+  ax=gca();
+  ax[:grid](true)
   tight_layout()
 end
 
