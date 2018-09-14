@@ -28,7 +28,7 @@ function onclickv2(event)
     errdat=deepcopy(data.v2_err)
     if clicktype == edit_oifits_remove_point_button    #if not a left click
         if event[:dblclick] == edit_oifits_remove_point_double_click
-            ax=axes()
+            ax=gca()
             ymin,ymax=ax[:get_ylim]()
             xmin,xmax=ax[:get_xlim]()
             normfactor=abs(xmax-xmin)/abs(ymax-ymin)
@@ -199,7 +199,6 @@ end
 
 const axgrid = PyNULL()
 copy!(axgrid, pyimport("mpl_toolkits.axes_grid1"))
-const mpcircle = matplotlib[:patches][:Circle]
 
 function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure("Image",figsize=(6,6),facecolor="White")
@@ -238,7 +237,7 @@ end
  end
 
   if beamsize > 0
-   c = mpcircle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+   c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
    ax[:add_artist](c)
   end
  tight_layout()
@@ -287,7 +286,7 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
   end
  
    if beamsize > 0
-    c = mpcircle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+    c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
     ax[:add_artist](c)
    end
   tight_layout()

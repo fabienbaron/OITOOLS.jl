@@ -12,7 +12,7 @@ x_true = readfits(fitsfile); nx = (size(x_true))[1]; x_true=vec(x_true);
 imdisp(x_true, pixscale = pixsize, tickinterval = 1.0, beamsize = 1.0, beamlocation = [0.85, 0.85])
 
 # read the data file
-oifitsfile = "2004-data1.oifits";
+oifitsfile = "./data/2004-data1.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
 
 # Display the data
