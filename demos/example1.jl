@@ -1,13 +1,12 @@
-include("oitools.jl");
-
+using OITOOLS
 #
 # EXAMPLE 1: read image and data, and compare the observables
 #
 
 # read the image file
-fitsfile = "2004true.fits";
+fitsfile = "./data/2004true.fits";
 pixsize = 0.101; # in mas/pixel
-x_true = (read((FITS(fitsfile))[1])); nx = (size(x_true))[1]; x_true=vec(x_true);
+x_true = readfits(fitsfile); nx = (size(x_true))[1]; x_true=vec(x_true);
 
 # display the image
 imdisp(x_true, pixscale = pixsize, tickinterval = 1.0, beamsize = 1.0, beamlocation = [0.85, 0.85])

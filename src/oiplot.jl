@@ -1,17 +1,17 @@
 # gather common display tasks
 using PyPlot,PyCall
-# PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
-# PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.size"]=[6]
-# PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.size"]=[6]
-# PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.size"]=[6]
-# PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.size"]=[6]
-# PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.width"]=[1]
-# PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.width"]=[1]
-# PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.width"]=[1]
-# PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.width"]=[1]
-# PyDict(pyimport("matplotlib")["rcParams"])["lines.markeredgewidth"]=[1]
-# PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
-# PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
+PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.size"]=[6]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.width"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["lines.markeredgewidth"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
+PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
 
 edit_oifits_remove_point_button=1
 edit_oifits_remove_point_double_click=true

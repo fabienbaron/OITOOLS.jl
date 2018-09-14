@@ -1,8 +1,6 @@
 using FITSIO
 using OIFITS
-if VERSION==v"0.7.0"
-  using Statistics  
-end
+using Statistics  
 
 include("remove_redundance.jl")
 mutable struct OIdata
