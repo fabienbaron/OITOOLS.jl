@@ -55,7 +55,7 @@ function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{
 end
 
 else
-    warn("NLopt not installed: related functions will not be loaded")
+    @warn("NLopt not installed: related functions will not be loaded")
 end
 
 #
@@ -116,7 +116,7 @@ return (minf,minx,cvis_model)
 end
 
 else
-   warn("MultiNest is not installed: related functions will not be loaded")
+   @warn("MultiNest is not installed: related functions will not be loaded")
 end
 
 

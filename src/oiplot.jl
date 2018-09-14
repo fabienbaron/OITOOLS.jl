@@ -85,7 +85,6 @@ xlabel(L"U (M$\lambda$)")
 ylabel(L"V (M$\lambda$)")
 grid("on")
 tight_layout();
-#PyPlot.draw();PyPlot.pause(0.5); # this is used to see plots when running code in batch mode
 end
 
 
@@ -110,7 +109,6 @@ xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
 grid("on");
 tight_layout()
-#PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
 
@@ -158,7 +156,6 @@ xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
 grid("on");
 tight_layout()
-#PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
 function v2plot(data::OIdata;logplot=false,remove=false)
@@ -182,7 +179,6 @@ xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
 grid("on")
 tight_layout()
-#PyPlot.show();PyPlot.pause(0.05);  # this is used to see plots when running code in batch mode
 end
 
 
@@ -199,12 +195,11 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   ylabel("Closure phase (degrees)")
   grid("on")
   tight_layout()
-#  PyPlot.show();PyPlot.pause(0.5);  # this is used to see plots when running code in batch mode
 end
 
-#@pyimport mpl_toolkits.axes_grid1 as axgrid
-mpcircle = matplotlib[:patches][:Circle]
-
+const axgrid = PyNULL()
+copy!(axgrid, pyimport("mpl_toolkits.axes_grid1"))
+const mpcircle = matplotlib[:patches][:Circle]
 
 function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure("Image",figsize=(6,6),facecolor="White")
@@ -236,19 +231,17 @@ end
  ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
  ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
 
- #if colorbar == true
-   #divider = axgrid.make_axes_locatable(ax)
-  # cax = divider[:append_axes]("right", size="5%", pad=0.05)
-  # colorbar(image, cax=cax)
- #end
+ if colorbar == true
+  divider = axgrid.make_axes_locatable(ax)
+  cax = divider[:append_axes]("right", size="5%", pad=0.05)
+  colorbar(image, cax=cax)
+ end
 
   if beamsize > 0
    c = mpcircle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
    ax[:add_artist](c)
   end
  tight_layout()
-
- #PyPlot.draw();PyPlot.pause(0.05);
 end
 
 function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
@@ -287,11 +280,11 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
   ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
   ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
  
-  #if colorbar == true
-    #divider = axgrid.make_axes_locatable(ax)
-    #cax = divider[:append_axes]("right", size="5%", pad=0.05)
-    #colorbar(image, cax=cax)
-  #end
+  if colorbar == true
+    divider = axgrid.make_axes_locatable(ax)
+    cax = divider[:append_axes]("right", size="5%", pad=0.05)
+    colorbar(image, cax=cax)
+  end
  
    if beamsize > 0
     c = mpcircle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
@@ -299,6 +292,5 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
    end
   tight_layout()
   end
-  #PyPlot.draw();PyPlot.pause(0.05);
- end
+end
  
