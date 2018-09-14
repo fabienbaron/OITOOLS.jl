@@ -11,7 +11,7 @@ For image reconstruction, ```OptimPackNextGen```.
 # Installation
 
 Add the package:
-``` add clone https://github.com/fabienbaron/OITOOLS.jl.git```
+``` add https://github.com/fabienbaron/OITOOLS.jl.git```
 
 # Demos
 

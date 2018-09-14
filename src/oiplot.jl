@@ -1,20 +1,17 @@
 # gather common display tasks
 using PyPlot,PyCall
-PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
-#PyDict(pyimport("matplotlib")["rcParams"])["mathtext.fontset"]=["custom"]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["lines.markeredgewidth"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
-#PyDict(pyimport("matplotlib")["rcParams"])["legend.frameon"]=["False"]
-PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
-#@pyimport mpl_toolkits.axes_grid1 as axgrid
+# PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
+# PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.size"]=[6]
+# PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.size"]=[6]
+# PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.size"]=[6]
+# PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.size"]=[6]
+# PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.width"]=[1]
+# PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.width"]=[1]
+# PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.width"]=[1]
+# PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.width"]=[1]
+# PyDict(pyimport("matplotlib")["rcParams"])["lines.markeredgewidth"]=[1]
+# PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
+# PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
 
 edit_oifits_remove_point_button=1
 edit_oifits_remove_point_double_click=true
@@ -206,7 +203,8 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
 end
 
 @pyimport mpl_toolkits.axes_grid1 as axgrid
-@pyimport matplotlib.patches as patch
+mpcircle = matplotlib[:patches][:Circle]
+
 
 function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure("Image",figsize=(6,6),facecolor="White")
@@ -245,7 +243,7 @@ end
  end
 
   if beamsize > 0
-   c = patch.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+   c = mpcircle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
    ax[:add_artist](c)
   end
  tight_layout()
@@ -296,7 +294,7 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
   end
  
    if beamsize > 0
-    c = patch.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+    c = mpcircle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
     ax[:add_artist](c)
    end
   tight_layout()
