@@ -1,0 +1,9 @@
+julia 0.7
+FITSIO 0.11
+PyPlot 2.6
+PyCall 1.18
+SpecialFunctions 0.7.0
+NFFT  0.3.0
+NLopt 0.5.1
+NearestNeighbors 0.4.2
+OIFITS 0.3.1
