@@ -6,10 +6,15 @@ The ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` 
 For image reconstruction, ```OptimPackNextGen```.
 
 From a fresh Julia 0.7 installation, use the package manager (```]``` key) then do:
-``` add FITSIO#master```
+
+``` add FITSIO#master``` (as of September 2018)
+
 ``` add https://github.com/fabienbaron/OIFITS.jl.git```
+
 ``` add https://github.com/emmt/LazyAlgebra.jl.git```
+
 ``` add https://github.com/emmt/OptimPackNextGen.jl.git```
+
 ``` add https://github.com/fabienbaron/OITOOLS.jl.git```
 
 # Installation
