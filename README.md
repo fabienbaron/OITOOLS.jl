@@ -15,8 +15,6 @@ From a fresh Julia 0.7 installation, use the package manager (```]``` key) then 
 
 ``` add https://github.com/emmt/OptimPackNextGen.jl.git```
 
-``` add https://github.com/fabienbaron/OITOOLS.jl.git```
-
 # Installation
 
 Add the package:
