@@ -76,7 +76,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     else
       targettables = targettables[1];
     end
-    targetid_filter = targettables[:target_id][find(targettables[:target].==targetname)]; # match target ids to target name
+    targetid_filter = targettables[:target_id][findall(targettables[:target].==targetname)]; # match target ids to target name
   else
     targetid_filter = [targettables[i][:target_id] for i=1:length(targettables)];
   end
@@ -103,14 +103,14 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   v2_baseline_old = Array{Array{Float64,1}}(undef,v2_ntables);
 
   for itable = 1:v2_ntables
-    v2_targetid_filter = find(sum([v2table[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
+    v2_targetid_filter = findall(sum([v2table[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
     v2_old[itable] = v2table[itable][:vis2data][:,v2_targetid_filter]; # Visibility squared
     v2_err_old[itable] = v2table[itable][:vis2err][:,v2_targetid_filter]; # error in Visibility squared
     v2_ucoord_old[itable] = -v2table[itable][:ucoord][v2_targetid_filter]; # u coordinate in uv plane
     v2_vcoord_old[itable] = v2table[itable][:vcoord][v2_targetid_filter]; #  v coordinate in uv plane
     v2_mjd_old[itable] = repeat(v2table[itable][:mjd][v2_targetid_filter]',
     outer=[size(v2_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    whichwav = find(v2table[itable][:insname].==wavtableref);
+    whichwav = findall(v2table[itable][:insname].==wavtableref);
     if (length(whichwav) != 1)
       error("Wave table confusion -- Missing table ?\n");
     end
@@ -156,7 +156,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   t3_maxbaseline_old = Array{Array{Float64,1}}(undef,t3_ntables);
 
   for itable = 1:t3_ntables
-    t3_targetid_filter = find(sum([t3table[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
+    t3_targetid_filter = findall(sum([t3table[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
     t3amp_old[itable] = t3table[itable][:t3amp][:,t3_targetid_filter];
     t3amp_err_old[itable] = t3table[itable][:t3amperr][:,t3_targetid_filter];
     t3phi_old[itable] = t3table[itable][:t3phi][:,t3_targetid_filter];
@@ -169,7 +169,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
     t3_mjd_old[itable] = repeat(t3table[itable][:mjd][t3_targetid_filter]',
     outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    whichwav = find(t3table[itable][:insname].==wavtableref);
+    whichwav = findall(t3table[itable][:insname].==wavtableref);
     t3_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave],
     outer=[1,size(t3amp_old[itable],2)]); # spectral channels
     t3_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band],
@@ -398,14 +398,14 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         bin_v2 = (v2_mjd_all.<=hi_time[iter_mjd]).&(v2_mjd_all.>=lo_time[iter_mjd]).&(v2_lam_all.<=hi_wav[iter_wav]).&(v2_lam_all.>=lo_wav[iter_wav]);
         bin_t3 = (t3_mjd_all.<=hi_time[iter_mjd]).&(t3_mjd_all.>=lo_time[iter_mjd]).&(t3_lam_all.<=hi_wav[iter_wav]).&(t3_lam_all.>=lo_wav[iter_wav]);
         bin_t3uv = (t3_uv_mjd.<=hi_time[iter_mjd]).&(t3_uv_mjd.>=lo_time[iter_mjd]).&(t3_uv_lam.<=hi_wav[iter_wav]).&(t3_uv_lam.>=lo_wav[iter_wav]);
-        if length(find(bin_v2.==false))>0
-          print_with_color(:red, "$(length(find(bin_v2.==false))) V2 points were filtered out during binning\n");
+        if length(findall(bin_v2.==false))>0
+          print_with_color(:red, "$(length(findall(bin_v2.==false))) V2 points were filtered out during binning\n");
         end
-        if length(find(bin_t3.==false))>0
-          print_with_color(:red, "$(length(find(bin_t3.==false))) T3 points were filtered out during binning\n");
+        if length(findall(bin_t3.==false))>0
+          print_with_color(:red, "$(length(findall(bin_t3.==false))) T3 points were filtered out during binning\n");
         end
-        if length(find(bin_t3uv.==false))>0
-          print_with_color(:red, "$(length(find(bin_t3uv.==false))) T3UV points were filtered out during binning\n");
+        if length(findall(bin_t3uv.==false))>0
+          print_with_color(:red, "$(length(findall(bin_t3uv.==false))) T3UV points were filtered out during binning\n");
         end
       else
         bin_v2 = Bool.(ones(length(v2_all)))
@@ -464,7 +464,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
       if (filter_bad_data==true)
         # Filter OBVIOUSLY bad V2 data
-        v2_good = find(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0.0)
+        v2_good = findall(  (OIdataArr[ispecbin,itimebin].v2_flag.==false) .& (OIdataArr[ispecbin,itimebin].v2_err.>0.0)
         .& (OIdataArr[ispecbin,itimebin].v2_err.<1.0) .& (OIdataArr[ispecbin,itimebin].v2.>-0.2)
         .& (OIdataArr[ispecbin,itimebin].v2.<1.2)
         .& .!isnan.(OIdataArr[ispecbin,itimebin].v2) .& .!isnan.(OIdataArr[ispecbin,itimebin].v2_err)
@@ -489,9 +489,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
         t3_good = []
         if force_full_t3 == false
-          t3_good = find(.!OIdataArr[ispecbin,itimebin].t3_flag .& (t3amp_good .| t3phi_good) )
+          t3_good = findall(.!OIdataArr[ispecbin,itimebin].t3_flag .& (t3amp_good .| t3phi_good) )
         else
-          t3_good = find(.!OIdataArr[ispecbin,itimebin].t3_flag .& (t3amp_good .& t3phi_good) )
+          t3_good = findall(.!OIdataArr[ispecbin,itimebin].t3_flag .& (t3amp_good .& t3phi_good) )
         end
         
         good_uv_t3_1 = OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]
@@ -519,7 +519,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         uv_select[good_uv_t3_2] =true
         uv_select[good_uv_t3_3] =true
         indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)]
-        OIdataArr[ispecbin,itimebin].uv = OIdataArr[ispecbin,itimebin].uv[:,find(uv_select.==true)]
+        OIdataArr[ispecbin,itimebin].uv = OIdataArr[ispecbin,itimebin].uv[:,findall(uv_select.==true)]
         OIdataArr[ispecbin,itimebin].indx_v2 =   indx_conv[good_uv_v2]
         OIdataArr[ispecbin,itimebin].indx_t3_1 = indx_conv[good_uv_t3_1]
         OIdataArr[ispecbin,itimebin].indx_t3_2 = indx_conv[good_uv_t3_2]

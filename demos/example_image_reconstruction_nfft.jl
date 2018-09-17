@@ -2,7 +2,7 @@
 # Very Basic Image reconstruction code
 #
 using OITOOLS
-oifitsfile = "2004-data1.oifits"
+oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.2
 nx = 64
 data = readoifits(oifitsfile)[1,1];
