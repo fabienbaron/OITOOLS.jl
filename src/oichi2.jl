@@ -239,8 +239,8 @@ nx = Int(sqrt(length(x)))
 y = reshape(x, nx, nx);
 yx = circshift(y,(0,-1));
 yy = circshift(y,(-1,0));
-tv_f = sum(sqrt.((y-yx).^2+(y-yy).^2+ϵ))
-tv_g[:] =  vec((2*y-yx-yy)./(sqrt.((y-yx).^2+(y-yy).^2+ϵ)));
+tv_f = sum(sqrt.((y-yx).^2+(y-yy).^2 .+ ϵ))
+tv_g[:] =  vec((2*y-yx-yy)./(sqrt.((y-yx).^2+(y-yy).^2 .+ ϵ)));
 if verb == true
   print(" TV:", tv_f);
 end
