@@ -1,8 +1,8 @@
 #
 # Very Basic Image reconstruction code
 #
-include("oitools.jl")
-oifitsfile = "2004-data1.oifits"
+using OITOOLS
+oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.2
 nx = 64
 data = readoifits(oifitsfile)[1,1];
@@ -16,6 +16,6 @@ dft = setup_dft(data.uv, nx, pixsize);
      end
  x_start = vec(x_start)/sum(x_start);
 regularizers = [["centering", 1e4], ["tv", 7e3]];
-x = reconstruct(x_start, data, dft, regularizers = regularizers);
+x = reconstruct(x_start, data, dft, regularizers = regularizers, verb = true);
 imdisp(x,pixscale=pixsize)
 writefits(reshape(x,nx,nx),"reconstruction.fits")

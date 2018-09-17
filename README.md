@@ -2,11 +2,15 @@
 
 # Requirements
 
-The ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages are required.
-
-For model fitting, ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection). ```DNest4``` is likely to replace ```Multinest``` soon.
-
+The ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages are required. For model fitting, ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection). ```DNest4``` is likely to replace ```Multinest``` soon.
 For image reconstruction, ```OptimPackNextGen```.
+
+From a fresh Julia 0.7 installation, use the package manager (```]``` key) then do:
+``` add FITSIO#master```
+``` add https://github.com/fabienbaron/OIFITS.jl.git```
+``` add https://github.com/emmt/LazyAlgebra.jl.git```
+``` add https://github.com/emmt/OptimPackNextGen.jl.git```
+``` add https://github.com/fabienbaron/OITOOLS.jl.git```
 
 # Installation
 

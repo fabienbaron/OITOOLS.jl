@@ -1,9 +1,8 @@
 #
 # Image reconstruction using total variation and l-curve
 #
-include("oitools.jl");
-using OptimPack;
-oifitsfile = "2004-data1.oifits"
+using OITOOLS
+oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.1
 nx = 137
 data = readoifits(oifitsfile)[1,1];
