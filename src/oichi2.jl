@@ -27,12 +27,12 @@ function setup_dft(uv::Array{Float64,2}, nx, pixsize)
 end
 
 
-mutable struct FFTPLAN
-fftplan_uv
-fftplan_v2
-fftplan_t3_1
-fftplan_t3_2
-fftplan_t3_3
+struct FFTPLAN
+fftplan_uv::NFFTPlan
+fftplan_v2::NFFTPlan
+fftplan_t3_1::NFFTPlan
+fftplan_t3_2::NFFTPlan
+fftplan_t3_3::NFFTPlan
 end
 
 
@@ -87,7 +87,7 @@ function image_to_cvis_dft(x, dft)
   cvis_model = dft * vec(x) / sum(x);
 end
 
-function image_to_cvis_nfft(x, nfft_plan::NFFTPlan)
+function image_to_cvis_nfft(x, nfft_plan::NFFT.NFFTPlan)
   flux = sum(x);
   if (ndims(x) == 1)
     nx = Int64(sqrt(length(x)))
@@ -193,10 +193,10 @@ end
 #   if type="gaussian"
 #   gaussian2d(nx,nx,sigma)
 #   elseif type="disc"
-#     x = 
+#     x =
 
 #   end
-# return 
+# return
 # end
 
 
@@ -308,10 +308,10 @@ function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Comple
    return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN, data::OIdata; printcolor =:black,  verb = false)
+function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::FFTPLAN, data::OIdata; printcolor =:black,  verb = false)
   flux = sum(x);
 # Likelihood
-  cvis_model = image_to_cvis_nfft(x, fftplan.fftplan_uv);
+  cvis_model = image_to_cvis_nfft(x, ftplan.fftplan_uv);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
   chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
@@ -327,7 +327,7 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, fftplan::FFTPLAN
  if verb==true
    printstyled("V2: $(chi2_v2/data.nv2) T3A: $(chi2_t3amp/data.nt3amp) T3P: $(chi2_t3phi/data.nt3phi)  Flux: $(flux) ", color=printcolor)
  end
-   return chi2_v2 + chi2_t3amp + chi2_t3phi 
+   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
 
@@ -387,7 +387,7 @@ function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :
   if typeof(ft) == FFTPLAN
     crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
-  else 
+  else
     crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   end
@@ -400,7 +400,7 @@ function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata
   if typeof(ft) == Array{FFTPLAN,1}
     crit = (x,g)->crit_multitemporal_nfft_fg(x, g, ft, data, printcolor=printcolor, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
-  else 
+  else
     error("Sorry, polytemporal DFT methods not implemented yet");
     #crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
     #x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
@@ -421,7 +421,7 @@ end
 #         end
 #         return Wx;
 #   end
-  
+
 #   function Wt(mat; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
 #     nx = size(mat,2)
 #     IWx = Array{Float64}(nx*nx,length(wavelet_bases));
@@ -430,18 +430,11 @@ end
 #       end
 #    return sum(IWx,2);#/length(wavelet_bases);
 #   end
-  
-  
+
+
 #   function regwav(x,wav_g; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
 #     wav_f = vecnorm(W(x,wavelet_bases))^2
 #     wav_g[:] = 2*length(wavelet_bases)*x
 #     return tv_f
 #   end
 #   end
-  
-
-
-
-
-
-
