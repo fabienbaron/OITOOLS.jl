@@ -375,7 +375,7 @@ end
 using OptimPackNextGen
 function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[])
   x_sol = []
-  if typeof(ft) == FFTPLAN
+  if typeof(ft) == Array{NFFTPlan{2,0,Float64},1}
     crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   else
@@ -388,7 +388,7 @@ end
 
 function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[])
   x_sol = []
-  if typeof(ft) == Array{FFTPLAN,1}
+  if typeof(ft) == Array{Array{NFFTPlan{2,0,Float64},1},1}
     crit = (x,g)->crit_multitemporal_nfft_fg(x, g, ft, data, printcolor=printcolor, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   else
