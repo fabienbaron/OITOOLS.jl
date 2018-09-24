@@ -2,15 +2,6 @@
 # Very Basic Image reconstruction code
 #
 using OITOOLS
-using LinearAlgebra
-
-function test_crash(x::Array{Float64,1}, fftplan, data::OIdata ) # criterion function for nfft
-  println(typeof(fftplan))
-  println(typeof(fftplan.fftplan_uv))
-  return 1
-end
-
-
 oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.2
 nx = 64
@@ -26,11 +17,6 @@ x_start = Array{Float64}(undef, nx, nx);
  x_start = vec(x_start)/sum(x_start);
 
 regularizers = [["centering", 1e4], ["tv", 7e3]];
-
-test_crash(x_start,  ft, data)
-
-
-
-#x = reconstruct(x_start, data, ft, regularizers = regularizers);
+x = reconstruct(x_start, data, ft, regularizers = regularizers);
 imdisp(x,pixscale=pixsize)
 writefits(reshape(x,nx,nx),"reconstruction.fits")
