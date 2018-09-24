@@ -8,14 +8,8 @@ nx = 137
 data = readoifits(oifitsfile)[1,1];
 fftplan = setup_nfft(data, nx, pixsize);
 #initial image is a simple Gaussian
-
-x_start = Array{Float64}(nx, nx);
-     for i=1:nx
-       for j=1:nx
-         x_start[i,j] = exp(-((i-(nx+1)/2)^2+(j-(nx+1)/2)^2)/(2*(nx/6)^2));
-       end
-     end
- x_start = vec(x_start)/sum(x_start);
+x_start = gaussian2d(nx,nx,nx/6);
+x_start = vec(x_start)/sum(x_start);
 
 
 # L-CURVE

@@ -13,7 +13,7 @@ From a fresh Julia 0.7 installation, use the package manager (```]``` key) then 
 
 ``` add https://github.com/emmt/LazyAlgebra.jl.git```
 
-``` add https://github.com/emmt/OptimPackNextGen.jl.git```
+``` add https://github.com/fabienbaron/OptimPackNextGen.jl.git```
 
 # Installation
 
