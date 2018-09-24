@@ -120,8 +120,8 @@ end
 #   # compute observables from all cvis
 #   visamp_model = abs.(cvis_model);
 #   visphi_model = angle.(cvis_model)*(180.0/pi);
-#   chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
-#   chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
+#   chi2_visamp = norm((visamp_model - data.visamp)./data.visamp_err)^2;
+#   chi2_visphi = norm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
 #   println("VISAMP: ", chi2_visamp/data.nvisamp, " VISPHI: ", chi2_visphi/data.nvisphi)
 #   return chi2_visamp+chi2_visphi
 # end
@@ -132,8 +132,8 @@ end
 #   # compute observables from all cvis
 #   visamp_model = abs.(cvis_model);
 #   visphi_model = angle.(cvis_model)*(180.0/pi);
-#   chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
-#   chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
+#   chi2_visamp = norm((visamp_model - data.visamp)./data.visamp_err)^2;
+#   chi2_visphi = norm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
 #   # Original formulas
 #   # g_visamp = 2.0*sum(((visamp_model-data.visamp)./data.visamp_err.^2).*real( conj(cvis_model./visamp_model).*dft),1);
 #   # g_visphi = 360.0/pi*sum(((mod360(visphi_model-data.visphi)./data.visphi_err.^2)./abs2.(cvis_model)).*(-imag(cvis_model).*real(dft)+real(cvis_model).*imag(dft)),1);
@@ -164,8 +164,8 @@ end
 #   # compute observables from all cvis
 #   visamp_model = abs.(cvis_model);
 #   visphi_model = angle.(cvis_model)*(180.0/pi);
-#   chi2_visamp = vecnorm((visamp_model - data.visamp)./data.visamp_err)^2;
-#   chi2_visphi = vecnorm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
+#   chi2_visamp = norm((visamp_model - data.visamp)./data.visamp_err)^2;
+#   chi2_visphi = norm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
 #   g_visamp = 2.0*real(nfft_adjoint(fftplan.fftplan_uv,(cvis_model./visamp_model.*(visamp_model-data.visamp)./data.visamp_err.^2)));
 #   g_visphi = 360.0/pi*-imag(nfft_adjoint(fftplan.fftplan_uv,cvis_model.*((mod360(visphi_model-data.visphi)./data.visphi_err.^2)./visamp_model.^2)));
 #   g[:] = vec(g_visamp + g_visphi) +  mu * tv_g;
@@ -216,7 +216,7 @@ function tvsq(x,tvsq_g; verb = false)
   y = reshape(x, nx, nx);
   dx = circshift(y,(0,1))-y;
   dy = circshift(y,(1,0))-y;
-  tvsq_f = vecnorm(dx)^2+vecnorm(dy)^2
+  tvsq_f = norm(dx)^2+norm(dy)^2
   tvsq_g[:] = 2*vec((dx+dy))
   if verb == true
   print(" TVSQ:", tvsq_f);
@@ -305,9 +305,9 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
   cvis_model = image_to_cvis_nfft(x, ftplan[1]);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-  chi2_v2 = vecnorm((v2_model - data.v2)./data.v2_err)^2;
-  chi2_t3amp = vecnorm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-  chi2_t3phi = vecnorm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+  chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
+  chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+  chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
   g_v2 = real(nfft_adjoint(ftplan[2], (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
   g_t3amp = real(nfft_adjoint(ftplan[3], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(ftplan[4],(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(ftplan[5],(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
   g_t3phi = -360.0/pi*imag(nfft_adjoint(ftplan[3], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
@@ -424,7 +424,7 @@ end
 
 
 #   function regwav(x,wav_g; wavelet_bases=[WT.db1, WT.db2, WT.db3, WT.db4, WT.db5, WT.db6, WT.db7, WT.db8, WT.haar])
-#     wav_f = vecnorm(W(x,wavelet_bases))^2
+#     wav_f = norm(W(x,wavelet_bases))^2
 #     wav_g[:] = 2*length(wavelet_bases)*x
 #     return tv_f
 #   end
