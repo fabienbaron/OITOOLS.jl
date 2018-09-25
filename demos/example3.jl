@@ -1,22 +1,19 @@
-include("oitools.jl");
+using OITOOLS
 include("satlas.jl");
 
-oifitsfile = "AlphaCenA.oifits";
+oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1];
-satlas_model = read_satlas("satlas_models/ld_satlas_surface.2t3300g-25m25");
+satlas_model = read_satlas("./data/ld_satlas_surface.2t3300g-25m25");
 
 
 # Compare visibiliy_satlas image and analytic methods
+cvis_model =[]
 for i = 1:5
-tic();
-cvis_model = visibility_satlas_img([6e0], data.v2_baseline, satlas_model);
-toc();
+    cvis_model = visibility_satlas_img([6e0], data.v2_baseline, satlas_model);
 end
 
 for i = 1:5
-tic();
-cvis_model = visibility_satlas_any([6e0], data.v2_baseline, satlas_model);
-toc();
+    cvis_model = visibility_satlas_any([6e0], data.v2_baseline, satlas_model);
 end
 
 # FITS

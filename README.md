@@ -2,10 +2,12 @@
 
 # Requirements
 
+As of September 2018, Julia 1.0 is required.
+
 The ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages are required. For model fitting, ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection). ```DNest4``` is likely to replace ```Multinest``` soon.
 For image reconstruction, ```OptimPackNextGen```.
 
-From a fresh Julia 0.7 installation, use the package manager (```]``` key) then do:
+From a fresh Julia 1.0 installation, use the package manager (```]``` key) then do:
 
 ``` add FITSIO#master``` (as of September 2018)
 
@@ -21,8 +23,7 @@ Add the package:
 ``` add https://github.com/fabienbaron/OITOOLS.jl.git```
 
 # Demos
-
-We provide several demo files:
+We provide several demo files in the demos/ subfolder
 * example1.jl: given OIFITS data and a model image, compute the chi2, and plot the interferometric observables
 * example2.jl: model OIFITS data using model-fitting (uniform disc, limb-darkened disc)
 * example3.jl: model OIFITS data using a SATLAS model (open-source stellar atmosphere model code)
