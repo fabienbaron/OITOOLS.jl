@@ -1,9 +1,8 @@
-include("oitools.jl");
-
+using OITOOLS
 #
 # EXAMPLE 2: fit uniform disc and limb-darkening law to data
 #
-oifitsfile = "AlphaCenA.oifits";
+oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
 uvplot(data)
 v2plot(data,logplot=true);

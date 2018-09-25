@@ -2,11 +2,13 @@ using SpecialFunctions
 #uniform disk
 #param[1] = diameter in mas
 #v_r = radius
-function visibility_ud(param, v_r;tol=1e-7)
+function visibility_ud(param, v_r;tol=1e-14)
 theta = param[1]/2.0626480624709636e8;
 V = 2.0*(besselj1.(pi*theta*v_r))./(pi*theta*v_r)
-indx= find(abs.(theta*v_r).<tol)
-V[indx]=1;
+indx= findall(abs.(theta*v_r).<tol)
+if indx !=[]
+    V[indx]=1;
+end
 return V
 end
 
@@ -15,7 +17,7 @@ function visibility_ldpow(param, v_r)
 maxk=200;
 theta = param[1]/2.0626480624709636e8;
 #f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*theta*v_r).^2).^k; # note: can lead to NaN due to typical gamma blow up
-f=k->(-1)^k*exp.(lgamma(param[2]/2+2)-lgamma(param[2]/2+k+2)-lgamma(k+1)+2k*log.(0.5*pi*theta*v_r));
+f=k->(-1)^k*exp.(lgamma(param[2]/2+2)-lgamma(param[2]/2+k+2)-lgamma(k+1).+2k*log.(0.5*pi*theta*v_r));
 V = sum(map(f,collect(0:maxk)));
 return V
 end
