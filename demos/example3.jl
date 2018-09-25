@@ -1,4 +1,5 @@
 using OITOOLS
+using LinearAlgebra
 include("satlas.jl");
 
 oifitsfile = "./data/AlphaCenA.oifits";
@@ -7,7 +8,6 @@ satlas_model = read_satlas("./data/ld_satlas_surface.2t3300g-25m25");
 
 
 # Compare visibiliy_satlas image and analytic methods
-cvis_model =[]
 for i = 1:5
     cvis_model = visibility_satlas_img([6e0], data.v2_baseline, satlas_model);
 end

@@ -107,6 +107,7 @@ subplot(212)
 plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
+ax = gca();
 ax[:grid](true);
 tight_layout()
 end
@@ -154,6 +155,7 @@ subplot(212)
 plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
+ax = gca();
 ax[:grid](true);
 tight_layout()
 end
@@ -269,7 +271,7 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
   xlabel("RA (mas)")
   ylabel("DEC (mas)")
  end
- 
+
   ax = gca()
   ax[:set_aspect]("equal")
   mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
@@ -279,13 +281,13 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
   ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
   ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
   ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
- 
+
   if colorbar == true
     divider = axgrid.make_axes_locatable(ax)
     cax = divider[:append_axes]("right", size="5%", pad=0.05)
     colorbar(image, cax=cax)
   end
- 
+
    if beamsize > 0
     c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
     ax[:add_artist](c)
@@ -293,4 +295,3 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
   tight_layout()
   end
 end
- 
