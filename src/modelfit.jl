@@ -23,6 +23,7 @@ function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; fitte
     return (minf,minx,cvis_model)
 end
 
+using Statistics
 
 function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD)
     npars=length(init_param)

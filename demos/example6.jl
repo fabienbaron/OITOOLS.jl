@@ -1,4 +1,4 @@
-include("../OITOOLS.jl/oitools.jl")
+using OITOOLS
 using NFFT
 function cvis_to_t3(cvis, indx1, indx2, indx3)
   t3 = cvis[indx1].*cvis[indx2].*conj(cvis[indx3]);

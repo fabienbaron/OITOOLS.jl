@@ -2,10 +2,9 @@
 # BOOTSTRAP EXAMPLE
 #
 
-include("oitools.jl");
-
+using OITOOLS
 # VLTI example
-oifitsfile = "AlphaCenA.oifits";
+oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1];
 
 # NPOI example
