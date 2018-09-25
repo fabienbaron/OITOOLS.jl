@@ -47,8 +47,8 @@ function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{
     xlabel("Value of parameter $(i)");
     ylabel("Boostrap samples");
     end
-    params_mean = mean(params, 2)
-    params_err = std(params, 2, corrected=false)
+    params_mean = mean(params, dims=2)
+    params_err = std(params, dims=2, corrected=false)
     println("Mode (maximum likelihood from original data): $(params_mode)")
     println("Boostrap mean: $(params_mean)");
     println("Bootstrap standard deviation: $(params_err)");
