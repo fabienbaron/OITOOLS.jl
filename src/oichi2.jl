@@ -337,15 +337,15 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
     epochs_weights=ones(Float64, nepochs);
   end
   if printcolor == []
-    printcolor=Array{Symbol}(nepochs);
-    printcolor[:]=:black
+    printcolor=Array{Symbol}(undef,nepochs);
+    printcolor[:] .= :black
   end
   npix = div(length(x),nepochs);
   f = 0.0;
   for i=1:nepochs # weighted sum -- should probably do the computation in parallel
     tslice = 1+(i-1)*npix:i*npix; # temporal slice
-    subg = Array{Float64}(npix);
-    print_with_color(printcolor[i], "Epoch $i ");
+    subg = Array{Float64}(undef, npix);
+    printstyled("Epoch $i ",color=printcolor[i]);
     f += epochs_weights[i]*crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=[], printcolor = printcolor[i], verb = verb);
     g[tslice] = epochs_weights[i]*subg
   end
@@ -355,7 +355,7 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
      if (regularizers[nepochs+1][1][1] == "temporal_tvsq")  & (nepochs>1)
       y = reshape(x,(npix,nepochs))
       temporalf = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
-      tv_g = Array{Float64}(npix,nepochs)
+      tv_g = Array{Float64}(undef, npix,nepochs)
       if nepochs>2
          tv_g[:,1] = 2*(y[:,1] - y[:,2])
          tv_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
@@ -366,7 +366,7 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
       end
       f+= temporalf
       g[:] += regularizers[nepochs+1][1][2]*vec(tv_g);
-      print_with_color(:yellow,"Temporal regularization: $temporalf\n")
+      printstyled("Temporal regularization: $temporalf\n", color=:yellow)
      end
     end
    return f;
