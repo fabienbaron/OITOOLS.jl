@@ -1,7 +1,6 @@
 # Example to load one of NPOI files with multiple targets
-include("oitools.jl");
-
-filename = "HD48329_oidata.fits";
+using OITOOLS
+filename = "./data/HD48329_oidata.fits";
 targetname =  "FKV0254";
 data = (readoifits(filename, targetname=targetname, filter_bad_data = true, filter_v2_snr_threshold=1.0))[1,1];
 v2plot(data.v2_baseline,data.v2,data.v2_err)

@@ -161,7 +161,7 @@ tight_layout()
 end
 
 function v2plot(data::OIdata;logplot=false,remove=false)
-v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true,remove=true);
+v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=logplot,remove=remove);
 end
 
 
