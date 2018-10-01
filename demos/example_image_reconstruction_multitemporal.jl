@@ -12,7 +12,7 @@ fftplan = setup_nfft_multiepochs(data, nx, pixsize);
 #initial image is a simple Gaussian
 x_start_single = [ exp(-((i-(nx+1)/2)^2+(j-(nx+1)/2)^2)/(2*(nx/6)^2)) for i=1:nx for j=1:nx]
 x_start_single /= sum(x_start_single);
-x_start = repmat(x_start_single, nepochs);
+x_start = repeat(x_start_single, nepochs);
 
 regularizers = [   [ ["centering", 1e4], ["tv", 7e3] ],  #epoch 1
                    [ ["tv", 7e3] ],  #epoch 2
@@ -22,4 +22,4 @@ regularizers = [   [ ["centering", 1e4], ["tv", 7e3] ],  #epoch 1
 x = reconstruct_multitemporal(x_start, data, fftplan, printcolor= printcolors, regularizers = regularizers);
 
 imdisp_temporal(x, nepochs, pixscale=pixsize)
-writefits(reshape(x,nx,nx),"reconstruction.fits")
+writefits(reshape(x,nx,nx,3),"reconstruction.fits")
