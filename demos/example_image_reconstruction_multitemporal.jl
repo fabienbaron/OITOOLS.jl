@@ -2,7 +2,7 @@
 # Image reconstruction code with temporal regularization
 #
 using OITOOLS
-oifitsfiles = ["AZCYG_JUN01_2018.oifits","AZCYG_JUL_2018.oifits","AZCYG_AUG25_2018.oifits"]
+oifitsfiles = ["./data/AZCYG_JUN01_2018.oifits","./data/AZCYG_JUL_2018.oifits","./data/AZCYG_AUG25_2018.oifits"]
 printcolors = [:red, :green, :blue];
 nepochs, tepochs, data = readoifits_multiepochs(oifitsfiles, filter_bad_data=true, force_full_t3 = true);
 pixsize = 0.2;

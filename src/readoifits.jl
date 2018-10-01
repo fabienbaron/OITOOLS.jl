@@ -1,6 +1,6 @@
 using FITSIO
 using OIFITS
-using Statistics  
+using Statistics
 
 include("remove_redundance.jl")
 mutable struct OIdata
@@ -482,10 +482,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         OIdataArr[ispecbin,itimebin].v2_flag = OIdataArr[ispecbin,itimebin].v2_flag[v2_good]
 
         # TODO: filter T3.t3amp
-          
+
         t3amp_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp )) .& (.!isnan.(OIdataArr[ispecbin,itimebin].t3amp_err )) .& (OIdataArr[ispecbin,itimebin].t3amp_err.>0.0)
         t3phi_good =  (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi ) ).& (.!isnan.(OIdataArr[ispecbin,itimebin].t3phi_err )) .& (OIdataArr[ispecbin,itimebin].t3phi_err.>0.0)
-        
+
         #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
         t3_good = []
         if force_full_t3 == false
@@ -493,7 +493,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         else
           t3_good = findall(.!OIdataArr[ispecbin,itimebin].t3_flag .& (t3amp_good .& t3phi_good) )
         end
-        
+
         good_uv_t3_1 = OIdataArr[ispecbin,itimebin].indx_t3_1[t3_good]
         good_uv_t3_2 = OIdataArr[ispecbin,itimebin].indx_t3_2[t3_good]
         good_uv_t3_3 = OIdataArr[ispecbin,itimebin].indx_t3_3[t3_good]
@@ -512,7 +512,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         OIdataArr[ispecbin,itimebin].t3_flag = OIdataArr[ispecbin,itimebin].t3_flag[t3_good]
 
         # uv points filtering
-        uv_select  = Array{Bool}(size(OIdataArr[ispecbin,itimebin].uv,2))
+        uv_select  = Array{Bool}(undef, size(OIdataArr[ispecbin,itimebin].uv,2))
         uv_select[:]  = false;
         uv_select[good_uv_v2]= true
         uv_select[good_uv_t3_1] =true
@@ -537,8 +537,8 @@ end
 
 function readoifits_multiepochs(oifitsfiles; filter_bad_data=false,  force_full_t3 = false)
   nepochs = length(oifitsfiles);
-  tepochs = Array{Float64}(nepochs);
-  data = Array{OIdata}(nepochs);
+  tepochs = Array{Float64}(undef, nepochs);
+  data = Array{OIdata}(undef, nepochs);
   for i=1:nepochs
     data[i] = readoifits(oifitsfiles[i], filter_bad_data=filter_bad_data, force_full_t3 =force_full_t3 )[1,1];
     tepochs[i] = data[i].mean_mjd;
