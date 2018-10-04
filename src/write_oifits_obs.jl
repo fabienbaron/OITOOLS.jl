@@ -57,7 +57,7 @@ function copy_oi_header(fileout,hduin) #filenone in this case is in FITSIO not c
   nkeys=length(header)
     for i = 4:nkeys #first four are created by create_img
         entry = FITSIO.read_key(hduin,i);
-        if typeof(entry[2]) != Void
+        if typeof(entry[2]) != Nothing
             fits_write_key(fileout,entry[1],entry[2],entry[3]);
         else
         fits_write_key(fileout,entry[1],"",entry[3]);
