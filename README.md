@@ -15,7 +15,7 @@ From a fresh Julia 1.0 installation, use the package manager (```]``` key) then 
 
 ``` add https://github.com/emmt/LazyAlgebra.jl.git```
 
-``` add https://github.com/fabienbaron/OptimPackNextGen.jl.git```
+``` add https://github.com/emmt/OptimPackNextGen.jl.git```
 
 # Installation
 
