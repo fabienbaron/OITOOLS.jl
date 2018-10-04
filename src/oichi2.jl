@@ -354,6 +354,8 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
    if length(regularizers)>nepochs
      if (regularizers[nepochs+1][1][1] == "temporal_tvsq")  & (nepochs>1)
       y = reshape(x,(npix,nepochs))
+      #needs to be normalized
+    #  typeof(y),size(y)
       temporalf = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
       tv_g = Array{Float64}(undef, npix,nepochs)
       if nepochs>2
