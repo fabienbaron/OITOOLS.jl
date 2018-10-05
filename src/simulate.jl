@@ -309,7 +309,7 @@ end
 
 
 function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true)
-    #simulate observation from input oifits and input image. 
+    #simulate observation from input oifits and input image.
     if typeof(fitsfiles)== String
         num_files = 1.0
     else
@@ -344,6 +344,7 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     copy_oi_header(f,oifits[1]);
 
     ioiarraytables=[]
+    iotargettables=[]
     swavetables=[]
     iwavetables=[]
     svistables=[]
@@ -356,6 +357,9 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     for itable=2:length(oifits)
         if (read_key(oifits[itable],"EXTNAME")[1] == "OI_ARRAY")
             push!(ioiarraytables,itable)
+        end
+        if (read_key(oifits[itable],"EXTNAME")[1] == "OI_TARGET")
+            push!(iotargettables,itable)
         end
         if (read_key(oifits[itable],"EXTNAME")[1] == "OI_WAVELENGTH")
             push!(swavetables,read_key(oifits[itable],"INSNAME")[1])
@@ -376,14 +380,23 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     #get OI_ARRY details (currently only handles one Array)
     for itable=1:length(ioiarraytables)
         telnames=read(oifits[ioiarraytables[itable]],"TEL_NAME")
+                 read(oifits[ioiarraytables[1]],"TEL_NAME")
         sta_names=read(oifits[ioiarraytables[itable]],"STA_NAME")
         sta_index=read(oifits[ioiarraytables[itable]],"STA_INDEX")
         tel_diams= read(oifits[ioiarraytables[itable]],"DIAMETER")
         staxyz=read(oifits[ioiarraytables[itable]],"STAXYZ");
         station_xyz=transpose(staxyz);
         N=length(read(oifits[ioiarraytables[itable]],"TEL_NAME"))
-        oi_array=[telnames,sta_names,sta_index,tel_diams,staxyz];
-        copy_oi_array(f,oifits[ioiarraytables[itable]],oi_array);
+        if read_key(oifits[ioiarraytables[itable]],"OI_REVN")[1] == 2
+            print,"HERE"
+            fov=read(oifits[ioiarraytables[itable]],"FOV")
+            fovtype=read(oifits[ioiarraytables[itable]],"FOVTYPE")
+            oi_array=[telnames,sta_names,sta_index,tel_diams,staxyz,fov,fovtype];
+            copy_oi_array(f,oifits[ioiarraytables[itable]],oi_array);
+        else
+            oi_array=[telnames,sta_names,sta_index,tel_diams,staxyz];
+            copy_oi_array(f,oifits[ioiarraytables[itable]],oi_array);
+        end
     end
 
     #get target array details
@@ -408,7 +421,7 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     target_array=[target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp];
     #copy_oi_target(f,oifits[ioiarraytables[length(ioiarraytables)]+1],target_array);
     #copy_oi_target(f,oifits[ioiarraytables[length(ioiarraytables)]-1],target_array); comment out to deal with EXTNAME issue check this
-    copy_oi_target(f,oifits[ioiarraytables[length(ioiarraytables)]+1],target_array);
+    copy_oi_target(f,oifits[iotargettables[length(iotargettables)]],target_array);
     #GET WAVE TABLES
     for itable=1:length(iwavetables)
         eff_wave=read(oifits[iwavetables[itable]],"EFF_WAVE")
