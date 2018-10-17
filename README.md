@@ -9,13 +9,20 @@ For image reconstruction, ```OptimPackNextGen```.
 
 From a fresh Julia 1.0 installation, use the package manager (```]``` key) then do:
 
-``` add FITSIO#master``` (as of September 2018)
+``` add FITSIO```
+
+``` add Libdl```
+
+``` add NLopt``` (optional, for model fitting)
 
 ``` add https://github.com/fabienbaron/OIFITS.jl.git```
 
-``` add https://github.com/emmt/LazyAlgebra.jl.git```
+``` add https://github.com/emmt/LazyAlgebra.jl.git``` (optional, for image reconstruction)
 
-``` add https://github.com/emmt/OptimPackNextGen.jl.git```
+``` add https://github.com/emmt/OptimPackNextGen.jl.git``` (optional, for image reconstruction)
+
+Check that everything works by doing:
+``` using OITOOLS```
 
 # Installation
 
