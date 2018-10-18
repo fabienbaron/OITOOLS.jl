@@ -9,13 +9,24 @@ For image reconstruction, ```OptimPackNextGen```.
 
 From a fresh Julia 1.0 installation, use the package manager (```]``` key) then do:
 
-``` add FITSIO#master``` (as of September 2018)
+``` add PyCall```
+
+``` add PyPlot```
+
+``` add FITSIO```
+
+``` add Libdl```
+
+``` add NLopt``` (optional, for model fitting)
 
 ``` add https://github.com/fabienbaron/OIFITS.jl.git```
 
-``` add https://github.com/emmt/LazyAlgebra.jl.git```
+``` add https://github.com/emmt/LazyAlgebra.jl.git``` (optional, for image reconstruction)
 
-``` add https://github.com/fabienbaron/OptimPackNextGen.jl.git```
+``` add https://github.com/emmt/OptimPackNextGen.jl.git``` (optional, for image reconstruction)
+
+Check that everything works by doing:
+``` using OITOOLS```
 
 # Installation
 
@@ -23,11 +34,20 @@ Add the package:
 ``` add https://github.com/fabienbaron/OITOOLS.jl.git```
 
 # Demos
-We provide several demo files in the demos/ subfolder
-* example1.jl: given OIFITS data and a model image, compute the chi2, and plot the interferometric observables
-* example2.jl: model OIFITS data using model-fitting (uniform disc, limb-darkened disc)
-* example3.jl: model OIFITS data using a SATLAS model (open-source stellar atmosphere model code)
-* example4.jl: use Bayesian model selection to pick the best limb-darkening law
-* example5.jl: simple image reconstruction framework (mostly for teaching & experimenting purpose)
-* example6.jl: writing OIFITS data to file
-* example_image_reconstruction_*.jl: various examples of image reconstruction
+We provide several demo files in the demos/ subfolder:
+* example_image_and_model.jl    : given OIFITS data and a model image, compute the chi2, and plot the interferometric observables
+* example_limb_darkening_fit.jl : given OIFITS data, do model-fitting (uniform disc, limb-darkened disc)
+* example_satlas_fit.jl         : model OIFITS data using a SATLAS model (open-source stellar atmosphere model code)
+* example_nested_sampling_fit.jl: use Bayesian model selection via nested sampling to compare limb-darkening laws
+* example_bootstrap_fit.jl      : use the boostrap method to estimate error bars
+* example_npoi_target_filter.jl : how to select only a given target within an OIFITS, and filter bad SNR data
+* example_fakedata_hourangle.jl : simulate observations from target image and Hour Angle, write OIFITS data to file
+* example_fakedata_databased.jl : simulate observations from target image and already existing OIFITS
+* example_image_reconstruction_dft.jl  : gradient-based image reconstruction using the exact DFT
+* example_image_reconstruction_nfft.jl : gradient-based image reconstruction using fast yet accurate NFFT
+* example_image_reconstruction_lcurve.jl : l-curve method to determine the regularization factor
+* example_image_reconstruction_epll.jl  : gradient-based image reconstruction using machine-learned priors (work in progress)
+* example_image_reconstruction_multitemporal.jl : gradient-based image reconstruction for time-variable images, with temporal regularization
+* example_image_reconstruction_multiwavelength.jl : (upcoming) gradient-based image reconstruction for spectrally dependent images, with transpectral regularization
+* example_oifitslib.jl                  : (upcoming) an interface to John Young's OIFITSLIB utilities (oimerge, oifilter, oicheck)
+
