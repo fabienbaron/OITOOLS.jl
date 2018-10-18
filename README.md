@@ -34,7 +34,7 @@ Add the package:
 ``` add https://github.com/fabienbaron/OITOOLS.jl.git```
 
 # Demos
-We provide several demo files in the demos/ subfolder
+We provide several demo files in the demos/ subfolder:
 * example_image_and_model.jl    : given OIFITS data and a model image, compute the chi2, and plot the interferometric observables
 * example_limb_darkening_fit.jl : given OIFITS data, do model-fitting (uniform disc, limb-darkened disc)
 * example_satlas_fit.jl         : model OIFITS data using a SATLAS model (open-source stellar atmosphere model code)
@@ -48,6 +48,6 @@ We provide several demo files in the demos/ subfolder
 * example_image_reconstruction_lcurve.jl : l-curve method to determine the regularization factor
 * example_image_reconstruction_epll.jl  : gradient-based image reconstruction using machine-learned priors (work in progress)
 * example_image_reconstruction_multitemporal.jl : gradient-based image reconstruction for time-variable images, with temporal regularization
-* example_image_reconstruction_multiwavelength.jl : gradient-based image reconstruction for spectrally dependent images, with transpectral regularization
+* example_image_reconstruction_multiwavelength.jl : (upcoming) gradient-based image reconstruction for spectrally dependent images, with transpectral regularization
 * example_oifitslib.jl                  : (upcoming) an interface to John Young's OIFITSLIB utilities (oimerge, oifilter, oicheck)
 
