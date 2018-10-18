@@ -8,11 +8,11 @@ facility_config_file="./data/example_facility_config.txt"
 obsv_config_file="./data/example_obs_config.txt"
 combiner_config_file="./data/example_combiner_config.txt"
 wave_config_file="./data/example_wave_config.txt"
-hour_angles=[-1,0,1]
-RA=18.59
+hour_angles=range(-3,3,20)
+RA=20.0
 image_file="./data/2004true.fits"
 pixsize=0.101
-out_file="!./data/2004testsimulation.fits"
+out_file="!./data/2004testsimulation.oifits"
 
 simulate_ha(facility_config_file,obsv_config_file,combiner_config_file,wave_config_file,hour_angles,RA,image_file,pixsize,out_file)
 
@@ -26,7 +26,7 @@ imdisp(x_true, pixscale = pixsize, tickinterval = 1.0, beamsize = 1.0, beamlocat
 
 #read the data file
 
-oifitsfile = "./data/2004testsimulation.fits";
+oifitsfile = "./data/2004testsimulation.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
 uvplot(data);
 v2plot(data,logplot=true);# Alternatively, one can do v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
