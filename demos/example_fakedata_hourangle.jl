@@ -8,7 +8,7 @@ facility_config_file="./data/example_facility_config.txt"
 obsv_config_file="./data/example_obs_config.txt"
 combiner_config_file="./data/example_combiner_config.txt"
 wave_config_file="./data/example_wave_config.txt"
-hour_angles=range(-3,3,20)
+hour_angles=range(-3,3,length=20)
 RA=20.0
 image_file="./data/2004true.fits"
 pixsize=0.101
