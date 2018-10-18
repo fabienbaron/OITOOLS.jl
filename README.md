@@ -9,6 +9,10 @@ For image reconstruction, ```OptimPackNextGen```.
 
 From a fresh Julia 1.0 installation, use the package manager (```]``` key) then do:
 
+``` add PyCall```
+
+``` add PyPlot```
+
 ``` add FITSIO```
 
 ``` add Libdl```
