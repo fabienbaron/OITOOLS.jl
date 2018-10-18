@@ -1,6 +1,6 @@
 using FITSIO.Libcfitsio;
 using OIFITS;
-
+using Dates;
 #=
 function get_extname(filein)
     num=fits_get_num_hdus(filein)
@@ -73,9 +73,9 @@ function copy_oi_array(fileout,hduin,arrays)
   =#
   header=FITSIO.read_header(hduin);
   tfields = 5;
-  ttype= ["TEL_NAME", "STA_NAME", "STA_INDEX", "DIAMETER", "STAXYZ"]#,"FOV", "FOVTYPE"];
-  tform = ["16A", "16A", "I", "E", "3D"]#, "D", "6A"];
-  tunit = ["\0", "\0", "\0", "m", "m"]# "arcsec", ""];
+  ttype= ["TEL_NAME", "STA_NAME", "STA_INDEX", "DIAMETER", "STAXYZ","FOV", "FOVTYPE"];
+  tform = ["16A", "16A", "I", "E", "3D", "D", "16A"];
+  tunit = ["\0", "\0", "\0", "m", "m", "arcsec", ""];
   extname = header["EXTNAME"];
   extver = header["EXTVER"]
   revision = header["OI_REVN"]; #1 or 2 depending on which format XYZ
@@ -84,27 +84,31 @@ function copy_oi_array(fileout,hduin,arrays)
   arrayx=header["ARRAYX"]
   arrayy=header["ARRAYY"]
   arrayz=header["ARRAYZ"]
-  coldefs = [(ttype[1],tform[1],tunit[1]),(ttype[2],tform[2],tunit[2]),(ttype[3],tform[3],tunit[3]),
-          (ttype[4],tform[4],tunit[4]),(ttype[5],tform[5],tunit[5])];
+  if revision == 2
+    tfields = 7;
+      coldefs = [(ttype[1],tform[1],tunit[1]),(ttype[2],tform[2],tunit[2]),(ttype[3],tform[3],tunit[3]),
+            (ttype[4],tform[4],tunit[4]),(ttype[5],tform[5],tunit[5]),(ttype[6],tform[6],tunit[6]),(ttype[7],tform[7],tunit[7])];
           #= OFITS2 needs to add ,(ttype[6],tform[6],tunit[6]),(ttype[7],tform[7],tunit[7])];=#
-  fits_create_binary_tbl(fileout,0,coldefs,extname);
-  fits_write_key(fileout,"EXTNAME",extname,"name of the binary extension")
-  fits_write_key(fileout,"EXTEND",extver,"Extension version");
-  fits_write_key(fileout,"OI_REVN",revision,"Revision number of the table definition");
-  fits_write_key(fileout,"ARRNAME",arrname,"Array Name");
-  fits_write_key(fileout,"FRAME",frame,"Coordinate Frame");
-  fits_write_key(fileout,"ARRAYX",arrayx,"[m] Array center x coordinate");
-  fits_write_key(fileout,"ARRAYY",arrayy,"[m] Array center y coordinate");
-  fits_write_key(fileout,"ARRAYZ",arrayz,"[m] Array center z coordinate");
-  fits_write_col(fileout, 1, 1, 1, convert(Array{String},arrays[1]));
-  fits_write_col(fileout, 2, 1, 1, convert(Array{String},arrays[2]));
-  fits_write_col(fileout, 3, 1, 1, convert(Array{Int16},arrays[3]));
-  fits_write_col(fileout, 4, 1, 1, convert(Array{Float32},arrays[4]));
-  fits_write_col(fileout, 5, 1, 1, convert(Array{Float64,2},arrays[5]));
-#= OIFITS2 STUFF
-int revision = 2, irow;
-  fits_write_key(fptr, TSTRING, "ARRNAOI_VIS2 ME", array.arrname,
-                 "Array name", pStatus);
+          fits_create_binary_tbl(fileout,0,coldefs,extname);
+          fits_write_key(fileout,"EXTNAME",extname,"name of the binary extension")
+          fits_write_key(fileout,"EXTEND",extver,"Extension version");
+          fits_write_key(fileout,"OI_REVN",revision,"Revision number of the table definition");
+          fits_write_key(fileout,"ARRNAME",arrname,"Array Name");
+          fits_write_key(fileout,"FRAME",frame,"Coordinate Frame");
+          fits_write_key(fileout,"ARRAYX",arrayx,"[m] Array center x coordinate");
+          fits_write_key(fileout,"ARRAYY",arrayy,"[m] Array center y coordinate");
+          fits_write_key(fileout,"ARRAYZ",arrayz,"[m] Array center z coordinate");
+          fits_write_col(fileout, 1, 1, 1, convert(Array{String},arrays[1]));
+          fits_write_col(fileout, 2, 1, 1, convert(Array{String},arrays[2]));
+          fits_write_col(fileout, 3, 1, 1, convert(Array{Int16},arrays[3]));
+          fits_write_col(fileout, 4, 1, 1, convert(Array{Float32},arrays[4]));
+          fits_write_col(fileout, 5, 1, 1, convert(Array{Float64,2},arrays[5]));
+          fits_write_col(fileout, 6, 1, 1, convert(Array{Float64,1},arrays[6]));
+          fits_write_col(fileout, 7, 1, 1, convert(Array{String,1},arrays[7]));
+          #= OIFITS2 STUFF
+          int revision = 2, irow;
+          fits_write_key(fptr, TSTRING, "ARRNAOI_VIS2 ME", array.arrname,
+            "Array name", pStatus);
   fits_write_key(fptr, TSTRING, "FRAME", array.frame,
                  "Coordinate frame", pStatus);
   fits_write_key(fptr, TDOUBLE, "ARRAYX", &array.arrayx,
@@ -122,6 +126,25 @@ int revision = 2, irow;
 
   #OIFITS2 needs additional columns which might be more difficult as OIFITS doesn't have the get procedures for those yet
     #if error status ==1 return 0; this is an error check I might put in later
+    else
+        coldefs = [(ttype[1],tform[1],tunit[1]),(ttype[2],tform[2],tunit[2]),(ttype[3],tform[3],tunit[3]),
+              (ttype[4],tform[4],tunit[4]),(ttype[5],tform[5],tunit[5])];
+            #= OFITS2 needs to add ,(ttype[6],tform[6],tunit[6]),(ttype[7],tform[7],tunit[7])];=#
+            fits_create_binary_tbl(fileout,0,coldefs,extname);
+            fits_write_key(fileout,"EXTNAME",extname,"name of the binary extension")
+            fits_write_key(fileout,"EXTEND",extver,"Extension version");
+            fits_write_key(fileout,"OI_REVN",revision,"Revision number of the table definition");
+            fits_write_key(fileout,"ARRNAME",arrname,"Array Name");
+            fits_write_key(fileout,"FRAME",frame,"Coordinate Frame");
+            fits_write_key(fileout,"ARRAYX",arrayx,"[m] Array center x coordinate");
+            fits_write_key(fileout,"ARRAYY",arrayy,"[m] Array center y coordinate");
+            fits_write_key(fileout,"ARRAYZ",arrayz,"[m] Array center z coordinate");
+            fits_write_col(fileout, 1, 1, 1, convert(Array{String},arrays[1]));
+            fits_write_col(fileout, 2, 1, 1, convert(Array{String},arrays[2]));
+            fits_write_col(fileout, 3, 1, 1, convert(Array{Int16},arrays[3]));
+            fits_write_col(fileout, 4, 1, 1, convert(Array{Float32},arrays[4]));
+            fits_write_col(fileout, 5, 1, 1, convert(Array{Float64,2},arrays[5]));
+        end
  end
 
 
