@@ -3,6 +3,90 @@ using DelimitedFiles
 using FITSIO
 using FITSIO.Libcfitsio
 
+
+function hour_angle_calc(day,month,year,hour,minutes,seconds,longitude,ra;dst="no",ldir="W",timezone="UTC")
+    """
+    This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
+    of observations.  The program assumes UTC but changing the timezone argument to "local" will adjust the
+    input times accordingly.
+
+    Arguments:
+    Manual Inputs:
+        -day,month,year,hour,min,sec: all dictate the time/date of the input.  Correction to UTC is done
+                within code if necessary/dictated.
+        -longitude: degree (in decimal form) value of the longitudinal location of the telescope.
+        -ra: [h,m,s] array of the right ascension of the desired object.
+    Optional Inputs:
+        -dst: ["yes","no"] whether daylight savings time needs to be accounted for.
+        -ldir: ["W","E"] defines the positive direction for change in longitude (should be kept to W for
+                best applicability).
+        -timezone: ["UTC","local"] states whether the time inputs are UTC or not.  If not the code will
+                adjust the times as needed with the given longitude.
+
+    Accuracy:
+        -With preliminary testing the LST returned is accurate to within a few minutes when compared with other
+        calculators (MORE TESTING AND QUANTITATIVE ERROR NEEDS TO BE ESTABLISHED).
+    """
+    if ldir == "W"
+        alpha = -1.
+    elseif ldir == "E"
+        alpha = 1.
+    end
+    rah=ra[1]
+    ram=ra[2]
+    ras=ra[3]
+    raht = rah+(ram/60.)+(ras/3600.) #Converts the RA array into a hour decimal
+    h_ad = alpha*longitude/15 #Measures the hours offset due to longitude
+    if timezone != "UTC"
+        if dst=="no"
+            hour -= h_ad
+        elseif dst=="yes"
+            h_ad += 1
+            hour -= h_ad
+        end
+        if hour > 24
+            hour -= 24
+            day += 1
+        elseif hour < 0
+            hour +=24
+            day -= 1
+        end
+    end
+    """
+    Below: the code calculates first the Julian Date given the input time and then determines the GMST based
+    on this JD.  This is then converted to LST and finally to Local Hour Angle (LHA or HA).  The final result
+    is in terms of hours for both LST and HA.
+    """
+    jdn = floor((1461*(year+4800+(month-14)/12))/4+(367*(month-2-12*((month-14)/12)))/12-(3*((year+4900+(month-14)/12)/100))/4+day-32075)
+    jdn = jdn + ((hour-12)/24)+(minutes/1440)+(seconds/86400)
+    jd0 = jdn-2451545.0
+    #gmst = 6.697374558 + (0.06570982441908*(jd0-(hour/24.))) + (1.00273790935*hour) + 0.000026*(jd0/36525)^2
+    t = jd0/36525.0
+    H = 24110.54841 + 8640184.812866*t + 0.093104*(t^2) - (6.2*10.0^(-6))*(t^3)
+    w = 1.00273790935 + (5.9*10.0^(-11)*t)
+    tt = hour*3600 + minutes*60 + seconds
+    gmst = H + w*(tt) #seconds
+    gmst = gmst/3600 #hours
+    if gmst > 24
+        subfact = floor(gmst/24)
+        gmst -= (24*subfact)
+        lst = (gmst)+h_ad
+    else
+        lst = gmst+h_ad
+    end
+    if lst < 0
+        lst += 24
+    elseif lst > 24
+        subfact = floor(lst/24)
+        lst -= (24*subfact)
+        #lst -= 24.
+    end
+    hour_angle = lst-raht
+    return lst,hour_angle
+end
+
+
+
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
 
 #Functions used in main Functions
@@ -25,16 +109,16 @@ function get_v2_baselines(N,station_xyz)
     v2_stations_nonredun=Array{Int64}(undef,2,nv2);
     v2_indx      = Array{Int64}(undef,nv2);
     baseline_list = Array{String}(undef,nv2);
-    indx = 1
+    ind = 1
     for i=1:N+1
       for j=i+1:N
-            v2_baselines[:,indx] .= station_xyz[j]-station_xyz[i];
-            v2_stations[:,indx] = [i,j];
-            v2_indx[indx] = indx;
-            indx += 1
+            v2_baselines[:,ind] .= station_xyz[j,:]-station_xyz[i,:];
+            v2_stations[:,ind] = [i,j];
+            v2_indx[ind] = ind;
+            ind += 1
       end
     end
-    return nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,indx
+    return nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind
 end
 
 function v2mapt3(i,j,v2_stations)
@@ -53,26 +137,32 @@ function get_t3_baselines(N,station_xyz,v2_stations)
     t3_indx_1  = Array{Int64}(undef,nt3);
     t3_indx_2  = Array{Int64}(undef,nt3);
     t3_indx_3  = Array{Int64}(undef,nt3);
-    indx = 1;
+    ind = 1;
     for i=1:N
       for j=i+1:N-1
         for k=j+1:N
-            t3_baselines[:, 1, indx] .= station_xyz[j]-station_xyz[i];
-            t3_baselines[:, 2, indx] .= station_xyz[k]-station_xyz[j];
-            t3_baselines[:, 3, indx] .= station_xyz[i]-station_xyz[k];
-            t3_stations[:,indx]=[i,j,k];
-            t3_indx_1[indx] = v2mapt3(i,j,v2_stations);
-            t3_indx_2[indx] = v2mapt3(j,k,v2_stations);
-            t3_indx_3[indx] = v2mapt3(i,k,v2_stations);
-            indx += 1
+            t3_baselines[:, 1, ind] .= station_xyz[j,:]-station_xyz[i,:];
+            t3_baselines[:, 2, ind] .= station_xyz[k,:]-station_xyz[j,:];
+            t3_baselines[:, 3, ind] .= station_xyz[i,:]-station_xyz[k,:];
+            t3_stations[:,ind]=[i,j,k];
+            t3_indx_1[ind] = v2mapt3(i,j,v2_stations);
+            t3_indx_2[ind] = v2mapt3(j,k,v2_stations);
+            t3_indx_3[ind] = v2mapt3(i,k,v2_stations);
+            ind += 1
         end
       end
     end
-    return nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,indx
+    return nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind
 end
 
 function get_uv(l,h,λ,δ,v2_baselines,nhours)
     # Merge all uv
+    #l=longitude (scalar)
+    #h=hour angles (array)
+    #λ = wavelength (array)
+    #δ =RA (sclar)
+    #v2_baselines (array)
+    #nhours (sclar)
     #Use following expression only if there are missing baselines somewhere
     #vis_baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
     #Expression to use for pure simulation where the full complement of v2 and t3 are created
@@ -80,9 +170,12 @@ function get_uv(l,h,λ,δ,v2_baselines,nhours)
     nuv = size(vis_baselines, 2);
     # Baselines to proj Baselines (uv m)
     # Now compute the UV coordinates, again according to the APIS++ standards.
-    u_M = -sin.(l)*sin.(h) .* vis_baselines[1,:] .+ cos.(h) .* vis_baselines[2,:]+cos.(l)*sin.(h).*vis_baselines[3,:];
-    v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)) .* vis_baselines[1,:] + sin(δ)*sin.(h) .* vis_baselines[2,:]+(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* vis_baselines[3,:];
-    w_M =  (-sin.(l)*cos(δ)* cos.(h).+cos.(l)*sin(δ)).* vis_baselines[1,:] - cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ)) .* vis_baselines[3,:];
+    #u_M = -sin.(l)*sin.(h) .* vis_baselines[1,:] .+ cos.(h) .* vis_baselines[2,:]+cos.(l)*sin.(h).*vis_baselines[3,:];
+    u_M = sin.(h) .* vis_baselines[1,:] .+ cos.(h) .* vis_baselines[2,:]
+    #v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)) .* vis_baselines[1,:] + sin(δ)*sin.(h) .* vis_baselines[2,:]+(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* vis_baselines[3,:];
+    v_M = -sin(δ)*cos.(h).* vis_baselines[1,:] .+ sin(δ)*sin.(h) .* vis_baselines[2,:].+cos(δ) .* vis_baselines[3,:];
+    #w_M =  (-sin.(l)*cos(δ)* cos.(h).+cos.(l)*sin(δ)).* vis_baselines[1,:] - cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ)) .* vis_baselines[3,:];
+    w_M =  cos(δ)* cos.(h).* vis_baselines[1,:] .- cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ sin(δ) .* vis_baselines[3,:];
     u_M = -u_M
     v_M = -v_M
     # proj baselines to (uv wav)
@@ -229,21 +322,25 @@ function simulate_ha(facility_config_file,obsv_info_file,comb_file,wave_file,hou
     nhours = length(hour_angles);
     h = hour_angles' .* pi / 12;
     l=lat/180*pi;
+    #l=90/180*pi
     nw=length(λ)
     N=ntel[1]
     staxyz=Array{Float64}(undef,3,N);
     for i=1:N
             staxyz[:,i]=station_xyz[i,:];
     end
-    nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,indx=get_v2_baselines(N,station_xyz);
-    nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,indx=get_t3_baselines(N,station_xyz,v2_stations);
+
+
+
+    nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind=get_v2_baselines(N,station_xyz);
+    nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind=get_t3_baselines(N,station_xyz,v2_stations);
     nuv,uv,u_M,v_M,w_M=get_uv(l,h,λ,δ,v2_baselines,nhours)
     v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
     v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err=get_simulated_image(image_file,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
 
     #setup arrays for OIFITS format
     sta_names=tel_names
-    sta_index=Int64.(collect(range(1,step=N,length=N)))
+    sta_index=Int64.(collect(range(1,step=1,length=N)))
 
     #input telescope data
 

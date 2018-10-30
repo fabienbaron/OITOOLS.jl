@@ -1,15 +1,43 @@
 using OITOOLS
 
+
 #
 #EXAMPLE 8
 #Simulate an observation using an input image, given telescope parameters, and input hour angles
 
+days=[30]
+months=[10]
+hours=[0]
+minutes=[0]
+secs=[0]
+years=[2018]
+longitude=118.0570313111
+lstsarr=[]
+hour_angles=[]
+ra=[20,57,59.44]
+for i=1:length(days)
+    for j=1:length(months)
+        for k=1:length(hours)
+            for l=1:length(minutes)
+                for m=1:length(secs)
+                    for n=1:length(years)
+                        lsts,hour_angle=hour_angle_calc(days[i],months[j],years[n],hours[k],minutes[l],secs[m],longitude,ra)
+                        push!(lstsarr,lsts)
+                        push!(hour_angles,hour_angle)
+                    end
+                end
+            end
+        end
+    end
+end
+lst_hours=floor.(lstsarr)
+lstmin=floor.((lst.-floor.(lstsarr)).*60)
+lstsec=(((lst.-floor.(lstsarr)).*60)-floor.(lstmin))*60
 facility_config_file="./data/example_facility_config.txt"
 obsv_config_file="./data/example_obs_config.txt"
 combiner_config_file="./data/example_combiner_config.txt"
 wave_config_file="./data/example_wave_config.txt"
-hour_angles=range(-3,3,length=20)
-RA=20.0
+
 image_file="./data/2004true.fits"
 pixsize=0.101
 out_file="!./data/2004testsimulation.oifits"
