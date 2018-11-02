@@ -374,6 +374,90 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
    return f;
 end
 
+
+function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], verb = false)
+  nwavs = length(ft);
+  if printcolor == []
+    printcolor=Array{Symbol}(undef,nwavs);
+    printcolor[:] .= :black
+  end
+  npix = div(length(x),nwavs);
+  f = 0.0;
+  for i=1:nwavs # weighted sum -- should probably do the computation in parallel
+    tslice = 1+(i-1)*npix:i*npix; # chromatic slice
+    subg = Array{Float64}(undef, npix);
+    printstyled("Spectral channel $i ",color=printcolor[i]);
+    f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=[], printcolor = printcolor[i], verb = verb);
+    g[tslice] = subg
+  end
+
+  # transspectral regularization
+   if length(regularizers)>nwavs
+     if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>1)
+      y = reshape(x,(npix,nwavs))
+      #needs to be normalized
+    #  typeof(y),size(y)
+      trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
+      trsp_g = Array{Float64}(undef, npix,nwavs)
+      if nwavs>2
+         trsp_g[:,1] = 2*(y[:,1] - y[:,2])
+         trsp_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
+         trsp_g[:,end] = 2*(y[:,end] - y[:,end-1])
+      else
+         trsp_g[:,1] = 2*(y[:,1]-y[:,2]);
+         trsp_g[:,2] = 2*(y[:,2]-y[:,1]);
+      end
+      f+= trsp_f
+      g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
+      printstyled("Trans-spectral regularization: $trsp_f\n", color=:yellow)
+     end
+    end
+   return f;
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 using OptimPackNextGen
 function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[])
   x_sol = []
@@ -395,11 +479,23 @@ function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   else
     error("Sorry, polytemporal DFT methods not implemented yet");
-    #crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
-    #x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   end
 return x_sol
 end
+
+
+
+function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; printcolor= [], verb = true, maxiter = 100, regularizers =[])
+  x_sol = []
+  if typeof(ft) == Array{Array{NFFTPlan{2,0,Float64},1},1}
+    crit = (x,g)->crit_polychromatic_nfft_fg(x, g, ft, data, printcolor=printcolor, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
+    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+  else
+    error("Sorry, polychromatic DFT methods not implemented yet");
+  end
+return x_sol
+end
+
 
 
 

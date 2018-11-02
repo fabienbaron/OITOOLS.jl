@@ -172,30 +172,11 @@ function get_uv(l,h,λ,δ,v2_baselines,nhours,station_xyz,nv2)
     #v2_baselines (array)
     #nhours (sclar)
     #Use following expression only if there are missing baselines somewhere
-    #vis_baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
-    #Expression to use for pure simulation where the full complement of v2 and t3 are created
-    #geo_baselines = Array{Float64}(undef,3,nv2);
     vis_baselines = deepcopy(v2_baselines)
     nuv = size(vis_baselines, 2);
-    #l=l[1]
-    # Baselines to proj Baselines (uv m)
-    # Now compute the UV coordinates, again according to the APIS++ standards.
-    #localtogeo=[[0,1,0] [-sin(l),0,cos(l)] [cos(l),0,sin(l)]]*station_xyz'
-    #indcount=1
-    #for i=1:N+1
-     # for j=i+1:N
-    #        geo_baselines[:,indcount] .= localtogeo[:,j]-localtogeo[:,i];
-    #        indcount += 1
-     # end
-    #end
     u_M = -sin.(l)*sin.(h) .*vis_baselines[1,:]  .+ cos.(h) .* vis_baselines[2,:]+cos.(l)*sin.(h).*vis_baselines[3,:];
-    #u_M = sin.(h) .*geo_baselines[1,:] .+ cos.(h).*geo_baselines[2,:]
     v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)) .* vis_baselines[1,:] + sin(δ)*sin.(h) .* vis_baselines[2,:]+(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* vis_baselines[3,:];
-    #v_M = -sin(δ)*cos.(h).*geo_baselines[1,:] .+ sin(δ)*sin.(h) .*geo_baselines[2,:].+cos(δ) .*geo_baselines[3,:];
     w_M =  (sin.(l)*cos(δ)* cos.(h).+cos.(l)*sin(δ)).* vis_baselines[1,:] - cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ)) .* vis_baselines[3,:];
-    #w_M =  cos(δ)* cos.(h).*geo_baselines[1,:] .- cos(δ)* sin.(h) .*geo_baselines[2,:]  .+ sin(δ) .*geo_baselines[3,:];
-    u_M = u_M
-    v_M = v_M
     # proj baselines to (uv wav)
     u = reshape((1 ./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
     v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));

@@ -5,14 +5,11 @@ using OITOOLS
 #EXAMPLE 8
 #Simulate an observation using an input image, given telescope parameters, and input hour angles
 
-
-
-dates=[2018  3 5 10 13 56.7; 2018 3 5 10 13 56.7]
+dates=[2018  3 5 10 13 56.7; 2018 3 5 10 15 56.7]
 longitude=118.0570313111
 ra=[20,57,59.44]
 dec=46.4668258840408
 lsts,hour_angles=hour_angle_calc(dates,longitude,ra)
-
 lst_hours=floor.(lsts)
 lstmin=floor.((lsts.-floor.(lsts)).*60)
 lstsec=(((lsts.-floor.(lsts)).*60)-floor.(lstmin))*60
