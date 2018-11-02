@@ -9,8 +9,6 @@ using OITOOLS
 
 dates=[2018  3 5 10 13 56.7; 2018 3 5 10 13 56.7]
 longitude=118.0570313111
-ra=[20,57,59.44]
-dec=46.4668258840408
 lsts,hour_angles=hour_angle_calc(dates,longitude,ra)
 
 lst_hours=floor.(lsts)
@@ -24,8 +22,12 @@ wave_config_file="./data/example_wave_config.txt"
 image_file="./data/testmask.fits" #A 4.0 mas disk at 0.1 pix/mas in 64x64 grid
 pixsize=0.1
 out_file="!./data/test_ha_sim.oifits"
-hour_angles=range(-1.07,stop=2.39,length=(38))
-simulate_ha(facility_config_file,obsv_config_file,combiner_config_file,wave_config_file,hour_angles,dec,image_file,pixsize,out_file)
+
+facility_out=read_facility_file(facility_config_file,facility_info)
+observatory_out=read_obs_file(obsv_config_file,obsv_info)
+combiner_out=read_comb_file(combiner_config_file,combiner_info)
+wave_out=read_wave_file(wave_config_file,wave_info)
+simulate_ha(facility_out,observatory_out,combiner_out,wave_out,hour_angles,dec,image_file,pixsize,out_file)
 
 #Compare simulated data to impate
 
