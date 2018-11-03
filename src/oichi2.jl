@@ -46,6 +46,21 @@ function setup_nfft_multiepochs(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,Flo
 return fftplan_multi
 end
 
+
+function setup_nfft_polychromatic(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,Float64},1},1}
+  nwavs = size(data,1);
+  scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+  fftplan_multi = Array{Any}(undef, nwavs);
+  for i=1:nepochs
+    fftplan_multi[i]=setup_nfft(data[i], nx, pixsize);
+  end
+return fftplan_multi
+end
+
+
+
+
+
 function mod360(x)
   mod.(mod.(x.+180.0,360.0).+360.0, 360.0) .- 180.0
 end
