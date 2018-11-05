@@ -574,8 +574,15 @@ function time_split(mjd,period;mjd_start=mjd[1])
   return temporalbin
 end
 
-function readfits(fitsfile)
-return (read((FITS(fitsfile))[1]));
+function readfits(fitsfile; normalize = false, vectorize=false)
+x = (read((FITS(fitsfile))[1]))
+if normalize == true
+ x ./= sum(x)
+end
+if vectorize == x_true
+    x = vec(x)
+end
+return x;
 end
 
 function writefits(data, fitsfile)
