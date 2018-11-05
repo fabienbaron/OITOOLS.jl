@@ -201,19 +201,20 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
- function compute_observables(x,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
-      #nfft_plan = setup_nfft(-uv, nx, pixsize)
-     #cvis_model = image_to_cvis_nfft(x, nfft_plan)https://fivethirtyeight.com/
-     dft = setup_dft(-uv, nx, pixsize);
+ function compute_observables(image,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+     nx = size(image,1);
+     x = vec(image)/sum(image);
+     dft = setup_dft(uv, nx, pixsize);
      cvis_model = image_to_cvis_dft(x, dft);
      v2_model = cvis_to_v2(cvis_model, v2_indx_w);
-     t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
+     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
      #Add noise
      v2_model_err = 2.0/100*v2_model .+ 1e-5
-     v2_model += v2_model_err.*randn(length(v2_model))
      t3amp_model_err = 2.0/100*t3amp_model .+ 1e-6
-     t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
      t3phi_model_err = zeros(length(t3phi_model)) .+ .5 # degree  -- there is another way of setting this with Haniff formula
+
+     v2_model    += v2_model_err.*randn(length(v2_model))
+     t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
      t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
     return v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err
  end
@@ -335,7 +336,9 @@ function simulate_ha(facility_config_file,obsv_info_file,comb_file,wave_file,hou
     v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
 
     #simulate observation using input image file and pixsize
-    x = readfits(image_file, normalize=true, vectorize=true);
+    x = readfits(image_file)
+    # TODO: "wavelength to image" vector, "epoch to image" vector
+    # TODO: test the size of x, handle temporal and polychromatic loops
     v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err=compute_observables(x,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
 
     #setup arrays for OIFITS format
@@ -376,6 +379,7 @@ function simulate_ha(facility_config_file,obsv_info_file,comb_file,wave_file,hou
 
     v2_model_stations=repeat(v2_stations,1,nhours);
     t3_model_stations=repeat(t3_stations,1,nhours);
+
     v2_model=transpose(v2_model);
     v2_model_err=transpose(v2_model_err);
     t3amp_model=transpose(t3amp_model);
