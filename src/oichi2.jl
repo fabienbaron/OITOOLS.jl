@@ -51,7 +51,7 @@ function setup_nfft_polychromatic(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,F
   nwavs = size(data,1);
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
   fftplan_multi = Array{Any}(undef, nwavs);
-  for i=1:nepochs
+  for i=1:nwavs
     fftplan_multi[i]=setup_nfft(data[i], nx, pixsize);
   end
 return fftplan_multi
@@ -429,49 +429,6 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
     end
    return f;
 end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 using OptimPackNextGen
 function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[])

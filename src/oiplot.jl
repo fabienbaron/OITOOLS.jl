@@ -247,13 +247,14 @@ end
 end
 
 #TODO: work for rectangular
-function imdisp_polychromatic(image_vector::Union{Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
 
-  if typeof(image_vector)==Array{Float64,2}
-      nwavs = size(image_vector,2)
+if typeof(image_vector)==Array{Float64,2}
+    nwavs = size(image_vector,2)
 elseif typeof(image_vector)==Array{Float64,3}
     nwavs = size(image_vector,3)
 end
+
 fig = figure(imtitle,figsize=(nwavs*6,6),facecolor="White")
 clf();
   images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
