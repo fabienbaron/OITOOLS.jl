@@ -329,8 +329,6 @@ function simulate_ha(facility_config_file,obsv_info_file,comb_file,wave_file,hou
             staxyz[:,i]=station_xyz[i,:];
     end
 
-
-
     nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind=get_v2_baselines(N,station_xyz,tel_names);
     nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind=get_t3_baselines(N,station_xyz,v2_stations);
     nuv,uv,u_M,v_M,w_M=get_uv(l,h,λ,δ,v2_baselines,nhours,station_xyz,nv2)

@@ -579,7 +579,7 @@ x = (read((FITS(fitsfile))[1]))
 if normalize == true
  x ./= sum(x)
 end
-if vectorize == x_true
+if vectorize == true
     x = vec(x)
 end
 return x;
