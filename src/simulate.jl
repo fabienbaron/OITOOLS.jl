@@ -13,10 +13,10 @@ struct facility_info
     wind_speed::Array{Any,1}
     r0::Array{Any,1}
     ntel::Array{Any,1}
-    tel_names::Array{Any,2}
-    sta_names::Array{Any,2}
     tel_diams::Array{Any,2}
     tel_gain::Array{Any,2}
+    tel_names::Array{Any,2}
+    sta_names::Array{Any,2}
     sta_index::Array{Any,2}
     sta_xyz::Array{Float64,2}
 end
@@ -295,7 +295,6 @@ function opd_limits(dec,ha,base;latitude=34.224722)
     return opd
 end
 
-function writefi
 
 
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
@@ -373,18 +372,14 @@ function get_uv(l,h,λ,δ,v2_baselines,nhours)
     #Use following expression only if there are missing baselines somewhere
     #vis_baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
     #Expression to use for pure simulation where the full complement of v2 and t3 are created
-    #vis_baselines = deepcopy(v2_baselines)
-    #nuv = size(vis_baselines, 2);
-    #l=l[1]
-    # Baselines to proj Baselines (uv m)
+    vis_baselines = deepcopy(v2_baselines)
+    nuv = size(vis_baselines, 2);
     # Now compute the UV coordinates, again according to the APIS++ standards.
-    #localtogeo=[[0,1,0] [-sin(l),0,cos(l)] [cos(l),0,sin(l)]]*vis_baselines
     u_M = -sin.(l)*sin.(h) .*vis_baselines[1,:]  .+ cos.(h) .* vis_baselines[2,:]+cos.(l)*sin.(h).*vis_baselines[3,:];
-    #u_M = sin.(h) .*localtogeo[1,:] .+ cos.(h).*localtogeo[2,:]
+
     v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)) .* vis_baselines[1,:] + sin(δ)*sin.(h) .* vis_baselines[2,:]+(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* vis_baselines[3,:];
-    #v_M = -sin(δ)*cos.(h).*localtogeo[1,:] .+ sin(δ)*sin.(h) .*localtogeo[2,:].+cos(δ) .*localtogeo[3,:];
+
     w_M =  (sin.(l)*cos(δ)* cos.(h).+cos.(l)*sin(δ)).* vis_baselines[1,:] - cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ)) .* vis_baselines[3,:];
-    #w_M =  cos(δ)* cos.(h).*localtogeo[1,:] .- cos(δ)* sin.(h) .*localtogeo[2,:]  .+ sin(δ) .*localtogeo[3,:];
     # proj baselines to (uv wav)
     u = reshape((1 ./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
     v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
@@ -428,7 +423,7 @@ function get_t3phi_errors(t3phi_model,phi_multit,phi_addit)
     return t3amp_model_err,t3phi_model_err
 end
 
-function prep_arrays(obsv_info)
+function prep_arrays(_info)
     oi_array=[tel_names,sta_names,sta_index,tel_diams,staxyz];
     target_array=[target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp];
     wave_array=[eff_wave,eff_band];
@@ -445,58 +440,59 @@ function prep_arrays(obsv_info)
 #include("npoi_config.jl")
 #hour_angles = range(-6,6,20);
 
-function simulate_ha(facility,obsv_info_file,comb_file,wave_file,hour_angles,dec,image_file,pixsize,outfilename,v2)
+function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,image_file,pixsize,outfilename)
     #simulate an observation using input hour angles, info about array and combiner, and input image
-     target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp=read_obs_file(obsv_info_file)
-     name,int_trans,vis,n_pix_fringe,n_pix_photometry,flux_frac_photometry,flux_frac_fringes,throughput_photometry,throughput_fringes,n_splits,read_noise,quantum_efficiency,v2v2_cal_err,phase_cal_err,incoh_int_time=read_comb_file(comb_file)
      combiner,mode,λ,δλ=read_wave_file(wave_file)
-    ntel=facility.ntel[1]
-    nhours = length(hour_angles);
-    h = hour_angles' .* pi / 12;
-    δ=dec/180*pi
-    l=facility.lat[1]/180*pi;
+
+    ntel=facility.ntel[1] #✓
+    nhours = length(hour_angles); #✓
+    h = hour_angles' .* pi / 12; #✓
+    δ=observatory.decep0[1]/180*pi #✓
+    l=facility.lat[1]/180*pi; #✓
+    λ=wave_info_out.lam[1]#✓
+    δλ=wave_info_out.del_lam[1] #✓
     nw=length(λ)
 
-    station_xyz=Array{Float64}(undef,ntel,3)
-    staxyz=Array{Float64}(undef,3,ntel);
-    for i=1:ntel[1]
-        station_xyz[i,1:3]=facility.sta_xyz[(i*3-2):i*3]
+    station_xyz=Array{Float64}(undef,ntel,3) #✓
+    staxyz=Array{Float64}(undef,3,ntel); #✓
+    for i=1:ntel[1] #✓
+        station_xyz[i,1:3]=facility.sta_xyz[(i*3-2):i*3]#✓
     end
 
 
-    for i=1:ntel
-            staxyz[:,i]=station_xyz[i,:];
+    for i=1:ntel #✓
+            staxyz[:,i]=station_xyz[i,:];#✓
     end
+#✓
 
-
-    nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind=get_v2_baselines(ntel,station_xyz,tel_names);
+    nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind=get_v2_baselines(ntel,station_xyz,facility.tel_names);
     nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind=get_t3_baselines(ntel,station_xyz,v2_stations);
     nuv,uv,u_M,v_M,w_M=get_uv(l,h,λ,δ,v2_baselines,nhours)
     v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
-
+#✓
 
     x = (read((FITS(image_file))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x);
     dft = setup_dft(-uv, nx, pixsize);
     cvis_model = image_to_cvis_dft(x, dft);
     v2_model = cvis_to_v2(cvis_model, v2_indx_w);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
-    v2_model,v2_model_err=get_v2_errors(v2_model,multit,addit)
+    v2_model,v2_model_err=get_v2_errors(v2_model,v2_multit,v2_addit)
     t3amp_model,t3amp_model_err=get_t3amp_errors(t3amp_model,t3amp_multit,t3amp_addit)
     t3phi_model,t3phi_model_err=get_t3phi_errors(t3phi_model,t3phi_multit,t3phi_addit)
     #setup arrays for OIFITS format
-    sta_names=tel_names
-    sta_index=Int64.(collect(range(1,step=1,length=N)))
+    sta_names=facility.tel_names
+    sta_index=Int64.(collect(range(1,step=1,length=ntel)))
 
     #input telescope data
 
 
-    target_id_vis2=ones(nv2*nhours)
+    target_id_vis2=ones(nv2*nhours).*observatory.target_id[1]
     time_vis2=ones(nv2*nhours) #change
     mjd_vis2=ones(nv2*nhours)*58297.  #change
     int_time_vis2=ones(nv2*nhours) #exchange
     flag_vis2=fill(false,nv2*nhours,1)
     #need to get vis2,vis2err,u,v,sta_index from DATA
-    target_id_t3=ones(nt3*nhours)
+    target_id_t3=ones(nt3*nhours).*observatory.target_id[1]
     time_t3=ones(nt3*nhours) #change
     mjd_t3=ones(nt3*nhours)*58297.  #change
     int_time_t3=ones(nt3*nhours) #exchange;
@@ -530,8 +526,8 @@ function simulate_ha(facility,obsv_info_file,comb_file,wave_file,hour_angles,dec
     t3phi_model=transpose(t3phi_model);
     t3phi_model_err=transpose(t3phi_model_err);
 
-    oi_array=[tel_names,sta_names,sta_index,tel_diams,staxyz];
-    target_array=[convert(Int16,target_id[1]),convert(String,target[1]),convert(Float64,raep0[1]),convert(Float64,decep0[1]),convert(Int16,equinox[1]),convert(Int16,ra_err[1]),convert(Int16,dec_err[1]),convert(Int16,sysvel[1]),convert(String,veltyp[1]),convert(String,veldef[1]),convert(Int16,pmra[1]),convert(Int16,pmdec[1]),convert(Int16,pmra_err[1]),convert(Int16,pmdec_err[1]),convert(Float64,parallax[1]),convert(Float64,para_err[1]),convert(String,spectyp[1])];
+    oi_array=[facility.tel_names,sta_names,sta_index,facility.tel_diams,staxyz];
+    target_array=[observatory.target_id[1],observatory.target[1],observatory.raep0[1],observatory.decep0[1],observatory.equinox[1],observatory.ra_err[1],observatory.dec_err[1],observatory.sysvel[1],observatory.veltyp[1],observatory.veldef[1],observatory.pmra[1],observatory.pmdec[1],observatory.pmra_err[1],observatory.pmdec_err[1],observatory.parallax[1],observatory.para_err[1],observatory.spectyp[1]];
     wave_array=[eff_wave,eff_band];
     vis2_array=[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2];
     t3_array=[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3];
