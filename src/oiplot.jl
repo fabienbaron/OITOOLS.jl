@@ -257,7 +257,7 @@ end
 
 fig = figure(imtitle,figsize=(nwavs*6,6),facecolor="White")
 clf();
-  images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
+images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
   for i=1:nwavs
     plotnum = 100+nwavs*10+i
     subplot(plotnum)

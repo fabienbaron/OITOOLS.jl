@@ -207,10 +207,10 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
      dft = setup_dft(uv, nx, pixsize);
      cvis_model = image_to_cvis_dft(x, dft);
      v2_model = cvis_to_v2(cvis_model, v2_indx_w);
-     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
+     t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
      #Add noise
-     v2_model_err = 2.0/100*v2_model .+ 1e-5
-     t3amp_model_err = 2.0/100*t3amp_model .+ 1e-6
+     v2_model_err = 1.0/100*v2_model .+ 1e-5
+     t3amp_model_err = 1.0/100*t3amp_model .+ 1e-6
      t3phi_model_err = zeros(length(t3phi_model)) .+ .5 # degree  -- there is another way of setting this with Haniff formula
 
      v2_model    += v2_model_err.*randn(length(v2_model))
