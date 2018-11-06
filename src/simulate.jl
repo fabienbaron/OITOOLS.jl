@@ -416,24 +416,23 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
+ function compute_observables(image,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w,error_struc)
+     nx = size(image,1);
+     x = vec(image)/sum(image);
+     dft = setup_dft(uv, nx, pixsize);
+     cvis_model = image_to_cvis_dft(x, dft);
+     v2_model = cvis_to_v2(cvis_model, v2_indx_w);
+     t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
+     #Add noise
+     v2_model_err = error_struc.v2_multit*v2_model .+ error_struc.v2_addit
+     t3amp_model_err = error_struc.t3amp_multit*t3amp_model .+ error_struc.t3amp_addit
+     t3phi_model_err = zeros(length(t3phi_model)) .+ error_struc.t3phi_addit # degree  -- there is another way of setting this with Haniff formula
 
-function get_v2_errors(v2_model,multit,addit)
-     v2_model_err = multit*v2_model .+addit
-     v2_model += v2_model_err.*randn(length(v2_model))
-    return v2_model,v2_model_err
-end
-
-function get_t3amp_errors(t3amp_model,amp_multit,amp_addit)
-    t3amp_model_err =amp_multit*t3amp_model .+ amp_addit
-    t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
-    return t3amp_model,t3amp_model_err
-end
-
-function get_t3phi_errors(t3phi_model,phi_multit,phi_addit)
-    t3phi_model_err = zeros(length(t3phi_model)) .+phi_addit # degree  -- there is another way of setting this with Haniff formula
-    t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
-    return t3amp_model_err,t3phi_model_err
-end
+     v2_model    += v2_model_err.*randn(length(v2_model))
+     t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
+     t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
+    return v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err
+ end
 
 function prep_arrays(_info)
     oi_array=[tel_names,sta_names,sta_index,tel_diams,staxyz];
@@ -454,7 +453,7 @@ function prep_arrays(_info)
 
 function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,image_file,pixsize,error,outfilename)
     #simulate an observation using input hour angles, info about array and combiner, and input image
-     combiner,mode,λ,δλ=read_wave_file(wave_file)
+
 
     ntel=facility.ntel[1] #✓
     nhours = length(hour_angles); #✓
@@ -483,21 +482,17 @@ function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,im
     v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
 #✓
 
-    x = (read((FITS(image_file))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x);
-    dft = setup_dft(-uv, nx, pixsize);
-    cvis_model = image_to_cvis_dft(x, dft);
-    v2_model = cvis_to_v2(cvis_model, v2_indx_w);
-    t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
-    v2_model,v2_model_err=get_v2_errors(v2_model,error.v2_multit,error.v2_addit)
-    t3amp_model,t3amp_model_err=get_t3amp_errors(t3amp_model,error.t3amp_multit,error.t3amp_addit)
-    t3phi_model,t3phi_model_err=get_t3phi_errors(t3phi_model,error.t3phi_multit,error.t3phi_addit)
+#simulate observation using input image file and pixsize
+    x = readfits(image_file)
+    # TODO: "wavelength to image" vector, "epoch to image" vector
+    # TODO: test the size of x, handle temporal and polychromatic loops
+    v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err=compute_observables(x,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w,error)
+
     #setup arrays for OIFITS format
     sta_names=facility.tel_names
     sta_index=Int64.(collect(range(1,step=1,length=ntel)))
 
     #input telescope data
-
-
     target_id_vis2=ones(nv2*nhours).*observatory.target_id[1]
     time_vis2=ones(nv2*nhours) #change
     mjd_vis2=ones(nv2*nhours)*58297.  #change
@@ -531,6 +526,7 @@ function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,im
 
     v2_model_stations=repeat(v2_stations,1,nhours);
     t3_model_stations=repeat(t3_stations,1,nhours);
+
     v2_model=transpose(v2_model);
     v2_model_err=transpose(v2_model_err);
     t3amp_model=transpose(t3amp_model);
@@ -547,17 +543,14 @@ function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,im
 
     f = fits_create_file(outfilename);
     write_oi_header(f,1);
-    write_oi_array(f,oi_array);
-    write_oi_target(f,target_array);
-    write_oi_wavelength(f,wave_array);
-    write_oi_vis2(f,vis2_array);
-    write_oi_t3(f,t3_array);
+    write_oi_array(f,[tel_names,sta_names,sta_index,tel_diams,staxyz]);
+    write_oi_target(f,[convert(Int16,target_id[1]),convert(String,target[1]),convert(Float64,raep0[1]),convert(Float64,decep0[1]),convert(Int16,equinox[1]),convert(Int16,ra_err[1]),convert(Int16,dec_err[1]),convert(Int16,sysvel[1]),convert(String,veltyp[1]),convert(String,veldef[1]),convert(Int16,pmra[1]),convert(Int16,pmdec[1]),convert(Int16,pmra_err[1]),convert(Int16,pmdec_err[1]),convert(Float64,parallax[1]),convert(Float64,para_err[1]),convert(String,spectyp[1])]);
+    write_oi_wavelength(f,[eff_wave,eff_band]);
+    write_oi_vis2(f,[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2]);
+    write_oi_t3(f,[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3]);
     fits_close_file(f);
 
 end
-
-
-
 
 function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true)
     #simulate observation from input oifits and input image.

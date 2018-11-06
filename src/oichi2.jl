@@ -46,6 +46,21 @@ function setup_nfft_multiepochs(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,Flo
 return fftplan_multi
 end
 
+
+function setup_nfft_polychromatic(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,Float64},1},1}
+  nwavs = size(data,1);
+  scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+  fftplan_multi = Array{Any}(undef, nwavs);
+  for i=1:nwavs
+    fftplan_multi[i]=setup_nfft(data[i], nx, pixsize);
+  end
+return fftplan_multi
+end
+
+
+
+
+
 function mod360(x)
   mod.(mod.(x.+180.0,360.0).+360.0, 360.0) .- 180.0
 end
@@ -88,7 +103,7 @@ function image_to_cvis_nfft(x, nfft_plan::Array{NFFTPlan{2,0,Float64},1})
   end
 end
 
-function chi2_dft_f(x, dft, data, verbose = true)
+function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verbose = true)
   cvis_model = image_to_cvis_dft(x, dft);
   # compute observables from all cvis
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
@@ -104,14 +119,16 @@ function chi2_dft_f(x, dft, data, verbose = true)
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata ) # criterion function for nfft
+function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; verbose = true ) # criterion function for nfft
   cvis_model = image_to_cvis_nfft(x, fftplan[1]);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
   chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
   chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
   chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+  if verbose == true
+      println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+  end
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 #
@@ -268,11 +285,11 @@ function crit_dft_fg(x, g, dft, data; regularizers=[], verb = true) # regulariza
   return chi2_f + reg_f;
 end
 
-function crit_nfft_fg(x,g, fftplan, data;regularizers=[], verb = true)
+function crit_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; printcolor = :black, regularizers=[], verb = true)
   chi2_f = chi2_nfft_fg(x, g, fftplan, data, verb = verb);
-  reg_f = regularization(x,g, regularizers=regularizers, verb = verb);
+  reg_f = regularization(x,g, regularizers=regularizers, printcolor = printcolor, verb = verb);
   flux = sum(x)
-  g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
+  g[:] = (g .- sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
   return chi2_f + reg_f;
 end
 
@@ -322,13 +339,7 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
 end
 
 
-function crit_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; printcolor = :black, regularizers=[], verb = true)
-  chi2_f = chi2_nfft_fg(x, g, fftplan, data, verb = verb);
-  reg_f = regularization(x,g, regularizers=regularizers, printcolor = printcolor, verb = verb);
-  flux = sum(x)
-  g[:] = (g .- sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
-  return chi2_f + reg_f;
-end
+
 
 
 function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], epochs_weights=[],regularizers=[], verb = false)
@@ -374,6 +385,47 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
    return f;
 end
 
+
+function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], verb = false)
+  nwavs = length(ft);
+  if printcolor == []
+    printcolor=Array{Symbol}(undef,nwavs);
+    printcolor[:] .= :black
+  end
+  npix = div(length(x),nwavs);
+  f = 0.0;
+  for i=1:nwavs # weighted sum -- should probably do the computation in parallel
+    tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
+    subg = Array{Float64}(undef, npix);
+    printstyled("Spectral channel $i ",color=printcolor[i]);
+    f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=[], printcolor = printcolor[i], verb = verb);
+    g[tslice] = subg
+  end
+
+  # transspectral regularization
+   if length(regularizers)>nwavs
+     if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>1)
+      y = reshape(x,(npix,nwavs))
+      #needs to be normalized
+    #  typeof(y),size(y)
+      trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
+      trsp_g = Array{Float64}(undef, npix,nwavs)
+      if nwavs>2
+         trsp_g[:,1] = 2*(y[:,1] - y[:,2])
+         trsp_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
+         trsp_g[:,end] = 2*(y[:,end] - y[:,end-1])
+      else
+         trsp_g[:,1] = 2*(y[:,1]-y[:,2]);
+         trsp_g[:,2] = 2*(y[:,2]-y[:,1]);
+      end
+      f+= trsp_f
+      g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
+      printstyled("Trans-spectral regularization: $trsp_f\n", color=:yellow)
+     end
+    end
+   return f;
+end
+
 using OptimPackNextGen
 function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[])
   x_sol = []
@@ -395,11 +447,23 @@ function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   else
     error("Sorry, polytemporal DFT methods not implemented yet");
-    #crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
-    #x_sol = OptimPack.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
   end
 return x_sol
 end
+
+
+
+function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; printcolor= [], verb = true, maxiter = 100, regularizers =[])
+  x_sol = []
+  if typeof(ft) == Array{Array{NFFTPlan{2,0,Float64},1},1}
+    crit = (x,g)->crit_polychromatic_nfft_fg(x, g, ft, data, printcolor=printcolor, regularizers=regularizers, verb = verb)
+    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+  else
+    error("Sorry, polychromatic DFT methods not implemented yet");
+  end
+return x_sol
+end
+
 
 
 

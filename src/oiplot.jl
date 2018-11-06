@@ -246,6 +246,61 @@ end
  tight_layout()
 end
 
+#TODO: work for rectangular
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+
+if typeof(image_vector)==Array{Float64,2}
+    nwavs = size(image_vector,2)
+elseif typeof(image_vector)==Array{Float64,3}
+    nwavs = size(image_vector,3)
+end
+
+fig = figure(imtitle,figsize=(nwavs*6,6),facecolor="White")
+clf();
+images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
+  for i=1:nwavs
+    plotnum = 100+nwavs*10+i
+    subplot(plotnum)
+    title("Wave $i")
+    image = images_all[:,i]
+    nx=ny=-1;
+    pixmode = false;
+    if pixscale == -1
+      pixmode = true;
+      pixscale = 1
+    end
+    ny=nx=Int64.(sqrt(length(image)))
+    imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    if pixmode == false
+        xlabel("RA (mas)")
+        ylabel("DEC (mas)")
+    end
+
+    ax = gca()
+    ax[:set_aspect]("equal")
+    mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
+    ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
+    ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
+    ax[:xaxis][:set_tick_params](which="major",length=10,width=2)
+    ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
+    ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
+    ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
+
+  if colorbar == true
+    divider = axgrid.make_axes_locatable(ax)
+    cax = divider[:append_axes]("right", size="5%", pad=0.05)
+    colorbar(image, cax=cax)
+  end
+
+   if beamsize > 0
+    c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+    ax[:add_artist](c)
+   end
+  tight_layout()
+  end
+end
+
+# TODO: rework for julia 1.0+
 function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
   fig = figure("Image",figsize=(nepochs*6,6),facecolor="White")
   images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))

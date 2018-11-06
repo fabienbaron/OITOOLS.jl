@@ -535,7 +535,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   return OIdataArr;
 end
 
-function readoifits_multiepochs(oifitsfiles; filter_bad_data=false,  force_full_t3 = false)
+function readoifits_multiepochs(oifitsfiles; filter_bad_data=false,  force_full_t3 = false) # read multiple files, each containing a single epochs
   nepochs = length(oifitsfiles);
   tepochs = Array{Float64}(undef, nepochs);
   data = Array{OIdata}(undef, nepochs);
@@ -546,6 +546,19 @@ function readoifits_multiepochs(oifitsfiles; filter_bad_data=false,  force_full_
   end
   return nepochs, tepochs, data
 end
+
+function readoifits_multicolors(oifitsfiles; filter_bad_data=false,  force_full_t3 = false) # read multiple files, each containing a single wavelength
+  nwavs = length(oifitsfiles);
+  data = Array{OIdata}(undef, nwavs);
+  for i=1:nwavs
+    data[i] = readoifits(oifitsfiles[i], filter_bad_data=filter_bad_data, force_full_t3 =force_full_t3 )[1,1];
+    println(oifitsfiles[i], "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi);
+  end
+  return data
+end
+
+
+
 
 # period in days
 function time_split(mjd,period;mjd_start=mjd[1])
@@ -561,8 +574,15 @@ function time_split(mjd,period;mjd_start=mjd[1])
   return temporalbin
 end
 
-function readfits(fitsfile)
-return (read((FITS(fitsfile))[1]));
+function readfits(fitsfile; normalize = false, vectorize=false)
+x = (read((FITS(fitsfile))[1]))
+if normalize == true
+ x ./= sum(x)
+end
+if vectorize == true
+    x = vec(x)
+end
+return x;
 end
 
 function writefits(data, fitsfile)
