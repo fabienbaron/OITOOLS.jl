@@ -5,8 +5,6 @@ using OITOOLS
 #EXAMPLE 8
 #Simulate an observation using an input image, given telescope parameters, and input hour angles
 
-
-
 dates=[2018  3 5 10 13 56.7; 2018 3 5 10 13 56.7]
 longitude=118.0570313111
 lsts,hour_angles=hour_angle_calc(dates,longitude,ra)
@@ -23,11 +21,14 @@ image_file="./data/testmask.fits" #A 4.0 mas disk at 0.1 pix/mas in 64x64 grid
 pixsize=0.1
 out_file="!./data/test_ha_sim.oifits"
 
+#need to input multiple images...
+
 facility_out=read_facility_file(facility_config_file,facility_info)
 observatory_out=read_obs_file(obsv_config_file,obsv_info)
 combiner_out=read_comb_file(combiner_config_file,combiner_info)
 wave_out=read_wave_file(wave_config_file,wave_info)
-simulate_ha(facility_out,observatory_out,combiner_out,wave_out,hour_angles,dec,image_file,pixsize,out_file)
+errors=define_errors(v2m,v2a,t3ampm,t3ampa,t3phim,t3phia)
+simulate_ha(facility_out,observatory_out,combiner_out,wave_out,hour_angles,dec,image_file,pixsize,errors,out_file)
 
 #Compare simulated data to impate
 

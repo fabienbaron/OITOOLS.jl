@@ -66,6 +66,14 @@ struct wave_info
     del_lam::Array{Any,1}
 end
 
+struct error_struct
+    v2_multit::Float64
+    v2_addit::Float64
+    t3amp_multit::Float64
+    t3amp_addit::Float64
+    t3phi_multit::Float64
+    t3phi_addit::Float64
+end
 
 function read_facility_file(facility_file,facility_struct)
     facility=readdlm(facility_file)
@@ -144,6 +152,10 @@ function read_wave_file(wave_file,wave_structure)
     return wave_out
  end
 
+function define_errors(errorstruct,v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
+        error_out=errorstruct(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
+        return error_out
+end
 
 
 function writefits_aspro(data, fitsfile;res=0.05)
@@ -440,7 +452,7 @@ function prep_arrays(_info)
 #include("npoi_config.jl")
 #hour_angles = range(-6,6,20);
 
-function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,image_file,pixsize,outfilename)
+function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,image_file,pixsize,error,outfilename)
     #simulate an observation using input hour angles, info about array and combiner, and input image
      combiner,mode,λ,δλ=read_wave_file(wave_file)
 
@@ -476,9 +488,9 @@ function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,im
     cvis_model = image_to_cvis_dft(x, dft);
     v2_model = cvis_to_v2(cvis_model, v2_indx_w);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
-    v2_model,v2_model_err=get_v2_errors(v2_model,v2_multit,v2_addit)
-    t3amp_model,t3amp_model_err=get_t3amp_errors(t3amp_model,t3amp_multit,t3amp_addit)
-    t3phi_model,t3phi_model_err=get_t3phi_errors(t3phi_model,t3phi_multit,t3phi_addit)
+    v2_model,v2_model_err=get_v2_errors(v2_model,error.v2_multit,error.v2_addit)
+    t3amp_model,t3amp_model_err=get_t3amp_errors(t3amp_model,error.t3amp_multit,error.t3amp_addit)
+    t3phi_model,t3phi_model_err=get_t3phi_errors(t3phi_model,error.t3phi_multit,error.t3phi_addit)
     #setup arrays for OIFITS format
     sta_names=facility.tel_names
     sta_index=Int64.(collect(range(1,step=1,length=ntel)))
