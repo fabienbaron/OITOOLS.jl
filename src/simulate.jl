@@ -234,7 +234,9 @@ seconds=Float64.(dates[:,6])
 #rah=ra[1]
 #ram=ra[2]
 #ras=ra[3]
+
 #raht = rah+(ram/60.)+(ras/3600.) #Converts the RA array into a hour decimal
+raht=ra
 h_ad = alpha*longitude/15 #Measures the hours offset due to longitude
 
 
@@ -393,6 +395,8 @@ function get_uv(l,h,λ,δ,v2_baselines,nhours)
 
     w_M =  (sin.(l)*cos(δ)* cos.(h).+cos.(l)*sin(δ)).* vis_baselines[1,:] - cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ)) .* vis_baselines[3,:];
     # proj baselines to (uv wav)
+    u_M=-u_M
+    v_M=v_M
     u = reshape((1 ./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
     v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
     w = reshape((1 ./λ)'.*vec(w_M), (nuv,nhours,length(λ)));
@@ -427,7 +431,6 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
      v2_model_err = error_struc.v2_multit*v2_model .+ error_struc.v2_addit
      t3amp_model_err = error_struc.t3amp_multit*t3amp_model .+ error_struc.t3amp_addit
      t3phi_model_err = zeros(length(t3phi_model)) .+ error_struc.t3phi_addit # degree  -- there is another way of setting this with Haniff formula
-
      v2_model    += v2_model_err.*randn(length(v2_model))
      t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
      t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
@@ -451,7 +454,7 @@ function prep_arrays(_info)
 #include("npoi_config.jl")
 #hour_angles = range(-6,6,20);
 
-function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,image_file,pixsize,error,outfilename)
+function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,image_file,pixsize,errors,outfilename)
     #simulate an observation using input hour angles, info about array and combiner, and input image
 
 
@@ -460,8 +463,8 @@ function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,im
     h = hour_angles' .* pi / 12; #✓
     δ=observatory.decep0[1]/180*pi #✓
     l=facility.lat[1]/180*pi; #✓
-    λ=wave_info_out.lam[1]#✓
-    δλ=wave_info_out.del_lam[1] #✓
+    λ=wave_info_out.lam#✓
+    δλ=wave_info_out.del_lam #✓
     nw=length(λ)
 
     station_xyz=Array{Float64}(undef,ntel,3) #✓
@@ -484,9 +487,11 @@ function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,im
 
 #simulate observation using input image file and pixsize
     x = readfits(image_file)
+    #flip image for an unknown reason
+    x=x[end:-1:1,:]
     # TODO: "wavelength to image" vector, "epoch to image" vector
     # TODO: test the size of x, handle temporal and polychromatic loops
-    v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err=compute_observables(x,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w,error)
+    v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err=compute_observables(x,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w,errors)
 
     #setup arrays for OIFITS format
     sta_names=facility.tel_names
@@ -536,23 +541,24 @@ function simulate_ha(facility,obseravatory,combiner,wave_info_out,hour_angles,im
 
     oi_array=[facility.tel_names,sta_names,sta_index,facility.tel_diams,staxyz];
     target_array=[observatory.target_id[1],observatory.target[1],observatory.raep0[1],observatory.decep0[1],observatory.equinox[1],observatory.ra_err[1],observatory.dec_err[1],observatory.sysvel[1],observatory.veltyp[1],observatory.veldef[1],observatory.pmra[1],observatory.pmdec[1],observatory.pmra_err[1],observatory.pmdec_err[1],observatory.parallax[1],observatory.para_err[1],observatory.spectyp[1]];
-    wave_array=[eff_wave,eff_band];
+    wave_array=[λ,δλ];
     vis2_array=[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2];
     t3_array=[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3];
 
 
     f = fits_create_file(outfilename);
     write_oi_header(f,1);
-    write_oi_array(f,[tel_names,sta_names,sta_index,tel_diams,staxyz]);
-    write_oi_target(f,[convert(Int16,target_id[1]),convert(String,target[1]),convert(Float64,raep0[1]),convert(Float64,decep0[1]),convert(Int16,equinox[1]),convert(Int16,ra_err[1]),convert(Int16,dec_err[1]),convert(Int16,sysvel[1]),convert(String,veltyp[1]),convert(String,veldef[1]),convert(Int16,pmra[1]),convert(Int16,pmdec[1]),convert(Int16,pmra_err[1]),convert(Int16,pmdec_err[1]),convert(Float64,parallax[1]),convert(Float64,para_err[1]),convert(String,spectyp[1])]);
-    write_oi_wavelength(f,[eff_wave,eff_band]);
+    write_oi_array(f,[facility.tel_names,sta_names,facility.sta_index,facility.tel_diams,staxyz]);
+    #write_oi_target(f,[convert(Int16,target_id[1]),convert(String,target[1]),convert(Float64,raep0[1]),convert(Float64,decep0[1]),convert(Int16,equinox[1]),convert(Int16,ra_err[1]),convert(Int16,dec_err[1]),convert(Int16,sysvel[1]),convert(String,veltyp[1]),convert(String,veldef[1]),convert(Int16,pmra[1]),convert(Int16,pmdec[1]),convert(Int16,pmra_err[1]),convert(Int16,pmdec_err[1]),convert(Float64,parallax[1]),convert(Float64,para_err[1]),convert(String,spectyp[1])]);
+    write_oi_target(f,target_array)
+    write_oi_wavelength(f,wave_array);
     write_oi_vis2(f,[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2]);
     write_oi_t3(f,[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3]);
     fits_close_file(f);
 
 end
 
-function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true)
+function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=false)
     #simulate observation from input oifits and input image.
     if typeof(fitsfiles)== String
         num_files = 1.0
@@ -567,8 +573,8 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     #setup simulation
     nuv = data.nuv
 
-    x = (read((FITS(fitsfiles))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
-
+    #x = (read((FITS(fitsfiles))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
+    x = (read((FITS(fitsfiles))[1])); nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
     #nfft_plan = setup_nfft(-uv, nx, pixsize)
     #cvis_model = image_to_cvis_nfft(x, nfft_plan)
     cvis_model=[]
