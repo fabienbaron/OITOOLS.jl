@@ -1,4 +1,12 @@
 module OITOOLS
+include("readoifits.jl");
+include("write_oifits_ha.jl");
+include("write_oifits_obs.jl");
+include("simulate.jl");
+include("oichi2.jl");
+include("oiplot.jl");
+include("vis_functions_classic.jl");
+include("modelfit.jl");
 export OIdata
 export uvplot, v2plot, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot
 export readoifits, readoifits_multiepochs, readfits, writefits
@@ -8,12 +16,4 @@ export fit_model_v2,bootstrap_v2_fit,fit_model_v2_nest,resample_v2_data
 export get_uv,get_uv_indxes,get_simulated_image,prep_arrays,read_array_file,read_obs_file,read_comb_file,read_wave_file,simulate_ha,simulate_obs,cvis_to_t3_conj,get_v2_baselines,v2mapt3,get_t3_baselines,hour_angle_calc
 export write_oi_header,write_oi_array,write_oi_target,write_oi_wavelength,write_oi_vis2,write_oi_t3
 export readoifits_multicolors,setup_nfft_polychromatic,imdisp_polychromatic,reconstruct_polychromatic
-include("readoifits.jl");
-include("write_oifits_ha.jl");
-include("write_oifits_obs.jl");
-include("simulate.jl");
-include("oichi2.jl");
-include("oiplot.jl");
-include("vis_functions_classic.jl");
-include("modelfit.jl");
 end

@@ -9,7 +9,7 @@ pixsize=0.101
 oifitsin="./data/2004-data1.oifits"
 out_file="!./data/2004testsimulation.oifits"
 
-simulate_obs(oifitsin,out_file,image_file,pixsize)
+simulate_obs(oifitsin,out_file,image_file,pixsize,dft=true,nfft=false)
 
 #Compare simulated data to impate
 

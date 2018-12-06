@@ -3,9 +3,199 @@ using DelimitedFiles
 using FITSIO
 using FITSIO.Libcfitsio
 
+struct facility_info
+    facility_name::Array{Any,1}
+    lat::Array{Any,1}
+    lon::Array{Any,1}
+    atl::Array{Any,1}
+    coord::Array{Any,1}
+    throughput::Array{Any,1}
+    wind_speed::Array{Any,1}
+    r0::Array{Any,1}
+    ntel::Array{Any,1}
+    tel_diams::Array{Any,2}
+    tel_gain::Array{Any,2}
+    tel_names::Array{Any,2}
+    sta_names::Array{Any,2}
+    sta_index::Array{Any,2}
+    sta_xyz::Array{Float64,2}
+end
+
+struct obsv_info
+    target_id::Array{Any,1}
+    target::Array{Any,1}
+    raep0::Array{Any,1}
+    decep0::Array{Any,1}
+    equinox::Array{Any,1}
+    ra_err::Array{Any,1}
+    dec_err::Array{Any,1}
+    sysvel::Array{Any,1}
+    veltyp::Array{Any,1}
+    veldef::Array{Any,1}
+    pmra::Array{Any,1}
+    pmdec::Array{Any,1}
+    pmra_err::Array{Any,1}
+    pmdec_err::Array{Any,1}
+    parallax::Array{Any,1}
+    para_err::Array{Any,1}
+    spectyp::Array{Any,1}
+end
+
+struct combiner_info
+    comb_name::Array{Any,1}
+    int_trans::Array{Any,1}
+    vis::Array{Any,1}
+    n_pix::Array{Any,1}
+    n_pix_photometry::Array{Any,1}
+    flux_frac_photometry::Array{Any,1}
+    flux_frac_fringes::Array{Any,1}
+    throughput_photometry::Array{Any,1}
+    throughput_fringes::Array{Any,1}
+    n_splits::Array{Any,1}
+    read_noise::Array{Any,1}
+    quantum_efficiency::Array{Any,1}
+    v2_cal_err::Array{Any,1}
+    phase_cal_err::Array{Any,1}
+    incoh_int_time::Array{Any,1}
+end
+
+struct wave_info
+    combiner_name::Array{Any,1}
+    combiner_mode::Array{Any,1}
+    lam::Array{Any,1}
+    del_lam::Array{Any,1}
+end
+
+struct error_struct
+    v2_multit::Float64
+    v2_addit::Float64
+    t3amp_multit::Float64
+    t3amp_addit::Float64
+    t3phi_multit::Float64
+    t3phi_addit::Float64
+end
+
+function read_facility_file(facility_file,facility_struct)
+    facility=readdlm(facility_file)
+    facility_name=facility[(LinearIndices(facility.=="name"))[findall(facility.=="name")],3]
+    latitude=facility[(LinearIndices(facility.=="lat"))[findall(facility.=="lat")],3]
+    longitude=facility[(LinearIndices(facility.=="lon"))[findall(facility.=="lon")],3]
+    altitude=facility[(LinearIndices(facility.=="alt"))[findall(facility.=="alt")],3]
+    coordinates=facility[(LinearIndices(facility.=="coord"))[findall(facility.=="coord")],3]
+    facility_throughput=facility[(LinearIndices(facility.=="throughput"))[findall(facility.=="throughput")],3]
+    windspeed=facility[(LinearIndices(facility.=="wind_speed"))[findall(facility.=="wind_speed")],3]
+    r_0=facility[(LinearIndices(facility.=="r0"))[findall(facility.=="r0")],3]
+    n_tel=facility[(LinearIndices(facility.=="ntel"))[findall(facility.=="ntel")],3]
+    teldiams=facility[(LinearIndices(facility.=="tel_diams"))[findall(facility.=="tel_diams")],3:n_tel[1]+2]
+    telgain=facility[(LinearIndices(facility.=="tel_gain"))[findall(facility.=="tel_gain")],3:n_tel[1]+2]
+    telnames=facility[(LinearIndices(facility.=="tel_names"))[findall(facility.=="tel_names")],3:n_tel[1]+2]
+    stanames=facility[(LinearIndices(facility.=="sta_names"))[findall(facility.=="sta_names")],3:n_tel[1]+2]
+    staindex=facility[(LinearIndices(facility.=="sta_index"))[findall(facility.=="sta_index")],3:n_tel[1]+2]
+    staxyz=facility[(LinearIndices(facility.=="sta_xyz"))[findall(facility.=="sta_xyz")],3:n_tel[1]*3+2]
+    facility_out=facility_struct(facility_name,latitude,longitude,altitude,coordinates,facility_throughput,windspeed,r_0,n_tel,teldiams,telgain,telnames,stanames,staindex,staxyz)
+    return facility_out
+ end
 
 
-function hour_angle_calc(dates::Union{Array{Any,2},Array{Float64,2}},longitude::Float64, ra::Array{Float64,1};dst="no",ldir="W",timezone="UTC")
+
+function read_obs_file(obsv_file,obs_structure)
+    obs=readdlm(obsv_file)
+    targetid=obs[(LinearIndices(obs.=="target_id"))[findall(obs.=="target_id")],3]
+    target_name=obs[(LinearIndices(obs.=="target"))[findall(obs.=="target")],3]
+    raep_0=obs[(LinearIndices(obs.=="raep0"))[findall(obs.=="raep0")],3]
+    decep_0=obs[(LinearIndices(obs.=="decep0"))[findall(obs.=="decep0")],3]
+    equi=obs[(LinearIndices(obs.=="equinox"))[findall(obs.=="equinox")],3]
+    raerr=obs[(LinearIndices(obs.=="ra_err"))[findall(obs.=="ra_err")],3]
+    decerr = obs[(LinearIndices(obs.=="dec_err"))[findall(obs.=="dec_err")],3]
+    sys_vel = obs[(LinearIndices(obs.=="sysvel"))[findall(obs.=="sysvel")],3]
+    vel_typ =  obs[(LinearIndices(obs.=="veltyp"))[findall(obs.=="veltyp")],3]
+    vel_def = obs[(LinearIndices(obs.=="veldef"))[findall(obs.=="veldef")],3]
+    pm_ra = obs[(LinearIndices(obs.=="pmra"))[findall(obs.=="pmra")],3]
+    pm_dec =  obs[(LinearIndices(obs.=="pmdec"))[findall(obs.=="pmdec")],3]
+    pm_ra_err =  obs[(LinearIndices(obs.=="pmra_err"))[findall(obs.=="pmra_err")],3]
+    pm_dec_err =  obs[(LinearIndices(obs.=="pmdec_err"))[findall(obs.=="pmdec_err")],3]
+    para =  obs[(LinearIndices(obs.=="parallax"))[findall(obs.=="parallax")],3]
+    par_err =   obs[(LinearIndices(obs.=="para_err"))[findall(obs.=="para_err")],3]
+    spec_typ =  obs[(LinearIndices(obs.=="spectyp"))[findall(obs.=="spectyp")],3]
+    obs_out=obs_structure(targetid,target_name,raep_0,decep_0,equi,raerr,decerr,sys_vel,vel_typ,vel_def,pm_ra,pm_dec,pm_ra_err,pm_dec_err,para,par_err,spec_typ)
+    return obs_out
+ end
+
+function read_comb_file(comb_file,comb_structure)
+    comb=readdlm(comb_file)
+    name =comb[(LinearIndices(comb.=="name"))[findall(comb.=="name")],3]
+    int_trans = comb[(LinearIndices(comb.=="int_trans"))[findall(comb.=="int_trans")],3]
+    vis = comb[(LinearIndices(comb.=="vis"))[findall(comb.=="vis")],3]
+    n_pix_fringe =comb[(LinearIndices(comb.=="n_pix_fringe"))[findall(comb.=="n_pix_fringe")],3]
+    n_pix_photometry = comb[(LinearIndices(comb.=="n_pix_photometry"))[findall(comb.=="n_pix_photometry")],3]
+    flux_frac_photometry = comb[(LinearIndices(comb.=="flux_frac_photometry"))[findall(comb.=="flux_frac_photometry")],3]
+    flux_frac_fringes = comb[(LinearIndices(comb.=="flux_frac_fringes"))[findall(comb.=="flux_frac_fringes")],3]
+    throughput_photometry = comb[(LinearIndices(comb.=="throughput_photometry"))[findall(comb.=="throughput_photometry")],3]
+    throughput_fringes = comb[(LinearIndices(comb.=="throughput_fringes"))[findall(comb.=="throughput_fringes")],3]
+    n_splits = comb[(LinearIndices(comb.=="n_splits"))[findall(comb.=="n_splits")],3]
+    read_noise = comb[(LinearIndices(comb.=="read_noise"))[findall(comb.=="read_noise")],3]
+    quantum_efficiency = comb[(LinearIndices(comb.=="quantum_efficiency"))[findall(comb.=="quantum_efficiency")],3]
+    v2_cal_err = comb[(LinearIndices(comb.=="v2_cal_err"))[findall(comb.=="v2_cal_err")],3]
+    phase_cal_err = comb[(LinearIndices(comb.=="phase_cal_err"))[findall(comb.=="phase_cal_err")],3]
+    incoh_int_time = comb[(LinearIndices(comb.=="incoh_int_time"))[findall(comb.=="incoh_int_time")],3]
+    comb_out=comb_structure(name,int_trans,vis,n_pix_fringe,n_pix_photometry,flux_frac_photometry,flux_frac_fringes,throughput_photometry,throughput_fringes,n_splits,read_noise,quantum_efficiency,v2_cal_err,phase_cal_err,incoh_int_time)
+    return comb_out
+ end
+
+function read_wave_file(wave_file,wave_structure)
+    wave=readdlm(wave_file)
+    combiner =wave[(LinearIndices(wave.=="combiner"))[findall(wave.=="combiner")],3]
+    mode = wave[(LinearIndices(wave.=="mode"))[findall(wave.=="mode")],3]
+    lambda=wave[3:size(wave)[1],1]
+    del_lambda=wave[3:size(wave)[1],2]
+    wave_out=wave_structure(combiner,mode,lambda,del_lambda)
+    return wave_out
+ end
+
+function define_errors(errorstruct,v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
+        error_out=errorstruct(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
+        return error_out
+end
+
+
+function writefits_aspro(data, fitsfile;res=0.05)
+    """
+    res should be input as mas
+    """
+    f = FITS(fitsfile, "w");
+    header = FITSHeader(["CDELT1","CDELT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],[-(res/1000.0)/(206265.0),(res/1000.0)/(206265.0),0.0,0.0,(size(data)[1]/2),(size(data)[1]/2)],["Radians per Pixel","Radians per Pixel","X-coordinate of reference pixel","Y-coordinate of reference pixel","reference pixel in X","reference pixel in Y"])
+    write(f, data,header=header);
+    close(f);
+end
+
+function updatefits_aspro(fitsfile_in,fitsfile_out;res=0.05)
+    """
+    res should be input as mas
+    """
+    f = FITS(fitsfile_in);
+    data = read(f[1])
+    header = read_header(f[1])
+    header["CDELT1"] = -(res/1000.0)/(206265.0)
+    header["CDELT2"] = (res/1000.0)/(206265.0)
+    header["CRVAL1"] = 0.0
+    header["CRVAL2"] = 0.0
+    header["CRPIX1"] = (size(data)[1]/2)
+    header["CRPIX2"] = (size(data)[1]/2)
+    set_comment!(header,"CDELT1","Radians per Pixel")
+    set_comment!(header,"CDELT2","Radians per Pixel")
+    set_comment!(header,"CRVAL1","X-coordinate of reference pixel")
+    set_comment!(header,"CRVAL2","Y-coordinate of reference pixel")
+    set_comment!(header,"CRPIX1","reference pixel in X")
+    set_comment!(header,"CRPIX2","reference pixel in Y")
+    fout = FITS(fitsfile_out,"w")
+    write(fout,data,header=header);
+    close(f)
+    close(fout)
+end
+
+
+
+function hour_angle_calc(dates::Union{Array{Any,2},Array{Float64,2}},longitude::Float64, ra::Float64;dst="no",ldir="W",timezone="UTC")
 
 """
 This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
@@ -41,10 +231,12 @@ hours=Int.(dates[:,4])
 minutes=Int.(dates[:,5])
 seconds=Float64.(dates[:,6])
 
-rah=ra[1]
-ram=ra[2]
-ras=ra[3]
-raht = rah+(ram/60.)+(ras/3600.) #Converts the RA array into a hour decimal
+#rah=ra[1]
+#ram=ra[2]
+#ras=ra[3]
+
+#raht = rah+(ram/60.)+(ras/3600.) #Converts the RA array into a hour decimal
+raht=ra
 h_ad = alpha*longitude/15 #Measures the hours offset due to longitude
 
 
@@ -90,6 +282,33 @@ lst[lst_over] -= (24*floor.(lst[lst_over]/24))
 hour_angle = lst .-raht
 return lst,hour_angle
 end
+
+
+
+
+
+function opd_limits(dec,ha,base;latitude=34.224722)
+    """
+    dec should be input as [deg,am,as]
+    ha should be in hours and may be input as array
+    base is the difference in baselines (delX i, delY j, delZ k) where i,j,k
+        point respecitvely towards the East, North, and Meridian(?).
+    res should be input as mas
+    latitude is latitude of chara in degrees
+    """
+    ha = ha .* 15.0
+    dec = dec[1]+(dec[2]/60.0)+(dec[3]/3600.0)
+    dtr = pi/180.0 #degrees to radians
+    opd = zeros(length(ha))
+    for i in range(1,length(ha))
+        alt = asin.(sin(dec*dtr)*sin(latitude*dtr)+(cos(dec*dtr)*cos(latitude*dtr)*cos.(ha[i]*dtr)))/dtr #returns alt in degree
+        az = atan((-1.0*cos(dec*dtr)*sin.(ha[i]*dtr))/(sin(dec*dtr)*cos(latitude*dtr)-(cos(dec*dtr)*cos.(ha[i]*dtr)*sin(latitude*dtr))))/dtr
+        s = [cos.(alt*dtr)*cos.(az*dtr),cos.(alt*dtr)*sin.(az*dtr),sin.(alt*dtr)]
+        opd[i] = dot(base,s) #in meters (?)
+    end
+    return opd
+end
+
 
 
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
@@ -163,21 +382,21 @@ function get_t3_baselines(N,station_xyz,v2_stations)
     return nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind
 end
 
-function get_uv(l,h,λ,δ,v2_baselines,nhours,station_xyz,nv2)
-    # Merge all uv
-    #l=longitude (scalar)
-    #h=hour angles (array)
-    #λ = wavelength (array)
-    #δ =dec (sclar)
-    #v2_baselines (array)
-    #nhours (sclar)
+function get_uv(l,h,λ,δ,v2_baselines,nhours)
     #Use following expression only if there are missing baselines somewhere
+    #vis_baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
+    #Expression to use for pure simulation where the full complement of v2 and t3 are created
     vis_baselines = deepcopy(v2_baselines)
     nuv = size(vis_baselines, 2);
+    # Now compute the UV coordinates, again according to the APIS++ standards.
     u_M = -sin.(l)*sin.(h) .*vis_baselines[1,:]  .+ cos.(h) .* vis_baselines[2,:]+cos.(l)*sin.(h).*vis_baselines[3,:];
+
     v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)) .* vis_baselines[1,:] + sin(δ)*sin.(h) .* vis_baselines[2,:]+(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* vis_baselines[3,:];
+
     w_M =  (sin.(l)*cos(δ)* cos.(h).+cos.(l)*sin(δ)).* vis_baselines[1,:] - cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ)) .* vis_baselines[3,:];
     # proj baselines to (uv wav)
+    u_M=-u_M
+    v_M=v_M
     u = reshape((1 ./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
     v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
     w = reshape((1 ./λ)'.*vec(w_M), (nuv,nhours,length(λ)));
@@ -201,7 +420,7 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
- function compute_observables(image,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+ function compute_observables(image,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w,error_struc)
      nx = size(image,1);
      x = vec(image)/sum(image);
      dft = setup_dft(uv, nx, pixsize);
@@ -209,17 +428,16 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
      v2_model = cvis_to_v2(cvis_model, v2_indx_w);
      t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
      #Add noise
-     v2_model_err = 1.0/100*v2_model .+ 1e-5
-     t3amp_model_err = 1.0/100*t3amp_model .+ 1e-6
-     t3phi_model_err = zeros(length(t3phi_model)) .+ .5 # degree  -- there is another way of setting this with Haniff formula
-
+     v2_model_err = error_struc.v2_multit*v2_model .+ error_struc.v2_addit
+     t3amp_model_err = error_struc.t3amp_multit*t3amp_model .+ error_struc.t3amp_addit
+     t3phi_model_err = zeros(length(t3phi_model)) .+ error_struc.t3phi_addit # degree  -- there is another way of setting this with Haniff formula
      v2_model    += v2_model_err.*randn(length(v2_model))
      t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
      t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
     return v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err
  end
 
-function prep_arrays(obsv_info)
+function prep_arrays(_info)
     oi_array=[tel_names,sta_names,sta_index,tel_diams,staxyz];
     target_array=[target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp];
     wave_array=[eff_wave,eff_band];
@@ -228,80 +446,6 @@ function prep_arrays(obsv_info)
     return oi_array,target_array,wave_array,vis2_array,t3oi_array
  end
 
-function read_facility_file(facility_file)
-    facility=readdlm(facility_file)
-    facility_name=facility[(LinearIndices(facility.=="name"))[findall(facility.=="name")],3]
-    lat=facility[(LinearIndices(facility.=="lat"))[findall(facility.=="lat")],3]
-    lon=facility[(LinearIndices(facility.=="lon"))[findall(facility.=="lon")],3]
-    alt=facility[(LinearIndices(facility.=="alt"))[findall(facility.=="alt")],3]
-    coord=facility[(LinearIndices(facility.=="coord"))[findall(facility.=="coord")],3]
-    throughput=facility[(LinearIndices(facility.=="throughput"))[findall(facility.=="throughput")],3]
-    wind_speed=facility[(LinearIndices(facility.=="wind_speed"))[findall(facility.=="wind_speed")],3]
-    r0=facility[(LinearIndices(facility.=="r0"))[findall(facility.=="r0")],3]
-    ntel=facility[(LinearIndices(facility.=="ntel"))[findall(facility.=="ntel")],3]
-    tel_diams=facility[(LinearIndices(facility.=="tel_diams"))[findall(facility.=="tel_diams")],3:ntel[1]+2]
-    tel_gain=facility[(LinearIndices(facility.=="tel_gain"))[findall(facility.=="tel_gain")],3:ntel[1]+2]
-    tel_names=facility[(LinearIndices(facility.=="tel_names"))[findall(facility.=="tel_names")],3:ntel[1]+2]
-    sta_names=facility[(LinearIndices(facility.=="sta_names"))[findall(facility.=="sta_names")],3:ntel[1]+2]
-    sta_index=facility[(LinearIndices(facility.=="sta_index"))[findall(facility.=="sta_index")],3:ntel[1]+2]
-    sta_xyz=facility[(LinearIndices(facility.=="sta_xyz"))[findall(facility.=="sta_xyz")],3:ntel[1]*3+2]
-    station_xyz=Array{Float64}(undef,ntel[1],3)
-    for i=1:ntel[1]
-        station_xyz[i,1:3]=sta_xyz[(i*3-2):i*3]
-    end
-    return facility_name,lat,lon,alt,coord,throughput,wind_speed,r0,ntel,tel_diams,tel_gain,tel_names,sta_names,sta_index,station_xyz
- end
-
-function read_obs_file(obsv_file)
-    obs=readdlm(obsv_file)
-    target_id=obs[(LinearIndices(obs.=="target_id"))[findall(obs.=="target_id")],3]
-    target=obs[(LinearIndices(obs.=="target"))[findall(obs.=="target")],3]
-    raep0=obs[(LinearIndices(obs.=="raep0"))[findall(obs.=="raep0")],3]
-    decep0=obs[(LinearIndices(obs.=="decep0"))[findall(obs.=="decep0")],3]
-    equinox=obs[(LinearIndices(obs.=="equinox"))[findall(obs.=="equinox")],3]
-    ra_err=obs[(LinearIndices(obs.=="ra_err"))[findall(obs.=="ra_err")],3]
-    dec_err = obs[(LinearIndices(obs.=="dec_err"))[findall(obs.=="dec_err")],3]
-    sysvel = obs[(LinearIndices(obs.=="sysvel"))[findall(obs.=="sysvel")],3]
-    veltyp =  obs[(LinearIndices(obs.=="veltyp"))[findall(obs.=="veltyp")],3]
-    veldef = obs[(LinearIndices(obs.=="veldef"))[findall(obs.=="veldef")],3]
-    pmra = obs[(LinearIndices(obs.=="pmra"))[findall(obs.=="pmra")],3]
-    pmdec =  obs[(LinearIndices(obs.=="pmdec"))[findall(obs.=="pmdec")],3]
-    pmra_err =  obs[(LinearIndices(obs.=="pmra_err"))[findall(obs.=="pmra_err")],3]
-    pmdec_err =  obs[(LinearIndices(obs.=="pmdec_err"))[findall(obs.=="pmdec_err")],3]
-    parallax =  obs[(LinearIndices(obs.=="parallax"))[findall(obs.=="parallax")],3]
-    para_err =   obs[(LinearIndices(obs.=="para_err"))[findall(obs.=="para_err")],3]
-    spectyp =  obs[(LinearIndices(obs.=="spectyp"))[findall(obs.=="spectyp")],3]
-    return target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp
- end
-
-function read_comb_file(comb_file)
-    comb=readdlm(comb_file)
-    name =comb[(LinearIndices(comb.=="name"))[findall(comb.=="name")],3]
-    int_trans = comb[(LinearIndices(comb.=="int_trans"))[findall(comb.=="int_trans")],3]
-    vis = comb[(LinearIndices(comb.=="vis"))[findall(comb.=="vis")],3]
-    n_pix_fringe =comb[(LinearIndices(comb.=="n_pix_fringe"))[findall(comb.=="n_pix_fringe")],3]
-    n_pix_photometry = comb[(LinearIndices(comb.=="n_pix_photometry"))[findall(comb.=="n_pix_photometry")],3]
-    flux_frac_photometry = comb[(LinearIndices(comb.=="flux_frac_photometry"))[findall(comb.=="flux_frac_photometry")],3]
-    flux_frac_fringes = comb[(LinearIndices(comb.=="flux_frac_fringes"))[findall(comb.=="flux_frac_fringes")],3]
-    throughput_photometry = comb[(LinearIndices(comb.=="throughput_photometry"))[findall(comb.=="throughput_photometry")],3]
-    throughput_fringes = comb[(LinearIndices(comb.=="throughput_fringes"))[findall(comb.=="throughput_fringes")],3]
-    n_splits = comb[(LinearIndices(comb.=="n_splits"))[findall(comb.=="n_splits")],3]
-    read_noise = comb[(LinearIndices(comb.=="read_noise"))[findall(comb.=="read_noise")],3]
-    quantum_efficiency = comb[(LinearIndices(comb.=="quantum_efficiency"))[findall(comb.=="quantum_efficiency")],3]
-    v2_cal_err = comb[(LinearIndices(comb.=="v2_cal_err"))[findall(comb.=="v2_cal_err")],3]
-    phase_cal_err = comb[(LinearIndices(comb.=="phase_cal_err"))[findall(comb.=="phase_cal_err")],3]
-    incoh_int_time = comb[(LinearIndices(comb.=="incoh_int_time"))[findall(comb.=="incoh_int_time")],3]
-    return name,int_trans,vis,n_pix_fringe,n_pix_photometry,flux_frac_photometry,flux_frac_fringes,throughput_photometry,throughput_fringes,n_splits,read_noise,quantum_efficiency,v2_cal_err,phase_cal_err,incoh_int_time
- end
-
-function read_wave_file(wave_file)
-    wave=readdlm(wave_file)
-    combiner =wave[(LinearIndices(wave.=="combiner"))[findall(wave.=="combiner")],3]
-    mode = wave[(LinearIndices(wave.=="mode"))[findall(wave.=="mode")],3]
-    λ=wave[3:size(wave)[1],1]
-    δλ=wave[3:size(wave)[1],2]
-    return combiner,mode,λ,δλ
- end
 
 #user input
 #δ=+18.594234/180*pi #ce tau 10 mas 32w 0.37 pix
@@ -310,51 +454,59 @@ function read_wave_file(wave_file)
 #include("npoi_config.jl")
 #hour_angles = range(-6,6,20);
 
-function simulate_ha(facility_config_file,obsv_info_file,comb_file,wave_file,hour_angles,dec,image_file,pixsize,outfilename)
+function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,image_file,pixsize,errors,outfilename)
     #simulate an observation using input hour angles, info about array and combiner, and input image
-    facility_name,lat,lon,alt,coord,throughput,wind_speed,r0,ntel,tel_diams,tel_gain,tel_names,sta_names,sta_index,station_xyz=read_facility_file(facility_config_file)
-    target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp=read_obs_file(obsv_info_file)
-    name,int_trans,vis,n_pix_fringe,n_pix_photometry,flux_frac_photometry,flux_frac_fringes,throughput_photometry,throughput_fringes,n_splits,read_noise,quantum_efficiency,v2v2_cal_err,phase_cal_err,incoh_int_time=read_comb_file(comb_file)
-    combiner,mode,λ,δλ=read_wave_file(wave_file)
-    N=ntel[1]
-    nhours = length(hour_angles);
-    h = hour_angles' .* pi / 12;
-    #h=hour_angles'
-    δ=dec/180*pi
-    #l=90/180*pi
-    l=lat/180*pi;
+
+
+    ntel=facility.ntel[1] #✓
+    nhours = length(hour_angles); #✓
+    h = hour_angles' .* pi / 12; #✓
+    δ=observatory.decep0[1]/180*pi #✓
+    l=facility.lat[1]/180*pi; #✓
+    λ=wave_info_out.lam#✓
+    δλ=wave_info_out.del_lam #✓
     nw=length(λ)
-    N=ntel[1]
-    staxyz=Array{Float64}(undef,3,N);
-    for i=1:N
-        staxyz[:,i]=station_xyz[i,:];
+
+    station_xyz=Array{Float64}(undef,ntel,3) #✓
+    staxyz=Array{Float64}(undef,3,ntel); #✓
+    for i=1:ntel[1] #✓
+        station_xyz[i,1:3]=facility.sta_xyz[(i*3-2):i*3]#✓
     end
 
-    nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind=get_v2_baselines(N,station_xyz,tel_names);
-    nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind=get_t3_baselines(N,station_xyz,v2_stations);
-    nuv,uv,u_M,v_M,w_M=get_uv(l,h,λ,δ,v2_baselines,nhours,station_xyz,nv2)
-    v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
 
-    #simulate observation using input image file and pixsize
+    for i=1:ntel #✓
+            staxyz[:,i]=station_xyz[i,:];#✓
+    end
+#✓
+
+    nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind=get_v2_baselines(ntel,station_xyz,facility.tel_names);
+    nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind=get_t3_baselines(ntel,station_xyz,v2_stations);
+    nuv,uv,u_M,v_M,w_M=get_uv(l,h,λ,δ,v2_baselines,nhours)
+    v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
+#✓
+
+#simulate observation using input image file and pixsize
     x = readfits(image_file)
+    #flip image for an unknown reason
+    x=x[end:-1:1,:]
     # TODO: "wavelength to image" vector, "epoch to image" vector
     # TODO: test the size of x, handle temporal and polychromatic loops
-    v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err=compute_observables(x,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+    v2_model,v2_model_err,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err=compute_observables(x,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w,errors)
 
     #setup arrays for OIFITS format
-    sta_names=tel_names
-    sta_index=Int64.(collect(range(1,step=1,length=N)))
+    sta_names=facility.tel_names
+    sta_index=Int64.(collect(range(1,step=1,length=ntel)))
 
     #input telescope data
-    target_id_vis2=ones(nv2*nhours)
-    time_vis2=ones(nv2*nhours) #TODO
-    mjd_vis2=ones(nv2*nhours)*58297.  #TODO
+    target_id_vis2=ones(nv2*nhours).*observatory.target_id[1]
+    time_vis2=ones(nv2*nhours) #change
+    mjd_vis2=ones(nv2*nhours)*58297.  #change
     int_time_vis2=ones(nv2*nhours) #exchange
     flag_vis2=fill(false,nv2*nhours,1)
     #need to get vis2,vis2err,u,v,sta_index from DATA
-    target_id_t3=ones(nt3*nhours)
-    time_t3=ones(nt3*nhours) #TODO
-    mjd_t3=ones(nt3*nhours)*58297.  #TODO
+    target_id_t3=ones(nt3*nhours).*observatory.target_id[1]
+    time_t3=ones(nt3*nhours) #change
+    mjd_t3=ones(nt3*nhours)*58297.  #change
     int_time_t3=ones(nt3*nhours) #exchange;
     flag_t3=fill(false,(nt3*nhours),1);
 
@@ -387,18 +539,26 @@ function simulate_ha(facility_config_file,obsv_info_file,comb_file,wave_file,hou
     t3phi_model=transpose(t3phi_model);
     t3phi_model_err=transpose(t3phi_model_err);
 
+    oi_array=[facility.tel_names,sta_names,sta_index,facility.tel_diams,staxyz];
+    target_array=[observatory.target_id[1],observatory.target[1],observatory.raep0[1],observatory.decep0[1],observatory.equinox[1],observatory.ra_err[1],observatory.dec_err[1],observatory.sysvel[1],observatory.veltyp[1],observatory.veldef[1],observatory.pmra[1],observatory.pmdec[1],observatory.pmra_err[1],observatory.pmdec_err[1],observatory.parallax[1],observatory.para_err[1],observatory.spectyp[1]];
+    wave_array=[λ,δλ];
+    vis2_array=[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2];
+    t3_array=[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3];
+
+
     f = fits_create_file(outfilename);
     write_oi_header(f,1);
-    write_oi_array(f,[tel_names,sta_names,sta_index,tel_diams,staxyz]);
-    write_oi_target(f,[convert(Int16,target_id[1]),convert(String,target[1]),convert(Float64,raep0[1]),convert(Float64,decep0[1]),convert(Int16,equinox[1]),convert(Int16,ra_err[1]),convert(Int16,dec_err[1]),convert(Int16,sysvel[1]),convert(String,veltyp[1]),convert(String,veldef[1]),convert(Int16,pmra[1]),convert(Int16,pmdec[1]),convert(Int16,pmra_err[1]),convert(Int16,pmdec_err[1]),convert(Float64,parallax[1]),convert(Float64,para_err[1]),convert(String,spectyp[1])]);
-    write_oi_wavelength(f,[eff_wave,eff_band]);
+    write_oi_array(f,[facility.tel_names,sta_names,facility.sta_index,facility.tel_diams,staxyz]);
+    #write_oi_target(f,[convert(Int16,target_id[1]),convert(String,target[1]),convert(Float64,raep0[1]),convert(Float64,decep0[1]),convert(Int16,equinox[1]),convert(Int16,ra_err[1]),convert(Int16,dec_err[1]),convert(Int16,sysvel[1]),convert(String,veltyp[1]),convert(String,veldef[1]),convert(Int16,pmra[1]),convert(Int16,pmdec[1]),convert(Int16,pmra_err[1]),convert(Int16,pmdec_err[1]),convert(Float64,parallax[1]),convert(Float64,para_err[1]),convert(String,spectyp[1])]);
+    write_oi_target(f,target_array)
+    write_oi_wavelength(f,wave_array);
     write_oi_vis2(f,[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2]);
     write_oi_t3(f,[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3]);
     fits_close_file(f);
 
 end
 
-function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true)
+function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=false)
     #simulate observation from input oifits and input image.
     if typeof(fitsfiles)== String
         num_files = 1.0
@@ -413,8 +573,8 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     #setup simulation
     nuv = data.nuv
 
-    x = (read((FITS(fitsfiles))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
-
+    #x = (read((FITS(fitsfiles))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
+    x = (read((FITS(fitsfiles))[1])); nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
     #nfft_plan = setup_nfft(-uv, nx, pixsize)
     #cvis_model = image_to_cvis_nfft(x, nfft_plan)
     cvis_model=[]
