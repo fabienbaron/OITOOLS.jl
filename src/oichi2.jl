@@ -338,10 +338,6 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
    return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-
-
-
-
 function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], epochs_weights=[],regularizers=[], verb = false)
   nepochs = length(ft);
   if epochs_weights == []
@@ -357,7 +353,7 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
     tslice = 1+(i-1)*npix:i*npix; # temporal slice
     subg = Array{Float64}(undef, npix);
     printstyled("Epoch $i ",color=printcolor[i]);
-    f += epochs_weights[i]*crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=[], printcolor = printcolor[i], verb = verb);
+    f += epochs_weights[i]*crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
     g[tslice] = epochs_weights[i]*subg
   end
 
@@ -398,7 +394,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
     tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
     subg = Array{Float64}(undef, npix);
     printstyled("Spectral channel $i ",color=printcolor[i]);
-    f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=[], printcolor = printcolor[i], verb = verb);
+    f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
     g[tslice] = subg
   end
 
