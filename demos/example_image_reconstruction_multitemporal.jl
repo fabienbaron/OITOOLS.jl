@@ -3,7 +3,7 @@
 #
 using OITOOLS
 using FITSIO
-oifitsfiles=["./data/AZCYGJUN01.oifits","./data/AZCYGJUL.oifits","./data/AZCYGAUG.oifits"]
+oifitsfiles=["./data/spotchange1.oifits","./data/spotchange2.oifits","./data/spotchange3.oifits"]
 printcolors = [:red, :green, :blue]
 nepochs, tepochs, data = readoifits_multiepochs(oifitsfiles, filter_bad_data=true, force_full_t3 = true);
 pixsize = 0.1;
@@ -16,12 +16,11 @@ prior_im=convert(Array{Float64,2},prior_im)
 prior_im=vec(prior_im)/sum(prior_im)
 x_start=prior_im=repeat(prior_im,nepochs)
 
-
-regularizers = [   [ ["centering", 1e4], ["tv", 2e3] ],  #epoch 1
-                   [ ["tv", 5e2] ],  #epoch 2
-                   [ ["tv", 5e2] ], #epoch 3
-                   [ ["temporal_tvsq", 3e4] ] ]; #transtemporal
-
+regularizers = [   [ ["centering", 1e4], ["tv", 2e4] ],  #epoch 1
+                   [ ["tv", 2e4] ],  #epoch 2
+                   [ ["tv", 2e4] ], #epoch 3
+                   [ ["temporal_tvsq", 3e8] ] ]; #transtemporal
+                   
 x = reconstruct_multitemporal(x_start, data, fftplan, printcolor= printcolors, regularizers = regularizers);
 
 imdisp_temporal(x, nepochs, pixscale=pixsize, cmap="gist_heat")
