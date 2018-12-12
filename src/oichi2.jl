@@ -373,7 +373,7 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
          tv_g[:,1] = 2*(y[:,1]-y[:,2]);
          tv_g[:,2] = 2*(y[:,2]-y[:,1]);
       end
-      f+= temporalf
+      f+= regularizers[nepochs+1][1][2]*temporalf
       g[:] += regularizers[nepochs+1][1][2]*vec(tv_g);
       printstyled("Temporal regularization: $temporalf\n", color=:yellow)
      end
@@ -414,7 +414,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
          trsp_g[:,1] = 2*(y[:,1]-y[:,2]);
          trsp_g[:,2] = 2*(y[:,2]-y[:,1]);
       end
-      f+= trsp_f
+      f+= regularizers[nwavs+1][1][2]*trsp_f
       g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
       printstyled("Trans-spectral regularization: $trsp_f\n", color=:yellow)
      end

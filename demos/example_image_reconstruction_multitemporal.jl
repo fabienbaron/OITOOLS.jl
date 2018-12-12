@@ -16,12 +16,11 @@ prior_im=convert(Array{Float64,2},prior_im)
 prior_im=vec(prior_im)/sum(prior_im)
 x_start=prior_im=repeat(prior_im,nepochs)
 
-regularizers = [   [ ["centering", 1e4], ["tv", 2e4] ],  #epoch 1
-                   [ ["tv", 2e4] ],  #epoch 2
-                   [ ["tv", 2e4] ], #epoch 3
+regularizers = [   [ ["centering", 1e4], ["tv", 2e6] ],  #epoch 1
+                   [ ["tv", 2e6] ],  #epoch 2
+                   [ ["tv", 2e6] ], #epoch 3
                    [ ["temporal_tvsq", 3e8] ] ]; #transtemporal
-                   
+
 x = reconstruct_multitemporal(x_start, data, fftplan, printcolor= printcolors, regularizers = regularizers);
 
 imdisp_temporal(x, nepochs, pixscale=pixsize, cmap="gist_heat")
-writefits(reshape(x,nx,nx,3),"reconstruction.fits")
