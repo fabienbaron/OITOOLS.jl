@@ -25,6 +25,9 @@ From a fresh Julia 1.0 installation, use the package manager (```]``` key) then 
 Check that everything works by doing:
 ``` using OITOOLS```
 
+
+OITOOLS uses the ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages. For model fitting, ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection) are used. ```DNest4``` is likely to replace ```Multinest``` soon. For image reconstruction, we use ```OptimPackNextGen```.
+
 # Installation
 
 Add the package:
