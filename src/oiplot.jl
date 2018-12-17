@@ -301,52 +301,57 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
 end
 
 # TODO: rework for julia 1.0+
-function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-  fig = figure("Image",figsize=(nepochs*6,6),facecolor="White")
+function imdisp_temporal(image_vector, nepochs; cmap = "hot", name="Image" pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+ figure()
+  fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
   images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
+  cols=6
+  rows=div(nepochs,cols)+1
   for i=1:nepochs
-    plotnum = 100+nepochs*10+i
-    subplot(plotnum)
+    #plotnum = 100*(div(nepochs,9)+1)
+    fig[:add_subplot](rows,cols,i)
+    #subplot()
     title("Epoch $i")
     image = images_all[:,i]
     nx=ny=-1;
-  pixmode = false;
-  if pixscale == -1
+    pixmode = false;
+    if pixscale == -1
       pixmode = true;
       pixscale = 1
-  end
-  if ndims(image) ==1
-    ny=nx=Int64(sqrt(length(image)))
-    imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
-  else
-    nx,ny = size(image);
-    imshow(rotl90(image), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
-  end
-  if pixmode == false
-  xlabel("RA (mas)")
-  ylabel("DEC (mas)")
- end
-
-  ax = gca()
-  ax[:set_aspect]("equal")
-  mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
-  ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
-  ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
-  ax[:xaxis][:set_tick_params](which="major",length=10,width=2)
-  ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
-  ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
-  ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
-
-  if colorbar == true
-    divider = axgrid.make_axes_locatable(ax)
-    cax = divider[:append_axes]("right", size="5%", pad=0.05)
-    colorbar(image, cax=cax)
-  end
-
-   if beamsize > 0
-    c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-    ax[:add_artist](c)
-   end
-  tight_layout()
-  end
+    end
+    if ndims(image) ==1
+        ny=nx=Int64(sqrt(length(image)))
+        imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    else
+        nx,ny = size(image);
+        imshow(rotl90(image), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    end
+    if pixmode == false
+        if i > nepochs-cols
+            xlabel("RA (mas)")
+        end
+        if i % cols == 1
+            ylabel("DEC (mas)")
+        end
+    end
+    ax = gca()
+    ax[:set_aspect]("equal")
+    mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
+    ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
+    ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
+    ax[:xaxis][:set_tick_params](which="major",length=10,width=2)
+    ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
+    ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
+    ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
+    if colorbar == true
+        divider = axgrid.make_axes_locatable(ax)
+        cax = divider[:append_axes]("right", size="5%", pad=0.05)
+        colorbar(image, cax=cax)
+    end
+    if beamsize > 0
+        c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+        ax[:add_artist](c)
+    end
+    #tight_layout()
+    end
 end
