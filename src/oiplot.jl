@@ -301,8 +301,7 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
 end
 
 # TODO: rework for julia 1.0+
-function imdisp_temporal(image_vector, nepochs; cmap = "hot", name="Image" pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
- figure()
+function imdisp_temporal(image_vector, nepochs; cmap = "hot", name="Image",pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
   fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
   images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
   cols=6
