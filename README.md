@@ -22,16 +22,15 @@ From a fresh Julia 1.0 installation, use the package manager (```]``` key) then 
 
 ``` add https://github.com/emmt/OptimPackNextGen.jl.git``` (optional, for image reconstruction)
 
-Check that everything works by doing:
-``` using OITOOLS```
-
-
 OITOOLS uses the ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages. For model fitting, ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection) are used. ```DNest4``` is likely to replace ```Multinest``` soon. For image reconstruction, we use ```OptimPackNextGen```.
 
 # Installation
 
 Add the package:
 ``` add https://github.com/fabienbaron/OITOOLS.jl.git```
+
+Check that everything works by doing:
+``` using OITOOLS```
 
 # Demos
 We provide several demo files in the demos/ subfolder:
@@ -50,4 +49,3 @@ We provide several demo files in the demos/ subfolder:
 * example_image_reconstruction_multitemporal.jl : gradient-based image reconstruction for time-variable images, with temporal regularization
 * example_image_reconstruction_multiwavelength.jl : (upcoming) gradient-based image reconstruction for spectrally dependent images, with transpectral regularization
 * example_oifitslib.jl                  : (upcoming) an interface to John Young's OIFITSLIB utilities (oimerge, oifilter, oicheck)
-
