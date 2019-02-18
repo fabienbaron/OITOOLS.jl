@@ -10,6 +10,8 @@ From a fresh Julia 1.0 installation, use the package manager (```]``` key) then 
 
 ``` add PyPlot```
 
+``` add LaTeXStrings```
+
 ``` add FITSIO```
 
 ``` add Libdl```
