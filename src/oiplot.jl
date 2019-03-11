@@ -95,7 +95,7 @@ clf();
 subplot(211)
 ax = gca();
 if logplot==true
-ax[:set_yscale]("log")
+ax.set_yscale("log")
 end
 errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
 plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
@@ -131,7 +131,7 @@ clf();
 subplot(211)
 ax = gca();
 if logplot==true
-ax[:set_yscale]("log")
+ax.set_yscale("log")
 end
 
 if yrange !=[]
@@ -156,7 +156,7 @@ plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
 ax = gca();
-ax[:grid](true);
+ax.grid(true);
 tight_layout()
 end
 
@@ -179,7 +179,7 @@ errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color="B
 title("Squared Visibility Amplitude Data")
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
-ax[:grid](true)
+ax.grid(true)
 tight_layout()
 end
 
@@ -196,14 +196,14 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err) # plots v2 data only
   xlabel(L"Maximum Baseline (M$\lambda$)")
   ylabel("Closure phase (degrees)")
   ax=gca();
-  ax[:grid](true)
+  ax.grid(true)
   tight_layout()
 end
 
 const axgrid = PyNULL()
 copy!(axgrid, pyimport("mpl_toolkits.axes_grid1"))
 
-function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp(image; colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure("Image",figsize=(6,6),facecolor="White")
  nx=ny=-1;
  pixmode = false;
@@ -213,10 +213,10 @@ function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorba
  end
  if ndims(image) ==1
    ny=nx=Int64(sqrt(length(image)))
-   imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+   imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  else
    nx,ny = size(image);
-   imshow(rotl90(image), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+   imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  end
  if pixmode == false
  xlabel("RA (mas)")
@@ -224,30 +224,30 @@ function imdisp(image; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorba
 end
 
  ax = gca()
- ax[:set_aspect]("equal")
- mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
- ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
- ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
- ax[:xaxis][:set_tick_params](which="major",length=10,width=2)
- ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
- ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
- ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
+ ax.set_aspect("equal")
+ mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
+ ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
+ ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
+ ax.xaxis.set_tick_params(which="major",length=10,width=2)
+ ax.xaxis.set_tick_params(which="minor",length=5,width=1)
+ ax.yaxis.set_tick_params(which="major",length=10,width=2)
+ ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
  if colorbar == true
   divider = axgrid.make_axes_locatable(ax)
-  cax = divider[:append_axes]("right", size="5%", pad=0.05)
+  cax = divider.append_axes("right", size="5%", pad=0.05)
   colorbar(image, cax=cax)
  end
 
   if beamsize > 0
-   c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-   ax[:add_artist](c)
+   c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+   ax.add_artist(c)
   end
  tight_layout()
 end
 
 #TODO: work for rectangular
-function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
 
 if typeof(image_vector)==Array{Float64,2}
     nwavs = size(image_vector,2)
@@ -270,38 +270,38 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
       pixscale = 1
     end
     ny=nx=Int64.(sqrt(length(image)))
-    imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
     if pixmode == false
         xlabel("RA (mas)")
         ylabel("DEC (mas)")
     end
 
     ax = gca()
-    ax[:set_aspect]("equal")
-    mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
-    ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
-    ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
-    ax[:xaxis][:set_tick_params](which="major",length=10,width=2)
-    ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
-    ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
-    ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
+    ax.set_aspect("equal")
+    mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
+    ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
+    ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
+    ax.xaxis.set_tick_params(which="major",length=10,width=2)
+    ax.xaxis.set_tick_params(which="minor",length=5,width=1)
+    ax.yaxis.set_tick_params(which="major",length=10,width=2)
+    ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
   if colorbar == true
     divider = axgrid.make_axes_locatable(ax)
-    cax = divider[:append_axes]("right", size="5%", pad=0.05)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
     colorbar(image, cax=cax)
   end
 
    if beamsize > 0
-    c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-    ax[:add_artist](c)
+    c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+    ax.add_artist(c)
    end
   tight_layout()
   end
 end
 
 # TODO: rework for julia 1.0+
-function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_temporal(image_vector, nepochs; colormap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
   fig = figure("Image",figsize=(nepochs*6,6),facecolor="White")
   images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
   for i=1:nepochs
@@ -317,10 +317,10 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
   end
   if ndims(image) ==1
     ny=nx=Int64(sqrt(length(image)))
-    imshow(rotl90(reshape(image,nx,nx)), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
   else
     nx,ny = size(image);
-    imshow(rotl90(image), ColorMap(cmap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
   end
   if pixmode == false
   xlabel("RA (mas)")
@@ -328,24 +328,24 @@ function imdisp_temporal(image_vector, nepochs; cmap = "hot", pixscale = -1.0, t
  end
 
   ax = gca()
-  ax[:set_aspect]("equal")
-  mx = matplotlib[:ticker][:MultipleLocator](tickinterval) # Define interval of minor ticks
-  ax[:xaxis][:set_minor_locator](mx) # Set interval of minor ticks
-  ax[:yaxis][:set_minor_locator](mx) # Set interval of minor ticks
-  ax[:xaxis][:set_tick_params](which="major",length=10,width=2)
-  ax[:xaxis][:set_tick_params](which="minor",length=5,width=1)
-  ax[:yaxis][:set_tick_params](which="major",length=10,width=2)
-  ax[:yaxis][:set_tick_params](which="minor",length=5,width=1)
+  ax.set_aspect("equal")
+  mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
+  ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
+  ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
+  ax.xaxis.set_tick_params(which="major",length=10,width=2)
+  ax.xaxis.set_tick_params(which="minor",length=5,width=1)
+  ax.yaxis.set_tick_params(which="major",length=10,width=2)
+  ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
   if colorbar == true
     divider = axgrid.make_axes_locatable(ax)
-    cax = divider[:append_axes]("right", size="5%", pad=0.05)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
     colorbar(image, cax=cax)
   end
 
    if beamsize > 0
-    c = matplotlib[:patches][:Circle]((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-    ax[:add_artist](c)
+    c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+    ax.add_artist(c)
    end
   tight_layout()
   end
