@@ -7,6 +7,7 @@ include("oichi2.jl");
 include("oiplot.jl");
 include("vis_functions_classic.jl");
 include("modelfit.jl");
+include("make_spot_move.jl")
 export OIdata
 export uvplot, v2plot, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot
 export readoifits, readoifits_multiepochs, readfits, writefits
@@ -17,4 +18,5 @@ export get_uv,get_uv_indxes,get_simulated_image,prep_arrays,read_array_file,read
 export write_oi_header,write_oi_array,write_oi_target,write_oi_wavelength,write_oi_vis2,write_oi_t3
 export readoifits_multicolors,setup_nfft_polychromatic,imdisp_polychromatic,reconstruct_polychromatic
 export facility_info,obsv_info,combiner_info,wave_info,error_struct,read_facility_file,read_obs_file,read_wave_file,read_comb_file,define_errors
+export make_spot_move,place_spot,make_disk
 end

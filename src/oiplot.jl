@@ -301,17 +301,20 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
 end
 
 # TODO: rework for julia 1.0+
-function imdisp_temporal(image_vector, nepochs; colormap = "hot", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-  fig = figure("Image",figsize=(nepochs*6,6),facecolor="White")
+function imdisp_temporal(image_vector, nepochs; cmap = "gist_heat", name="Image",pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+  fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
   images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
+  cols=6
+  rows=div(nepochs,cols)+1
   for i=1:nepochs
-    plotnum = 100+nepochs*10+i
-    subplot(plotnum)
+    #plotnum = 100*(div(nepochs,9)+1)
+    fig[:add_subplot](rows,cols,i)
+    #subplot()
     title("Epoch $i")
     image = images_all[:,i]
     nx=ny=-1;
-  pixmode = false;
-  if pixscale == -1
+    pixmode = false;
+    if pixscale == -1
       pixmode = true;
       pixscale = 1
   end
