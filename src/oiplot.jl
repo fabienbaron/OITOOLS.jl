@@ -1,17 +1,17 @@
 # gather common display tasks
 using PyPlot,PyCall
-PyDict(pyimport("matplotlib")["rcParams"])["font.family"]=["serif"]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.major.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.major.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["xtick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["ytick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["lines.markeredgewidth"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["legend.numpoints"]=[1]
-PyDict(pyimport("matplotlib")["rcParams"])["legend.handletextpad"]=[0.3]
+PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
+PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
+PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
+PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
+PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.size"]=[6]
+PyDict(pyimport("matplotlib")."rcParams")["xtick.major.width"]=[1]
+PyDict(pyimport("matplotlib")."rcParams")["ytick.major.width"]=[1]
+PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.width"]=[1]
+PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.width"]=[1]
+PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
+PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
+PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
 
 edit_oifits_remove_point_button=1
 edit_oifits_remove_point_double_click=true
@@ -29,8 +29,8 @@ function onclickv2(event)
     if clicktype == edit_oifits_remove_point_button    #if not a left click
         if event[:dblclick] == edit_oifits_remove_point_double_click
             ax=gca()
-            ymin,ymax=ax[:get_ylim]()
-            xmin,xmax=ax[:get_xlim]()
+            ymin,ymax=ax.get_ylim()
+            xmin,xmax=ax.get_xlim()
             normfactor=abs(xmax-xmin)/abs(ymax-ymin)
             xclick=event[:xdata]
             yclick=event[:ydata]
@@ -76,14 +76,14 @@ clf();
 ax = gca()
 minorticks_on
 markeredgewidth=0.1
-ax[:locator_params](axis ="y", nbins=20)
-ax[:locator_params](axis ="x", nbins=20)
+ax.locator_params(axis ="y", nbins=20)
+ax.locator_params(axis ="x", nbins=20)
 scatter(u, v,alpha=0.5, color="Black")
 scatter(-u, -v,alpha=0.5, color="Black")
 title("UV coverage")
 xlabel(L"U (M$\lambda$)")
 ylabel(L"V (M$\lambda$)")
-ax[:grid](true);
+ax.grid(true);
 tight_layout();
 end
 
@@ -102,13 +102,13 @@ plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", marke
 title("Squared Visbility Amplitudes - Model vs data plot")
 #xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
-ax[:grid](true);
+ax.grid(true);
 subplot(212)
 plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
 xlabel(L"Baseline (M$\lambda$)")
 ylabel("Residuals (number of sigma)")
 ax = gca();
-ax[:grid](true);
+ax.grid(true);
 tight_layout()
 end
 
@@ -150,7 +150,7 @@ end
 title("Squared Visbility Amplitudes - Model vs data plot")
 #xlabel(L"Baseline (M$\lambda$)")
 ylabel("Squared Visibility Amplitudes")
-ax[:grid](true);
+ax.grid(true);
 subplot(212)
 plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
 xlabel(L"Baseline (M$\lambda$)")
@@ -170,7 +170,7 @@ fig = figure("V2 data",figsize=(10,5),facecolor="White");
 clf();
 ax = gca();
 if logplot==true
-ax[:set_yscale]("log")
+ax.set_yscale("log")
 end
 if remove == true
 fig[:canvas][:mpl_connect]("button_press_event",onclickv2)
