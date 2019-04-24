@@ -520,6 +520,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         uv_select[good_uv_t3_3] .= true
         indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)]
         OIdataArr[ispecbin,itimebin].uv = OIdataArr[ispecbin,itimebin].uv[:,findall(uv_select.==true)]
+        OIdataArr[ispecbin,itimebin].nuv = div(length(OIdataArr[ispecbin,itimebin].uv),2)  
         OIdataArr[ispecbin,itimebin].indx_v2 =   indx_conv[good_uv_v2]
         OIdataArr[ispecbin,itimebin].indx_t3_1 = indx_conv[good_uv_t3_1]
         OIdataArr[ispecbin,itimebin].indx_t3_2 = indx_conv[good_uv_t3_2]
