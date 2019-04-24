@@ -115,14 +115,17 @@ end
 
 
 # This draws a continuous line based on the analytic function
-function v2plot_modelvsfunc(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, visfunc, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
+function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
 # Compute model points (discrete)
+baseline_v2 = data.v2_baseline;
+v2_data = data.v2;
+v2_data_err = data.v2_err;
 cvis_model = visfunc(params,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
 v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
 # Compute model curve (continous)
 r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
-range = linspace(minimum(r),maximum(r),1000);
-cvis_func = visfunc(params,range);
+xrange = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000);
+cvis_func = visfunc(params,xrange);
 v2_func = abs2.(cvis_func);
 
 
@@ -144,7 +147,7 @@ plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", marke
 end
 
 if drawfunc == true
-plot(range/1e6, v2_func, color="Red", linestyle="-", markersize=3)
+plot(xrange/1e6, v2_func, color="Red", linestyle="-", markersize=3)
 end
 
 title("Squared Visbility Amplitudes - Model vs data plot")
