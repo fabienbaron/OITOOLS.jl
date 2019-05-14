@@ -1,6 +1,5 @@
 module OITOOLS
-#include("readoifits.jl");
-include("readoifits_t4.jl");
+include("readoifits.jl");
 include("write_oifits_ha.jl");
 include("write_oifits_obs.jl");
 include("simulate.jl");
