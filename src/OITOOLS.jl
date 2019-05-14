@@ -1,5 +1,6 @@
 module OITOOLS
-include("readoifits.jl");
+#include("readoifits.jl");
+include("readoifits_t4.jl");
 include("write_oifits_ha.jl");
 include("write_oifits_obs.jl");
 include("simulate.jl");
@@ -19,4 +20,5 @@ export write_oi_header,write_oi_array,write_oi_target,write_oi_wavelength,write_
 export readoifits_multicolors,setup_nfft_polychromatic,imdisp_polychromatic,reconstruct_polychromatic
 export facility_info,obsv_info,combiner_info,wave_info,error_struct,read_facility_file,read_obs_file,read_wave_file,read_comb_file,define_errors
 export make_spot_move,place_spot,make_disk
+export setup_nfft_t4, cvis_to_t4
 end

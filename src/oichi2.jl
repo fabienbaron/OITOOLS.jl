@@ -36,6 +36,22 @@ function setup_nfft(data, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
   return [fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
 end
 
+
+function setup_nfft_t4(data, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
+  scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+  fftplan_uv  = NFFTPlan(scale_rad*data.uv, (nx,nx), 4, 2.0);
+  fftplan_v2   = NFFTPlan(scale_rad*data.uv[:, data.indx_v2], (nx,nx), 4, 2.0);
+  fftplan_t3_1 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_1], (nx,nx), 4, 2.0);
+  fftplan_t3_2 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_2], (nx,nx), 4, 2.0);
+  fftplan_t3_3 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_3], (nx,nx), 4, 2.0);
+  fftplan_t4_1 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_1], (nx,nx), 4, 2.0);
+  fftplan_t4_2 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_2], (nx,nx), 4, 2.0);
+  fftplan_t4_3 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_3], (nx,nx), 4, 2.0);
+  fftplan_t4_4 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_4], (nx,nx), 4, 2.0);
+  return [fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3, fftplan_t4_1,fftplan_t4_2,fftplan_t4_3, fftplan_t4_4]
+end
+
+
 function setup_nfft_multiepochs(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,Float64},1},1}
   nepochs = size(data,1);
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
@@ -74,6 +90,13 @@ function cvis_to_t3(cvis, indx1, indx2, indx3)
   t3amp = abs.(t3);
   t3phi = angle.(t3)*180.0/pi;
   return t3, t3amp, t3phi
+end
+
+function cvis_to_t4(cvis, indx1, indx2, indx3, indx4)
+  t4 = cvis[indx1].*cvis[indx2]./(cvis[indx3]*conj(cvis[indx4]));
+  t4amp = abs.(t4);
+  t4phi = angle.(t4)*180.0/pi;
+  return t4, t4amp, t4phi
 end
 
 
@@ -131,6 +154,14 @@ function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1
   end
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
+
+
+
+
+
+
+
+
 #
 # function chi2_vis_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata ) # criterion function plus its gradient w/r x
 #   cvis_model = image_to_cvis_nfft(x, fftplan[1]);
