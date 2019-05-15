@@ -43,11 +43,29 @@ end
 
 # visibility of an annulus of unit flux
 function visibility_annulus(r_in, r_out, v_r;tol=1e-10)
-if abs(r_out - r_in)<tol
+if abs(r_out - r_in)<tol #
   return zeros(Complex{Float64},length(v_r));
 else
   return (1.0+0*im).*(visibility_ud([2*r_out],v_r)*r_out^2-visibility_ud([2*r_in],v_r)*r_in^2)/(r_out^2-r_in^2);
 end
+
+function visibility_thinring(param,v_r)
+return besselj0.(pi*param[1]/2.0626480624709636e8*v_r)
+end
+
+# function visibility_ldsqrt(param,v_r)
+# theta = param[1]/2.0626480624709636e8;
+# bs1 = bessel(0, pi*v_r*theta, 2)
+# bs2 = bessel(0.5, pi*v_r*theta, 2)
+# bs3 = bessel(0.25, pi*v_r*theta, 2)
+# x1 = ((1D0-alpha-beta)*(bs1(2)))/(pi*a*rho)
+# x2 = (alpha*(sqrt(pi/2D0))*bs2(2))/((pi*a*rho)**(1.5D0))
+# x3 = (beta*((2D0)**(0.25D0))*(gamma(1.25D0))*bs3(2))/((pi*a*rho)**(1.25D0))
+# x4 = (0.5D0)-((1D0/6D0)*alpha)-((1D0/10D0)*beta)
+# return (x1+x2+x3)/x4
+# end
+
+
 end
 
 function init_bounds(visfunc)

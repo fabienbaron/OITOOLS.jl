@@ -33,3 +33,6 @@ v2plot_modelvsdata(data.v2_baseline,data.v2,data.v2_err, v2_model,logplot=true);
 
 # Directly compare chi2 for given law
 model_chi2_v2(data, visibility_ud, [8.0])
+
+# Example of fitting with bound constraints
+f_chi2, params, cvis_model = fit_model_v2(data, visibility_ud, [8.0], lbounds=[7.5], hbounds=[8.2]);# diameter is the parameter, chi2 ~ 15.23
