@@ -414,9 +414,9 @@ end
       spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
     end
   end
-  
+
   # count how many spectral bins user input into file
-  nspecbin_old = length(spectralbin);
+  nspecbin = length(spectralbin);
   ncombspec = Int(length(spectralbin[1])/2);
   if (nspecbin_old == 1) # exclude other data
     nspecbin = ntotspec = 1;
@@ -427,7 +427,7 @@ end
   end
 
   # count how many temporal bins user input into file
-  ntimebin_old = length(temporalbin);
+  ntimebin = length(temporalbin);
   ncombtime = Int(length(temporalbin[1])/2);
   if (ntimebin_old == 1)
     ntimebin = ntottime = 1;
