@@ -1,17 +1,26 @@
+using Statistics
+using LinearAlgebra
+
 using Pkg
 if in("NLopt",keys(Pkg.installed()))
     @eval using NLopt
 
-function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD, verbose = true, calculate_vis = true)
+function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD, lbounds = [], hbounds = [], verbose = true, calculate_vis = true)
     nparams=length(init_param)
     nv2 = length(data.v2);
     chisq=(param,g)->norm( (abs2.(visfunc(param,data.v2_baseline))-data.v2)./data.v2_err)^2/nv2;
     opt = Opt(fitter, nparams);
     min_objective!(opt, chisq)
     xtol_rel!(opt,1e-5)
-    bounds = zeros(size(init_param)); # note: this enforces positivity on radius and coefficients
+    if lbounds == []
+        lbounds,~ = init_bounds(visfunc)
+    end
+    if hbounds == []
+        ~,hbounds = init_bounds(visfunc)
+    end
     # maybe not desirable for quadratic law ?
-    lower_bounds!(opt, bounds);
+    lower_bounds!(opt, lbounds);
+    upper_bounds!(opt, hbounds);
     (minf,minx,ret) = optimize(opt, init_param);
     if verbose == true
         println("Chi2: $minf \t parameters:$minx \t \t $ret")
@@ -23,7 +32,6 @@ function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; fitte
     return (minf,minx,cvis_model)
 end
 
-using Statistics
 
 function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD)
     npars=length(init_param)
@@ -60,6 +68,13 @@ else
 end
 
 #
+# Just get the chi2
+#
+
+function model_chi2_v2(data::OIdata, visfunc, param::Array{Float64,1})
+    nv2 = length(data.v2);
+    return norm( (abs2.(visfunc(param,data.v2_baseline))-data.v2)./data.v2_err)^2/nv2;
+end
 
 if in("MultiNest",keys(Pkg.installed()))
     @eval using MultiNest

@@ -49,3 +49,30 @@ else
   return (1.0+0*im).*(visibility_ud([2*r_out],v_r)*r_out^2-visibility_ud([2*r_in],v_r)*r_in^2)/(r_out^2-r_in^2);
 end
 end
+
+function init_bounds(visfunc)
+#return default lower and upper bounds on parameters
+lbounds = []
+hbounds = []
+if visfunc==visibility_ud
+ lbounds = [0.0]
+ hbounds = [1e9]
+end
+
+if visfunc==visibility_ldpow
+ lbounds = [0.0, 0.0]
+ hbounds = [1e9, 3.0]
+end
+
+if visfunc == visibility_ldquad
+ lbounds = [0.0, -1.0, -1.0]
+ hbounds = [1e9, 1.0, 1.0]
+end
+
+if visfunc == visibility_ldlin
+ lbounds = [0.0, -1.0]
+ hbounds = [1e9, 1.0]
+end
+
+return lbounds, hbounds
+end

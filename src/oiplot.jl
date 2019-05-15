@@ -113,7 +113,7 @@ end
 
 # double check by plotting uv coverage
 function uvplot(data::OIdata;fancy=false,filename="")
-    uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,colors;fancy=fancy,filename=filename)
+    uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,colors,fancy=fancy,filename=filename)
 end
 
 function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta_index::Array{Int64,2},v2_lam::Array{Float64,1},colors::Array{String,1};fancy=false,filename="")
