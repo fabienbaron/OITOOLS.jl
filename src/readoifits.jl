@@ -418,9 +418,9 @@ end
   # count how many spectral bins user input into file
   nspecbin = length(spectralbin);
   ncombspec = Int(length(spectralbin[1])/2);
-  if (nspecbin_old == 1) # exclude other data
+  if (nspecbin == 1) # exclude other data
     nspecbin = ntotspec = 1;
-  elseif (nspecbin_old == 2)
+  elseif (nspecbin == 2)
     nsplitspec = Int(length(spectralbin[2])/2);
     ntotspec = ncombspec + nsplitspec;
     nspecbin = Int(1) + nsplitspec;
@@ -429,9 +429,9 @@ end
   # count how many temporal bins user input into file
   ntimebin = length(temporalbin);
   ncombtime = Int(length(temporalbin[1])/2);
-  if (ntimebin_old == 1)
+  if (ntimebin == 1)
     ntimebin = ntottime = 1;
-  elseif (ntimebin_old == 2)
+  elseif (ntimebin == 2)
     nsplittime = Int(length(temporalbin[2])/2);
     ntottime = ncombtime + nsplittime;
     ntimebin = Int(1) + nsplittime;
