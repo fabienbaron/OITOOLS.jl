@@ -101,6 +101,7 @@ function onclickidentify(event)
             else
                 printstyled("Filename: ",clickfile[1],"\n",color=:green)
             end
+            printstyled("MJD: ",clickmjd[indx_id],"\n",color=:black)
             printstyled("Year: ", clickyear," Month: ",clickmonth," Day: ",clickday,"\n",color=:blue)
             printstyled("Hour: ",clickhour, " Min: ",clickmin, " Sec: ", clicksec,"\n",color=:red )
     #elseif clicktype == right_click
