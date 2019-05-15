@@ -1,4 +1,7 @@
-using OITOOLS
+#
+# Utility functions for spotted discs
+#
+
 using FITSIO
 
 function make_disk(npix,scale,d_mean,majorminor,pa)

@@ -7,7 +7,7 @@ include("oichi2.jl");
 include("oiplot.jl");
 include("vis_functions_classic.jl");
 include("modelfit.jl");
-include("make_spot_move.jl")
+include("utils.jl")
 export OIdata
 export uvplot, onclickidentify, v2plot,v2plot_timelapse, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot,v2plot_multifile,get_baseline_list,get_baseline_list_t3phi,imdisp_multiwave,imdisp_polychromatic
 export readoifits, readoifits_multiepochs, readfits, writefits

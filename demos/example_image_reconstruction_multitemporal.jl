@@ -3,7 +3,7 @@
 #
 using OITOOLS
 using FITSIO
-
+include("spot_motion.jl")
 #parameters for simulation of moving spots
 #star params
 star_params=[64,0.1,4,1,90] #params=[npix,scale,d_mean_star,majorminor,pa_star]
