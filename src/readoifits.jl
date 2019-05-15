@@ -95,8 +95,8 @@ end
 #    readoifits_timespec second run though. This is in the range of [start, end).
 
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], binning = false,  get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, force_full_t3 = false, filter_v2_snr_threshold=0.5)
-  # oifitsfile="../demos/data/AlphaCenA.oifits" ; targetname =""; spectralbin=[[]]; temporalbin=[[]];  binning = false; get_specbin_file=true; get_timebin_file=true;redundance_chk=false;uvtol=1.e3; filter_bad_data=false; force_full_t3 = false; filter_v2_snr_threshold=0.5
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, force_full_t3 = false, filter_v2_snr_threshold=0.5)
+  # oifitsfile="../demos/data/AlphaCenA.oifits" ; targetname =""; spectralbin=[[]]; temporalbin=[[]];  splitting = false; get_specbin_file=true; get_timebin_file=true;redundance_chk=false;uvtol=1.e3; filter_bad_data=false; force_full_t3 = false; filter_v2_snr_threshold=0.5
 
   if !isfile(oifitsfile)
     @warn("Could not find file")
@@ -387,25 +387,34 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
 
 #
-# Binning logic
+# Data splitting logic
 #
 
-  if (temporalbin != [[]])||(spectralbin != [[]])
-    binning = true
-  end
+if (temporalbin != [[]])||(spectralbin != [[]]|| (polychromatic == true))
+  splitting = true
+end
 
   # calculate default timebin if user picks timebin = [[]]
   if ((temporalbin == [[]]) && (get_timebin_file == true))
     temporalbin = [[]]
-    temporalbin[1] = [minimum(v2_mjd_all),maximum(v2_mjd_all)]; # start & end mjd
-    temporalbin[1][2] += 0.001
+    temporalbin[1] = [minimum(v2_mjd_all),maximum(v2_mjd_all)+0.001]; # start & end mjd
   end
 
   # get spectralbin if get_spectralbin_from_file == true
-  if ((spectralbin == [[]]) && (get_specbin_file == true))
+
+  if ((spectralbin == [[]]) && (get_specbin_file == true) && (polychromatic == false))
     spectralbin[1] = vcat(spectralbin[1], minimum(v2_lam_all)-minimum(v2_dlam_all[argmin(v2_lam_all)])*0.5, maximum(v2_lam_all)+maximum(v2_dlam_all[argmax(v2_lam_all)])*0.5);
   end
 
+  if ((polychromatic == true) && (get_specbin_file == true))
+    if length(wavtable)>1
+      @warn("Sorry, multiple OI_WAVELENGTH table, I do not know how to pick spectral channels");
+    else
+      wavarray = hcat(wavtable[1][:eff_wave]-wavtable[1][:eff_band]/2, wavtable[1][:eff_wave]+wavtable[1][:eff_band]/2);
+      spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
+    end
+  end
+  
   # count how many spectral bins user input into file
   nspecbin_old = length(spectralbin);
   ncombspec = Int(length(spectralbin[1])/2);
@@ -503,7 +512,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
 
   iter_mjd = 0; iter_wav = 0;
-  # New iteration for binning data
+  # New iteration for splitting data
   for itime = 1:ntottime
     # combine data to one bin
     iter_mjd += 1;
@@ -520,7 +529,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
       end
     end
 
-    # get ranges for time binning
+    # get ranges for time splitting
     if (itime == 1) # make sure logic is right
       lo_time = temporalbin[1][[(i%2 == 1) for i=1:length(temporalbin[1])]];
       hi_time = temporalbin[1][[(i%2 == 0) for i=1:length(temporalbin[1])]];
@@ -545,7 +554,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
       end
 
-      # get ranges for wavelength binning
+      # get ranges for wavelength splitting
       if (ispec == 1) # make sure logic is right
         lo_wav = spectralbin[1][[(i%2 == 1) for i=1:length(spectralbin[1])]];
         hi_wav = spectralbin[1][[(i%2 == 0) for i=1:length(spectralbin[1])]];
@@ -557,7 +566,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
       # Binning filter
       bin_v2=Bool[];bin_t3=Bool[]; bin_t3uv=Bool[]
-      if binning == true
+      if splitting == true
         bin_v2 = (v2_mjd_all.<=hi_time[iter_mjd]).&(v2_mjd_all.>=lo_time[iter_mjd]).&(v2_lam_all.<=hi_wav[iter_wav]).&(v2_lam_all.>=lo_wav[iter_wav]);
         bin_t3 = (t3_mjd_all.<=hi_time[iter_mjd]).&(t3_mjd_all.>=lo_time[iter_mjd]).&(t3_lam_all.<=hi_wav[iter_wav]).&(t3_lam_all.>=lo_wav[iter_wav]);
         bin_t3uv = (t3_uv_mjd.<=hi_time[iter_mjd]).&(t3_uv_mjd.>=lo_time[iter_mjd]).&(t3_uv_lam.<=hi_wav[iter_wav]).&(t3_uv_lam.>=lo_wav[iter_wav]);
@@ -567,13 +576,13 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
 
         if length(findall(bin_v2.==false))>0
-          print_with_color(:red, "$(length(findall(bin_v2.==false))) V2 points were filtered out during binning\n");
+          print_with_color(:red, "$(length(findall(bin_v2.==false))) V2 points were filtered out during splitting\n");
         end
         if length(findall(bin_t3.==false))>0
-          print_with_color(:red, "$(length(findall(bin_t3.==false))) T3 points were filtered out during binning\n");
+          print_with_color(:red, "$(length(findall(bin_t3.==false))) T3 points were filtered out during splitting\n");
         end
         if length(findall(bin_t3uv.==false))>0
-          print_with_color(:red, "$(length(findall(bin_t3uv.==false))) T3UV points were filtered out during binning\n");
+          print_with_color(:red, "$(length(findall(bin_t3uv.==false))) T3UV points were filtered out during splitting\n");
         end
       else
         bin_v2 = Bool.(ones(length(v2_all)))
