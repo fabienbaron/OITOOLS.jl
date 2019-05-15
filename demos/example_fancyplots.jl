@@ -1,3 +1,4 @@
+using OITOOLS
 oifitsin = "./data/AZCYG2011_FINAL2018.oifits"
 data1 = readoifits(oifitsin,filter_bad_data=true)[1,1];
 
