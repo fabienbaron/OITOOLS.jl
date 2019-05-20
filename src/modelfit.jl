@@ -76,8 +76,6 @@ function model_chi2_v2(data::OIdata, visfunc, param::Array{Float64,1})
     return norm( (abs2.(visfunc(param,data.v2_baseline))-data.v2)./data.v2_err)^2/nv2;
 end
 
-if in("MultiNest",keys(Pkg.installed()))
-    @eval using MultiNest
 
 function fit_model_v2_nest(data::OIdata, visfunc, bounds::Array{StepRangeLen{Float64,Base.TwicePrecision{Float64},Base.TwicePrecision{Float64}},1})
 npar = size(bounds,1);
@@ -130,12 +128,6 @@ minf =norm( (abs2.(visfunc(minx,data.v2_baseline))-data.v2)./data.v2_err)^2;
 cvis_model = visfunc(minx,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
 return (minf,minx,cvis_model)
 end
-
-else
-   @warn("MultiNest is not installed: related functions will not be loaded")
-end
-
-
 
 #
 # BOOSTRAPING
