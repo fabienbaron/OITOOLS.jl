@@ -73,10 +73,6 @@ function setup_nfft_polychromatic(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,F
 return fftplan_multi
 end
 
-
-
-
-
 function mod360(x)
   mod.(mod.(x.+180.0,360.0).+360.0, 360.0) .- 180.0
 end
@@ -154,13 +150,6 @@ function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1
   end
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
-
-
-
-
-
-
-
 
 #
 # function chi2_vis_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata ) # criterion function plus its gradient w/r x
@@ -392,8 +381,6 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
    if length(regularizers)>nepochs
      if (regularizers[nepochs+1][1][1] == "temporal_tvsq")  & (nepochs>1)
       y = reshape(x,(npix,nepochs))
-      #needs to be normalized
-    #  typeof(y),size(y)
       temporalf = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
       tv_g = Array{Float64}(undef, npix,nepochs)
       if nepochs>2
@@ -406,7 +393,7 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
       end
       f+= regularizers[nepochs+1][1][2]*temporalf
       g[:] += regularizers[nepochs+1][1][2]*vec(tv_g);
-      printstyled("Temporal regularization: $temporalf\n", color=:yellow)
+      printstyled("Temporal regularization: $(regularizers[nepochs+1][1][2]*temporalf)\n", color=:yellow)
      end
     end
    return f;
@@ -431,10 +418,8 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
 
   # transspectral regularization
    if length(regularizers)>nwavs
-     if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>1)
+     if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>2)
       y = reshape(x,(npix,nwavs))
-      #needs to be normalized
-    #  typeof(y),size(y)
       trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
       trsp_g = Array{Float64}(undef, npix,nwavs)
       if nwavs>2
@@ -447,7 +432,33 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
       end
       f+= regularizers[nwavs+1][1][2]*trsp_f
       g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
-      printstyled("Trans-spectral regularization: $trsp_f\n", color=:yellow)
+      printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
+     end
+    end
+   return f;
+end
+
+function crit_polychromatic_nfft_f(x::Array{Float64,1},  ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], verb = false)
+  nwavs = length(ft);
+  if printcolor == []
+    printcolor=Array{Symbol}(undef,nwavs);
+    printcolor[:] .= :black
+  end
+  npix = div(length(x),nwavs);
+  f = 0.0;
+  for i=1:nwavs # weighted sum -- should probably do the computation in parallel
+    tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
+    printstyled("Spectral channel $i ",color=printcolor[i]);
+    f += chi2_nfft_f(x[tslice], ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
+  end
+
+  # transspectral regularization
+   if length(regularizers)>nwavs
+     if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>1)
+      y = reshape(x,(npix,nwavs))
+      trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
+      f+= regularizers[nwavs+1][1][2]*trsp_f
+      printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
      end
     end
    return f;
@@ -480,7 +491,7 @@ end
 
 
 
-function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; printcolor= [], verb = true, maxiter = 100, regularizers =[])
+function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata,1}, ft; printcolor= [], verb = true, maxiter = 100, regularizers =[])
   x_sol = []
   if typeof(ft) == Array{Array{NFFTPlan{2,0,Float64},1},1}
     crit = (x,g)->crit_polychromatic_nfft_fg(x, g, ft, data, printcolor=printcolor, regularizers=regularizers, verb = verb)
