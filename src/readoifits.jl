@@ -1,7 +1,7 @@
 using FITSIO
 
-#using OIFITS
-include("../../OIFITS.jl/src/OIFITS.jl"); using Main.OIFITS; #modified for T4
+using OIFITS
+#include("../../OIFITS.jl/src/OIFITS.jl"); using Main.OIFITS; #modified for T4
 
 using Statistics
 
@@ -80,10 +80,6 @@ mutable struct OIdata
 end
 
 function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, force_full_t3 = false, filter_v2_snr_threshold=0.5, use_v2 = true, use_t3 = true, use_t4 = true)
-  # oifitsfile="../demos/data/AlphaCenA.oifits" ; targetname =""; spectralbin=[[]]; temporalbin=[[]];  splitting = false; get_specbin_file=true; get_timebin_file=true;redundance_chk=false;uvtol=1.e3; filter_bad_data=false; force_full_t3 = false; filter_v2_snr_threshold=0.5
-#  oifitsfile="../demos/data/MWC480.oifits" ; polychromatic = true; targetname =""; spectralbin=[[]]; temporalbin=[[]];  splitting = false; get_specbin_file=true; get_timebin_file=true;redundance_chk=false;uvtol=1.e3; filter_bad_data=false; force_full_t3 = false; filter_v2_snr_threshold=0.5
-#oifitsfile="../demos/data/TEMP_ALL_ABAUR_HBand.oifits" ; polychromatic = true; targetname =""; spectralbin=[[]]; temporalbin=[[]];  splitting = false; get_specbin_file=true; get_timebin_file=true;redundance_chk=false;uvtol=1.e3; filter_bad_data=false; force_full_t3 = false; filter_v2_snr_threshold=0.5
-#oifitsfile="../demos/data/lamquad.oifits" ; polychromatic = false; targetname =""; spectralbin=[[]]; temporalbin=[[]];  splitting = false; get_specbin_file=true; get_timebin_file=true;redundance_chk=false;uvtol=1.e3; filter_bad_data=false; force_full_t3 = false; filter_v2_snr_threshold=0.5
 
   if !isfile(oifitsfile)
     @warn("Could not find file")
