@@ -534,14 +534,24 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Flo
       println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
   end
 
-# Derivative with respect to fs0 (param[1])
-#
+
+  # Derivative with respect to fs0 (param[1])
+  #
   u =  fluxstar.*Vstar + fluxenv.*Venv;
   v =  fluxstar+fluxenv;
   #cvis_model = u./v;
   up = α.*Vstar - β.*Venv # du/df
   vp = α - β# dv/df
-  dcvis_model = (up.*v-u.*vp)./(v.*v)
+  dcvis_model_df = (up.*v-u.*vp)./(v.*v)
+
+  # Derivative with respect to diameter D (param[2])
+  #
+  dVstar = dvisibility_ud([params[2]], data.uv_baseline);
+  dcvis_model_dD = fluxstar.*dVstar./(fluxstar+fluxenv)
+
+ #
+ #
+ # 
 
 
   return chi2_v2 + chi2_t3amp + chi2_t3phi

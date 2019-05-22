@@ -8,14 +8,22 @@ using SpecialFunctions
 #param[1] = diameter in mas
 #v_r = radius in uv space
 function visibility_ud(param, v_r;tol=1e-14)
-temp = param[1]/2.0626480624709636e8*pi*v_r;
-V = 2.0*(besselj1.(temp))./(temp)
-indx= findall(abs.(temp).<tol)
+t = param[1]/2.0626480624709636e8*pi*v_r;
+V = 2.0*besselj1.(t)./t
+indx= findall(abs.(t).<tol)
 if indx !=[]
     V[indx].=1.0;
 end
 return V
 end
+
+function dvisibility_ud(param, v_r;tol=1e-14)
+dt_dp = pi*v_r/2.0626480624709636e8
+t= params[1]*dt_dp
+dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2
+return dV_dt.*dt_dp
+end
+
 
 #power law
 function visibility_ldpow(param, v_r)
