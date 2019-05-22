@@ -54,6 +54,10 @@ mutable struct OIdata
   t4_dlam::Array{Float64,1}
   t4_flag::Array{Bool,1}
   uv::Array{Float64,2}
+  uv_lam::Array{Float64,1}
+  uv_dlam::Array{Float64,1}
+  uv_mjd::Array{Float64,1}
+  uv_baseline::Array{Float64,1}
   nvisamp::Int64
   nvisphi::Int64
   nv2::Int64
@@ -421,9 +425,13 @@ end
 
   # Define new arrays so that they get binned properly
 
-  #TODO: replace undef with zeros
+  #TODO: replace some undef with zeros
   mean_mjd = Array{Float64}(undef, nwavbin,ntimebin);
   full_uv = Array{Array{Float64,2}}(undef, nwavbin,ntimebin);
+  full_uv_lam = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
+  full_uv_dlam = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
+  full_uv_mjd = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
+  full_uv_baseline = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
   nuv = Array{Int64}(undef,nwavbin,ntimebin);
 
   nv2 = Array{Int64}(undef,nwavbin,ntimebin);
@@ -550,15 +558,22 @@ end
 
       if use_t4 == true
         full_uv[iwavbin,itimebin] = hcat(v2_uv_new[iwavbin,itimebin],t3_uv_new[iwavbin,itimebin],t4_uv_new[iwavbin,itimebin]);
+        full_uv_lam[iwavbin,itimebin]  = vcat(v2_lam_new[iwavbin,itimebin], repeat(t3_lam_new[iwavbin,itimebin],3), repeat(t4_lam_new[iwavbin,itimebin],4));
+        full_uv_dlam[iwavbin,itimebin] = vcat(v2_dlam_new[iwavbin,itimebin],repeat(t3_dlam_new[iwavbin,itimebin],3),repeat(t4_dlam_new[iwavbin,itimebin],4));
+        full_uv_mjd[iwavbin,itimebin]  = vcat(v2_mjd_new[iwavbin,itimebin],repeat(t3_mjd_new[iwavbin,itimebin],3),repeat(t4_mjd_new[iwavbin,itimebin],4));
       else
         full_uv[iwavbin,itimebin] = hcat(v2_uv_new[iwavbin,itimebin],t3_uv_new[iwavbin,itimebin]);
+        full_uv_lam[iwavbin,itimebin]  = vcat(v2_lam_new[iwavbin,itimebin], repeat(t3_lam_new[iwavbin,itimebin],3));
+        full_uv_dlam[iwavbin,itimebin] = vcat(v2_dlam_new[iwavbin,itimebin],repeat(t3_dlam_new[iwavbin,itimebin],3));
+        full_uv_mjd[iwavbin,itimebin]  = vcat(v2_mjd_new[iwavbin,itimebin],repeat(t3_mjd_new[iwavbin,itimebin],3));
       end
+      full_uv_baseline[iwavbin,itimebin]  = vec(sqrt.(sum(full_uv[iwavbin,itimebin].^2,dims=1)));
       nuv[iwavbin,itimebin] = size(full_uv[iwavbin,itimebin],2);
-
-      mean_mjd[iwavbin,itimebin] = mean(v2_mjd_new[iwavbin,itimebin]); # TODO: better calculation
+      mean_mjd[iwavbin,itimebin] = mean(full_uv_mjd[iwavbin,itimebin]); # TODO obviously will fail if any NaN
 
       if (redundance_chk == true) # temp fix?
         full_uv[iwavbin,itimebin], indx_redun = rm_redundance_kdtree(full_uv[iwavbin,itimebin],uvtol);
+        #TODO: fix full_uv_lam, dlam, and mjd, full_uv_baseline
         nuv[iwavbin,itimebin] = size(full_uv[iwavbin,itimebin],2);
         indx_v2[iwavbin,itimebin] = indx_redun[indx_v2[iwavbin,itimebin]];
         indx_t3_1[iwavbin,itimebin] = indx_redun[indx_t3_1[iwavbin,itimebin]];
@@ -578,10 +593,10 @@ end
       t3amp_err_new[iwavbin,itimebin], t3phi_new[iwavbin,itimebin], t3phi_err_new[iwavbin,itimebin], t3_baseline_new[iwavbin,itimebin],t3_maxbaseline_new[iwavbin,itimebin],
       t3_mjd_new[iwavbin,itimebin], t3_lam_new[iwavbin,itimebin], t3_dlam_new[iwavbin,itimebin], t3_flag_new[iwavbin,itimebin], t4amp_new[iwavbin,itimebin], t4amp_err_new[iwavbin,itimebin], t4phi_new[iwavbin,itimebin], t4phi_err_new[iwavbin,itimebin], t4_baseline_new[iwavbin,itimebin],t4_maxbaseline_new[iwavbin,itimebin],
       t4_mjd_new[iwavbin,itimebin], t4_lam_new[iwavbin,itimebin], t4_dlam_new[iwavbin,itimebin], t4_flag_new[iwavbin,itimebin],
-      full_uv[iwavbin,itimebin], 0, 0, nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
+      full_uv[iwavbin,itimebin], full_uv_lam[iwavbin,itimebin], full_uv_dlam[iwavbin,itimebin],full_uv_mjd[iwavbin,itimebin], full_uv_baseline[iwavbin,itimebin], 0, 0, nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
       indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],indx_t4_1[iwavbin,itimebin], indx_t4_2[iwavbin,itimebin], indx_t4_3[iwavbin,itimebin],indx_t4_4[iwavbin,itimebin],station_name[1],telescope_name[1],station_index[:][1],v2_sta_index_new[iwavbin,itimebin],t3_sta_index_new[iwavbin,itimebin], t4_sta_index_new[iwavbin,itimebin],oifitsfile);
 
-      if (filter_bad_data==true)
+      if (filter_bad_data==true) # TODO: move out and make its own function
         # Filter OBVIOUSLY bad V2 data
         v2_good = findall(  (OIdataArr[iwavbin,itimebin].v2_flag.==false) .& (OIdataArr[iwavbin,itimebin].v2_err.>0.0)
         .& (OIdataArr[iwavbin,itimebin].v2_err.<1.0) .& (OIdataArr[iwavbin,itimebin].v2.>-0.2)
@@ -674,6 +689,10 @@ end
 
         indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)]
         OIdataArr[iwavbin,itimebin].uv = OIdataArr[iwavbin,itimebin].uv[:,findall(uv_select.==true)]
+        OIdataArr[iwavbin,itimebin].uv_lam = OIdataArr[iwavbin,itimebin].uv_lam[findall(uv_select.==true)]
+        OIdataArr[iwavbin,itimebin].uv_dlam = OIdataArr[iwavbin,itimebin].uv_dlam[findall(uv_select.==true)]
+        OIdataArr[iwavbin,itimebin].uv_mjd = OIdataArr[iwavbin,itimebin].uv_mjd[findall(uv_select.==true)]
+        OIdataArr[iwavbin,itimebin].uv_baseline = OIdataArr[iwavbin,itimebin].uv_baseline[findall(uv_select.==true)]
         OIdataArr[iwavbin,itimebin].nuv = size(OIdataArr[iwavbin,itimebin].uv,2)
         OIdataArr[iwavbin,itimebin].indx_v2 =   indx_conv[good_uv_v2]
         OIdataArr[iwavbin,itimebin].indx_t3_1 = indx_conv[good_uv_t3_1]

@@ -1,7 +1,12 @@
+#
+# Classic visibility functions (uniform disc, etc.)
+#
+
 using SpecialFunctions
-#uniform disk
+
+#param  : model parameter
 #param[1] = diameter in mas
-#v_r = radius
+#v_r = radius in uv space
 function visibility_ud(param, v_r;tol=1e-14)
 theta = param[1]/2.0626480624709636e8;
 V = 2.0*(besselj1.(pi*theta*v_r))./(pi*theta*v_r)
@@ -44,7 +49,7 @@ end
 # visibility of an annulus of unit flux
 function visibility_annulus(r_in, r_out, v_r;tol=1e-10)
 if abs(r_out - r_in)<tol #
-  return zeros(Complex{Float64},length(v_r));
+  return zeros(Complex{Float64},length(v_r)); #shouldn't we use thin ring here ?
 else
   return (1.0+0*im).*(visibility_ud([2*r_out],v_r)*r_out^2-visibility_ud([2*r_in],v_r)*r_in^2)/(r_out^2-r_in^2);
 end

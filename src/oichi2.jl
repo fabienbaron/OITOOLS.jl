@@ -438,31 +438,31 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
    return f;
 end
 
-function crit_polychromatic_nfft_f(x::Array{Float64,1},  ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], verb = false)
-  nwavs = length(ft);
-  if printcolor == []
-    printcolor=Array{Symbol}(undef,nwavs);
-    printcolor[:] .= :black
-  end
-  npix = div(length(x),nwavs);
-  f = 0.0;
-  for i=1:nwavs # weighted sum -- should probably do the computation in parallel
-    tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
-    printstyled("Spectral channel $i ",color=printcolor[i]);
-    f += chi2_nfft_f(x[tslice], ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
-  end
-
-  # transspectral regularization
-   if length(regularizers)>nwavs
-     if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>1)
-      y = reshape(x,(npix,nwavs))
-      trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
-      f+= regularizers[nwavs+1][1][2]*trsp_f
-      printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
-     end
-    end
-   return f;
-end
+# function crit_polychromatic_nfft_f(x::Array{Float64,1},  ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], verb = false)
+#   nwavs = length(ft);
+#   if printcolor == []
+#     printcolor=Array{Symbol}(undef,nwavs);
+#     printcolor[:] .= :black
+#   end
+#   npix = div(length(x),nwavs);
+#   f = 0.0;
+#   for i=1:nwavs # weighted sum -- should probably do the computation in parallel
+#     tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
+#     printstyled("Spectral channel $i ",color=printcolor[i]);
+#     f += chi2_nfft_f(x[tslice], ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
+#   end
+#
+#   # transspectral regularization
+#    if length(regularizers)>nwavs
+#      if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>1)
+#       y = reshape(x,(npix,nwavs))
+#       trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
+#       f+= regularizers[nwavs+1][1][2]*trsp_f
+#       printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
+#      end
+#     end
+#    return f;
+# end
 
 using OptimPackNextGen
 function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[])
@@ -503,6 +503,39 @@ return x_sol
 end
 
 
+function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata, params::Array{Float64,1}; verbose = true ) # criterion function for nfft
+
+  # The chromatism is defined as follows (Kluska et al. 2012) :
+  #        fs0 (lambda/ lambda_0)^-4 V_star + (1-fs0)*(lambda/lambda_0)^d_ind * V_env
+  # V_tot = --------------------------------------------------------------------------
+  #        fs0 (lambda/ lambda_0)^-4 + (1-fs0)*(lambda/lambda_0)^d_ind
+# param[1] = fs0
+# param[2] = diameter of star
+# param[3] :  lambda_0 (fixed)
+# param[4] : fixed, d_ind environment power law
+
+# params=[0.8, 0.5, 1.6e-6, -4.0]
+
+    # Compute visibilty for model
+  visibility_ud([params[1]], vec(sqrt.(sum(data.uv.^2,dims=1))))
+  fluxstar = params[1]*(lambda/params[3]).^-4.0
+  fluxenv = (1.0-params[1])*(lambda/params[3])^params[4];
+
+  # Compute visibility for image
+  cvis_model = image_to_cvis_nfft(x, fftplan[1]);
+
+
+
+  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+  chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
+  chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+  chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+  if verbose == true
+      println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+  end
+  return chi2_v2 + chi2_t3amp + chi2_t3phi
+end
 
 
 
