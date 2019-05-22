@@ -509,22 +509,21 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Flo
   #        fs0 (lambda/ lambda_0)^-4 V_star + (1-fs0)*(lambda/lambda_0)^d_ind * V_env
   # V_tot = --------------------------------------------------------------------------
   #        fs0 (lambda/ lambda_0)^-4 + (1-fs0)*(lambda/lambda_0)^d_ind
-# param[1] = fs0
-# param[2] = diameter of star
-# param[3] :  lambda_0 (fixed)
+# param[1] = fs0 = 4.364e-01
+# param[2] = diameter of star = 2.776e-01
+# param[3] :  lambda_0 (fixed) = 1.600e-06
 # param[4] : fixed, d_ind environment power law
-
 # params=[0.8, 0.5, 1.6e-6, -4.0]
 
-    # Compute visibilty for model
-  visibility_ud([params[1]], vec(sqrt.(sum(data.uv.^2,dims=1))))
-  fluxstar = params[1]*(lambda/params[3]).^-4.0
-  fluxenv = (1.0-params[1])*(lambda/params[3])^params[4];
+  # Compute visibilty for model + image
+  α = (data.uv_lam/params[3]).^-4.0;
+  β = (data.uv_lam/params[3]).^params[4];
+  fluxstar = params[1]*α;
+  fluxenv = (1.0-params[1])*β;
+  Vstar = visibility_ud([params[2]], data.uv_baseline);
+  Venv = image_to_cvis_nfft(x, fftplan[1]);
 
-  # Compute visibility for image
-  cvis_model = image_to_cvis_nfft(x, fftplan[1]);
-
-
+  cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv)
 
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
@@ -534,6 +533,17 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Flo
   if verbose == true
       println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
   end
+
+# Derivative with respect to fs0 (param[1])
+#
+  u =  fluxstar.*Vstar + fluxenv.*Venv;
+  v =  fluxstar+fluxenv;
+  #cvis_model = u./v;
+  up = α.*Vstar - β.*Venv # du/df
+  vp = α - β# dv/df
+  dcvis_model = (up.*v-u.*vp)./(v.*v)
+
+
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 

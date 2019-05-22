@@ -8,9 +8,9 @@ using SpecialFunctions
 #param[1] = diameter in mas
 #v_r = radius in uv space
 function visibility_ud(param, v_r;tol=1e-14)
-theta = param[1]/2.0626480624709636e8;
-V = 2.0*(besselj1.(pi*theta*v_r))./(pi*theta*v_r)
-indx= findall(abs.(theta*v_r).<tol)
+temp = param[1]/2.0626480624709636e8*pi*v_r;
+V = 2.0*(besselj1.(temp))./(temp)
+indx= findall(abs.(temp).<tol)
 if indx !=[]
     V[indx].=1.0;
 end
