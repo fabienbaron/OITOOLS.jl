@@ -20,5 +20,5 @@ export readoifits_multicolors,setup_nfft_polychromatic,imdisp_polychromatic,reco
 export facility_info,obsv_info,combiner_info,wave_info,error_struct,read_facility_file,read_obs_file,read_wave_file,read_comb_file,define_errors
 export make_spot_move,place_spot,make_disk
 export setup_nfft_t4, cvis_to_t4
-export model_chi2_v2,chi2_sparco_nfft_f
+export model_chi2_v2,chi2_sparco_nfft_f,chi2_sparco_nfft_f_alt, chi2_sparco_nfft_fg,reconstruct_sparco_gray
 end

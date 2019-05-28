@@ -122,7 +122,7 @@ function image_to_cvis_nfft(x, nfft_plan::Array{NFFTPlan{2,0,Float64},1})
   end
 end
 
-function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verbose = true)
+function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verb = true)
   cvis_model = image_to_cvis_dft(x, dft);
   # compute observables from all cvis
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
@@ -130,7 +130,7 @@ function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verbose = true)
   chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2);
   chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2);
   chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2);
-  if verbose == true
+  if verb == true
     flux = sum(x);
     println("Chi2  -  Total: ", chi2_v2 + chi2_t3amp + chi2_t3phi, " V2: ", chi2_v2, " T3A: ", chi2_t3amp, " T3P: ", chi2_t3phi," Flux: ", flux)
     println("Chi2r -  Total:", (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+ data.nt3amp+ data.nt3phi), " V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
@@ -138,14 +138,14 @@ function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verbose = true)
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; verbose = true ) # criterion function for nfft
+function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; verb = true ) # criterion function for nfft
   cvis_model = image_to_cvis_nfft(x, fftplan[1]);
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
   chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
   chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
   chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  if verbose == true
+  if verb == true
       println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
   end
   return chi2_v2 + chi2_t3amp + chi2_t3phi
@@ -503,7 +503,9 @@ return x_sol
 end
 
 
-function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata, params::Array{Float64,1}; verbose = true ) # criterion function for nfft
+function chi2_sparco_nfft_f_alt(x::Array{Float64,1}, ftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata, params::Array{Float64,1}; verb = true ) # criterion function for nfft
+
+# this function is an alternative where x is a pure image (as opposed to concatenated image + parameters)
 
   # The chromatism is defined as follows (Kluska et al. 2012) :
   #        fs0 (lambda/ lambda_0)^-4 V_star + (1-fs0)*(lambda/lambda_0)^d_ind * V_env
@@ -521,7 +523,7 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Flo
   fluxstar = params[1]*α;
   fluxenv = (1.0-params[1])*β;
   Vstar = visibility_ud([params[2]], data.uv_baseline);
-  Venv = image_to_cvis_nfft(x, fftplan[1]);
+  Venv = image_to_cvis_nfft(x, ftplan[1]);
 
   cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv)
 
@@ -530,7 +532,77 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Flo
   chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
   chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
   chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-  if verbose == true
+  if verb == true
+      println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+  end
+  return chi2_v2 + chi2_t3amp + chi2_t3phi
+end
+
+function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata, params::Array{Float64,1}; verb = true ) # criterion function for nfft
+
+# this function is an alternative where x is a pure image (as opposed to concatenated image + parameters)
+
+  # The chromatism is defined as follows (Kluska et al. 2012) :
+  #        fs0 (lambda/ lambda_0)^-4 V_star + (1-fs0)*(lambda/lambda_0)^d_ind * V_env
+  # V_tot = --------------------------------------------------------------------------
+  #        fs0 (lambda/ lambda_0)^-4 + (1-fs0)*(lambda/lambda_0)^d_ind
+# param[1] = fs0 = 4.364e-01
+# param[2] = diameter of star = 2.776e-01
+# param[3] :  lambda_0 (fixed) = 1.600e-06
+# param[4] : fixed, d_ind environment power law
+# params=[0.8, 0.5, 1.6e-6, -4.0]
+
+  # Compute visibilty for model + image
+  α = (data.uv_lam/params[3]).^-4.0;
+  β = (data.uv_lam/params[3]).^params[4];
+  fluxstar = x[end-1]*α;
+  fluxenv = (1.0-x[end-1])*β;
+  Vstar = visibility_ud([x[end]], data.uv_baseline);
+  Venv = image_to_cvis_nfft(x[1:end-2], ftplan[1]);
+
+  cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv)
+
+  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+  chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
+  chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+  chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+  if verb == true
+      println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+  end
+  return chi2_v2 + chi2_t3amp + chi2_t3phi
+end
+
+
+
+function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata, params::Array{Float64,1}; verb = true ) # criterion function for nfft
+
+# The chromatism is defined as follows (Kluska et al. 2012) :
+#        fs0 (lambda/ lambda_0)^-4 V_star + (1-fs0)*(lambda/lambda_0)^d_ind * V_env
+# V_tot = --------------------------------------------------------------------------
+#        fs0 (lambda/ lambda_0)^-4 + (1-fs0)*(lambda/lambda_0)^d_ind
+# param[1] = fs0 = 4.364e-01
+# param[2] = diameter of star = 2.776e-01
+# param[3] :  lambda_0 (fixed) = 1.600e-06
+# param[4] : fixed, d_ind environment power law
+# params=[0.8, 0.5, 1.6e-6, -4.0]
+
+  # Compute visibilty for model + image
+  α = (data.uv_lam/params[3]).^-4.0;
+  β = (data.uv_lam/params[3]).^params[4];
+  fluxstar = x[end-1]*α;
+  fluxenv = (1.0-x[end-1])*β;
+  Vstar = visibility_ud([x[end]], data.uv_baseline);
+  Venv = image_to_cvis_nfft(x[1:end-2], ftplan[1]);
+
+  cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv)
+
+  v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+  t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+  chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
+  chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+  chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+  if verb == true
       println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
   end
 
@@ -546,16 +618,55 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Flo
 
   # Derivative with respect to diameter D (param[2])
   #
-  dVstar = dvisibility_ud([params[2]], data.uv_baseline);
+  dVstar = dvisibility_ud([x[end]], data.uv_baseline);
   dcvis_model_dD = fluxstar.*dVstar./(fluxstar+fluxenv)
 
- #
- #
- # 
 
+  g_v2 = real(nfft_adjoint(ftplan[2], (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
+  g_t3amp = real(nfft_adjoint(ftplan[3], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) ))) + real(nfft_adjoint(ftplan[4],(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))) +real(nfft_adjoint(ftplan[5],(2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
+  g_t3phi = -360.0/pi*imag(nfft_adjoint(ftplan[3], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
+                        +nfft_adjoint(ftplan[4], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
+                        +nfft_adjoint(ftplan[5], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
 
+  g[1:end-2] = vec(g_v2 + g_t3amp + g_t3phi)
+  g[end-1] = Δchi2(dcvis_model_df, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
+  g[end]   = Δchi2(dcvis_model_dD, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
+
+
+
+function Δchi2(dcvis_model::Union{Array{Complex{Float64},1}, Array{Float64,1}}, cvis_model::Union{Array{Complex{Float64},1},Array{Float64,1}}, v2_model::Array{Float64,1}, t3_model::Array{Complex{Float64},1}, t3amp_model::Array{Float64,1}, t3phi_model::Array{Float64,1}, data::OIdata) # return gradient of chi2 when cvis and dvis_model are known
+dv2 = 4*sum( ( (v2_model-data.v2)./data.v2_err.^2 ).*real.(cvis_model[data.indx_v2].*dcvis_model[data.indx_v2]))
+dt3amp = 2.0*sum(((t3amp_model-data.t3amp)./data.t3amp_err.^2).* ( real(cvis_model[data.indx_t3_1].*conj(dcvis_model[data.indx_t3_1]))./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3])
++ real(cvis_model[data.indx_t3_2].*conj(dcvis_model[data.indx_t3_2]))./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3])
++ real(cvis_model[data.indx_t3_3].*conj(dcvis_model[data.indx_t3_3]))./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
+
+# dt3phi = -360.0/pi*(mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
+#                       +nfft_adjoint(ftplan[4], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
+#                       +nfft_adjoint(ftplan[5], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
+return dv2+dt3amp
+end
+
+
+
+
+
+function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[]) #grey environment
+x_sol = []
+crit = (x,g)->chi2_sparco_nfft_fg(x, g, ft, data, params_start, verb = verb)
+
+sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+
+return sol
+end
+
+
+
+
+
+
+
 
 
 

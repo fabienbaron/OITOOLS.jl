@@ -19,7 +19,7 @@ end
 
 function dvisibility_ud(param, v_r;tol=1e-14)
 dt_dp = pi*v_r/2.0626480624709636e8
-t= params[1]*dt_dp
+t= param[1]*dt_dp
 dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2
 return dV_dt.*dt_dp
 end

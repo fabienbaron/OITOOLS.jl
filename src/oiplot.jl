@@ -445,7 +445,7 @@ elseif typeof(image_vector)==Array{Float64,3}
     nwavs = size(image_vector,3)
 end
 
-fig = figure(imtitle,figsize=(nwavs*10,6),facecolor="White")
+fig = figure(imtitle,figsize=(nwavs*10,4),facecolor="White")
 clf();
 images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
   for i=1:nwavs
