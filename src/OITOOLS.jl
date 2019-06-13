@@ -21,4 +21,5 @@ export facility_info,obsv_info,combiner_info,wave_info,error_struct,read_facilit
 export make_spot_move,place_spot,make_disk
 export setup_nfft_t4, cvis_to_t4
 export model_chi2_v2,chi2_sparco_nfft_f,chi2_sparco_nfft_f_alt, chi2_sparco_nfft_fg,reconstruct_sparco_gray
+export facility_info, obsv_info, combiner_info, wave_info, error_struct
 end

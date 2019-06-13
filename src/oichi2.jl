@@ -26,13 +26,23 @@ function setup_dft(uv::Array{Float64,2}, nx, pixsize)
   return dft
 end
 
-function setup_nfft(data, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
+function setup_nfft(data::OIdata, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
   fftplan_uv  = NFFTPlan(scale_rad*data.uv, (nx,nx), 4, 2.0);
   fftplan_v2   = NFFTPlan(scale_rad*data.uv[:, data.indx_v2], (nx,nx), 4, 2.0);
   fftplan_t3_1 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_1], (nx,nx), 4, 2.0);
   fftplan_t3_2 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_2], (nx,nx), 4, 2.0);
   fftplan_t3_3 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_3], (nx,nx), 4, 2.0);
+  return [fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
+end
+
+function setup_nfft(uv::Array{Float64,2}, indx_v2, indx_t3_1, indx_t3_2,indx_t3_3, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
+  scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+  fftplan_uv  = NFFTPlan(scale_rad*uv, (nx,nx), 4, 2.0);
+  fftplan_v2   = NFFTPlan(scale_rad*uv[:, indx_v2], (nx,nx), 4, 2.0);
+  fftplan_t3_1 = NFFTPlan(scale_rad*uv[:, indx_t3_1], (nx,nx), 4, 2.0);
+  fftplan_t3_2 = NFFTPlan(scale_rad*uv[:, indx_t3_2], (nx,nx), 4, 2.0);
+  fftplan_t3_3 = NFFTPlan(scale_rad*uv[:, indx_t3_3], (nx,nx), 4, 2.0);
   return [fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
 end
 

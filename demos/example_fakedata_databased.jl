@@ -1,5 +1,4 @@
 using OITOOLS
-
 #
 #EXAMPLE 9
 #Simulate an observation using an input image and input oifits file
@@ -26,15 +25,6 @@ data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, e
 uvplot(data);
 v2plot(data,logplot=true);# Alternatively, one can do v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
 t3phiplot(data);
-
-# Setup Fourier transform via DFT
-dft = setup_dft(data, nx, pixsize);
-# This computes the complete chi2
-f_chi2 = chi2_dft_f(x_true, dft, data);
-# Compute |V|^2 observables and plot
-cvis_model = image_to_cvis_dft(x_true, dft);
-v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-v2plot_modelvsdata(data.v2_baseline,data.v2,data.v2_err, v2_model);
 
 # NFFT method
 ft = setup_nfft(data, nx, pixsize);

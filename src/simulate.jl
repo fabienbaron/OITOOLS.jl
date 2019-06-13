@@ -3,7 +3,7 @@ using DelimitedFiles
 using FITSIO
 using FITSIO.Libcfitsio
 
-struct facility_info
+mutable struct facility_info
     facility_name::Array{Any,1}
     lat::Array{Any,1}
     lon::Array{Any,1}
@@ -21,7 +21,7 @@ struct facility_info
     sta_xyz::Array{Float64,2}
 end
 
-struct obsv_info
+mutable struct obsv_info
     target_id::Array{Any,1}
     target::Array{Any,1}
     raep0::Array{Any,1}
@@ -41,7 +41,7 @@ struct obsv_info
     spectyp::Array{Any,1}
 end
 
-struct combiner_info
+mutable struct combiner_info
     comb_name::Array{Any,1}
     int_trans::Array{Any,1}
     vis::Array{Any,1}
@@ -59,14 +59,14 @@ struct combiner_info
     incoh_int_time::Array{Any,1}
 end
 
-struct wave_info
+mutable struct wave_info
     combiner_name::Array{Any,1}
     combiner_mode::Array{Any,1}
     lam::Array{Any,1}
     del_lam::Array{Any,1}
 end
 
-struct error_struct
+mutable struct error_info
     v2_multit::Float64
     v2_addit::Float64
     t3amp_multit::Float64
@@ -75,7 +75,7 @@ struct error_struct
     t3phi_addit::Float64
 end
 
-function read_facility_file(facility_file,facility_struct)
+function read_facility_file(facility_file)
     facility=readdlm(facility_file)
     facility_name=facility[(LinearIndices(facility.=="name"))[findall(facility.=="name")],3]
     latitude=facility[(LinearIndices(facility.=="lat"))[findall(facility.=="lat")],3]
@@ -92,13 +92,13 @@ function read_facility_file(facility_file,facility_struct)
     stanames=facility[(LinearIndices(facility.=="sta_names"))[findall(facility.=="sta_names")],3:n_tel[1]+2]
     staindex=facility[(LinearIndices(facility.=="sta_index"))[findall(facility.=="sta_index")],3:n_tel[1]+2]
     staxyz=facility[(LinearIndices(facility.=="sta_xyz"))[findall(facility.=="sta_xyz")],3:n_tel[1]*3+2]
-    facility_out=facility_struct(facility_name,latitude,longitude,altitude,coordinates,facility_throughput,windspeed,r_0,n_tel,teldiams,telgain,telnames,stanames,staindex,staxyz)
+    facility_out=facility_info(facility_name,latitude,longitude,altitude,coordinates,facility_throughput,windspeed,r_0,n_tel,teldiams,telgain,telnames,stanames,staindex,staxyz)
     return facility_out
  end
 
 
 
-function read_obs_file(obsv_file,obs_structure)
+function read_obs_file(obsv_file)
     obs=readdlm(obsv_file)
     targetid=obs[(LinearIndices(obs.=="target_id"))[findall(obs.=="target_id")],3]
     target_name=obs[(LinearIndices(obs.=="target"))[findall(obs.=="target")],3]
@@ -117,11 +117,11 @@ function read_obs_file(obsv_file,obs_structure)
     para =  obs[(LinearIndices(obs.=="parallax"))[findall(obs.=="parallax")],3]
     par_err =   obs[(LinearIndices(obs.=="para_err"))[findall(obs.=="para_err")],3]
     spec_typ =  obs[(LinearIndices(obs.=="spectyp"))[findall(obs.=="spectyp")],3]
-    obs_out=obs_structure(targetid,target_name,raep_0,decep_0,equi,raerr,decerr,sys_vel,vel_typ,vel_def,pm_ra,pm_dec,pm_ra_err,pm_dec_err,para,par_err,spec_typ)
+    obs_out=obsv_info(targetid,target_name,raep_0,decep_0,equi,raerr,decerr,sys_vel,vel_typ,vel_def,pm_ra,pm_dec,pm_ra_err,pm_dec_err,para,par_err,spec_typ)
     return obs_out
  end
 
-function read_comb_file(comb_file,comb_structure)
+function read_comb_file(comb_file)
     comb=readdlm(comb_file)
     name =comb[(LinearIndices(comb.=="name"))[findall(comb.=="name")],3]
     int_trans = comb[(LinearIndices(comb.=="int_trans"))[findall(comb.=="int_trans")],3]
@@ -138,23 +138,20 @@ function read_comb_file(comb_file,comb_structure)
     v2_cal_err = comb[(LinearIndices(comb.=="v2_cal_err"))[findall(comb.=="v2_cal_err")],3]
     phase_cal_err = comb[(LinearIndices(comb.=="phase_cal_err"))[findall(comb.=="phase_cal_err")],3]
     incoh_int_time = comb[(LinearIndices(comb.=="incoh_int_time"))[findall(comb.=="incoh_int_time")],3]
-    comb_out=comb_structure(name,int_trans,vis,n_pix_fringe,n_pix_photometry,flux_frac_photometry,flux_frac_fringes,throughput_photometry,throughput_fringes,n_splits,read_noise,quantum_efficiency,v2_cal_err,phase_cal_err,incoh_int_time)
-    return comb_out
+    return combiner_info(name,int_trans,vis,n_pix_fringe,n_pix_photometry,flux_frac_photometry,flux_frac_fringes,throughput_photometry,throughput_fringes,n_splits,read_noise,quantum_efficiency,v2_cal_err,phase_cal_err,incoh_int_time)
  end
 
-function read_wave_file(wave_file,wave_structure)
+function read_wave_file(wave_file)
     wave=readdlm(wave_file)
     combiner =wave[(LinearIndices(wave.=="combiner"))[findall(wave.=="combiner")],3]
     mode = wave[(LinearIndices(wave.=="mode"))[findall(wave.=="mode")],3]
     lambda=wave[3:size(wave)[1],1]
     del_lambda=wave[3:size(wave)[1],2]
-    wave_out=wave_structure(combiner,mode,lambda,del_lambda)
-    return wave_out
+    return wave_info(combiner,mode,lambda,del_lambda)
  end
 
-function define_errors(errorstruct,v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
-        error_out=errorstruct(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
-        return error_out
+function define_errors(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
+ return error_info(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
 end
 
 
@@ -284,9 +281,6 @@ return lst,hour_angle
 end
 
 
-
-
-
 function opd_limits(dec,ha,base;latitude=34.224722)
     """
     dec should be input as [deg,am,as]
@@ -308,8 +302,6 @@ function opd_limits(dec,ha,base;latitude=34.224722)
     end
     return opd
 end
-
-
 
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
 
@@ -420,11 +412,14 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
- function compute_observables(image,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w,error_struc)
+ function compute_observables(image,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, error_struc)
      nx = size(image,1);
      x = vec(image)/sum(image);
-     dft = setup_dft(uv, nx, pixsize);
-     cvis_model = image_to_cvis_dft(x, dft);
+     # dft = setup_dft(uv, nx, pixsize);
+     # cvis_model = image_to_cvis_dft(x, dft);
+     ft = setup_nfft(uv, v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
+     cvis_model = image_to_cvis_nfft(x, ft);
+
      v2_model = cvis_to_v2(cvis_model, v2_indx_w);
      t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
      #Add noise
@@ -483,11 +478,11 @@ function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,ima
     nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind=get_t3_baselines(ntel,station_xyz,v2_stations);
     nuv,uv,u_M,v_M,w_M=get_uv(l,h,λ,δ,v2_baselines,nhours)
     v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
-#✓
 
-#simulate observation using input image file and pixsize
+
+    #simulate observation using input image file and pixsize
     x = readfits(image_file)
-    #flip image for an unknown reason
+    #flip image for an unknown reason  fix TBD !
     x=x[end:-1:1,:]
     # TODO: "wavelength to image" vector, "epoch to image" vector
     # TODO: test the size of x, handle temporal and polychromatic loops
@@ -510,7 +505,7 @@ function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,ima
     int_time_t3=ones(nt3*nhours) #exchange;
     flag_t3=fill(false,(nt3*nhours),1);
 
-    eff_wave= λ
+    eff_wave = λ
     eff_band = δλ
 
     ucoord_vis2 = u_M[v2_indx_M]
@@ -683,9 +678,7 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=fals
     #GET V2 INFO
 
     v2_model = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
-    v2_model_err=data.v2_err
-    # v2_model_err = v2_model_true./abs.(data.v2./data.v2_err)
-
+    v2_model_err = data.v2_err
     v2_model += v2_model_err.*randn(length(v2_model))
     #Now to fill the tables_
     #uvis_lam=[];
