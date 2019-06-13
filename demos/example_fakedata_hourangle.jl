@@ -13,14 +13,11 @@ dates=[2018 8 13 5 13 56.7; 2018 8 13 5 15 56.7; 2018 8 13 5 20 56.7; 2018 8 13 
        2018 8 18 7 15 56.7; 2018 8 18 7 20 56.7; 2018 8 18 7 25 56.7; 2018 8 18 7 30 56.7;]
 
 ra=20+57/60+59.44/3600
-
 longitude=118.0570313111
-v2m=1.0/100
-v2a=1e-5
-t3ampm=1.0/100
-t3ampa=1e-6
-t3phim=0.0
-t3phia=0.5
+
+v2m=1.0/100;  v2a=1e-5;
+t3ampm=1.0/100; t3ampa=1e-6;
+t3phim=0.0; t3phia=0.5;
 
 lsts,hour_angles=hour_angle_calc(dates,longitude,ra);
 # lst_hours=floor.(lsts)
