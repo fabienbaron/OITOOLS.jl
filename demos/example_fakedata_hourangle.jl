@@ -1,6 +1,4 @@
 using OITOOLS
-include("../src/OITOOLS.jl"); using Main.OITOOLS
-
 
 #EXAMPLE 8
 #Simulate an observation using an input image, given telescope parameters, and input hour angles

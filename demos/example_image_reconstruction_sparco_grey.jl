@@ -1,7 +1,8 @@
 #
 # Very Basic Image reconstruction code
 #
-include("../src/OITOOLS.jl");using Main.OITOOLS
+#include("../src/OITOOLS.jl");using Main.OITOOLS
+using OITOOLS
 oifitsfile = "./data/MWC480.oifits"
 pixsize = 0.15
 nx = 64
