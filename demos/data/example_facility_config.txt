@@ -9,7 +9,7 @@ r0 = 0.078
 ntel = 6
 
 tel_names = S1 S2 E1 E2 W1 W2
-sta_names = 0 1 2 3 4 5
+sta_names = 1 2 3 4 5 6
 tel_diams = 1.00 1.00 1.00 1.00 1.00 1.00
 tel_gain = 1.00 1.00 1.00 1.00 1.00 1.00
 sta_index = 0 1 2 3 4 5
