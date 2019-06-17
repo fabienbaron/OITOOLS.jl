@@ -112,7 +112,7 @@ end
 
 
 # double check by plotting uv coverage
-function uvplot(data::OIdata;fancy=true,filename="")
+function uvplot(data::OIdata;fancy=false,filename="")
     uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,colors,fancy=fancy,filename=filename)
 end
 
