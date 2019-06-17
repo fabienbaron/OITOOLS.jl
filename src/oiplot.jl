@@ -127,7 +127,7 @@ function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta
     ax.locator_params(axis ="x", nbins=20)
     axis("equal")
     if fancy == true
-        baseline_list=get_baseline_list(nv2,tel_name,v2_sta_index)
+        baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
         baseline=unique(baseline_list)
         for i=1:length(baseline)
             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
@@ -289,7 +289,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
                 clickfile=cat(clickfile,basearray,dims=1)
             end
         end
-        baseline_list=get_baseline_list(nv2,tel_name,v2_sta_index)
+        baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
         for j=1:length(unique(baseline_list))
             baseline=unique(baseline_list)[j]
             loc=findall(baseline_list->baseline_list==baseline,baseline_list)
@@ -333,7 +333,7 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
         fig.canvas.mpl_connect("button_press_event",onclickv2)
     end
     if fancy == true
-        baseline_list=get_baseline_list(nv2,tel_name,v2_sta_index)
+        baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
         baseline=unique(baseline_list)
         for i=1:length(baseline)
             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
@@ -540,10 +540,10 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
   end
 end
 
-function get_baseline_list(nv2,tel_names,v2_stations)
+function get_baseline_list_v2(nv2,tel_names,v2_stations)
     baseline_list=Array{String}(undef,nv2)
     for i=1:nv2
-        baseline_list[i]=string(tel_names[v2_stations[1,i]+1],"-",tel_names[v2_stations[2,i]+1])
+        baseline_list[i]=string(tel_names[v2_stations[1,i]],"-",tel_names[v2_stations[2,i]])
     end
     return baseline_list
 end
@@ -551,7 +551,7 @@ end
 function get_baseline_list_t3phi(nt3phi,tel_names,t3_stations)
     baseline_list=Array{String}(undef,nt3phi)
     for i=1:nt3phi
-        baseline_list[i]=string(tel_names[t3_stations[1,i]+1],"-",tel_names[t3_stations[2,i]+1],"-",tel_names[t3_stations[3,i]+1])
+        baseline_list[i]=string(tel_names[t3_stations[1,i]],"-",tel_names[t3_stations[2,i]],"-",tel_names[t3_stations[3,i]])
     end
     return baseline_list
 end

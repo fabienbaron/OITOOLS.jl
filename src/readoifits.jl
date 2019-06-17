@@ -125,6 +125,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
       station_index[itable] = arraytables[itable][:sta_index]; # station_indexes for matchin names to indexes in v2 and t3
   end
 
+  min_sta_index = minimum(hcat(station_index...)); #determine if compliant with OIFITS format (min index = 1,not 0)
+  if min_sta_index == 0
+    for itable = 1:array_ntables
+      station_index[itable] .+= 1;
+    end
+  end
 
   v2table = OIFITS.select(tables,"OI_VIS2");
   v2_ntables = length(v2table);
@@ -342,6 +348,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   v2_uv_all = vcat(v2_uv_old...)
   v2_baseline_all = tablemerge(v2_baseline_old);
   v2_sta_index_all= hcat(v2_sta_index_old...);
+  # Fix to v2_sta_index_all since it's a frequent mistake to have 0 there
+  # OIFITS standard says 1 should be the minimum
+  if min_sta_index == 0
+    v2_sta_index_all .+= 1;
+  end
 
   t3amp_all = tablemerge(t3amp_old);
   t3amp_err_all = tablemerge(t3amp_err_old);
@@ -360,6 +371,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   t3_baseline_all = tablemerge(t3_baseline_old);
   t3_maxbaseline_all = tablemerge(t3_maxbaseline_old);
   t3_sta_index_all= hcat(t3_sta_index_old...);
+  # to do: handle unusual cases such as no v2
+  if min_sta_index == 0
+    t3_sta_index_all .+= 1;
+  end
   t3_uv_all = cat(hcat(t3_u1_all, t3_v1_all), hcat(t3_u2_all, t3_v2_all),hcat(t3_u3_all, t3_v3_all), dims=3);
 
 if use_t4 == true
@@ -382,6 +397,9 @@ if use_t4 == true
   t4_baseline_all = tablemerge(t4_baseline_old);
   t4_maxbaseline_all = tablemerge(t4_maxbaseline_old);
   t4_sta_index_all=hcat(t4_sta_index_old...);
+  if min_sta_index == 0
+    t4_sta_index_all .+= 1;
+  end
   t4_uv_all = cat(hcat(t4_u1_all, t4_v1_all), hcat(t4_u2_all, t4_v2_all),hcat(t4_u3_all, t4_v3_all), hcat(t4_u4_all, t4_v4_all), dims=3);
 end
 
