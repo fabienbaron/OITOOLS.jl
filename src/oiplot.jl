@@ -112,7 +112,7 @@ end
 
 
 # double check by plotting uv coverage
-function uvplot(data::OIdata;fancy=false,filename="")
+function uvplot(data::OIdata;fancy=true,filename="")
     uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,colors,fancy=fancy,filename=filename)
 end
 
@@ -128,15 +128,15 @@ function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta
     axis("equal")
     if fancy == true
         baseline_list=get_baseline_list(nv2,tel_name,v2_sta_index)
-        for i=1:length(unique(baseline_list))
-            baseline=unique(baseline_list)[i]
-            loc=findall(baseline_list->baseline_list==baseline,baseline_list)
+        baseline=unique(baseline_list)
+        for i=1:length(baseline)
+            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
             #scatter(uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i],label=baseline)
             #scatter(-uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], -uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i])
-            scatter( uv[1,loc]/1e6,  uv[2,loc]/1e6, alpha=1.0, s=12.0, color=colors[i],label=baseline)
+            scatter( uv[1,loc]/1e6,  uv[2,loc]/1e6, alpha=1.0, s=12.0, color=colors[i],label=baseline[i])
             scatter(-uv[1,loc]/1e6, -uv[2,loc]/1e6, alpha=1.0, s=12.0, color=colors[i])
-            ax.legend(bbox_to_anchor=[0.925,1.0],loc=2,borderaxespad=0, fontsize=10, handlelength=1)
         end
+        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
     else
         scatter(u, v,alpha=1.0, s = 12.0,color="Black")
         scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
@@ -334,19 +334,16 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
     end
     if fancy == true
         baseline_list=get_baseline_list(nv2,tel_name,v2_sta_index)
-        for i=1:length(unique(baseline_list))
-            baseline=unique(baseline_list)[i]
-            loc=findall(baseline_list->baseline_list==baseline,baseline_list)
+        baseline=unique(baseline_list)
+        for i=1:length(baseline)
+            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
             if markopt == false
-                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=colors[i],markersize=3,ecolor="Gainsboro",color=colors[i],elinewidth=1.0,label=baseline)
-                ax.legend(bbox_to_anchor=[0.925,1.0],loc=2,borderaxespad=0)
+                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=colors[i],markersize=3,ecolor="Gainsboro",color=colors[i],elinewidth=1.0,label=baseline[i])
             else
-                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline)
+                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
             end
         end
-        if ledgendcount == 1
-            ax.legend(bbox_to_anchor=[0.925,1.0],loc=2,borderaxespad=0)
-        end
+        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
     else
         errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color=color,ecolor="Gainsboro",elinewidth=1.0)
     end
@@ -371,12 +368,12 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,tel_name,t3_sta_
   ax=gca();
   if fancy == true
       baseline_list=get_baseline_list_t3phi(nt3phi,tel_name,t3_sta_index)
-      for i=1:length(unique(baseline_list))
-          baseline=unique(baseline_list)[i]
-          loc=findall(baseline_list->baseline_list==baseline,baseline_list)
-          errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=colors[i],color=colors[i], markersize=3,ecolor=ecolor="Gainsboro",elinewidth=1.0,label=baseline)
-          ax.legend(bbox_to_anchor=[1.0,1.0],loc=1,borderaxespad=0.5)
+baseline = unique(baseline_list)
+      for i=1:length(baseline)
+          loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+          errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=colors[i],color=colors[i], markersize=3,ecolor=ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
       end
+      ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
   else
       errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color="Black")
   end
