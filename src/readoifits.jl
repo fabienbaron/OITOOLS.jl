@@ -83,7 +83,7 @@ mutable struct OIdata
   filename::String
 end
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data=false, force_full_t3 = false, filter_v2_snr_threshold=0.01, use_v2 = true, use_t3 = true, use_t4 = true)
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_chk=false,uvtol=1.e3, filter_bad_data= true, force_full_t3 = false, filter_v2_snr_threshold=0.01, use_v2 = true, use_t3 = true, use_t4 = true)
 
   if !isfile(oifitsfile)
     @warn("Could not find file")

@@ -13,8 +13,8 @@ PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
 
-global colors=["black","darkgreen","firebrick","forestgreen","peru","navy","gray","darkorange","lime","orange",
-"fuchsia","saddlebrown","red","darkslateblue","blueviolet","indigo","blue","dodgerblue",
+global colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
+"fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
 "sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen"]
 
 global markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
@@ -122,7 +122,6 @@ function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
     clf();
     ax = gca()
-    minorticks_on
     markeredgewidth=0.1
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
@@ -134,13 +133,13 @@ function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta
             loc=findall(baseline_list->baseline_list==baseline,baseline_list)
             #scatter(uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i],label=baseline)
             #scatter(-uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], -uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i])
-            scatter(uv[1,loc]/1e6, uv[2,loc]/1e6,alpha=0.5, color=colors[i],label=baseline)
-            scatter(-uv[1,loc]/1e6,-uv[2,loc]/1e6,alpha=0.5, color=colors[i])
-            ax.legend(bbox_to_anchor=[0.925,1.0],loc=2,borderaxespad=0)
+            scatter( uv[1,loc]/1e6,  uv[2,loc]/1e6, alpha=1.0, s=12.0, color=colors[i],label=baseline)
+            scatter(-uv[1,loc]/1e6, -uv[2,loc]/1e6, alpha=1.0, s=12.0, color=colors[i])
+            ax.legend(bbox_to_anchor=[0.925,1.0],loc=2,borderaxespad=0, fontsize=10, handlelength=1)
         end
     else
-        scatter(u, v,alpha=0.5, color="Black")
-        scatter(-u, -v,alpha=0.5, color="Black")
+        scatter(u, v,alpha=1.0, s = 12.0,color="Black")
+        scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
     end
     title("UV coverage")
     xlabel(L"U (M$\lambda$)")
