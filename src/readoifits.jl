@@ -125,7 +125,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
       station_index[itable] = arraytables[itable][:sta_index]; # station_indexes for matchin names to indexes in v2 and t3
   end
 
-  min_sta_index = minimum(hcat(station_index...)); #determine if compliant with OIFITS format (min index = 1,not 0)
+  min_sta_index = minimum(vcat(station_index...)); #determine if compliant with OIFITS format (min index = 1,not 0)
   if min_sta_index == 0
     for itable = 1:array_ntables
       station_index[itable] .+= 1;
