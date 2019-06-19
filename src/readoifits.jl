@@ -127,6 +127,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
   min_sta_index = minimum(vcat(station_index...)); #determine if compliant with OIFITS format (min index = 1,not 0)
   if min_sta_index == 0
+    @warn("This file does not follow the oifits standard - station indexing should start at 1, not zero")
    for itable = 1:array_ntables
      station_index[itable] .+= 1;
    end
