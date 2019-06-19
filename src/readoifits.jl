@@ -358,8 +358,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   v2_flag_all = tablemerge(v2_flag_old);
   v2_uv_all = vcat(v2_uv_old...)
   v2_baseline_all = tablemerge(v2_baseline_old);
-  v2_sta_index_all= hcat(v2_sta_index_old...)
-  v2_sta_index_all= reshape(v2_sta_index_all, 2, div(length(v2_sta_index_all), 2));
+  v2_sta_index_all= hcat([ reshape(v2_sta_index_old[i], 2, div(length(v2_sta_index_old[i]), 2)) for i=1:length(v2_sta_index_old) ]...)
+
   # Fix to v2_sta_index_all since it's a frequent mistake to have 0 there
   # OIFITS standard says 1 should be the minimum
   if min_sta_index == 0
@@ -382,8 +382,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   t3_v3_all = vcat(t3_v3_old...);
   t3_baseline_all = tablemerge(t3_baseline_old);
   t3_maxbaseline_all = tablemerge(t3_maxbaseline_old);
-  t3_sta_index_all= hcat(t3_sta_index_old...);
-  t3_sta_index_all= reshape(t3_sta_index_all, 3, div(length(t3_sta_index_all), 3));
+  t3_sta_index_all= hcat([ reshape(t3_sta_index_old[i], 3, div(length(t3_sta_index_old[i]), 3)) for i=1:length(t3_sta_index_old) ]...)
+
 
   # to do: handle unusual cases such as no v2
   if min_sta_index == 0
@@ -410,8 +410,7 @@ if use_t4 == true
   t4_v4_all = vcat(t4_v4_old...);
   t4_baseline_all = tablemerge(t4_baseline_old);
   t4_maxbaseline_all = tablemerge(t4_maxbaseline_old);
-  t4_sta_index_all= hcat(t4_sta_index_old...);
-  t4_sta_index_all=reshape(t4_sta_index_all, 4, div(length(t4_sta_index_all), 4));
+  t4_sta_index_all= hcat([ reshape(t4_sta_index_old[i], 4, div(length(t4_sta_index_old[i]), 4)) for i=1:length(t4_sta_index_old) ]...)
   if min_sta_index == 0
      t4_sta_index_all .+= 1;
   end
