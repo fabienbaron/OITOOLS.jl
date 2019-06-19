@@ -184,7 +184,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     v2_ucoord_old[itable] = -v2table[itable][:ucoord][v2_targetid_filter]; # u coordinate in uv plane
     v2_vcoord_old[itable] = v2table[itable][:vcoord][v2_targetid_filter]; #  v coordinate in uv plane
     v2_mjd_old[itable] = repeat(v2table[itable][:mjd][v2_targetid_filter]', outer=[size(v2_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    v2_sta_index_old[itable]=repeat(v2table[itable][:sta_index][:,v2_targetid_filter],outer=[1,size(v2_old[itable],1)]);
+    v2_sta_index_old[itable]=repeat(v2table[itable][:sta_index][:,v2_targetid_filter],outer=[size(v2_old[itable],1),1]);
     whichwav = findall(v2table[itable][:insname].==wavtableref);
     if (length(whichwav) != 1)
       error("Wave table confusion -- Missing table ?\n");
@@ -241,7 +241,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t3_u3coord_old[itable] = -(t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
     t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
     t3_mjd_old[itable] = repeat(t3table[itable][:mjd][t3_targetid_filter]', outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    t3_sta_index_old[itable]= repeat(t3table[itable][:sta_index][:,t3_targetid_filter],outer=[1,size(t3amp_old[itable],1)]);
+    t3_sta_index_old[itable]= repeat(t3table[itable][:sta_index][:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1]);
     whichwav = findall(t3table[itable][:insname].==wavtableref);
     t3_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave], outer=[1,size(t3amp_old[itable],2)]); # spectral channels
     t3_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band], outer=[1,size(t3amp_old[itable],2)]); # width of spectral channels
@@ -314,7 +314,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t4_u4coord_old[itable] = -(t4_u1coord_old[itable] + t4_u2coord_old[itable] + t4_u3coord_old[itable]); # the minus takes care of complex conjugate
     t4_v4coord_old[itable] = -(t4_v1coord_old[itable] + t4_v2coord_old[itable] + t4_v3coord_old[itable]);
     t4_mjd_old[itable] = repeat(t4table[itable][:mjd][t4_targetid_filter]', outer=[size(t4amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    t4_sta_index_old[itable]=repeat(t4table[itable][:sta_index][:,t4_targetid_filter],outer=[1, size(t4amp_old[itable],1)]);
+    t4_sta_index_old[itable]=repeat(t4table[itable][:sta_index][:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1]);
     whichwav = findall(t4table[itable][:insname].==wavtableref);
     t4_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave], outer=[1,size(t4amp_old[itable],2)]); # spectral channels
     t4_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band],outer=[1,size(t4amp_old[itable],2)]); # width of spectral channels
@@ -357,7 +357,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   v2_flag_all = tablemerge(v2_flag_old);
   v2_uv_all = vcat(v2_uv_old...)
   v2_baseline_all = tablemerge(v2_baseline_old);
-  v2_sta_index_all= hcat(v2_sta_index_old...);
+  v2_sta_index_all= hcat(v2_sta_index_old...)
+  v2_sta_index_all= reshape(v2_sta_index_all, 2, div(length(v2_sta_index_all), 2));
   # Fix to v2_sta_index_all since it's a frequent mistake to have 0 there
   # OIFITS standard says 1 should be the minimum
   # if min_sta_index == 0
@@ -381,6 +382,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   t3_baseline_all = tablemerge(t3_baseline_old);
   t3_maxbaseline_all = tablemerge(t3_maxbaseline_old);
   t3_sta_index_all= hcat(t3_sta_index_old...);
+  t3_sta_index_all= reshape(t3_sta_index_all, 3, div(length(t3_sta_index_all), 3));
+
   # to do: handle unusual cases such as no v2
   # if min_sta_index == 0
   #   t3_sta_index_all .+= 1;
@@ -406,7 +409,8 @@ if use_t4 == true
   t4_v4_all = vcat(t4_v4_old...);
   t4_baseline_all = tablemerge(t4_baseline_old);
   t4_maxbaseline_all = tablemerge(t4_maxbaseline_old);
-  t4_sta_index_all=hcat(t4_sta_index_old...);
+  t4_sta_index_all= hcat(t4_sta_index_old...);
+  t4_sta_index_all=reshape(t4_sta_index_all, 4, div(length(t4_sta_index_all), 4));
   # if min_sta_index == 0
   #   t4_sta_index_all .+= 1;
   # end
