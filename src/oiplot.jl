@@ -113,11 +113,11 @@ end
 
 # double check by plotting uv coverage
 function uvplot(data::OIdata;fancy=false,filename="")
-    uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,colors,fancy=fancy,filename=filename)
+    uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,fancy=fancy,filename=filename)
 end
 
-function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta_index::Array{Int64,2},v2_lam::Array{Float64,1},colors::Array{String,1};fancy=false,filename="")
-    u = uv[1,:]/1e6
+function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta_index::Array{Int64,2},v2_lam::Array{Float64,1};fancy=false,filename="")
+    u = -uv[1,:]/1e6
     v = uv[2,:]/1e6
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
     clf();
@@ -133,8 +133,8 @@ function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta
             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
             #scatter(uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i],label=baseline)
             #scatter(-uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], -uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i])
-            scatter( uv[1,loc]/1e6,  uv[2,loc]/1e6, alpha=1.0, s=12.0, color=colors[i],label=baseline[i])
-            scatter(-uv[1,loc]/1e6, -uv[2,loc]/1e6, alpha=1.0, s=12.0, color=colors[i])
+            scatter( u[loc],  v[loc], alpha=1.0, s=12.0, color=colors[i],label=baseline[i])
+            scatter(-u[loc], -v[loc], alpha=1.0, s=12.0, color=colors[i])
         end
         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
     else
@@ -371,11 +371,11 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,tel_name,t3_sta_
 baseline = unique(baseline_list)
       for i=1:length(baseline)
           loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-          errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=colors[i],color=colors[i], markersize=3,ecolor=ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+          errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=colors[i],color=colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
       end
       ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
   else
-      errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color="Black")
+      errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
   end
   title("Closure phase data")
   xlabel(L"Maximum Baseline (M$\lambda$)")
