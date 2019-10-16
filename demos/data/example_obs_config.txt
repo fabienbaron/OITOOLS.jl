@@ -1,7 +1,7 @@
 target_id = 1
 target = "Superstar"
-raep0 = 314.49769042
-decep0 = 46.46683833
+raep0 = 0.0
+decep0 = 0.0
 equinox = 2000
 ra_err = -1
 dec_err = -1

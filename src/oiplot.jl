@@ -128,7 +128,7 @@ function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta
     axis("equal")
     if fancy == true
         baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
-        baseline=unique(baseline_list)
+        baseline=sort(unique(baseline_list))
         for i=1:length(baseline)
             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
             #scatter(uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i],label=baseline)
@@ -334,7 +334,7 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
     end
     if fancy == true
         baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
-        baseline=unique(baseline_list)
+        baseline=sort(unique(baseline_list))
         for i=1:length(baseline)
             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
             if markopt == false

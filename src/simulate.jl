@@ -191,6 +191,18 @@ function updatefits_aspro(fitsfile_in,fitsfile_out;res=0.05)
 end
 
 
+function alt_az(dec_deg,lat_deg, ha_hours) #returns alt, az in degrees
+    dec = dec_deg*pi/180;
+    ha = ha_hours*pi/12
+    lat = lat_deg*pi/180
+    # Simple version
+    alt = asin.(sin(dec)*sin(lat).+cos(dec)*cos(lat)*cos.(ha))
+    az = atan.((-cos(dec)*sin.(ha))./(sin(dec)*cos(lat).-cos(dec)*cos.(ha)*sin(lat)))
+    return alt*180/pi, az*180/pi
+end
+
+
+
 
 function hour_angle_calc(dates::Union{Array{Any,2},Array{Float64,2}},longitude::Float64, ra::Float64;dst="no",ldir="W",timezone="UTC")
 
@@ -228,12 +240,6 @@ hours=Int.(dates[:,4])
 minutes=Int.(dates[:,5])
 seconds=Float64.(dates[:,6])
 
-#rah=ra[1]
-#ram=ra[2]
-#ras=ra[3]
-
-#raht = rah+(ram/60.)+(ras/3600.) #Converts the RA array into a hour decimal
-raht=ra
 h_ad = alpha*longitude/15 #Measures the hours offset due to longitude
 
 
@@ -280,29 +286,6 @@ hour_angle = lst .-raht
 return lst,hour_angle
 end
 
-
-function opd_limits(dec,ha,base;latitude=34.224722)
-    """
-    dec should be input as [deg,am,as]
-    ha should be in hours and may be input as array
-    base is the difference in baselines (delX i, delY j, delZ k) where i,j,k
-        point respecitvely towards the East, North, and Meridian(?).
-    res should be input as mas
-    latitude is latitude of chara in degrees
-    """
-    ha = ha .* 15.0
-    dec = dec[1]+(dec[2]/60.0)+(dec[3]/3600.0)
-    dtr = pi/180.0 #degrees to radians
-    opd = zeros(length(ha))
-    for i in range(1,length(ha))
-        alt = asin.(sin(dec*dtr)*sin(latitude*dtr)+(cos(dec*dtr)*cos(latitude*dtr)*cos.(ha[i]*dtr)))/dtr #returns alt in degree
-        az = atan((-1.0*cos(dec*dtr)*sin.(ha[i]*dtr))/(sin(dec*dtr)*cos(latitude*dtr)-(cos(dec*dtr)*cos.(ha[i]*dtr)*sin(latitude*dtr))))/dtr
-        s = [cos.(alt*dtr)*cos.(az*dtr),cos.(alt*dtr)*sin.(az*dtr),sin.(alt*dtr)]
-        opd[i] = dot(base,s) #in meters (?)
-    end
-    return opd
-end
-
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
 
 #Functions used in main Functions
@@ -322,9 +305,9 @@ function get_v2_baselines(N,station_xyz,tel_names)
     nv2 = Int64(N*(N-1)/2);
     v2_baselines = Array{Float64}(undef,3,nv2);
     v2_stations  = Array{Int64}(undef,2,nv2);
-    v2_stations_nonredun=Array{Int64}(undef,2,nv2);
+    #v2_stations_nonredun=Array{Int64}(undef,2,nv2);
     v2_indx      = Array{Int64}(undef,nv2);
-    baseline_list = Array{String}(undef,nv2);
+    baseline_name = Array{String}(undef,nv2);
     ind = 1
     for i=1:N+1
       for j=i+1:N
@@ -335,9 +318,9 @@ function get_v2_baselines(N,station_xyz,tel_names)
       end
     end
     for i=1:nv2
-        baseline_list[i]=string(tel_names[v2_stations[1,i]],"-",tel_names[v2_stations[2,i]])
+        baseline_name[i]=string(tel_names[v2_stations[1,i]],"-",tel_names[v2_stations[2,i]])
     end
-    return nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind
+    return nv2,v2_baselines,v2_stations,v2_indx,baseline_name
 end
 
 function v2mapt3(i,j,v2_stations)
@@ -371,29 +354,30 @@ function get_t3_baselines(N,station_xyz,v2_stations)
         end
       end
     end
-    return nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind
+    return nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3
 end
 
-function get_uv(l,h,λ,δ,v2_baselines,nhours)
+function get_uv(l, h, λ, δ, baselines)
     #Use following expression only if there are missing baselines somewhere
-    #vis_baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
+    # baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
     #Expression to use for pure simulation where the full complement of v2 and t3 are created
-    vis_baselines = deepcopy(v2_baselines)
-    nuv = size(vis_baselines, 2);
+    nhours = length(h);
+    nuv = size(baselines, 2);
     # Now compute the UV coordinates, again according to the APIS++ standards.
-    u_M = -sin.(l)*sin.(h) .*vis_baselines[1,:]  .+ cos.(h) .* vis_baselines[2,:]+cos.(l)*sin.(h).*vis_baselines[3,:];
-
-    v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)) .* vis_baselines[1,:] + sin(δ)*sin.(h) .* vis_baselines[2,:]+(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* vis_baselines[3,:];
-
-    w_M =  (sin.(l)*cos(δ)* cos.(h).+cos.(l)*sin(δ)).* vis_baselines[1,:] - cos(δ)* sin.(h) .* vis_baselines[2,:]  .+ (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ)) .* vis_baselines[3,:];
+    u_M = -sin.(l)*sin.(h) .*baselines[1,:]  .+ cos.(h) .* baselines[2,:]+cos.(l)*sin.(h).*baselines[3,:];
+    v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)).* baselines[1,:]  + sin(δ)*sin.(h) .*baselines[2,:]   +(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* baselines[3,:];
+    w_M = (-sin.(l)*cos(δ)*cos.(h).+cos.(l)*sin(δ)).* baselines[1,:] - cos(δ)*sin.(h) .*baselines[2,:]   + (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ))  .* baselines[3,:];
     # proj baselines to (uv wav)
-    u_M=-u_M
-    v_M=v_M
-    u = reshape((1 ./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
+    u = reshape((1 ./λ)'.*vec(-u_M), (nuv,nhours,length(λ))); #TODO: we have -u_M for the moment, need to fix nfft first
     v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
     w = reshape((1 ./λ)'.*vec(w_M), (nuv,nhours,length(λ)));
     uv = vcat(vec(u)',vec(v)')
     return nuv,uv,u_M,v_M,w_M
+end
+
+function geometric_delay(l,h,δ,baselines)
+    Δgeo = - (sin(l)*cos(δ)*cos.(h).-cos(l)*sin(δ) ).*baselines[1,:] -(cos(δ)*sin.(h)) .* baselines[2,:] + (cos(l)*cos(δ)*cos.(h)).*baselines[3,:]
+    return Δgeo
 end
 
 function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
@@ -412,12 +396,12 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
- function compute_observables(image,pixsize,uv,v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, error_struc)
+ function compute_observables(image,pixsize,uv, v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, error_struc)
      nx = size(image,1);
      x = vec(image)/sum(image);
      # dft = setup_dft(uv, nx, pixsize);
      # cvis_model = image_to_cvis_dft(x, dft);
-     ft = setup_nfft(uv, v2_indx_w,t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
+     ft = setup_nfft(uv, v2_indx_w, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
      cvis_model = image_to_cvis_nfft(x, ft);
 
      v2_model = cvis_to_v2(cvis_model, v2_indx_w);
@@ -449,40 +433,35 @@ function prep_arrays(_info)
 #include("npoi_config.jl")
 #hour_angles = range(-6,6,20);
 
-function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,image_file,pixsize,errors,outfilename)
+function simulate_ha(facility,obs,combiner,wave_info_out,hour_angles,image_file,pixsize,errors,outfilename)
     #simulate an observation using input hour angles, info about array and combiner, and input image
-
-
     ntel=facility.ntel[1] #✓
     nhours = length(hour_angles); #✓
-    h = hour_angles' .* pi / 12; #✓
-    δ=observatory.decep0[1]/180*pi #✓
-    l=facility.lat[1]/180*pi; #✓
-    λ=wave_info_out.lam#✓
-    δλ=wave_info_out.del_lam #✓
-    nw=length(λ)
+    h_rad = hour_angles' .* pi / 12; #✓
+    δ = obs.decep0[1]/180*pi #✓
+    l = facility.lat[1]/180*pi; #✓
+    λ = wave_info_out.lam#✓
+    δλ = wave_info_out.del_lam #✓
+    nw = length(λ)
 
     station_xyz=Array{Float64}(undef,ntel,3) #✓
-    staxyz=Array{Float64}(undef,3,ntel); #✓
-    for i=1:ntel[1] #✓
+    for i=1:ntel
         station_xyz[i,1:3]=facility.sta_xyz[(i*3-2):i*3]#✓
     end
 
+    staxyz =station_xyz';#✓
+    nv2,v2_baselines,v2_stations,v2_indx,baseline_name         = get_v2_baselines(ntel,station_xyz,facility.tel_names);
+    nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3 = get_t3_baselines(ntel,station_xyz,v2_stations);
 
-    for i=1:ntel #✓
-            staxyz[:,i]=station_xyz[i,:];#✓
-    end
-#✓
+    nuv, uv, u_M, v_M, w_M=get_uv(l,h_rad,λ,δ,v2_baselines)
 
-    nv2,v2_baselines,v2_stations,v2_stations_nonredun,v2_indx,baseline_list,ind=get_v2_baselines(ntel,station_xyz,facility.tel_names);
-    nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3,ind=get_t3_baselines(ntel,station_xyz,v2_stations);
-    nuv,uv,u_M,v_M,w_M=get_uv(l,h,λ,δ,v2_baselines,nhours)
     v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
 
 
     #simulate observation using input image file and pixsize
     x = readfits(image_file)
-    #flip image for an unknown reason  fix TBD !
+    #flip image to keep closure phases coherent
+    # TODO: can fix it with change to closure phase
     x=x[end:-1:1,:]
     # TODO: "wavelength to image" vector, "epoch to image" vector
     # TODO: test the size of x, handle temporal and polychromatic loops
@@ -493,13 +472,13 @@ function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,ima
     sta_index=Int64.(collect(range(1,step=1,length=ntel)))
 
     #input telescope data
-    target_id_vis2=ones(nv2*nhours).*observatory.target_id[1]
+    target_id_vis2=ones(nv2*nhours).*obs.target_id[1]
     time_vis2=ones(nv2*nhours) #change
     mjd_vis2=ones(nv2*nhours)*58297.  #change
     int_time_vis2=ones(nv2*nhours) #exchange
     flag_vis2=fill(false,nv2*nhours,1)
     #need to get vis2,vis2err,u,v,sta_index from DATA
-    target_id_t3=ones(nt3*nhours).*observatory.target_id[1]
+    target_id_t3=ones(nt3*nhours).*obs.target_id[1]
     time_t3=ones(nt3*nhours) #change
     mjd_t3=ones(nt3*nhours)*58297.  #change
     int_time_t3=ones(nt3*nhours) #exchange;
@@ -535,7 +514,7 @@ function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,ima
     t3phi_model_err=transpose(t3phi_model_err);
 
     oi_array=[facility.tel_names,sta_names,sta_index,facility.tel_diams,staxyz];
-    target_array=[observatory.target_id[1],observatory.target[1],observatory.raep0[1],observatory.decep0[1],observatory.equinox[1],observatory.ra_err[1],observatory.dec_err[1],observatory.sysvel[1],observatory.veltyp[1],observatory.veldef[1],observatory.pmra[1],observatory.pmdec[1],observatory.pmra_err[1],observatory.pmdec_err[1],observatory.parallax[1],observatory.para_err[1],observatory.spectyp[1]];
+    target_array=[obs.target_id[1],obs.target[1],obs.raep0[1],obs.decep0[1],obs.equinox[1],obs.ra_err[1],obs.dec_err[1],obs.sysvel[1],obs.veltyp[1],obs.veldef[1],obs.pmra[1],obs.pmdec[1],obs.pmra_err[1],obs.pmdec_err[1],obs.parallax[1],obs.para_err[1],obs.spectyp[1]];
     wave_array=[λ,δλ];
     vis2_array=[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2];
     t3_array=[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3];
@@ -553,7 +532,7 @@ function simulate_ha(facility,observatory,combiner,wave_info_out,hour_angles,ima
 
 end
 
-function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=false)
+function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true)
     #simulate observation from input oifits and input image.
     if typeof(fitsfiles)== String
         num_files = 1.0

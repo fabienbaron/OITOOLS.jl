@@ -7,7 +7,8 @@ include("oichi2.jl");
 include("oiplot.jl");
 include("vis_functions_classic.jl");
 include("modelfit.jl");
-include("utils.jl")
+include("utils.jl");
+include("astrometry.jl");
 export OIdata
 export uvplot, onclickidentify, v2plot,v2plot_timelapse, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot,v2plot_multifile,get_baseline_list,get_baseline_list_t3phi,imdisp_multiwave,imdisp_polychromatic
 export readoifits, readoifits_multiepochs, readfits, writefits
@@ -22,4 +23,5 @@ export make_spot_move,place_spot,make_disk
 export setup_nfft_t4, cvis_to_t4
 export model_chi2_v2,chi2_sparco_nfft_f,chi2_sparco_nfft_f_alt, chi2_sparco_nfft_fg,reconstruct_sparco_gray
 export facility_info, obsv_info, combiner_info, wave_info, error_struct
+export mjd_to_utc,dates_to_jd,jd_to_hour_angle,opd_limits,alt_az,geometric_delay,cart_delay
 end
