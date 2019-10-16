@@ -361,11 +361,6 @@ function get_uv(l, h, λ, δ, baselines)
     return nuv,uv,u_M,v_M,w_M
 end
 
-function geometric_delay(l,h,δ,baselines)
-    Δgeo = - (sin(l)*cos(δ)*cos.(h).-cos(l)*sin(δ) ).*baselines[1,:] -(cos(δ)*sin.(h)) .* baselines[2,:] + (cos(l)*cos(δ)*cos.(h)).*baselines[3,:]
-    return Δgeo
-end
-
 function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
     v2_indx_M = repeat(v2_indx,1,nhours)+repeat(Int64.(collect(range(0,stop=nuv*(nhours-1),length=nhours)))',nv2)
     t3_indx_1_M = repeat(t3_indx_1,1,nhours)+repeat(Int64.(collect(range(0,stop=nuv*(nhours-1),length=nhours)))',nt3)
