@@ -84,7 +84,7 @@ function dates_to_jd(dates::Union{Array{Any,2},Array{Float64,2}})
 end
 
 
-function jd_to_hour_angle(jd:Array{Float64,1},tel_longitude::Float64, obj_ra::Float64;dst="no",ldir="W",timezone="UTC")
+function jd_to_hour_angle(jd::Array{Float64,1},tel_longitude::Float64, obj_ra::Float64;dst="no",ldir="W",timezone="UTC")
 
 """
 This function calculates and returns the hour angle for the desired object given the object RA, the JD time, and longitude
