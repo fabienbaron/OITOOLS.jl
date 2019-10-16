@@ -50,7 +50,7 @@ nuv,uv,u_M,v_M,w_M = get_uv(l, h, λ, δ, v2_baselines)
 delay_geo   = geometric_delay(l,h,δ,v2_baselines)
 
 # POP DELAY
-include("../src/popranges.jl")
+include("../src/popranges.jl");
 pop_tel1 = 1
 pop_tel2 = 1
 delay_pop = zeros(nv2)
@@ -63,3 +63,5 @@ end
 # AIRMASS
 delay_carts = -0.5*( delay_geo .+ delay_airpath .+ delay_pop )
 has_delay = (delay_carts.>-43).&(delay_carts.<43)
+has_delay_all_baselines = vec(prod(has_delay, dims=1));
+findall(has_delay_all_baselines)
