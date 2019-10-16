@@ -190,20 +190,6 @@ function updatefits_aspro(fitsfile_in,fitsfile_out;res=0.05)
     close(fout)
 end
 
-
-function alt_az(dec_deg,lat_deg, ha_hours) #returns alt, az in degrees
-    dec = dec_deg*pi/180;
-    ha = ha_hours*pi/12
-    lat = lat_deg*pi/180
-    # Simple version
-    alt = asin.(sin(dec)*sin(lat).+cos(dec)*cos(lat)*cos.(ha))
-    az = atan.((-cos(dec)*sin.(ha))./(sin(dec)*cos(lat).-cos(dec)*cos.(ha)*sin(lat)))
-    return alt*180/pi, az*180/pi
-end
-
-
-
-
 function hour_angle_calc(dates::Union{Array{Any,2},Array{Float64,2}},longitude::Float64, ra::Float64;dst="no",ldir="W",timezone="UTC")
 
 """
@@ -282,7 +268,7 @@ lst_over = findall(lst.>24)
 lst[lst_under] .+= 24
 lst[lst_over] -= (24*floor.(lst[lst_over]/24))
 
-hour_angle = lst .-raht
+hour_angle = lst .-ra
 return lst,hour_angle
 end
 
@@ -452,11 +438,8 @@ function simulate_ha(facility,obs,combiner,wave_info_out,hour_angles,image_file,
     staxyz =station_xyz';#✓
     nv2,v2_baselines,v2_stations,v2_indx,baseline_name         = get_v2_baselines(ntel,station_xyz,facility.tel_names);
     nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3 = get_t3_baselines(ntel,station_xyz,v2_stations);
-
     nuv, uv, u_M, v_M, w_M=get_uv(l,h_rad,λ,δ,v2_baselines)
-
     v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w=get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
-
 
     #simulate observation using input image file and pixsize
     x = readfits(image_file)

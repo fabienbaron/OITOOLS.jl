@@ -114,7 +114,7 @@ lst_over = findall(lst.>24)
 lst[lst_under] .+= 24
 lst[lst_over] -= (24*floor.(lst[lst_over]/24))
 # HA of star at 0h UT on RJD
-hour_angle = lst .-ra
+hour_angle = lst .-obj_ra
 return lst, hour_angle
 end
 
