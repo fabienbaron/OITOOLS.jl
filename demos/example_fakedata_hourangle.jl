@@ -10,7 +10,7 @@ dates=[2018 8 13 5 13 56.7; 2018 8 13 5 15 56.7; 2018 8 13 5 20 56.7; 2018 8 13 
 # Object info
 image_file="./data/2004true.fits";
 pixsize=0.101;
-out_file="!./data/2004testsimulation.oifits";
+out_file="./data/2004testsimulation.oifits";
 obs = read_obs_file("./data/example_obs_config.txt"); # read defaults
 obs.raep0[1] =  [20, 57, 59.4437981]'*[1.0, 1/60., 1/3600] # UPDATE ra
 obs.decep0[1] = [46, 28, 00.5731825]'*[1.0, 1/60., 1/3600] # UPDATE DEC
@@ -25,32 +25,29 @@ lst, hour_angles = hour_angle_calc(dates,facility.lon[1],obs.raep0[1]);
 simulate_ha(facility, obs, combiner, wave, hour_angles, image_file, pixsize, errors, out_file);
 
 #Compare simulated data to original data
-oifitsfile = "./data/2004testsimulation.oifits";
-data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
+data = (readoifits(out_file))[1,1]; # data can be split by wavelength, time, etc.
 uvplot(data, fancy = true)
 
 #
 # DEBUGGING - WORK IN PROGRESS AFTER THIS POINT
 #
 ha = collect(range(-12, 12, step=1.0/60))
-alt_limit = 25; # observe above 25 degrees elevation
+alt_limit = 35; # observe above 25 degrees elevation
 alt, az = alt_az(obs.decep0[1], facility.lat[1], ha); # result will be in degrees
-print("HA range based on CHARA telescope elevation limit: from ", ha[good_alt[1]], " to ",  ha[good_alt[end]] )
+good_alt = findall(alt.>alt_limit);
+ha = ha[good_alt[1]:good_alt[end]];
+print("HA range based on CHARA telescope elevation limit: from ", ha[1], " to ",  ha[end] )
 
 h = ha' * pi / 12; #✓
 δ = obs.decep0[1]/180*pi
 l = facility.lat[1]/180*pi; #✓
 λ = wave.lam#
 
-
-station_xyz=Array{Float64}(undef,ntel,3) #✓
-for i=1:ntel
-    station_xyz[i,1:3]=facility.sta_xyz[(i*3-2):i*3]#✓
-end
-staxyz =station_xyz';#✓
+ntel = facility.ntel[1]
+station_xyz= hcat([facility.sta_xyz[(i*3-2):i*3] for i=1:ntel]...)'
 nv2,v2_baselines,v2_stations,v2_indx,baseline_name         = get_v2_baselines(ntel,station_xyz,facility.tel_names);
-nuv,uv,u_M,v_M,w_M = get_uv(l, h, λ, δ, baselines)
-delay_geo   = geometric_delay(l,h,δ,baselines)
+nuv,uv,u_M,v_M,w_M = get_uv(l, h, λ, δ, v2_baselines)
+delay_geo   = geometric_delay(l,h,δ,v2_baselines)
 
 # POP DELAY
 include("../src/popranges.jl")

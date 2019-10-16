@@ -415,6 +415,7 @@ function prep_arrays(_info)
 #hour_angles = range(-6,6,20);
 
 function simulate_ha(facility,obs,combiner,wave_info_out,hour_angles,image_file,pixsize,errors,outfilename)
+    outfilename= string("!", outfilename)
     #simulate an observation using input hour angles, info about array and combiner, and input image
     ntel=facility.ntel[1] #✓
     nhours = length(hour_angles); #✓

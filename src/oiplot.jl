@@ -1,5 +1,6 @@
 # gather common display tasks
 using PyPlot,PyCall
+using LaTeXStrings
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
@@ -110,8 +111,29 @@ function onclickidentify(event)
 end
 
 
+# Overloaded uvplot functions
+function uvplot(uv::Array{Float64,2};filename="")
+    u = -uv[1,:]/1e6
+    v = uv[2,:]/1e6
+    fig = figure("UV plot",figsize=(8,8),facecolor="White")
+    clf();
+    ax = gca()
+    markeredgewidth=0.1
+    ax.locator_params(axis ="y", nbins=20)
+    ax.locator_params(axis ="x", nbins=20)
+    axis("equal")
+    scatter(u, v,alpha=1.0, s = 12.0,color="Black")
+    scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
+    title("UV coverage")
+    xlabel(L"U (M$\lambda$)")
+    ylabel(L"V (M$\lambda$)")
+    ax.grid(true,which="both",color="LightGrey");
+    tight_layout();
+    if filename !=""
+        savefig(filename)
+    end
+end
 
-# double check by plotting uv coverage
 function uvplot(data::OIdata;fancy=false,filename="")
     uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,fancy=fancy,filename=filename)
 end
