@@ -227,15 +227,15 @@ function alt_az(dec_deg,lat_deg, ha_hours) #returns alt, az in degrees
 end
 
 function geometric_delay(l,h,δ,baselines)
-    Δgeo = - (sin(l)*cos(δ)*cos.(h).-cos(l)*sin(δ) ).*baselines[1,:] -(cos(δ)*sin.(h)) .* baselines[2,:] + (cos(l)*cos(δ)*cos.(h)).*baselines[3,:]
+    Δgeo =  -(sin(l)*cos(δ)*cos.(h).-cos(l)*sin(δ) ).*baselines[1,:]-(cos(δ)*sin.(h)) .* baselines[2,:]+ (cos(l)*cos(δ)*cos.(h) .+ sin(l)*sin(δ)).*baselines[3,:]
     return Δgeo
 end
 
 
-function cart_delay(baselines)
-    Δcarts = -0.5*(geometric_delay(l,h,δ,baselines) - airpath_delay(baselines) + pop_delay(baselines))
-    return Δcarts
-end
+#function cart_delay(baselines)
+#    Δcarts = -0.5*(geometric_delay(l,h,δ,baselines) - airpath_delay(baselines) + pop_delay(baselines))
+#    return Δcarts
+#end
 
 
 function dayofyear(day, month, year)
