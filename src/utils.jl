@@ -20,7 +20,10 @@ y = real(H'*(W*H)+1e9*DtD+1e9*sparse(1.0I, 4096,4096))\(real(H'*(W*V))); y=y.*(y
 end
 
 using PyCall
-query_simbad = pyimport("astroquery.simbad").Simbad.query_object
+
+function query_simbad(targetname)
+    return pyimport("astroquery.simbad").Simbad.query_object(targetname)
+end
 
 function ra_dec_from_simbad(targetname)
 res=query_simbad(targetname)

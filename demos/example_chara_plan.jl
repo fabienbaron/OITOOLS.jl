@@ -27,17 +27,13 @@ plot(dark_UTCs, alt)
 # az = az[good_alt]
 # print("HA range based on CHARA telescope elevation limit: from ", ha[1], " to ",  ha[end] )
 
-
-
-
-
-obs = read_obs_file("./data/example_obs_config.txt"); # read defaults
+obs = read_obs_file("./data/default_obs"); # read defaults
 obs.raep0[1] =  ra
 obs.decep0[1] = dec
-facility    = read_facility_file("./data/example_facility_config.txt");
+facility    = read_facility_file("./data/CHARA.txt");
 #facility    = read_facility_file("./data/example_S2E1.txt");
-combiner    = read_comb_file("./data/example_combiner_config.txt");
-wave        = read_wave_file("./data/example_wave_config.txt");
+combiner    = read_comb_file("./data/MIRC.txt");
+wave        = read_wave_file("./data/MIRC_LOWH.txt");
 
 h = ha' * pi / 12; #✓
 δ = obs.decep0[1]/180*pi
