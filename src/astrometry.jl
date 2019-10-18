@@ -7,7 +7,7 @@ end
 
 
 
-function hour_angle_calc(dates::Union{Array{Any,2},Array{Float64,2}},longitude::Float64, ra::Float64;dst="no",ldir="W",timezone="UTC")
+function hour_angle_calc(dates::Union{Array{Any,2},Array{Float64,2}},longitude::Float64, ra::Float64;dst="no",ldir="E",timezone="UTC")
 
 """
 This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
