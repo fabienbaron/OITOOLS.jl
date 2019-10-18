@@ -47,9 +47,9 @@ imageK = Float64.(readfits("./data/image_2p13.fits"))
 fade = collect(range(0,stop=1, length=nwavs))
 
 dec=30.551191666666668 # AB Aur
-facility_config_file="./data/example_facility_config.txt"
-obsv_config_file="./data/example_obs_config.txt"
-combiner_config_file="./data/example_combiner_config.txt"
+facility_config_file="./data/CHARA.txt"
+obsv_config_file="./data/default_obs.txt"
+combiner_config_file="./data/MIRC.txt"
 
 hour_angles=range(-1.70,stop=3.53,length=(108))
 pixsize=0.1

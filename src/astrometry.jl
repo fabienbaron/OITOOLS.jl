@@ -243,7 +243,7 @@ N = floor(275 * month / 9) - floor((month + 9) / 12) * (1 + floor((year - 4 * fl
 return N
 end
 
-function sunrise_sunset(day, month, year, latitude, longitude;zenith=90.833333333)
+function sunrise_sunset(day, month, year, latitude, longitude;zenith=102.0)
 #Source:
 #	Almanac for Computers, 1990
 #	published by Nautical Almanac Office

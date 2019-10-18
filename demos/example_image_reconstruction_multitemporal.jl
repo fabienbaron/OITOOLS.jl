@@ -11,14 +11,14 @@ spot_params=[0.75 0.75 1 0 90 0.45;0.75 0.5 2 145 35 0.45] # params[x_d_spot,y_d
 ra=20+57/60+59.44/3600
 longitude=118.0570313111
 error_array=[1.0/100,1e-5,1.0/100,1e-6,0.0,0.25] # v2m,v2a,t3ampm,t3ampa,t3phim,t3phia
-config_files=["./data/example_facility_config.txt","./data/example_obs_config.txt","./data/example_combiner_config.txt","./data/example_wave_config.txt"]
+config_files=["./data/CHARA.txt","./data/default_obs.txt","./data/MIRC.txt","./data/MIRC_LOWH.txt"]
 
 year=2018
 hours=[8 9 10; 7 9 10; 5 6 7]
 minutes=[5,10,15,30,35,40]
 simulation_params=[0.1,90,4,6,15,year,hours,minutes] #speed (mas/day) span,days/month,start_mont,start_day
 
-#make simulatations
+#make simulations
 files,models=make_spot_move(star_params,spot_params,ra,longitude,error_array,config_files,simulation_params,hours,minutes)
 
 oifitsfiles=files[:,1]
