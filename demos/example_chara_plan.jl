@@ -63,7 +63,7 @@ end
 delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop )
 
 clf()
-plot(dark_UTCs, delay_carts, label="Delay")
+plot(dark_UTCs, delay_carts[5,:], label="Delay")
 plot(dark_UTCs, alt, label = "Altitude")
 legend()
 xlabel("UT")

@@ -18,3 +18,13 @@ nx = 64; o = ones(nx); D_1D = spdiagm(-1=>-o[1:nx-1],0=>o); D = [kron(spdiagm(0=
 DtD = D'*D;
 y = real(H'*(W*H)+1e9*DtD+1e9*sparse(1.0I, 4096,4096))\(real(H'*(W*V))); y=y.*(y.>=0);imshow(reshape(y,64,64));chi2_dft_f(y, dft, data)
 end
+
+using PyCall
+query_simbad = pyimport("astroquery.simbad").Simbad.query_object
+
+function ra_dec_from_simbad(targetname)
+res=query_simbad(targetname)
+ra = [parse(Float64, i) for i in split(get(get(res, "RA"),0))]
+dec = [parse(Float64, i) for i in split(get(get(res, "DEC"),0))]
+return ra, dec
+end
