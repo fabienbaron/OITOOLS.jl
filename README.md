@@ -1,5 +1,9 @@
 # OITOOLS: Modeling Tools for Optical Interferometry
 
+| **Documentation**               | **License**                     |
+|:--------------------------------|:--------------------------------|
+| [![][doc-dev-img]][doc-dev-url] | [![][license-img]][license-url] |
+
 # Requirements
 
 As of March 2018, Julia 1.1 is required.
@@ -40,3 +44,9 @@ We provide several demo files in the demos/ subfolder:
 * example_image_reconstruction_multitemporal.jl : gradient-based image reconstruction for time-variable images, with temporal regularization
 * example_image_reconstruction_multiwavelength.jl : (upcoming) gradient-based image reconstruction for spectrally dependent images, with transpectral regularization
 * example_oifitslib.jl                  : (upcoming) an interface to John Young's OIFITSLIB utilities (oimerge, oifilter, oicheck)
+
+[doc-dev-img]: https://img.shields.io/badge/docs-master-blue.svg
+[doc-dev-url]: https://fabienbaron.github.io/OITOOLS.jl/master
+
+[license-url]: ./LICENSE.md
+[license-img]: http://img.shields.io/badge/license-GPL3-brightgreen.svg?style=flat
