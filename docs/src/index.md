@@ -7,7 +7,7 @@ The sources are [here](https://github.com/fabienbaron/OITOOLS.jl).
 ## Contents
 
 ```@contents
-Pages = ["install.md", "introduction.md", "reading.md", "modeling.md", "imaging.md"]
+Pages = ["install.md", "introduction.md", "examples.md"]
 ```
 
 ## Index

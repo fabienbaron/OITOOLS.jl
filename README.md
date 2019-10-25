@@ -46,7 +46,7 @@ We provide several demo files in the demos/ subfolder:
 * example_oifitslib.jl                  : (upcoming) an interface to John Young's OIFITSLIB utilities (oimerge, oifilter, oicheck)
 
 [doc-dev-img]: https://img.shields.io/badge/docs-master-blue.svg
-[doc-dev-url]: https://fabienbaron.github.io/OITOOLS.jl/dev
+[doc-dev-url]: https://fabienbaron.github.io/OITOOLS.jl/docs/site
 
 [license-url]: ./LICENSE.md
 [license-img]: http://img.shields.io/badge/license-GPL3-brightgreen.svg?style=flat
