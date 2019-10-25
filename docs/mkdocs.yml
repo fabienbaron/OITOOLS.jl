@@ -22,5 +22,5 @@ docs_dir: 'build'
 
 nav:
 - Introduction: index.md
-- Insllation: install.md
+- Installation: install.md
 - Examples: examples.md
