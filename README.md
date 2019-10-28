@@ -45,7 +45,7 @@ We provide several demo files in the demos/ subfolder:
 * example_image_reconstruction_multiwavelength.jl : (upcoming) gradient-based image reconstruction for spectrally dependent images, with transpectral regularization
 * example_oifitslib.jl                  : (upcoming) an interface to John Young's OIFITSLIB utilities (oimerge, oifilter, oicheck)
 
-[doc-dev-img]: https://img.shields.io/badge/docs-master-blue.svg
+[doc-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
 [doc-dev-url]: https://fabienbaron.github.io/OITOOLS.jl/dev
 
 [license-url]: ./LICENSE.md
