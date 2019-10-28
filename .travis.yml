@@ -1,0 +1,31 @@
+# See example script at https://github.com/JuliaLang/Example.jl
+language: julia
+
+os:
+  - linux
+  - osx
+
+julia:
+  - 1.1
+  - 1.2
+  - nightly
+
+matrix:
+  allow_failures:
+    - julia: 1.1
+    - julia: nightly
+
+notifications:
+  email: false
+
+jobs:
+  include:
+    - stage: "Documentation"
+      julia: 1.2
+      os: linux
+      script:
+        - julia --project=docs/ -e 'using Pkg;
+                                    Pkg.build("OITOOLS");
+                                    Pkg.instantiate()'
+        - julia --project=docs/ docs/make.jl
+      after_success: skip
