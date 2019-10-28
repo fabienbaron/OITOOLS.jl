@@ -1,7 +1,4 @@
-using Documenter
-
-push!(LOAD_PATH, "../src/")
-using OITOOLS
+using Documenter, OITOOLS
 
 DEPLOYDOCS = (get(ENV, "CI", nothing) == "true")
 
