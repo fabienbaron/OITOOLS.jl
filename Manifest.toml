@@ -330,3 +330,9 @@ deps = ["BinDeps", "BinaryProvider", "Libdl"]
 git-tree-sha1 = "3bdd374b6fd78faf0119b8c5d538788dbf910c6e"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
 version = "0.8.0"
+
+[[NFFT]]
+deps = ["Distributed", "FFTW", "LinearAlgebra", "Random", "SparseArrays", "SpecialFunctions", "Test"]
+git-tree-sha1 = "5678da0cbb2428a4b01403b5e555945191525bb0"
+uuid = "efe261a4-0d2b-5849-be55-fc731d526b0d"
+version = "0.4.0"
