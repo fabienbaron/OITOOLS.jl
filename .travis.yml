@@ -1,5 +1,7 @@
 # See example script at https://github.com/JuliaLang/Example.jl
 language: julia
+env:
+ - CONDA_JL_VERSION=2
 
 os:
   - linux
@@ -36,10 +38,6 @@ jobs:
 #      before_script:
 #        - julia --project -e 'using Pkg; '
       script:
-        - julia --project=docs/ -e 'using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.build("PyPlot");  Pkg.add("Conda"); using Conda; Conda.add("matplotlib"); Pkg.instantiate(); Pkg.develop(PackageSpec(path=pwd())); Pkg.build("OITOOLS");
-                    Pkg.instantiate();
-                    Pkg.develop(PackageSpec(path=pwd()));
-                    Pkg.build("OITOOLS");
-                    Pkg.test()'
+        - julia --project=docs/ -e 'using Pkg; Pkg.instantiate();'
         - julia --project=docs/ docs/make.jl
       after_success: skip
