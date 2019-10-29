@@ -37,6 +37,12 @@ repo-url = "https://github.com/emmt/LazyAlgebra.jl.git"
 uuid = "aeaa251e-9d76-11e9-311b-83636bf44738"
 version = "0.1.0"
 
+[[LibGit2]]
+uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
+
+[[Libdl]]
+uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+
 [[OIFITS]]
 deps = ["Compat", "FITSIO"]
 git-tree-sha1 = "19e5baa49adf9a60594b98795d8bbb5b74d8408f"
