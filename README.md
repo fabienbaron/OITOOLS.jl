@@ -1,8 +1,8 @@
 # OITOOLS: Modeling Tools for Optical Interferometry
 
-| **Documentation**               | **License**                     |
-|:--------------------------------|:--------------------------------|
-| [![][doc-dev-img]][doc-dev-url] | [![][license-img]][license-url] |
+| **Documentation**               | **License**                     |**Build**                      |
+|:--------------------------------|:--------------------------------|:------------------------------|
+| [![][doc-dev-img]][doc-dev-url] | [![][license-img]][license-url] | [![][travis-img]][travis-url] |
 
 # Requirements
 
@@ -50,3 +50,6 @@ We provide several demo files in the demos/ subfolder:
 
 [license-url]: ./LICENSE.md
 [license-img]: http://img.shields.io/badge/license-GPL3-brightgreen.svg?style=flat
+
+[travis-img]: https://travis-ci.com/fabienbaron/OITOOLS.jl.svg?branch=master
+[travis-url]: https://travis-ci.org/JuliaDocs/Documenter.jl
