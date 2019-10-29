@@ -1,6 +1,7 @@
 using Pkg
 
 if lowercase(get(ENV, "CI", "false")) == "true"
+    #ENV["PYTHON"]=""; using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.add("Conda"); using Conda; Conda.add_channel("anaconda"); Conda.update(); Conda.add("numpy"); Conda.add("scipy"); Conda.add("matplotlib");
     let basepython = get(ENV, "PYTHON", "python2")
         envpath = joinpath(@__DIR__, "env")
         run(`pip install --user virtualenv`)
