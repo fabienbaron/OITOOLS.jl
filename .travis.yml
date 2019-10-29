@@ -28,10 +28,10 @@ jobs:
       julia: 1.2
       os: linux
       before_script:
-        - julia --project=docs/ -e 'using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.build("PyPlot");  Pkg.add("Conda"); using Conda; Conda.add("matplotlib");'
+        - julia -e 'using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.build("PyPlot");  Pkg.add("Conda"); using Conda; Conda.add("matplotlib");'
       script:
-        - julia --project=docs/ -e 'using Pkg;
-                                    Pkg.build();
-                                    Pkg.test()'
+        - julia -e 'using Pkg;
+                    Pkg.build("OITOOLS");
+                    Pkg.test()'
         - julia --project=docs/ docs/make.jl
       after_success: skip
