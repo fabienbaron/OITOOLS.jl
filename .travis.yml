@@ -13,6 +13,7 @@ branches:
     - master
 
 matrix:
+  #- PYTHON=Conda-python
   allow_failures:
     - julia: 1.2
 
@@ -22,16 +23,18 @@ notifications:
 git:
   depth: 99999999
 
+script: # the default script is equivalent to the following
+ - travis_wait 10 julia --project --color=yes -e 'using Pkg; Pkg.instantiate(); Pkg.build(); Pkg.test()';
+
+before_script:
+  - julia -e 'using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.build("PyPlot");  Pkg.add("Conda"); using Conda; Conda.add("matplotlib");'
+
 jobs:
   include:
     - stage: "Documentation"
       julia: 1.2
       os: linux
-      before_script:
-        - julia -e 'using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.build("PyPlot");  Pkg.add("Conda"); using Conda; Conda.add("matplotlib");'
       script:
-        - julia -e 'using Pkg;
-                    Pkg.build("OITOOLS");
-                    Pkg.test()'
+        - julia --project=docs/ -e 'using Pkg; Pkg.instantiate();'
         - julia --project=docs/ docs/make.jl
       after_success: skip
