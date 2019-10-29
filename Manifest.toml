@@ -11,6 +11,10 @@ repo-url = "https://github.com/emmt/ArrayTools.jl.git"
 uuid = "1dc0ca97-c5ce-4e77-ac6d-c576ac9d7f27"
 version = "0.1.0"
 
+
+[[Base64]]
+uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+
 [[BinaryProvider]]
 deps = ["Libdl", "SHA"]
 git-tree-sha1 = "29995a7b317bbd06be147e1974a3541ce2502dca"
