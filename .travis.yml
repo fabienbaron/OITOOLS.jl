@@ -28,7 +28,7 @@ git:
   depth: 99999999
 
 script:
-  travis_wait 10 julia --project --color=yes --check-bounds=yes -e 'using Pkg; Pkg.instantiate(); Pkg.build(); Pkg.test()';
+  julia --project --color=yes --check-bounds=yes -e 'using Pkg; Pkg.instantiate(); Pkg.build(); Pkg.test()';
 
 # jobs:
 #    include:
