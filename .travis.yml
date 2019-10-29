@@ -28,8 +28,7 @@ jobs:
       julia: 1.2
       os: linux
       script:
-  #      - julia -e 'ENV["PYTHON"]=""; using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.add("Conda"); using Conda; Conda.add("matplotlib");'
-        - julia --project=docs/ -e 'using Pkg; using Conda; Conda.add("matplotlib");
+        - julia --project=docs/ -e 'using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.build("PyPlot");  Pkg.add("Conda"); using Conda; Conda.add("matplotlib");
                                     Pkg.build("OITOOLS");
                                     Pkg.instantiate()'
         - julia --project=docs/ docs/make.jl
