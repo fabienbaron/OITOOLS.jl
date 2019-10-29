@@ -1,9 +1,9 @@
 # OITOOLS: Modeling Tools for Optical Interferometry
-<center>
+
 | **Documentation**               | **License**                     |**Build**                      |
 |:--------------------------------|:--------------------------------|:------------------------------|
 | [![][doc-dev-img]][doc-dev-url] | [![][license-img]][license-url] | [![][travis-img]][travis-url] |
-</center>
+
 # Requirements
 
 As of March 2018, Julia 1.1 is required.
