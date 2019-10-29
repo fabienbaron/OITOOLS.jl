@@ -8,3 +8,5 @@ NFFT  0.3.0
 NLopt 0.5.1
 NearestNeighbors 0.4.2
 OIFITS 0.3.1
+Documenter
+DocumenterTools

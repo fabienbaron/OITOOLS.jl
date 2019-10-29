@@ -1,0 +1,30 @@
+[[ArrayTools]]
+git-tree-sha1 = "0be2baaba0c4ad44702551c8b9a97d86dd34d4bc"
+repo-rev = "master"
+repo-url = "https://github.com/emmt/ArrayTools.jl.git"
+uuid = "1dc0ca97-c5ce-4e77-ac6d-c576ac9d7f27"
+version = "0.1.0"
+
+[[LazyAlgebra]]
+deps = ["AbstractFFTs", "ArrayTools", "Compat", "FFTW", "LinearAlgebra"]
+git-tree-sha1 = "5c40ecd7cb5aade59d48212e09580066b04b03c6"
+repo-rev = "master"
+repo-url = "https://github.com/emmt/LazyAlgebra.jl.git"
+uuid = "aeaa251e-9d76-11e9-311b-83636bf44738"
+version = "0.1.0"
+
+[[OIFITS]]
+deps = ["Compat", "FITSIO"]
+git-tree-sha1 = "19e5baa49adf9a60594b98795d8bbb5b74d8408f"
+repo-rev = "t4"
+repo-url = "https://github.com/fabienbaron/OIFITS.jl"
+uuid = "53eb397e-dec1-5dcf-8dc9-2db916067267"
+version = "0.4.0+"
+
+[[OptimPackNextGen]]
+deps = ["BinDeps", "Compat", "LazyAlgebra", "Libdl", "Test"]
+git-tree-sha1 = "5363d2bfc88449b47b5783c6e3e9428d134a3280"
+repo-rev = "master"
+repo-url = "https://github.com/emmt/OptimPackNextGen.jl.git"
+uuid = "b132a0d0-84c6-50b3-baad-5f8b1904065a"
+version = "0.0.0"
