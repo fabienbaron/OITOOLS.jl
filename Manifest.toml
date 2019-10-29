@@ -17,6 +17,12 @@ repo-url = "https://github.com/emmt/ArrayTools.jl.git"
 uuid = "1dc0ca97-c5ce-4e77-ac6d-c576ac9d7f27"
 version = "0.1.0"
 
+[[FITSIO]]
+deps = ["BinaryProvider", "Libdl", "Printf"]
+git-tree-sha1 = "6624bd0cdd03aa82df34d3eac56ab77ff696472e"
+uuid = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
+version = "0.14.0"
+
 [[LazyAlgebra]]
 deps = ["AbstractFFTs", "ArrayTools", "Compat", "FFTW", "LinearAlgebra"]
 git-tree-sha1 = "5c40ecd7cb5aade59d48212e09580066b04b03c6"
