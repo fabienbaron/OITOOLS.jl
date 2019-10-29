@@ -31,6 +31,8 @@ jobs:
 #        - julia --project -e 'using Pkg; '
       script:
         - julia --project=docs/ -e 'using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.build("PyPlot");  Pkg.add("Conda"); using Conda; Conda.add("matplotlib");
+                    Pkg.instantiate();
+                    Pkg.develop(PackageSpec(path=pwd()));
                     Pkg.build("OITOOLS");
                     Pkg.test()'
         - julia --project=docs/ docs/make.jl
