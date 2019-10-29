@@ -28,16 +28,14 @@ git:
   depth: 99999999
 
 script:
+  julia --project --color=yes --check-bounds=yes -e 'using Pkg; Pkg.instantiate(); Pkg.build(); Pkg.test()';
 
- jobs:
-    include:
-      - stage: "Test"
-        julia: 1.2
-        os: linux
-        julia --project --color=yes --check-bounds=yes -e 'using Pkg; Pkg.instantiate(); Pkg.build(); Pkg.test()'; # Working if no documentation to generate
-      - stage: "Documentation"
-        julia: 1.2
-        os: linux
-        script:
-          - julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.build("OITOOLS"); Pkg.instantiate();'
-          - julia --project=docs/ docs/make.jl
+# jobs:
+#    include:
+#      - stage: "Documentation"
+#        julia: 1.2
+#        os: linux
+#        script:
+#          - julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.build("OITOOLS"); Pkg.instantiate();'
+#          - julia --project=docs/ docs/make.jl
+#        after_success: skip
