@@ -52,4 +52,4 @@ We provide several demo files in the demos/ subfolder:
 [license-img]: http://img.shields.io/badge/license-GPL3-brightgreen.svg?style=flat
 
 [travis-img]: https://travis-ci.com/fabienbaron/OITOOLS.jl.svg?branch=master
-[travis-url]: https://travis-ci.org/JuliaDocs/Documenter.jl
+[travis-url]: https://travis-ci.org/fabienbaron/OITOOLS.jl
