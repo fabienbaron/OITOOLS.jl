@@ -6,7 +6,6 @@ os:
   - osx
 
 julia:
-  - 1.1
   - 1.2
 
 branches:
@@ -15,7 +14,7 @@ branches:
 
 matrix:
   allow_failures:
-    - julia: 1.1
+    - julia: 1.2
 
 notifications:
   email: false
