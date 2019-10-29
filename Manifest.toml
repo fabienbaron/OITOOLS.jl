@@ -318,3 +318,15 @@ deps = ["Compat"]
 git-tree-sha1 = "7ab9b8788cfab2bdde22adf9004bda7ad9954b6c"
 uuid = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 version = "1.0.3"
+
+[[FileIO]]
+deps = ["Pkg"]
+git-tree-sha1 = "351f001a78aa1b7ad2696e386e110b5abd071c71"
+uuid = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
+version = "1.0.7"
+
+[[SpecialFunctions]]
+deps = ["BinDeps", "BinaryProvider", "Libdl"]
+git-tree-sha1 = "3bdd374b6fd78faf0119b8c5d538788dbf910c6e"
+uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
+version = "0.8.0"
