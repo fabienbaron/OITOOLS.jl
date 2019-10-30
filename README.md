@@ -22,11 +22,6 @@ Add the package:
 Check that everything works by doing:
 ``` using OITOOLS```
 
-# Updates
-
-This is a reminder that you can use the Julia's package manager to update this package:
-```update OITOOLS```
-
 # Demos
 We provide several demo files in the demos/ subfolder:
 * example_image_and_model.jl    : given OIFITS data and a model image, compute the chi2, and plot the interferometric observables
