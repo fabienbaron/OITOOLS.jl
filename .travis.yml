@@ -37,6 +37,6 @@ jobs:
           - julia --project -e 'using Pkg; Pkg.instantiate(); Pkg.build(); Pkg.test();'
       - stage: "Documentation"
         script:
-          - julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd()));Pkg.instantiate();'
+          - julia --project=docs -e 'using Pkg;Pkg.develop(PackageSpec(path=pwd()));Pkg.build("PackageName");Pkg.instantiate();'
           - julia --project=docs/ docs/make.jl
         after_success: skip
