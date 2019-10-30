@@ -3,7 +3,8 @@ using Documenter, OITOOLS
 DEPLOYDOCS = (get(ENV, "CI", nothing) == "true")
 
 makedocs(
-    sitename = "OITOOLS - Optical Julia",
+    modules=[OITOOLS],
+    sitename = "OITOOLS",
     format = Documenter.HTML(
         prettyurls = DEPLOYDOCS,
     ),
