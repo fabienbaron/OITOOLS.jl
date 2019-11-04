@@ -9,7 +9,16 @@ makedocs(
         prettyurls = DEPLOYDOCS,
     ),
     authors = "Fabien Baron and contributors",
-    pages = ["index.md", "install.md","examples.md"]
+    pages = [ "Home" => "index.md",
+    "Installation" => "install.md",
+    "Examples" => Any[
+                "examples/intro.md",
+                "examples/reading.md",
+                "examples/plotting.md",
+                "examples/modeling.md",
+                "examples/simulating.md",
+                "examples/imaging.md"]
+                ]
 )
 
 if DEPLOYDOCS

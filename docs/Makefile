@@ -1,5 +1,4 @@
-SOURCES = Project.toml make.jl src/index.md src/introduction.md \
-    src/examples.md
+SOURCES = Project.toml make.jl src/index.md src/install.md src/examples/intro.md src/examples/plotting.md src/examples/simulating.md src/examples/modeling.md src/examples/imaging.md 
 
 default: build/index.html
 
