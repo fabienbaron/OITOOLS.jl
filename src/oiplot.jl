@@ -14,8 +14,6 @@ PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
 
-axgrid = pyimport("mpl_toolkits.axes_grid1")
-
 global colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
 "fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
 "sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen"]
@@ -445,7 +443,7 @@ end
 
 
  if use_colorbar == true
-     divider = axgrid.make_axes_locatable(ax)
+     divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
      cax = divider.append_axes("right", size="5%", pad=0.2)
      colorbar(img, cax=cax, ax=ax)
  end
@@ -497,7 +495,7 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
     ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
     if use_colorbar == true
-     divider = axgrid.make_axes_locatable(ax)
+     divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
      cax = divider.append_axes("right", size="5%", pad=0.2)
      colorbar(img, cax=cax, ax=ax)
     end
@@ -552,7 +550,7 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
   ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
    if use_colorbar == true
-       divider = axgrid.make_axes_locatable(ax)
+       divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
        cax = divider.append_axes("right", size="5%", pad=0.2)
        colorbar(img, cax=cax, ax=ax)
    end
