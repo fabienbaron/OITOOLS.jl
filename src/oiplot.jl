@@ -14,6 +14,8 @@ PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
 
+axgrid = pyimport("mpl_toolkits.axes_grid1")
+
 global colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
 "fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
 "sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen"]
@@ -409,10 +411,8 @@ baseline = unique(baseline_list)
   end
 end
 
-const axgrid = PyNULL()
-copy!(axgrid, pyimport("mpl_toolkits.axes_grid1"))
 
-function imdisp(image; colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp(image; colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure("Image",figsize=(6,6),facecolor="White")
  nx=ny=-1;
  pixmode = false;
@@ -420,12 +420,13 @@ function imdisp(image; colormap = "gist_heat", pixscale = -1.0, tickinterval = 1
      pixmode = true;
      pixscale = 1
  end
+ img = []
  if ndims(image) ==1
    ny=nx=Int64(sqrt(length(image)))
-   imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+   img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  else
    nx,ny = size(image);
-   imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+   img = imshow(rotl90(image)/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  end
  if pixmode == false
  xlabel("RA (mas)")
@@ -442,10 +443,11 @@ end
  ax.yaxis.set_tick_params(which="major",length=10,width=2)
  ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
- if colorbar == true
-  divider = axgrid.make_axes_locatable(ax)
-  cax = divider.append_axes("right", size="5%", pad=0.05)
-  colorbar(image, cax=cax)
+
+ if use_colorbar == true
+     divider = axgrid.make_axes_locatable(ax)
+     cax = divider.append_axes("right", size="5%", pad=0.2)
+     colorbar(img, cax=cax, ax=ax)
  end
 
   if beamsize > 0
@@ -456,7 +458,7 @@ end
 end
 
 #TODO: work for rectangular
-function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
 if typeof(image_vector)==Array{Float64,2}
     nwavs = size(image_vector,2)
 elseif typeof(image_vector)==Array{Float64,3}
@@ -478,7 +480,7 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
       pixscale = 1
     end
     ny=nx=Int64.(sqrt(length(image)))
-    imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
     if pixmode == false
         xlabel("RA (mas)")
         ylabel("DEC (mas)")
@@ -494,11 +496,11 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
     ax.yaxis.set_tick_params(which="major",length=10,width=2)
     ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
-  if colorbar == true
-    divider = axgrid.make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.05)
-    colorbar(image, cax=cax)
-  end
+    if use_colorbar == true
+     divider = axgrid.make_axes_locatable(ax)
+     cax = divider.append_axes("right", size="5%", pad=0.2)
+     colorbar(img, cax=cax, ax=ax)
+    end
 
    if beamsize > 0
     c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
@@ -509,7 +511,7 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
 end
 
 # TODO: rework for julia 1.0+
-function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Time-variable images",pixscale = -1.0, tickinterval = 10, colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Time-variable images",pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
   fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
   images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
   cols=6
@@ -526,12 +528,13 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
       pixmode = true;
       pixscale = 1
   end
+  img = []
   if ndims(image) ==1
     ny=nx=Int64(sqrt(length(image)))
-    imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    img = imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
   else
     nx,ny = size(image);
-    imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    img = imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
   end
   if pixmode == false
   xlabel("RA (mas)")
@@ -548,11 +551,12 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
   ax.yaxis.set_tick_params(which="major",length=10,width=2)
   ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
-  if colorbar == true
-    divider = axgrid.make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.05)
-    colorbar(image, cax=cax)
-  end
+   if use_colorbar == true
+       divider = axgrid.make_axes_locatable(ax)
+       cax = divider.append_axes("right", size="5%", pad=0.2)
+       colorbar(img, cax=cax, ax=ax)
+   end
+
 
    if beamsize > 0
     c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)

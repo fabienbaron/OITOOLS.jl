@@ -1,4 +1,4 @@
-# Manual Installation
+# Installation
 
 From a fresh Julia >1.1 installation, use the package manager (```]``` key) then do:
 
