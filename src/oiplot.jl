@@ -410,21 +410,27 @@ baseline = unique(baseline_list)
 end
 
 
-function imdisp(image; colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
- fig = figure("Image",figsize=(6,6),facecolor="White")
+function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+ fig = figure(imtitle,figsize=(6,6),facecolor="White")
  nx=ny=-1;
  pixmode = false;
  if pixscale == -1
      pixmode = true;
      pixscale = 1
  end
+ scaling_factor = maximum(image);
+ if abs.(scaling_factor) <  1e-20
+     scaling_factor = 1.0;
+     warning("Maximum of image < tol");
+ end
+
  img = []
  if ndims(image) ==1
    ny=nx=Int64(sqrt(length(image)))
-   img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+   img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  else
    nx,ny = size(image);
-   img = imshow(rotl90(image)/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+   img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
  end
  if pixmode == false
  xlabel("RA (mas)")
