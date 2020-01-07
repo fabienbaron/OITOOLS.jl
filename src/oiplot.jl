@@ -246,7 +246,7 @@ end
     tight_layout()
 end
 
-function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=false,fancy=false,markopt=false,ledgendcount=1)
+function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=false,fancy=true,markopt=false,ledgendcount=1)
         if idpoint==true
             global v2base=data.v2_baseline
             global v2value=data.v2
@@ -378,7 +378,7 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
 end
 
 
-function t3phiplot(data::OIdata;fancy=false,filename="")
+function t3phiplot(data::OIdata;fancy=true,filename="")
     t3phiplot(data.t3_maxbaseline,data.t3phi,data.t3phi_err,data.nt3phi,data.tel_name,data.t3_sta_index;fancy=fancy,filename=filename);
 end
 
@@ -407,6 +407,35 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,tel_name,t3_sta_
   end
 end
 
+
+function t3ampplot(data::OIdata;fancy=true,filename="")
+    t3ampplot(data.t3_maxbaseline,data.t3amp,data.t3amp_err,data.nt3amp,data.tel_name,data.t3_sta_index;fancy=fancy,filename=filename);
+end
+
+function t3ampplot(baseline_t3,t3amp_data,t3amp_data_err,nt3amp,tel_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
+  fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
+  clf();
+  ax=gca();
+  if fancy == true
+      baseline_list=get_baseline_list_t3(tel_name,t3_sta_index)
+      baseline = unique(baseline_list)
+      for i=1:length(baseline)
+          loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+          errorbar(baseline_t3[loc]/1e6,t3amp_data[loc],yerr=t3amp_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+      end
+      ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+  else
+      errorbar(baseline_t3/1e6,t3amp_data,yerr=t3amp_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+  end
+  title("Triple amplitude data")
+  xlabel(L"Maximum Baseline (M$\lambda$)")
+  ylabel("Triple amplitude")
+  ax.grid(true,which="both",color="LightGrey")
+  tight_layout()
+  if filename !=""
+      savefig(filename)
+  end
+end
 
 function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure(imtitle,figsize=(6,6),facecolor="White")

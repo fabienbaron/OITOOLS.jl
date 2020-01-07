@@ -19,6 +19,7 @@ data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, e
 uvplot(data);
 v2plot(data,logplot=true);# Alternatively, one can do v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
 t3phiplot(data);
+t3ampplot(data);
 
 
 # Compare data to image

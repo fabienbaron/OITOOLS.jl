@@ -10,7 +10,7 @@ include("modelfit.jl");
 include("utils.jl");
 include("astrometry.jl");
 export OIdata
-export uvplot, onclickidentify, v2plot,v2plot_timelapse, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot,v2plot_multifile,get_baseline_list,get_baseline_list_t3phi,imdisp_multiwave,imdisp_polychromatic
+export uvplot, onclickidentify, v2plot,v2plot_timelapse, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot,t3ampplot,v2plot_multifile,get_baseline_list,get_baseline_list_t3phi,imdisp_multiwave,imdisp_polychromatic
 export readoifits, readoifits_multiepochs, readfits, writefits
 export setup_dft, setup_nfft,setup_nfft_multiepochs, mod360, cvis_to_v2,cvis_to_t3, image_to_cvis_dft,image_to_cvis_nfft,chi2_dft_f,chi2_nfft_f,chi2_vis_nfft_f,chi2_vis_dft_fg,chi2_vis_nfft_fg,gaussian2d,cdg,reg_centering,tvsq,tv,regularization,crit_dft_fg,crit_nfft_fg, chi2_dft_fg,chi2_nfft_fg,crit_nfft_fg,crit_multitemporal_nfft_fg,reconstruct,reconstruct_multitemporal
 export visibility_ud, visibility_ldpow, visibility_ldquad, visibility_ldlin, visibility_annulus
