@@ -3,7 +3,7 @@ using FITSIO
 using OIFITS
 #include("../../OIFITS.jl/src/OIFITS.jl"); using Main.OIFITS; #modified for T4
 
-using Statistics
+using Statistics, SparseArrays
 
 # TO DO : * use the splat operator to simplify things
 #         * add differential and complex visibilities
@@ -109,6 +109,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   end
 
   arraytables=OIFITS.select(tables,"OI_ARRAY")
+  arraytableref = [arraytables[i][:arrname] for i=1:length(arraytables)];
   array_ntables=length(arraytables)
 
 #get info from array tables_
@@ -125,12 +126,59 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
       station_index[itable] = arraytables[itable][:sta_index]; # station_indexes for matchin names to indexes in v2 and t3
   end
 
-  min_sta_index = minimum(vcat(station_index...)); #determine if compliant with OIFITS format (min index = 1,not 0)
-  if min_sta_index == 0
-    @warn("This file does not follow the oifits standard - station indexing should start at 1, not zero")
-   for itable = 1:array_ntables
-     station_index[itable] .+= 1;
-   end
+  station_index_offset = 0
+  if minimum(vcat(station_index...)) == 0  #determine if compliant with OIFITS format (min index = 1,not 0)
+   @warn("This file does not follow the oifits standard - station indexing should start at 1, not zero")
+   station_index_offset = 1
+  end
+
+  # At CHARA, station names = telescope names (for the moment)
+  # At VLTI, stations and telescopes are different
+  # This code can handle simple situations (pure CHARA or VLTI data) as well as CHARA + VLTI combined data
+  # as long as a give station always keep the same indexes in merged data sets
+
+  # To simplify things, we immediately collapse all names
+  station_names = vec(vcat(station_name...))
+  telescope_names = vec(vcat(telescope_name...))
+  station_indexes = vec(vcat(station_index...))
+
+  # Check if index use is consistent
+  list_stations = unique(station_names)
+  nstations =  length(list_stations)
+  new_station_name = Array{String}(undef,   nstations)
+  new_telescope_name = Array{String}(undef, nstations)
+  new_station_index = zeros(Int64,nstations)
+
+
+  for istation=1:length(list_stations)
+       name = list_stations[istation]
+       loc = findall(station_names .== name)
+       tel = unique(telescope_names[loc])[1] # possible issue if several telescopes can be positioned at the same station
+       indx = unique(station_indexes[loc])
+       if length(indx)>1
+         warning("Station index vary for station $(name) in this file")
+         # Give up -  Exit the for loop
+         new_station_name[:] = station_names;
+         new_telescope_name[:] = telescope_names;
+         new_station_index[:] = station_indexes;
+         break;
+       else
+           # simple case -- we renumber all stations
+           new_station_name[istation]   = name
+           new_telescope_name[istation] = tel
+           new_station_index[istation] = istation
+       end
+  end
+# we will need to convert the old indexes into the new ones
+  conversion_index = zeros(Int64, array_ntables, maximum(station_indexes)-minimum(station_indexes)+1)
+
+  for itable = 1:array_ntables
+      for istation = 1:length(station_name[itable])
+        name = station_name[itable][istation];
+        oldindx = station_index[itable][istation]
+        newindx = findall(new_station_name .== name)[1]
+        conversion_index[itable,station_index_offset+oldindx] = newindx;
+      end
   end
 
 
@@ -155,11 +203,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     use_t4 = false;
   end
 
-  # Quick OI-ARRAY check
+  # Quick OI-ARRAY check - Some arrays may be defined in V2/T3 tables, yet not included in OIARRAY
   all_oitables_names = unique(vcat((arraytables[i][:arrname] for i=1:length(arraytables))...))
   used_oiarray_tables = unique(vcat([v2table[itable][:arrname] for itable = 1:v2_ntables], [t3table[itable][:arrname] for itable = 1:t3_ntables]))
   if length(used_oiarray_tables)>length(all_oitables_names)
-    missing_oiarray_tables =  used_tables[.![used_tables[i] in oitables_names for i=1:length(used_tables)]]
+    missing_oiarray_tables =  used_oiarray_tables[.![used_oiarray_tables[i] in all_oitables_names for i=1:length(used_oiarray_tables)]]
     @warn("Missing at least $(length(used_oiarray_tables)-length(all_oitables_names)) OI-ARRAY tables in this file - won't be able to import stations properly although uv coverage will be fine.")
     @warn("Missing tables are: $(missing_oiarray_tables)");
   end
@@ -185,8 +233,13 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     v2_ucoord_old[itable] = -v2table[itable][:ucoord][v2_targetid_filter]; # u coordinate in uv plane
     v2_vcoord_old[itable] = v2table[itable][:vcoord][v2_targetid_filter]; #  v coordinate in uv plane
     v2_mjd_old[itable] = repeat(v2table[itable][:mjd][v2_targetid_filter]', outer=[size(v2_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    v2_sta_index_old[itable]=repeat(v2table[itable][:sta_index][:,v2_targetid_filter],outer=[size(v2_old[itable],1),1]);
-    whichwav = findall(v2table[itable][:insname].==wavtableref);
+    iarray = findall(v2table[itable][:arrname] .== arraytableref)
+    if length(iarray)>0
+      v2_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(v2table[itable][:sta_index][:,v2_targetid_filter],outer=[size(v2_old[itable],1),1])];
+    else # TO DO (or just hope people use correct OIFITS !)
+          v2_sta_index_old[itable]=1000 .+station_index_offset.+repeat(v2table[itable][:sta_index][:,v2_targetid_filter],outer=[size(v2_old[itable],1),1]);
+    end
+    whichwav = findall(v2table[itable][:insname].== wavtableref);
     if (length(whichwav) != 1)
       error("Wave table confusion -- Missing table ?\n");
     end
@@ -242,7 +295,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t3_u3coord_old[itable] = -(t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
     t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
     t3_mjd_old[itable] = repeat(t3table[itable][:mjd][t3_targetid_filter]', outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    t3_sta_index_old[itable]= repeat(t3table[itable][:sta_index][:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1]);
+    iarray = findall(t3table[itable][:arrname] .== arraytableref)
+    if length(iarray)>0
+      t3_sta_index_old[itable]= conversion_index[iarray[1], station_index_offset.+repeat(t3table[itable][:sta_index][:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1])];
+    else
+      t3_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(t3table[itable][:sta_index][:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1]);
+    end
     whichwav = findall(t3table[itable][:insname].==wavtableref);
     t3_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave], outer=[1,size(t3amp_old[itable],2)]); # spectral channels
     t3_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band], outer=[1,size(t3amp_old[itable],2)]); # width of spectral channels
@@ -315,7 +373,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t4_u4coord_old[itable] = -(t4_u1coord_old[itable] + t4_u2coord_old[itable] + t4_u3coord_old[itable]); # the minus takes care of complex conjugate
     t4_v4coord_old[itable] = -(t4_v1coord_old[itable] + t4_v2coord_old[itable] + t4_v3coord_old[itable]);
     t4_mjd_old[itable] = repeat(t4table[itable][:mjd][t4_targetid_filter]', outer=[size(t4amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    t4_sta_index_old[itable]=repeat(t4table[itable][:sta_index][:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1]);
+    iarray = findall(t4table[itable][:arrname] .== arraytableref)
+    if length(iarray)>0
+      t4_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(t4table[itable][:sta_index][:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1])];
+    else
+      t4_sta_index_old[itable]=1000 .+station_index_offset.+repeat(t4table[itable][:sta_index][:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1]);
+    end
     whichwav = findall(t4table[itable][:insname].==wavtableref);
     t4_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave], outer=[1,size(t4amp_old[itable],2)]); # spectral channels
     t4_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band],outer=[1,size(t4amp_old[itable],2)]); # width of spectral channels
@@ -360,12 +423,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   v2_baseline_all = tablemerge(v2_baseline_old);
   v2_sta_index_all= hcat([ reshape(v2_sta_index_old[i], 2, div(length(v2_sta_index_old[i]), 2)) for i=1:length(v2_sta_index_old) ]...)
 
-  # Fix to v2_sta_index_all since it's a frequent mistake to have 0 there
-  # OIFITS standard says 1 should be the minimum
-  if min_sta_index == 0
-   v2_sta_index_all .+= 1;
-  end
-
   t3amp_all = tablemerge(t3amp_old);
   t3amp_err_all = tablemerge(t3amp_err_old);
   t3phi_all = tablemerge(t3phi_old);
@@ -383,12 +440,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   t3_baseline_all = tablemerge(t3_baseline_old);
   t3_maxbaseline_all = tablemerge(t3_maxbaseline_old);
   t3_sta_index_all= hcat([ reshape(t3_sta_index_old[i], 3, div(length(t3_sta_index_old[i]), 3)) for i=1:length(t3_sta_index_old) ]...)
-
-
-  # to do: handle unusual cases such as no v2
-  if min_sta_index == 0
-   t3_sta_index_all .+= 1;
-  end
   t3_uv_all = cat(hcat(t3_u1_all, t3_v1_all), hcat(t3_u2_all, t3_v2_all),hcat(t3_u3_all, t3_v3_all), dims=3);
 
 if use_t4 == true
@@ -411,9 +462,6 @@ if use_t4 == true
   t4_baseline_all = tablemerge(t4_baseline_old);
   t4_maxbaseline_all = tablemerge(t4_maxbaseline_old);
   t4_sta_index_all= hcat([ reshape(t4_sta_index_old[i], 4, div(length(t4_sta_index_old[i]), 4)) for i=1:length(t4_sta_index_old) ]...)
-  if min_sta_index == 0
-     t4_sta_index_all .+= 1;
-  end
   t4_uv_all = cat(hcat(t4_u1_all, t4_v1_all), hcat(t4_u2_all, t4_v2_all),hcat(t4_u3_all, t4_v3_all), hcat(t4_u4_all, t4_v4_all), dims=3);
 end
 
@@ -627,7 +675,7 @@ end
       t3_mjd_new[iwavbin,itimebin], t3_lam_new[iwavbin,itimebin], t3_dlam_new[iwavbin,itimebin], t3_flag_new[iwavbin,itimebin], t4amp_new[iwavbin,itimebin], t4amp_err_new[iwavbin,itimebin], t4phi_new[iwavbin,itimebin], t4phi_err_new[iwavbin,itimebin], t4_baseline_new[iwavbin,itimebin],t4_maxbaseline_new[iwavbin,itimebin],
       t4_mjd_new[iwavbin,itimebin], t4_lam_new[iwavbin,itimebin], t4_dlam_new[iwavbin,itimebin], t4_flag_new[iwavbin,itimebin],
       full_uv[iwavbin,itimebin], full_uv_lam[iwavbin,itimebin], full_uv_dlam[iwavbin,itimebin],full_uv_mjd[iwavbin,itimebin], full_uv_baseline[iwavbin,itimebin], 0, 0, nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
-      indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],indx_t4_1[iwavbin,itimebin], indx_t4_2[iwavbin,itimebin], indx_t4_3[iwavbin,itimebin],indx_t4_4[iwavbin,itimebin],station_name[1],telescope_name[1],station_index[:][1],v2_sta_index_new[iwavbin,itimebin],t3_sta_index_new[iwavbin,itimebin], t4_sta_index_new[iwavbin,itimebin],oifitsfile);
+      indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],indx_t4_1[iwavbin,itimebin], indx_t4_2[iwavbin,itimebin], indx_t4_3[iwavbin,itimebin],indx_t4_4[iwavbin,itimebin],new_station_name,new_telescope_name,new_station_index,v2_sta_index_new[iwavbin,itimebin],t3_sta_index_new[iwavbin,itimebin], t4_sta_index_new[iwavbin,itimebin],oifitsfile);
 
       if (filter_bad_data==true) # TODO: move out and make its own function
         # Filter OBVIOUSLY bad V2 data

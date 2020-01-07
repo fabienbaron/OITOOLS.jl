@@ -14,11 +14,11 @@ PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
 
-global colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
+global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
 "fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
 "sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen"]
 
-global markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
+global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
 
 
 #xclicks=Array{Float64,1}(undef,1)
@@ -134,36 +134,34 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::OIdata;fancy=false,filename="")
-    uvplot(data.uv,data.nv2,data.tel_name,data.v2_sta_index,data.v2_lam,fancy=fancy,filename=filename)
-end
-
-function uvplot(uv::Array{Float64,2},nv2::Int64,tel_name::Array{String,1},v2_sta_index::Array{Int64,2},v2_lam::Array{Float64,1};fancy=false,filename="")
-    u = -uv[1,:]/1e6
-    v = uv[2,:]/1e6
-    fig = figure("UV plot",figsize=(8,8),facecolor="White")
+function uvplot(data::OIdata;fancy=true,filename="")
+    u = -data.uv[1,:]/1e6
+    v = data.uv[2,:]/1e6
+    fig = figure("MJD: $(data.mean_mjd), nuv: $(data.nuv)",figsize=(8,8),facecolor="White")
     clf();
     ax = gca()
     markeredgewidth=0.1
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
     axis("equal")
-    if fancy == true
-        baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
-        baseline=sort(unique(baseline_list))
+    if fancy == true # we need to identify corresponding baselines
+        baseline_list_v2 = get_baseline_list_v2(data.tel_name,data.v2_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
+        baseline_list_t3 = get_baseline_pairs_t3(data.tel_name,data.t3_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
+        baseline=sort(unique(vcat(baseline_list_v2, vec(baseline_list_t3))))
         for i=1:length(baseline)
-            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-            #scatter(uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i],label=baseline)
-            #scatter(-uv[1,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]], -uv[2,loc[1]:loc[length(loc)]].*v2_lam[loc[1]:loc[length(loc)]],alpha=0.5, color=colors[i])
-            scatter( u[loc],  v[loc], alpha=1.0, s=12.0, color=colors[i],label=baseline[i])
-            scatter(-u[loc], -v[loc], alpha=1.0, s=12.0, color=colors[i])
+            loc_v2=data.indx_v2[findall(baseline_list_v2->baseline_list_v2==baseline[i],baseline_list_v2)]
+            t3indx = hcat(data.indx_t3_1,data.indx_t3_2, data.indx_t3_3)';
+            loc_t3=t3indx[findall(baseline_list_t3->baseline_list_t3==baseline[i],baseline_list_t3)];
+            loc = vcat(loc_v2,loc_t3)
+            scatter( u[loc],  v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i])
+            scatter(-u[loc], -v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i])
         end
         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
     else
         scatter(u, v,alpha=1.0, s = 12.0,color="Black")
         scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
     end
-    title("UV coverage")
+    title("UV coverage -- MJD: $(data.mean_mjd), nuv: $(data.nuv)")
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
     ax.grid(true,which="both",color="LightGrey");
@@ -311,11 +309,11 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
                 clickfile=cat(clickfile,basearray,dims=1)
             end
         end
-        baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
+        baseline_list=get_baseline_list_v2(tel_name,v2_sta_index)
         for j=1:length(unique(baseline_list))
             baseline=unique(baseline_list)[j]
             loc=findall(baseline_list->baseline_list==baseline,baseline_list)
-            errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=markers[j], markeredgecolor=colors[i],color=colors[i],markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline)
+            errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[j], markeredgecolor=oiplot_colors[i],color=oiplot_colors[i],markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline)
             if axiscount==0
                 if (length(unique(baseline_list)))==15
                     ax.legend(bbox_to_anchor=[0.925,1.0],loc=2,borderaxespad=0)
@@ -355,14 +353,14 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
         fig.canvas.mpl_connect("button_press_event",onclickv2)
     end
     if fancy == true
-        baseline_list=get_baseline_list_v2(nv2,tel_name,v2_sta_index)
+        baseline_list=get_baseline_list_v2(tel_name,v2_sta_index)
         baseline=sort(unique(baseline_list))
         for i=1:length(baseline)
             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
             if markopt == false
-                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=colors[i],markersize=3,ecolor="Gainsboro",color=colors[i],elinewidth=1.0,label=baseline[i])
+                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
             else
-                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
+                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
             end
         end
         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
@@ -389,11 +387,11 @@ function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,tel_name,t3_sta_
   clf();
   ax=gca();
   if fancy == true
-      baseline_list=get_baseline_list_t3phi(nt3phi,tel_name,t3_sta_index)
-baseline = unique(baseline_list)
+      baseline_list=get_baseline_list_t3(tel_name,t3_sta_index)
+      baseline = unique(baseline_list)
       for i=1:length(baseline)
           loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-          errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=colors[i],color=colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+          errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
       end
       ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
   else
@@ -570,18 +568,31 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
   end
 end
 
-function get_baseline_list_v2(nv2,tel_names,v2_stations)
-    baseline_list=Array{String}(undef,nv2)
-    for i=1:nv2
+function get_baseline_list_v2(tel_names,v2_stations)
+    nbaselines = size(v2_stations,2)
+    baseline_list=Array{String}(undef,nbaselines)
+    for i=1:nbaselines
         baseline_list[i]=string(tel_names[v2_stations[1,i]],"-",tel_names[v2_stations[2,i]])
     end
     return baseline_list
 end
 
-function get_baseline_list_t3phi(nt3phi,tel_names,t3_stations)
-    baseline_list=Array{String}(undef,nt3phi)
-    for i=1:nt3phi
+function get_baseline_list_t3(tel_names, t3_stations)
+    nt3=size(t3_stations,2)
+    baseline_list=Array{String}(undef,nt3)
+    for i=1:nt3
         baseline_list[i]=string(tel_names[t3_stations[1,i]],"-",tel_names[t3_stations[2,i]],"-",tel_names[t3_stations[3,i]])
+    end
+    return baseline_list
+end
+
+function get_baseline_pairs_t3(tel_names, t3_stations)
+    nt3=size(t3_stations,2)
+    baseline_list=Array{String}(undef, 3, nt3)
+    for i=1:nt3
+        baseline_list[1, i]=string(tel_names[t3_stations[1,i]],"-",tel_names[t3_stations[2,i]])
+        baseline_list[2, i]=string(tel_names[t3_stations[2,i]],"-",tel_names[t3_stations[3,i]])
+        baseline_list[3, i]=string(tel_names[t3_stations[1,i]],"-",tel_names[t3_stations[3,i]])
     end
     return baseline_list
 end
