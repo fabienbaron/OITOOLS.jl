@@ -145,8 +145,8 @@ function uvplot(data::OIdata;fancy=true,filename="")
     ax.locator_params(axis ="x", nbins=20)
     axis("equal")
     if fancy == true # we need to identify corresponding baselines
-        baseline_list_v2 = get_baseline_list_v2(data.sta_name,data.v2_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
-        baseline_list_t3 = get_baseline_pairs_t3(data.sta_name,data.t3_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
+        baseline_list_v2 = get_baseline_list_v2(data.sta_name,data.v2_sta_index);
+        baseline_list_t3 = get_baseline_pairs_t3(data.sta_name,data.t3_sta_index);
         baseline=sort(unique(vcat(baseline_list_v2, vec(baseline_list_t3))))
         for i=1:length(baseline)
             loc_v2=data.indx_v2[findall(baseline_list_v2->baseline_list_v2==baseline[i],baseline_list_v2)]
@@ -182,7 +182,7 @@ function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64
     end
     errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
     plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
-    title("Squared Visbility Amplitudes - Model vs data plot")
+    title("Squared Visibility Amplitudes - Model vs data plot")
     #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true);
@@ -247,20 +247,59 @@ end
 end
 
 function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=false,fancy=true,markopt=false,ledgendcount=1)
-        if idpoint==true
+        if idpoint==true # interactive plot, click to identify point
             global v2base=data.v2_baseline
             global v2value=data.v2
             global v2err=data.v2_err
             global clickbase=data.v2_sta_index
-            global clickname=data.tel_name
+            global clickname=data.sta_name
             global clickmjd=data.v2_mjd
             global clickfile=[]
             push!(clickfile,data.filename)
-            v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.tel_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
+            v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
         else
-            v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.tel_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
+            v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
         end
 end
+
+
+function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, nv2::Int64,sta_name::Array{String,1},v2_sta_index::Array{Int64,2}; logplot = false, remove = false,idpoint=false,clean=true,color="Black",fancy=false,markopt=false,ledgendcount=1) # plots v2 data only
+    fig = figure("V2 data",figsize=(10,5),facecolor="White");
+    if clean == true
+        clf();
+    end
+    ax = gca();
+    if logplot==true
+        ax.set_yscale("log")
+    end
+    if remove == true
+        fig.canvas.mpl_connect("button_press_event",onclickv2)
+    end
+    if fancy == true
+        baseline_list=get_baseline_list_v2(sta_name,v2_sta_index)
+        baseline=sort(unique(baseline_list))
+        for i=1:length(baseline)
+            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+            if markopt == false
+                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
+            else
+                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
+            end
+        end
+        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+    else
+        errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color=color,ecolor="Gainsboro",elinewidth=1.0)
+    end
+    title("Squared Visibility Amplitude Data")
+    xlabel(L"Baseline (M$\lambda$)")
+    ylabel("Squared Visibility Amplitudes")
+    ax.grid(true,which="both",color="LightGrey")
+    tight_layout()
+    if idpoint==true
+        cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
+    end
+end
+
 
 function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="")
     global v2base=[]
@@ -285,7 +324,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
     end
     for i=1:length(data) #plot each night
         nv2=data[i].nv2
-        tel_name=data[i].tel_name
+        sta_name=data[i].sta_name
         v2_sta_index=data[i].v2_sta_index
         baseline_v2=data[i].v2_baseline
         v2_data=data[i].v2
@@ -299,7 +338,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
             else
                 clickbase=cat(clickbase,data[i].v2_sta_index,dims=2)
             end
-            clickname=vcat(clickname,data[i].tel_name)
+            clickname=vcat(clickname,data[i].sta_name)
             clickmjd=vcat(clickmjd,data[i].v2_mjd)
             basearray=Array{String,1}(undef,data[i].nv2)
             basearray[1:data[i].nv2].=data[i].filename
@@ -309,7 +348,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
                 clickfile=cat(clickfile,basearray,dims=1)
             end
         end
-        baseline_list=get_baseline_list_v2(tel_name,v2_sta_index)
+        baseline_list=get_baseline_list_v2(sta_name,v2_sta_index)
         for j=1:length(unique(baseline_list))
             baseline=unique(baseline_list)[j]
             loc=findall(baseline_list->baseline_list==baseline,baseline_list)
@@ -340,60 +379,22 @@ end
 
 
 
-function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, nv2::Int64,tel_name::Array{String,1},v2_sta_index::Array{Int64,2}; logplot = false, remove = false,idpoint=false,clean=true,color="Black",fancy=false,markopt=false,ledgendcount=1) # plots v2 data only
-    fig = figure("V2 data",figsize=(10,5),facecolor="White");
-    if clean == true
-        clf();
-    end
-    ax = gca();
-    if logplot==true
-        ax.set_yscale("log")
-    end
-    if remove == true
-        fig.canvas.mpl_connect("button_press_event",onclickv2)
-    end
-    if fancy == true
-        baseline_list=get_baseline_list_v2(tel_name,v2_sta_index)
-        baseline=sort(unique(baseline_list))
-        for i=1:length(baseline)
-            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-            if markopt == false
-                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
-            else
-                errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
-            end
-        end
-        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
-    else
-        errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color=color,ecolor="Gainsboro",elinewidth=1.0)
-    end
-    title("Squared Visibility Amplitude Data")
-    xlabel(L"Baseline (M$\lambda$)")
-    ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey")
-    tight_layout()
-    if idpoint==true
-        cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
-    end
-end
-
-
 function t3phiplot(data::OIdata;fancy=true,filename="")
-    t3phiplot(data.t3_maxbaseline,data.t3phi,data.t3phi_err,data.nt3phi,data.tel_name,data.t3_sta_index;fancy=fancy,filename=filename);
+    t3phiplot(data.t3_maxbaseline,data.t3phi,data.t3phi_err,data.nt3phi,data.sta_name,data.t3_sta_index;fancy=fancy,filename=filename);
 end
 
-function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,tel_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
+function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,sta_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
   fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
   clf();
   ax=gca();
   if fancy == true
-      baseline_list=get_baseline_list_t3(tel_name,t3_sta_index)
+      baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
       baseline = unique(baseline_list)
       for i=1:length(baseline)
           loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
           errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
       end
-      ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+      ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
   else
       errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
   end
@@ -409,15 +410,15 @@ end
 
 
 function t3ampplot(data::OIdata;fancy=true,filename="")
-    t3ampplot(data.t3_maxbaseline,data.t3amp,data.t3amp_err,data.nt3amp,data.tel_name,data.t3_sta_index;fancy=fancy,filename=filename);
+    t3ampplot(data.t3_maxbaseline,data.t3amp,data.t3amp_err,data.nt3amp,data.sta_name,data.t3_sta_index;fancy=fancy,filename=filename);
 end
 
-function t3ampplot(baseline_t3,t3amp_data,t3amp_data_err,nt3amp,tel_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
+function t3ampplot(baseline_t3,t3amp_data,t3amp_data_err,nt3amp,sta_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
   fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
   clf();
   ax=gca();
   if fancy == true
-      baseline_list=get_baseline_list_t3(tel_name,t3_sta_index)
+      baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
       baseline = unique(baseline_list)
       for i=1:length(baseline)
           loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
@@ -597,31 +598,31 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
   end
 end
 
-function get_baseline_list_v2(tel_names,v2_stations)
+function get_baseline_list_v2(sta_names,v2_stations)
     nbaselines = size(v2_stations,2)
     baseline_list=Array{String}(undef,nbaselines)
     for i=1:nbaselines
-        baseline_list[i]=string(tel_names[v2_stations[1,i]],"-",tel_names[v2_stations[2,i]])
+        baseline_list[i]=string(sta_names[v2_stations[1,i]],"-",sta_names[v2_stations[2,i]])
     end
     return baseline_list
 end
 
-function get_baseline_list_t3(tel_names, t3_stations)
+function get_baseline_list_t3(sta_names, t3_stations)
     nt3=size(t3_stations,2)
     baseline_list=Array{String}(undef,nt3)
     for i=1:nt3
-        baseline_list[i]=string(tel_names[t3_stations[1,i]],"-",tel_names[t3_stations[2,i]],"-",tel_names[t3_stations[3,i]])
+        baseline_list[i]=string(sta_names[t3_stations[1,i]],"-",sta_names[t3_stations[2,i]],"-",sta_names[t3_stations[3,i]])
     end
     return baseline_list
 end
 
-function get_baseline_pairs_t3(tel_names, t3_stations)
+function get_baseline_pairs_t3(sta_names, t3_stations)
     nt3=size(t3_stations,2)
     baseline_list=Array{String}(undef, 3, nt3)
     for i=1:nt3
-        baseline_list[1, i]=string(tel_names[t3_stations[1,i]],"-",tel_names[t3_stations[2,i]])
-        baseline_list[2, i]=string(tel_names[t3_stations[2,i]],"-",tel_names[t3_stations[3,i]])
-        baseline_list[3, i]=string(tel_names[t3_stations[1,i]],"-",tel_names[t3_stations[3,i]])
+        baseline_list[1, i]=string(sta_names[t3_stations[1,i]],"-",sta_names[t3_stations[2,i]])
+        baseline_list[2, i]=string(sta_names[t3_stations[2,i]],"-",sta_names[t3_stations[3,i]])
+        baseline_list[3, i]=string(sta_names[t3_stations[1,i]],"-",sta_names[t3_stations[3,i]])
     end
     return baseline_list
 end
