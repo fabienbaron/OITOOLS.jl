@@ -145,8 +145,8 @@ function uvplot(data::OIdata;fancy=true,filename="")
     ax.locator_params(axis ="x", nbins=20)
     axis("equal")
     if fancy == true # we need to identify corresponding baselines
-        baseline_list_v2 = get_baseline_list_v2(data.tel_name,data.v2_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
-        baseline_list_t3 = get_baseline_pairs_t3(data.tel_name,data.t3_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
+        baseline_list_v2 = get_baseline_list_v2(data.sta_name,data.v2_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
+        baseline_list_t3 = get_baseline_pairs_t3(data.sta_name,data.t3_sta_index);#, get_baseline_pairs_t3(data.nt3phi,data.tel_name,data.t3_sta_index))
         baseline=sort(unique(vcat(baseline_list_v2, vec(baseline_list_t3))))
         for i=1:length(baseline)
             loc_v2=data.indx_v2[findall(baseline_list_v2->baseline_list_v2==baseline[i],baseline_list_v2)]

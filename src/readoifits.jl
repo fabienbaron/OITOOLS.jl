@@ -814,9 +814,6 @@ function readoifits_multicolors(oifitsfiles; filter_bad_data=false,  force_full_
   return data
 end
 
-
-
-
 # period in days
 function time_split(mjd,period;mjd_start=mjd[1])
   timebins = (maximum(mjd) - mjd_start)/(period);
