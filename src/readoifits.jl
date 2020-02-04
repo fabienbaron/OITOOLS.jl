@@ -136,7 +136,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   arraytableref = [arraytables[i][:arrname] for i=1:length(arraytables)];
   array_ntables=length(arraytables)
 
-  #get info from array tables_  #TBD -> update with knowledge from number of v2
+  #get info from array tables_  #TBD -> update with knowledge from above
   v2_sta_index=Array{Array{Int64,2}}(undef, array_ntables);
   t3_sta_index=Array{Array{Int64,3}}(undef, array_ntables);
   t4_sta_index=Array{Array{Int64,4}}(undef, array_ntables);
@@ -772,7 +772,6 @@ end
         OIdataArr[iwavbin,itimebin].t4_dlam = OIdataArr[iwavbin,itimebin].t4_dlam[t4_good]
         OIdataArr[iwavbin,itimebin].t4_flag = OIdataArr[iwavbin,itimebin].t4_flag[t4_good]
         OIdataArr[iwavbin,itimebin].t4_sta_index = OIdataArr[iwavbin,itimebin].t4_sta_index[:,t4_good]
-
 
         # uv points filtering
         uv_select  = Array{Bool}(undef, size(OIdataArr[iwavbin,itimebin].uv,2))
