@@ -132,6 +132,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
    station_index_offset = 1
   end
 
+# START OF INDEXING LOGIC (this should catch a lot of errors due to non-compliance with OIFITS v2)
   # At CHARA, station names = telescope names (for the moment)
   # At VLTI, stations and telescopes are different
   # This code can handle simple situations (pure CHARA or VLTI data) as well as CHARA + VLTI combined data
@@ -149,11 +150,26 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   new_telescope_name = Array{String}(undef, nstations)
   new_station_index = zeros(Int64,nstations)
 
+  for itable = 1:v2_ntables
+    iarray = findall(v2table[itable][:arrname] .== arraytableref)
+    if length(iarray)>0 # Will fail if no corresponding OI_ARRAY table
+      iarray = iarray[1]
+      corresp_station_indexes = arraytables[iarray][:sta_index]
+      for jj in unique(v2table[itable][:sta_index]) # Will fail if non-existent indexes in V2 tables
+        if !(jj in corresp_station_indexes)
+          @warn("V2 table $itable has index $jj which is non existent in OI_ARRAY")
+        end
+      end
+      else
+        @warn("V2 table $itable is missing the corresponding OI_ARRAY")
+      end
+  end
+
 
   for istation=1:length(list_stations)
        name = list_stations[istation]
        loc = findall(station_names .== name)
-       tel = unique(telescope_names[loc])[1] # possible issue if several telescopes can be positioned at the same station
+       tel = unique(telescope_names[loc])[1] # possible issue if several telescopes can be positioned onto the same station
        indx = unique(station_indexes[loc])
        if length(indx)>1
          warning("Station index vary for station $(name) in this file")
@@ -180,7 +196,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         conversion_index[itable,station_index_offset+oldindx] = newindx;
       end
   end
-
+# END OF STATION INDEXING LOGIC
 
   v2table = OIFITS.select(tables,"OI_VIS2");
   v2_ntables = length(v2table);
@@ -203,7 +219,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     use_t4 = false;
   end
 
-  # Quick OI-ARRAY check - Some arrays may be defined in V2/T3 tables, yet not included in OIARRAY
+  # Quick OI-ARRAY check
   all_oitables_names = unique(vcat((arraytables[i][:arrname] for i=1:length(arraytables))...))
   used_oiarray_tables = unique(vcat([v2table[itable][:arrname] for itable = 1:v2_ntables], [t3table[itable][:arrname] for itable = 1:t3_ntables]))
   if length(used_oiarray_tables)>length(all_oitables_names)
