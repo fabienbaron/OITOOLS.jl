@@ -108,17 +108,42 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     targetid_filter = unique(vcat([targettables[i][:target_id] for i=1:length(targettables)]...));
   end
 
+
+  v2table = OIFITS.select(tables,"OI_VIS2");
+  v2_ntables = length(v2table);
+
+  if v2_ntables == 0
+    use_v2 = false;
+  end
+
+  t3table = OIFITS.select(tables,"OI_T3");
+  t3_ntables = length(t3table);
+
+  if t3_ntables == 0
+    use_v2 = false;
+  end
+
+  t4table = OIFITS.select(tables,"OI_T4");
+  t4_ntables = length(t4table);
+
+  if t4_ntables == 0
+    use_t4 = false;
+  end
+
+
+# OI_ARRAY
   arraytables=OIFITS.select(tables,"OI_ARRAY")
   arraytableref = [arraytables[i][:arrname] for i=1:length(arraytables)];
   array_ntables=length(arraytables)
 
-#get info from array tables_
-  station_name=Array{Array{String,1}}(undef, array_ntables)
-  telescope_name=Array{Array{String,1}}(undef, array_ntables);
-  station_index=Array{Array{Int64,1}}(undef, array_ntables);
+  #get info from array tables_  #TBD -> update with knowledge from number of v2
   v2_sta_index=Array{Array{Int64,2}}(undef, array_ntables);
   t3_sta_index=Array{Array{Int64,3}}(undef, array_ntables);
   t4_sta_index=Array{Array{Int64,4}}(undef, array_ntables);
+
+  station_name=Array{Array{String,1}}(undef, array_ntables)
+  telescope_name=Array{Array{String,1}}(undef, array_ntables);
+  station_index=Array{Array{Int64,1}}(undef, array_ntables);
 
   for itable = 1:array_ntables
       station_name[itable] = arraytables[itable][:sta_name]; # station_names
@@ -165,7 +190,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
       end
   end
 
-
   for istation=1:length(list_stations)
        name = list_stations[istation]
        loc = findall(station_names .== name)
@@ -198,28 +222,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   end
 # END OF STATION INDEXING LOGIC
 
-  v2table = OIFITS.select(tables,"OI_VIS2");
-  v2_ntables = length(v2table);
-
-  if v2_ntables == 0
-    use_v2 = false;
-  end
-
-  t3table = OIFITS.select(tables,"OI_T3");
-  t3_ntables = length(t3table);
-
-  if t3_ntables == 0
-    use_v2 = false;
-  end
-
-  t4table = OIFITS.select(tables,"OI_T4");
-  t4_ntables = length(t4table);
-
-  if t4_ntables == 0
-    use_t4 = false;
-  end
-
-  # Quick OI-ARRAY check
+  # Quick OI-ARRAY check -- update so that it's not redundant with previous checks
   all_oitables_names = unique(vcat((arraytables[i][:arrname] for i=1:length(arraytables))...))
   used_oiarray_tables = unique(vcat([v2table[itable][:arrname] for itable = 1:v2_ntables], [t3table[itable][:arrname] for itable = 1:t3_ntables]))
   if length(used_oiarray_tables)>length(all_oitables_names)
