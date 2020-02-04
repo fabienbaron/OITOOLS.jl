@@ -182,11 +182,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
       corresp_station_indexes = arraytables[iarray][:sta_index]
       for jj in unique(v2table[itable][:sta_index]) # Will fail if non-existent indexes in V2 tables
         if !(jj in corresp_station_indexes)
-          @warn("V2 table $itable has index $jj which is non existent in OI_ARRAY")
+          @warn("V2 table $itable refers to station index $jj, non existent in OI_ARRAY=$(v2table[itable][:arrname]); available indexes are $(corresp_station_indexes)")
         end
       end
       else
-        @warn("V2 table $itable is missing the corresponding OI_ARRAY")
+        @warn("V2 table $itable is missing its corresponding OI_ARRAY $(v2table[itable][:arrname])")
       end
   end
 
