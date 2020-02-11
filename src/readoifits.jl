@@ -107,6 +107,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   end
 
   tables = OIFITS.load(oifitsfile);
+
+#  fluxtables = OIFITS.select(tables,"OI_FLUX");
+
+
   wavtable = OIFITS.select(tables,"OI_WAVELENGTH");
   wavtableref = [wavtable[i][:insname] for i=1:length(wavtable)];
   # In case there are multiple targets per file (NPOI, some old MIRC), select only the wanted data
