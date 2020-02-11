@@ -8,13 +8,13 @@ data1 = readoifits(oifitsin,filter_bad_data=true)[1,1];
 oifitsin ="./data/AZCYG2014NEW.oifits"
 data2 = readoifits(oifitsin,filter_bad_data=true)[1,1];
 
-data =[data1,data2]
+data =[data1,data2];
 
 #plot one file uv by baseline
-uvplot(data1,fancy=true)
+uvplot(data1)
 
 #plot one v2 with baselines colored logscale --left click identifies the point
-v2plot(data1,logplot=true,fancy=true, idpoint = true)
+v2plot(data1,logplot=true, idpoint = true)
 
 
 #plot two files by baseline, with different colors for each and different symbols for baselines, and id points on click

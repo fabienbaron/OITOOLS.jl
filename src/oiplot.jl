@@ -144,7 +144,7 @@ function uvplot(data::OIdata;fancy=true,filename="")
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
     axis("equal")
-    if fancy == true # we need to identify corresponding baselines
+    if fancy == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = get_baseline_list_v2(data.sta_name,data.v2_sta_index);
         baseline_list_t3 = get_baseline_pairs_t3(data.sta_name,data.t3_sta_index);
         baseline=sort(unique(vcat(baseline_list_v2, vec(baseline_list_t3))))

@@ -29,7 +29,7 @@ x_start = zeros(nx, nx, nwav);
 for i=1:nwav
     x_start[:,:,i]=pointsource
 end
-x_start = vec(x_start)
+x_start = vec(x_start);
 x = reconstruct_polychromatic(x_start, data, fftplan, regularizers = regularizers, maxiter = 500);
 
 imdisp_polychromatic(reshape(x,nx*nx,nwav).^.25, pixscale=pixsize)
