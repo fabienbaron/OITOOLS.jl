@@ -109,8 +109,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   tables = OIFITS.load(oifitsfile);
 
 #  fluxtables = OIFITS.select(tables,"OI_FLUX");
-
-
   wavtable = OIFITS.select(tables,"OI_WAVELENGTH");
   wavtableref = [wavtable[i][:insname] for i=1:length(wavtable)];
   # In case there are multiple targets per file (NPOI, some old MIRC), select only the wanted data
@@ -534,8 +532,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
   vis_baseline_all = tablemerge(vis_baseline_old);
   vis_sta_index_all= hcat([ reshape(vis_sta_index_old[i], 2, div(length(vis_sta_index_old[i]), 2)) for i=1:length(vis_sta_index_old) ]...)
 
-
-
   v2_all = tablemerge(v2_old);
   v2_err_all =  tablemerge(v2_err_old);
   v2_mjd_all = tablemerge(v2_mjd_old);
@@ -717,9 +713,9 @@ end
           bin_t4 = (t4_mjd_all.<=temporalbin[itimebin][2]).&(t4_mjd_all.>=temporalbin[itimebin][1]).&(t4_lam_all.<=spectralbin[iwavbin][2]).&(t4_lam_all.>=spectralbin[iwavbin][1]);
         end
       else # select all
-        bin_vis = Bool.(ones(length(vis_all)))
+        bin_vis = Bool.(ones(length(visphi_all)))
         bin_v2 = Bool.(ones(length(v2_all)))
-        bin_t3 = Bool.(ones(length(t3amp_all)))
+        bin_t3 = Bool.(ones(length(t3phi_all)))
         if use_t4 == true
           bin_t4 = Bool.(ones(length(t4amp_all)))
         end

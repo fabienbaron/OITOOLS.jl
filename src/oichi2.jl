@@ -421,10 +421,13 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
   for i=1:nwavs # weighted sum -- should probably do the computation in parallel
     tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
     subg = Array{Float64}(undef, npix);
-    printstyled("Spectral channel $i ",color=printcolor[i]);
+    if verb == true
+      printstyled("Spectral channel $i ",color=printcolor[i]);
+    end
     f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
     g[tslice] = subg
   end
+  print("Total chi2 over wavelengths: $f \n");
 
   # transspectral regularization
    if length(regularizers)>nwavs
@@ -442,37 +445,13 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
       end
       f+= regularizers[nwavs+1][1][2]*trsp_f
       g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
-      printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
+      if verb == true
+        printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
+      end
      end
     end
    return f;
 end
-
-# function crit_polychromatic_nfft_f(x::Array{Float64,1},  ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], verb = false)
-#   nwavs = length(ft);
-#   if printcolor == []
-#     printcolor=Array{Symbol}(undef,nwavs);
-#     printcolor[:] .= :black
-#   end
-#   npix = div(length(x),nwavs);
-#   f = 0.0;
-#   for i=1:nwavs # weighted sum -- should probably do the computation in parallel
-#     tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
-#     printstyled("Spectral channel $i ",color=printcolor[i]);
-#     f += chi2_nfft_f(x[tslice], ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
-#   end
-#
-#   # transspectral regularization
-#    if length(regularizers)>nwavs
-#      if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>1)
-#       y = reshape(x,(npix,nwavs))
-#       trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
-#       f+= regularizers[nwavs+1][1][2]*trsp_f
-#       printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
-#      end
-#     end
-#    return f;
-# end
 
 using OptimPackNextGen
 function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[])
