@@ -18,13 +18,11 @@ function rm_redundance_kdtree(uv,uvtol)
   # Note: good idea but we would need to complex conjugate the data point in this case
   indx_redundance = collect(1:size(uv,2));
   kdtree = KDTree(uv);
-  for (index,value) in enumerate(indx_redundance)
+  for value in indx_redundance
     redundance = inrange(kdtree,uv[:,value],uvtol);
     @inbounds indx_redundance[redundance] .= minimum(redundance);
   end
-  tokeep = unique(indx_redundance)
-  #  uv = uv[:,tokeep];
-  # tokeep: actually unique indexes
-  # v2_indx[indx_redundance] -> new matrix to reindex v2_indx
-  return indx_redundance, tokeep;
+  tokeep = unique(indx_redundance) # we only need the tokeep points in the uv plane'
+  indx_red_conv = indexin(indx_redundance, tokeep)
+  return indx_red_conv, tokeep  ;
 end
