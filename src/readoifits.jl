@@ -307,7 +307,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         visamp_err_old[itable] = vistables[itable][:visamperr][:,vis_targetid_filter];
         visphi_old[itable] = vistables[itable][:visphi][:,vis_targetid_filter];
         visphi_err_old[itable] = vistables[itable][:visphierr][:,vis_targetid_filter];
-        vis_ucoord_old[itable] = -vistables[itable][:ucoord][vis_targetid_filter];
+        vis_ucoord_old[itable] = vistables[itable][:ucoord][vis_targetid_filter];
         vis_vcoord_old[itable] = vistables[itable][:vcoord][vis_targetid_filter];
         vis_mjd_old[itable] = repeat(vistables[itable][:mjd][vis_targetid_filter]', outer=[size(visamp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
         iarray = findall(vistables[itable][:arrname] .== arraytableref)
@@ -350,7 +350,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         v2_targetid_filter = findall(sum([v2tables[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
         v2_old[itable] = v2tables[itable][:vis2data][:,v2_targetid_filter]; # Visibility squared
         v2_err_old[itable] = v2tables[itable][:vis2err][:,v2_targetid_filter]; # error in Visibility squared
-        v2_ucoord_old[itable] = -v2tables[itable][:ucoord][v2_targetid_filter]; # u coordinate in uv plane
+        v2_ucoord_old[itable] = v2tables[itable][:ucoord][v2_targetid_filter]; # u coordinate in uv plane
         v2_vcoord_old[itable] = v2tables[itable][:vcoord][v2_targetid_filter]; #  v coordinate in uv plane
         v2_mjd_old[itable] = repeat(v2tables[itable][:mjd][v2_targetid_filter]', outer=[size(v2_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
         iarray = findall(v2tables[itable][:arrname] .== arraytableref)
@@ -408,9 +408,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         t3amp_err_old[itable] = t3tables[itable][:t3amperr][:,t3_targetid_filter];
         t3phi_old[itable] = t3tables[itable][:t3phi][:,t3_targetid_filter];
         t3phi_err_old[itable] = t3tables[itable][:t3phierr][:,t3_targetid_filter];
-        t3_u1coord_old[itable] = -t3tables[itable][:u1coord][t3_targetid_filter];
+        t3_u1coord_old[itable] = t3tables[itable][:u1coord][t3_targetid_filter];
         t3_v1coord_old[itable] = t3tables[itable][:v1coord][t3_targetid_filter];
-        t3_u2coord_old[itable] = -t3tables[itable][:u2coord][t3_targetid_filter];
+        t3_u2coord_old[itable] = t3tables[itable][:u2coord][t3_targetid_filter];
         t3_v2coord_old[itable] = t3tables[itable][:v2coord][t3_targetid_filter];
         t3_u3coord_old[itable] = -(t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
         t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
@@ -484,11 +484,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             t4amp_err_old[itable] = t4tables[itable][:t4amperr][:,t4_targetid_filter];
             t4phi_old[itable] = t4tables[itable][:t4phi][:,t4_targetid_filter];
             t4phi_err_old[itable] = t4tables[itable][:t4phierr][:,t4_targetid_filter];
-            t4_u1coord_old[itable] = -t4tables[itable][:u1coord][t4_targetid_filter];
+            t4_u1coord_old[itable] = t4tables[itable][:u1coord][t4_targetid_filter];
             t4_v1coord_old[itable] = t4tables[itable][:v1coord][t4_targetid_filter];
-            t4_u2coord_old[itable] = -t4tables[itable][:u2coord][t4_targetid_filter];
+            t4_u2coord_old[itable] = t4tables[itable][:u2coord][t4_targetid_filter];
             t4_v2coord_old[itable] = t4tables[itable][:v2coord][t4_targetid_filter];
-            t4_u3coord_old[itable] = -t4tables[itable][:u3coord][t4_targetid_filter];
+            t4_u3coord_old[itable] = t4tables[itable][:u3coord][t4_targetid_filter];
             t4_v3coord_old[itable] = t4tables[itable][:v3coord][t4_targetid_filter];
             t4_u4coord_old[itable] = -(t4_u1coord_old[itable] + t4_u2coord_old[itable] + t4_u3coord_old[itable]); # the minus takes care of complex conjugate
             t4_v4coord_old[itable] = -(t4_v1coord_old[itable] + t4_v2coord_old[itable] + t4_v3coord_old[itable]);

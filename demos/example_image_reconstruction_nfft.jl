@@ -11,7 +11,15 @@ ft = setup_nfft(data, nx, pixsize);
 x_start = gaussian2d(nx,nx,nx/6);
 x_start = vec(x_start)/sum(x_start);
 
-regularizers = [["centering", 1e4], ["tv", 7e3]];
+regularizers = [["centering", 1e3], ["tv", 7e3]];
 x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true);
 imdisp(x,pixscale=pixsize)
-writefits(reshape(x,nx,nx),"reconstruction.fits")
+
+# Uncomment if you want to write the result
+#writefits(reshape(x,nx,nx),"reconstruction.fits")
+
+# Another strategy
+x=deepcopy(x_start)
+for i=1:10 
+ global x = reconstruct(x, data, ft, regularizers = regularizers, verb = true);
+end

@@ -113,7 +113,7 @@ end
 
 # Overloaded uvplot functions
 function uvplot(uv::Array{Float64,2};filename="")
-    u = -uv[1,:]/1e6
+    u = uv[1,:]/1e6
     v = uv[2,:]/1e6
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
     clf();
@@ -135,7 +135,7 @@ function uvplot(uv::Array{Float64,2};filename="")
 end
 
 function uvplot(data::OIdata;fancy=true,filename="")
-    u = -data.uv[1,:]/1e6
+    u = data.uv[1,:]/1e6
     v = data.uv[2,:]/1e6
     fig = figure("MJD: $(data.mean_mjd), nuv: $(data.nuv)",figsize=(8,8),facecolor="White")
     clf();
