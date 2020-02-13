@@ -438,8 +438,9 @@ function t3ampplot(baseline_t3,t3amp_data,t3amp_data_err,nt3amp,sta_name,t3_sta_
   end
 end
 
-function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
  fig = figure(imtitle,figsize=(6,6),facecolor="White")
+ clf();
  nx=ny=-1;
  pixmode = false;
  if pixscale == -1
@@ -449,7 +450,7 @@ function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale
  scaling_factor = maximum(image);
  if abs.(scaling_factor) <  1e-20
      scaling_factor = 1.0;
-     warning("Maximum of image < tol");
+     @warn("Maximum of image < tol");
  end
 
  img = []
@@ -474,8 +475,6 @@ end
  ax.xaxis.set_tick_params(which="minor",length=5,width=1)
  ax.yaxis.set_tick_params(which="major",length=10,width=2)
  ax.yaxis.set_tick_params(which="minor",length=5,width=1)
-
-
  if use_colorbar == true
      divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
      cax = divider.append_axes("right", size="5%", pad=0.2)

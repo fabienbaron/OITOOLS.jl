@@ -6,10 +6,10 @@ function setup_dft(data::OIdata, nx, pixsize)
 scale_rad = pixsize * (pi / 180.0) / 3600000.0;
 nuv = size(data.uv,2)
 dft = zeros(Complex{Float64}, nuv, nx*nx);
-xvals = -2.0 * pi * scale_rad * ([(mod(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
-yvals=  -2.0 * pi * scale_rad * ([(div(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
+xvals = 2.0 * pi * scale_rad * ([(mod(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
+yvals=  2.0 * pi * scale_rad * ([(div(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
 for uu=1:nuv
-    dft[uu,:] = cis.( (data.uv[1,uu] * xvals + data.uv[2,uu] * yvals));
+    dft[uu,:] = cis.( (data.uv[1,uu] * xvals - data.uv[2,uu] * yvals)); # to keep orientation
 end
 return dft
 end
@@ -18,46 +18,46 @@ function setup_dft(uv::Array{Float64,2}, nx, pixsize)
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
   nuv = size(uv,2)
   dft = zeros(Complex{Float64}, nuv, nx*nx);
-  xvals = -2 * pi * scale_rad * ([(mod(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
-  yvals=  -2 * pi * scale_rad * ([(div(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
+  xvals = 2 * pi * scale_rad * ([(mod(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
+  yvals=  2 * pi * scale_rad * ([(div(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
   for uu=1:nuv
-      dft[uu,:] = cis.( (uv[1,uu] * xvals + uv[2,uu] * yvals));
+      dft[uu,:] = cis.( (uv[1,uu] * xvals - uv[2,uu] * yvals));
   end
   return dft
 end
 
 function setup_nfft(data::OIdata, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-  fftplan_uv  = NFFTPlan(scale_rad*data.uv, (nx,nx), 4, 2.0);
-  fftplan_v2   = NFFTPlan(scale_rad*data.uv[:, data.indx_v2], (nx,nx), 4, 2.0);
-  fftplan_t3_1 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_1], (nx,nx), 4, 2.0);
-  fftplan_t3_2 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_2], (nx,nx), 4, 2.0);
-  fftplan_t3_3 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_3], (nx,nx), 4, 2.0);
+  fftplan_uv  = NFFTPlan(scale_rad*[-1;1].*data.uv, (nx,nx), 4, 2.0);
+  fftplan_v2   = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_v2], (nx,nx), 4, 2.0);
+  fftplan_t3_1 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t3_1], (nx,nx), 4, 2.0);
+  fftplan_t3_2 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t3_2], (nx,nx), 4, 2.0);
+  fftplan_t3_3 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t3_3], (nx,nx), 4, 2.0);
   return [fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
 end
 
 function setup_nfft(uv::Array{Float64,2}, indx_v2, indx_t3_1, indx_t3_2,indx_t3_3, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-  fftplan_uv  = NFFTPlan(scale_rad*uv, (nx,nx), 4, 2.0);
-  fftplan_v2   = NFFTPlan(scale_rad*uv[:, indx_v2], (nx,nx), 4, 2.0);
-  fftplan_t3_1 = NFFTPlan(scale_rad*uv[:, indx_t3_1], (nx,nx), 4, 2.0);
-  fftplan_t3_2 = NFFTPlan(scale_rad*uv[:, indx_t3_2], (nx,nx), 4, 2.0);
-  fftplan_t3_3 = NFFTPlan(scale_rad*uv[:, indx_t3_3], (nx,nx), 4, 2.0);
+  fftplan_uv  = NFFTPlan(scale_rad*[-1;1].*uv, (nx,nx), 4, 2.0);
+  fftplan_v2   = NFFTPlan(scale_rad*[-1;1].*uv[:, indx_v2], (nx,nx), 4, 2.0);
+  fftplan_t3_1 = NFFTPlan(scale_rad*[-1;1].*uv[:, indx_t3_1], (nx,nx), 4, 2.0);
+  fftplan_t3_2 = NFFTPlan(scale_rad*[-1;1].*uv[:, indx_t3_2], (nx,nx), 4, 2.0);
+  fftplan_t3_3 = NFFTPlan(scale_rad*[-1;1].*uv[:, indx_t3_3], (nx,nx), 4, 2.0);
   return [fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
 end
 
 
 function setup_nfft_t4(data, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
   scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-  fftplan_uv  = NFFTPlan(scale_rad*data.uv, (nx,nx), 4, 2.0);
-  fftplan_v2   = NFFTPlan(scale_rad*data.uv[:, data.indx_v2], (nx,nx), 4, 2.0);
-  fftplan_t3_1 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_1], (nx,nx), 4, 2.0);
-  fftplan_t3_2 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_2], (nx,nx), 4, 2.0);
-  fftplan_t3_3 = NFFTPlan(scale_rad*data.uv[:, data.indx_t3_3], (nx,nx), 4, 2.0);
-  fftplan_t4_1 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_1], (nx,nx), 4, 2.0);
-  fftplan_t4_2 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_2], (nx,nx), 4, 2.0);
-  fftplan_t4_3 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_3], (nx,nx), 4, 2.0);
-  fftplan_t4_4 = NFFTPlan(scale_rad*data.uv[:, data.indx_t4_4], (nx,nx), 4, 2.0);
+  fftplan_uv  = NFFTPlan(scale_rad*[-1;1].*data.uv, (nx,nx), 4, 2.0);
+  fftplan_v2   = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_v2], (nx,nx), 4, 2.0);
+  fftplan_t3_1 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t3_1], (nx,nx), 4, 2.0);
+  fftplan_t3_2 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t3_2], (nx,nx), 4, 2.0);
+  fftplan_t3_3 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t3_3], (nx,nx), 4, 2.0);
+  fftplan_t4_1 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t4_1], (nx,nx), 4, 2.0);
+  fftplan_t4_2 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t4_2], (nx,nx), 4, 2.0);
+  fftplan_t4_3 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t4_3], (nx,nx), 4, 2.0);
+  fftplan_t4_4 = NFFTPlan(scale_rad*[-1;1].*data.uv[:, data.indx_t4_4], (nx,nx), 4, 2.0);
   return [fftplan_uv,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3, fftplan_t4_1,fftplan_t4_2,fftplan_t4_3, fftplan_t4_4]
 end
 
@@ -142,8 +142,8 @@ function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verb = true)
   chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2);
   if verb == true
     flux = sum(x);
-    println("Chi2  -  Total: ", chi2_v2 + chi2_t3amp + chi2_t3phi, " V2: ", chi2_v2, " T3A: ", chi2_t3amp, " T3P: ", chi2_t3phi," Flux: ", flux)
-    println("Chi2r -  Total:", (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+ data.nt3amp+ data.nt3phi), " V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
+#    println("Chi2 : ", chi2_v2 + chi2_t3amp + chi2_t3phi, " V2: ", chi2_v2, " T3A: ", chi2_t3amp, " T3P: ", chi2_t3phi," Flux: ", flux)
+    println("Chi2r: ", (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+ data.nt3amp+ data.nt3phi), " V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", flux)
   end
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
@@ -156,7 +156,7 @@ function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1
   chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
   chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
   if verb == true
-      println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+      println("Chi2r: ", (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+ data.nt3amp+ data.nt3phi)," V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
   end
   return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
