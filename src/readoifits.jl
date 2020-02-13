@@ -96,11 +96,11 @@ mutable struct OIdata
     filename::String
 end
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=false,uvtol=1.e3, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true)
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=false,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true)
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
-    # spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true
+    #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true
     if !isfile(oifitsfile)
         @warn("Could not find file")
         return [];
@@ -807,7 +807,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
             if (redundance_remove == true) # Remove duplicate uv points accross different data products (V2, T3, etc.)
                 #TODO: find a better heuristic for uvtol, currently uvtol=1000 works for VLTI & CHARA near-infrared
-                full_uv[iwavbin,itimebin], indx_redun, tokeep = rm_redundance_kdtree(full_uv[iwavbin,itimebin],uvtol);
+                indx_redun, tokeep = rm_redundance_kdtree(full_uv[iwavbin,itimebin],uvtol);
+                full_uv[iwavbin,itimebin] = full_uv[iwavbin,itimebin][:,tokeep]
                 full_uv_lam[iwavbin,itimebin]  =  full_uv_lam[iwavbin,itimebin][tokeep]
                 full_uv_dlam[iwavbin,itimebin] =  full_uv_dlam[iwavbin,itimebin][tokeep]
                 full_uv_mjd[iwavbin,itimebin] =  full_uv_mjd[iwavbin,itimebin][tokeep]
@@ -825,6 +826,14 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                     indx_t4_4[iwavbin,itimebin] = indx_redun[indx_t4_4[iwavbin,itimebin]];
                 end
             end
+
+
+
+
+
+
+
+
 
             OIdataArr[iwavbin,itimebin] = OIdata( visamp_new[iwavbin,itimebin], visamp_err_new[iwavbin,itimebin], visphi_new[iwavbin,itimebin], visphi_err_new[iwavbin,itimebin], vis_baseline_new[iwavbin,itimebin], vis_mjd_new[iwavbin,itimebin], vis_lam_new[iwavbin,itimebin], vis_dlam_new[iwavbin,itimebin], vis_flag_new[iwavbin,itimebin], v2_new[iwavbin,itimebin], v2_err_new[iwavbin,itimebin], v2_baseline_new[iwavbin,itimebin], v2_mjd_new[iwavbin,itimebin],
             mean_mjd[iwavbin,itimebin], v2_lam_new[iwavbin,itimebin], v2_dlam_new[iwavbin,itimebin], v2_flag_new[iwavbin,itimebin], t3amp_new[iwavbin,itimebin], t3amp_err_new[iwavbin,itimebin], t3phi_new[iwavbin,itimebin], t3phi_err_new[iwavbin,itimebin], t3_baseline_new[iwavbin,itimebin],t3_maxbaseline_new[iwavbin,itimebin], t3_mjd_new[iwavbin,itimebin], t3_lam_new[iwavbin,itimebin], t3_dlam_new[iwavbin,itimebin], t3_flag_new[iwavbin,itimebin], t4amp_new[iwavbin,itimebin], t4amp_err_new[iwavbin,itimebin], t4phi_new[iwavbin,itimebin], t4phi_err_new[iwavbin,itimebin], t4_baseline_new[iwavbin,itimebin],t4_maxbaseline_new[iwavbin,itimebin],t4_mjd_new[iwavbin,itimebin], t4_lam_new[iwavbin,itimebin], t4_dlam_new[iwavbin,itimebin], t4_flag_new[iwavbin,itimebin],
