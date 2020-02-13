@@ -13,7 +13,20 @@ using Statistics, SparseArrays
 #         * define booleans "use_v2, use_t3amp" and apply to all file
 #         * check if t3_uv_mjd and similar are necessary
 
-include("remove_redundance.jl")
+using NearestNeighbors
+function rm_redundance_kdtree(uv,uvtol)
+  #@inbounds uv[:,findall(uv[1,:].<0)] *= -1; # change any (-u,v) -> (u,-v)
+  # Note: good idea but we would need to complex conjugate the data point in this case
+  indx_redundance = collect(1:size(uv,2));
+  kdtree = KDTree(uv);
+  for value in indx_redundance
+    redundance = inrange(kdtree,uv[:,value],uvtol);
+    @inbounds indx_redundance[redundance] .= minimum(redundance);
+  end
+  tokeep = unique(indx_redundance) # we only need the tokeep points in the uv plane'
+  indx_red_conv = indexin(indx_redundance, tokeep)
+  return indx_red_conv, tokeep  ;
+end
 
 function tablemerge(tabtomerge)
     return vcat([vec(tabtomerge[i]) for i=1:length(tabtomerge)]...);
