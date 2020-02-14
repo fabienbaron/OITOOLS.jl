@@ -37,7 +37,6 @@ function setup_nfft(data::OIdata, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
 end
 
 
-
 function setup_nfft(uv::Array{Float64,2}, indx_v2, indx_t3_1, indx_t3_2,indx_t3_3, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
   scale_rad = pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv;
   fftplan_uv  = NFFTPlan(scale_rad, (nx,nx), 4, 2.0);
@@ -85,6 +84,19 @@ function setup_nfft_polychromatic(data, nx, pixsize)::Array{Array{NFFTPlan{2,0,F
 return fftplan_multi
 end
 
+  #
+  # using FINUFFT
+  #
+  # function image_to_cvis_finufft(x::Array{Float64,2})
+  #   out2 = nufft2d2(pixsize * (pi / 180.0) / 3600000.0*data.uv[1,:], -pixsize * (pi / 180.0) / 3600000.0*data.uv[2,:],-1, 1e-6, Complex{Float64}.(x) / sum(x))
+  # end
+  #
+  # function image_to_cvis_finufft(x::Array{Float64,1})
+  # nx = Int64(sqrt(length(x)))
+  # out2 = nufft2d2(pixsize * (pi / 180.0) / 3600000.0*data.uv[1,:], -pixsize * (pi / 180.0) / 3600000.0*data.uv[2,:],-1, 1e-6, Complex{Float64}.(reshape(x,(nx,nx))) / sum(x))
+  # end
+
+
 function mod360(x)
   mod.(mod.(x.+180.0,360.0).+360.0, 360.0) .- 180.0
 end
@@ -113,27 +125,26 @@ function image_to_cvis_dft(x, dft)
   cvis_model = dft * vec(x) / sum(x);
 end
 
-function image_to_cvis_nfft(x, nfft_plan::NFFTPlan)
-  flux = sum(x);
-  if (ndims(x) == 1)
-    nx = Int64(sqrt(length(x)))
-    cvis_model = nfft(nfft_plan, Complex{Float64}.(reshape(x,(nx,nx)))) / flux;
-  else
-    cvis_model = nfft(nfft_plan, Complex{Float64}.(x)) / flux;
-  end
+function image_to_cvis_nfft(x::Array{Float64,1}, nfft_plan::NFFTPlan)
+  nx = Int64(sqrt(length(x)))
+  cvis_model = nfft(nfft_plan, Complex{Float64}.(reshape(x,(nx,nx)))) / sum(x);
+end
+
+function image_to_cvis_nfft(x::Array{Float64,2}, nfft_plan::NFFTPlan)
+  cvis_model = nfft(nfft_plan, Complex{Float64}.(x)) / sum(x);
 end
 
 # Overload
-function image_to_cvis_nfft(x, nfft_plan::Array{NFFTPlan{2,0,Float64},1})
+function image_to_cvis_nfft(x::Array{Float64,1}, nfft_plan::Array{NFFTPlan{2,0,Float64},1})
   flux = sum(x);
-  if (ndims(x) == 1)
-    nx = Int64(sqrt(length(x)))
-    cvis_model = nfft(nfft_plan[1], Complex{Float64}.(reshape(x,(nx,nx)))) / flux;
-  else
-    cvis_model = nfft(nfft_plan[1], Complex{Float64}.(x)) / flux;
-  end
+  nx = Int64(sqrt(length(x)))
+  cvis_model = nfft(nfft_plan[1], Complex{Float64}.(reshape(x,(nx,nx)))) / flux;
 end
 
+function image_to_cvis_nfft(x::Array{Float64,2}, nfft_plan::Array{NFFTPlan{2,0,Float64},1})
+  flux = sum(x);
+  cvis_model = nfft(nfft_plan[1], Complex{Float64}.(x)) / flux;
+end
 
 
 function image_to_cvis_finufft(x, data)
@@ -473,24 +484,24 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
 end
 
 using OptimPackNextGen
-function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[])
+function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], gtol=(0,1e-8))
   x_sol = []
   if typeof(ft) == Array{NFFTPlan{2,0,Float64},1}
     crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
-    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=gtol);
   else
     crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb)
-    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=gtol);
   end
 return x_sol
 end
 
 
-function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[])
+function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[], gtol=(0,1e-8))
   x_sol = []
   if typeof(ft) == Array{Array{NFFTPlan{2,0,Float64},1},1}
     crit = (x,g)->crit_multitemporal_nfft_fg(x, g, ft, data, printcolor=printcolor, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
-    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=gtol);
   else
     error("Sorry, polytemporal DFT methods not implemented yet");
   end

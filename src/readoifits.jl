@@ -1,7 +1,6 @@
 using FITSIO
 
 using OIFITS
-#include("../../OIFITS.jl/src/OIFITS.jl"); using Main.OIFITS; #modified for T4
 
 using Statistics, SparseArrays
 
@@ -115,7 +114,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true
     if !isfile(oifitsfile)
-        @warn("Could not locate file\n")
+        @error("Could not locate file\n")
         return [[]];
     end
 
@@ -213,20 +212,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     # This code can handle simple situations (pure CHARA or VLTI data) as well as CHARA + VLTI combined data
     # as long as a give station always keep the same indexes in merged data sets
 
-    # To simplify things, we immediately collapse all names
-    station_names = vec(vcat(station_name...))
-    telescope_names = vec(vcat(telescope_name...))
-    station_indexes = vec(vcat(station_index...))
+    # First test if there are unknown *station indexes*
+    # TODO: currently using only V2 tables, check for other data products
+    unknown_station_names = String[]
+    unknown_tel_names = String[]
+    unknown_station_indexes = Int64[]
 
-    # Check if index use is consistent
-    list_stations = unique(station_names)
-    nstations =  length(list_stations)
-    new_station_name = Array{String}(undef,   nstations)
-    new_telescope_name = Array{String}(undef, nstations)
-    new_station_index = zeros(Int64,nstations)
-
-    # Check in V2 table
-    # TODO: check for other data products
     for itable = 1:v2_ntables
         iarray = findall(v2tables[itable][:arrname] .== arraytableref)
         if length(iarray)>0 # Will fail if no corresponding OI_ARRAY table
@@ -235,6 +226,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             for jj in unique(v2tables[itable][:sta_index]) # Will fail if non-existent indexes in V2 tables
                 if !(jj in corresp_station_indexes)
                     @warn("V2 table $itable refers to station index $jj, non existent in OI_ARRAY=$(v2tables[itable][:arrname]); available indexes are $(corresp_station_indexes)")
+                    push!(unknown_station_names, string("UNKN",jj))
+                    push!(unknown_tel_names, string("UNKN",jj))
+                    push!(unknown_station_indexes, jj);
                 end
             end
         else
@@ -242,13 +236,39 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
     end
 
+    if unknown_station_names != []
+        # Keep only non-redundant and sort them
+        non_redundant_unknown_stations = indexin(unique(unknown_station_indexes), unknown_station_indexes)
+        unknown_station_indexes = unknown_station_indexes[non_redundant_unknown_stations]
+        unknown_station_names = unknown_station_names[non_redundant_unknown_stations]
+        unknown_tel_names = unknown_tel_names[non_redundant_unknown_stations]
+        sorted_non_redundant_stations = sortperm(unknown_station_indexes)
+        unknown_station_indexes = unknown_station_indexes[sorted_non_redundant_stations]
+        unknown_station_names = unknown_station_names[sorted_non_redundant_stations]
+        unknown_tel_names = unknown_tel_names[sorted_non_redundant_stations]
+        @warn("Unknown stations, creating station names $unknown_station_names with corresponding indexes = $unknown_station_indexes \n");
+    end
+
+
+    # To simplify things, we immediately collapse all names
+    station_names = vec(vcat(station_name..., unknown_station_names))
+    telescope_names = vec(vcat(telescope_name..., unknown_tel_names))
+    station_indexes = vec(vcat(station_index..., unknown_station_indexes))
+
+    # Check if index use is consistent
+    list_stations = unique(station_names)
+    nstations =  length(list_stations)
+    new_station_name = Array{String}(undef, nstations)
+    new_telescope_name = Array{String}(undef, nstations)
+    new_station_index = zeros(Int64,nstations)
+
     for istation=1:length(list_stations)
         name = list_stations[istation]
         loc = findall(station_names .== name)
         tel = unique(telescope_names[loc])[1] # possible issue if several telescopes can be positioned onto the same station
         indx = unique(station_indexes[loc])
         if length(indx)>1
-            warning("Station index vary for station $(name) in this file")
+            @warn("Station index vary for station $(name) in this file")
             # Give up -  Exit the for loop
             new_station_name[:] = station_names;
             new_telescope_name[:] = telescope_names;
@@ -264,6 +284,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     # we will need to convert the old indexes into the new ones
     conversion_index = zeros(Int64, array_ntables, maximum(station_indexes)-minimum(station_indexes)+1) # TODO: use sparse array instead
 
+    # Existing indexes in OI_ARRAY
     for itable = 1:array_ntables
         for istation = 1:length(station_name[itable])
             name = station_name[itable][istation];
@@ -271,7 +292,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             newindx = findall(new_station_name .== name)[1]
             conversion_index[itable,station_index_offset+oldindx] = newindx;
         end
+        # TODO: check logic
+        nmax = sum(conversion_index[itable,:] .!=0) ;
+        conversion_index[itable, unknown_station_indexes] = nmax+1:size(conversion_index,2);
     end
+
     # END OF STATION INDEXING LOGIC
 
     # Quick OI-ARRAY check
@@ -620,6 +645,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     if ((polychromatic == true) && (get_specbin_file == true))
         if length(wavtable)>1
             @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels.");
+            @warn("I will try to load the first one only")
+            wavarray = hcat(wavtable[1][:eff_wave]-wavtable[1][:eff_band]/2, wavtable[1][:eff_wave]+wavtable[1][:eff_band]/2);
+            spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
         else
             wavarray = hcat(wavtable[1][:eff_wave]-wavtable[1][:eff_band]/2, wavtable[1][:eff_wave]+wavtable[1][:eff_band]/2);
             spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
