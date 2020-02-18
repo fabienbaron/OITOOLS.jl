@@ -282,7 +282,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
     end
     # we will need to convert the old indexes into the new ones
-    conversion_index = zeros(Int64, array_ntables, maximum(station_indexes)-minimum(station_indexes)+1) # TODO: use sparse array instead
+    conversion_index = spzeros(Int64, array_ntables, maximum(station_indexes)-minimum(station_indexes)+1) # TODO: use sparse array instead
 
     # Existing indexes in OI_ARRAY
     for itable = 1:array_ntables
@@ -293,8 +293,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             conversion_index[itable,station_index_offset+oldindx] = newindx;
         end
         # TODO: check logic
+        if unknown_station_names != []
         nmax = sum(conversion_index[itable,:] .!=0) ;
         conversion_index[itable, unknown_station_indexes] = nmax+1:size(conversion_index,2);
+        end
     end
 
     # END OF STATION INDEXING LOGIC
