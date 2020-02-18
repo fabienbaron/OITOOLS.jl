@@ -971,7 +971,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 acc = 0;
                 for i=1:length(uv_select)
                     if uv_select[i]
-                        global acc+=1;
+                        acc+=1;
                     end
                     indx_conv[i]=acc;
                 end
