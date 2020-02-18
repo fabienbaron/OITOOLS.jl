@@ -7,9 +7,9 @@ using OITOOLS
 
 oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
-uvplot(data)
-v2plot(data,logplot=true);
-t3phiplot(data);
+#uvplot(data)
+#v2plot(data,logplot=true);
+#t3phiplot(data);
 
 # Example of visibilities, here for Hestroffer with limb-darkening parameter 0.1
 cvis = visibility_ldpow([8.0,0.1], data.v2_baseline);
@@ -32,7 +32,8 @@ v2_model = cvis_to_v2(cvis_model, data.indx_v2);
 v2plot_modelvsdata(data.v2_baseline,data.v2,data.v2_err, v2_model,logplot=true);
 
 # Directly compare chi2 for given law
-model_chi2_v2(data, visibility_ud, [8.0])
+model_chi2_v2(data, visibility_ud, [8.306655883789062]);
+model_chi2_v2(data, visibility_ldquad, [8.517405608182667, -0.0138396157376444, 0.4117664729712856]);
 
 # Example of fitting with bound constraints
 f_chi2, params, cvis_model = fit_model_v2(data, visibility_ud, [8.0], lbounds=[7.5], hbounds=[8.2]);# diameter is the parameter, chi2 ~ 15.23
