@@ -966,7 +966,16 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 uv_select[good_uv_t4_3] .= true
                 uv_select[good_uv_t4_4] .= true
 
-                indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)]
+                #indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)] # Performance pitfall
+                indx_conv = Array{Int64}(undef, length(uv_select))
+                acc = 0;
+                for i=1:length(uv_select)
+                    if uv_select[i]
+                        global acc+=1;
+                    end
+                    indx_conv[i]=acc;
+                end
+
                 indx_uv_sel = findall(uv_select.==true)
                 uv[iwavbin,itimebin] = uv[iwavbin,itimebin][:,indx_uv_sel]
                 uv_lam[iwavbin,itimebin] = uv_lam[iwavbin,itimebin][indx_uv_sel]
