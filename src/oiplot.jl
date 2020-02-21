@@ -165,7 +165,7 @@ function uvplot(data::OIdata;bybaseline=true,bywavelength=false,filename="")
         wavcol = data.uv_lam*1e6
         scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
         scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
-        cbar = colorbar(aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.08)
+        cbar = colorbar(aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.08, fraction=0.05)
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
         cbar.set_ticks(cbar_range)
     else
