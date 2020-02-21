@@ -162,8 +162,8 @@ function uvplot(data::OIdata;bybaseline=true,bywavelength=false,filename="")
         end
         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
     elseif bywavelength== true
-        scatter(u, v,alpha=1.0, s = 12.0, c=data.uv_lam, cmap="rainbow_r")
-        scatter(-u, -v,alpha=1.0, s = 12.0, c=data.uv_lam, cmap="rainbow_r")
+        scatter(u, v,alpha=1.0, s = 12.0, c=data.uv_lam, cmap="gist_rainbow_r")
+        scatter(-u, -v,alpha=1.0, s = 12.0, c=data.uv_lam, cmap="gist_rainbow_r")
     else
         scatter(u, v,alpha=1.0, s = 12.0,color="Black")
         scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
