@@ -135,7 +135,7 @@ function uvplot(uv::Array{Float64,2};filename="")
 end
 
 function uvplot(data::OIdata;bybaseline=true,bywavelength=false,filename="")
-    if bywavelenth==true
+    if bywavelength==true
         bybaseline=false
     end
     fig = figure("MJD: $(data.mean_mjd), nuv: $(data.nuv)",figsize=(8,8),facecolor="White")
