@@ -654,13 +654,12 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
 end
 
 
-
+# TODO: complete this function to finish SPARCO
 function Δchi2(dcvis_model::Union{Array{Complex{Float64},1}, Array{Float64,1}}, cvis_model::Union{Array{Complex{Float64},1},Array{Float64,1}}, v2_model::Array{Float64,1}, t3_model::Array{Complex{Float64},1}, t3amp_model::Array{Float64,1}, t3phi_model::Array{Float64,1}, data::OIdata) # return gradient of chi2 when cvis and dvis_model are known
 dv2 = 4*sum( ( (v2_model-data.v2)./data.v2_err.^2 ).*real.(cvis_model[data.indx_v2].*dcvis_model[data.indx_v2]))
 dt3amp = 2.0*sum(((t3amp_model-data.t3amp)./data.t3amp_err.^2).* ( real(cvis_model[data.indx_t3_1].*conj(dcvis_model[data.indx_t3_1]))./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3])
 + real(cvis_model[data.indx_t3_2].*conj(dcvis_model[data.indx_t3_2]))./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3])
 + real(cvis_model[data.indx_t3_3].*conj(dcvis_model[data.indx_t3_3]))./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
-
 # dt3phi = -360.0/pi*(mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
 #                       +nfft_adjoint(ftplan[4], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
 #                       +nfft_adjoint(ftplan[5], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
@@ -668,26 +667,12 @@ return dv2+dt3amp
 end
 
 
-
-
-
 function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[]) #grey environment
 x_sol = []
 crit = (x,g)->chi2_sparco_nfft_fg(x, g, ft, data, params_start, verb = verb)
-
 sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
-
 return sol
 end
-
-
-
-
-
-
-
-
-
 
 # if Pkg.installed("Wavelets") !=nothing
 #   using Wavelets

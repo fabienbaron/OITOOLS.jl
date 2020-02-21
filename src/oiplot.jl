@@ -77,36 +77,36 @@ end
 function onclickidentify(event)
     clicktype=event.button
     if clicktype == left_click    #left click to id
-            xclick=event.xdata
-            yclick=event.ydata
-            ax=gca()
-            ymin,ymax=ax.get_ylim()
-            xmin,xmax=ax.get_xlim()
-            normfactor=abs(xmax-xmin)/abs(ymax-ymin)
-            xdat=v2base./1e6
-            ydat=v2value
-            errdat=v2err
-            #diffx=abs.(xdat.-xclicks[length(xclicks)])
-            #diffy=abs.(ydat.-yclicks[length(xclicks)])
-            diffr=sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2)
-            indx_id=argmin(diffr)
-            closestx=xdat[indx_id]
-            closesty=ydat[indx_id]
-            closesterr=errdat[indx_id]
-            clickbaseval=clickbase[:,indx_id].+1
-            clicksec,clickmin,clickhour,clickday,clickmonth,clickyear=mjd_to_utc(clickmjd[indx_id])
-            printstyled("Frequency: ",closestx," Squared Vis Amp (V2): ",closesty," V2 Error: ",closesterr,"\n",color=:blue)
-            printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red)
-            if length(clickfile)!=1
-                printstyled("Filename: ",clickfile[indx_id],"\n",color=:green)
-            else
-                printstyled("Filename: ",clickfile[1],"\n",color=:green)
-            end
-            printstyled("MJD: ",clickmjd[indx_id],"\n",color=:black)
-            printstyled("Year: ", clickyear," Month: ",clickmonth," Day: ",clickday,"\n",color=:blue)
-            printstyled("Hour: ",clickhour, " Min: ",clickmin, " Sec: ", clicksec,"\n",color=:red )
-    #elseif clicktype == right_click
-    #    fig.canvas.mpl_disconnect(cid)
+        xclick=event.xdata
+        yclick=event.ydata
+        ax=gca()
+        ymin,ymax=ax.get_ylim()
+        xmin,xmax=ax.get_xlim()
+        normfactor=abs(xmax-xmin)/abs(ymax-ymin)
+        xdat=v2base./1e6
+        ydat=v2value
+        errdat=v2err
+        #diffx=abs.(xdat.-xclicks[length(xclicks)])
+        #diffy=abs.(ydat.-yclicks[length(xclicks)])
+        diffr=sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2)
+        indx_id=argmin(diffr)
+        closestx=xdat[indx_id]
+        closesty=ydat[indx_id]
+        closesterr=errdat[indx_id]
+        clickbaseval=clickbase[:,indx_id].+1
+        clicksec,clickmin,clickhour,clickday,clickmonth,clickyear=mjd_to_utc(clickmjd[indx_id])
+        printstyled("Frequency: ",closestx," Squared Vis Amp (V2): ",closesty," V2 Error: ",closesterr,"\n",color=:blue)
+        printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red)
+        if length(clickfile)!=1
+            printstyled("Filename: ",clickfile[indx_id],"\n",color=:green)
+        else
+            printstyled("Filename: ",clickfile[1],"\n",color=:green)
+        end
+        printstyled("MJD: ",clickmjd[indx_id],"\n",color=:black)
+        printstyled("Year: ", clickyear," Month: ",clickmonth," Day: ",clickday,"\n",color=:blue)
+        printstyled("Hour: ",clickhour, " Min: ",clickmin, " Sec: ", clicksec,"\n",color=:red )
+        #elseif clicktype == right_click
+        #    fig.canvas.mpl_disconnect(cid)
     end
 end
 
@@ -134,9 +134,10 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::OIdata;fancy=true,filename="")
-    u = data.uv[1,:]/1e6
-    v = data.uv[2,:]/1e6
+function uvplot(data::OIdata;bybaseline=true,bywavelenth=false,filename="")
+    if bywavelenth==true
+        bybaseline=false
+    end
     fig = figure("MJD: $(data.mean_mjd), nuv: $(data.nuv)",figsize=(8,8),facecolor="White")
     clf();
     ax = gca()
@@ -144,7 +145,10 @@ function uvplot(data::OIdata;fancy=true,filename="")
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
     axis("equal")
-    if fancy == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
+
+    u = data.uv[1,:]/1e6
+    v = data.uv[2,:]/1e6
+    if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = get_baseline_list_v2(data.sta_name,data.v2_sta_index);
         baseline_list_t3 = get_baseline_pairs_t3(data.sta_name,data.t3_sta_index);
         baseline=sort(unique(vcat(baseline_list_v2, vec(baseline_list_t3))))
@@ -157,6 +161,9 @@ function uvplot(data::OIdata;fancy=true,filename="")
             scatter(-u[loc], -v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i])
         end
         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+    elseif bywavelenth== true
+        scatter(u, v,alpha=1.0, s = 12.0, c=data.uv_lam, cmap="gist_rainbow")
+        scatter(-u, -v,alpha=1.0, s = 12.0, c=data.uv_lam, cmap="gist_rainbow")
     else
         scatter(u, v,alpha=1.0, s = 12.0,color="Black")
         scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
@@ -170,6 +177,9 @@ function uvplot(data::OIdata;fancy=true,filename="")
         savefig(filename)
     end
 end
+
+
+
 
 
 function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
@@ -199,39 +209,39 @@ end
 
 # This draws a continuous line based on the analytic function
 function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
-# Compute model points (discrete)
-baseline_v2 = data.v2_baseline;
-v2_data = data.v2;
-v2_data_err = data.v2_err;
-cvis_model = visfunc(params,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
-v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
-# Compute model curve (continous)
-r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
-xrange = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000);
-cvis_func = visfunc(params,xrange);
-v2_func = abs2.(cvis_func);
+    # Compute model points (discrete)
+    baseline_v2 = data.v2_baseline;
+    v2_data = data.v2;
+    v2_data_err = data.v2_err;
+    cvis_model = visfunc(params,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
+    v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
+    # Compute model curve (continous)
+    r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
+    xrange = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000);
+    cvis_func = visfunc(params,xrange);
+    v2_func = abs2.(cvis_func);
 
 
-fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
-clf();
-subplot(211)
-ax = gca();
-if logplot==true
-ax.set_yscale("log")
-end
+    fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
+    clf();
+    subplot(211)
+    ax = gca();
+    if logplot==true
+        ax.set_yscale("log")
+    end
 
-if yrange !=[]
-ylim((yrange[1], yrange[2]))
-end
+    if yrange !=[]
+        ylim((yrange[1], yrange[2]))
+    end
 
-errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
-if drawpoints == true
-plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
-end
+    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
+    if drawpoints == true
+        plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
+    end
 
-if drawfunc == true
-plot(xrange/1e6, v2_func, color="Red", linestyle="-", markersize=3)
-end
+    if drawfunc == true
+        plot(xrange/1e6, v2_func, color="Red", linestyle="-", markersize=3)
+    end
 
     title("Squared Visbility Amplitudes - Model vs data plot")
     #xlabel(L"Baseline (M$\lambda$)")
@@ -247,19 +257,19 @@ end
 end
 
 function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=false,fancy=true,markopt=false,ledgendcount=1)
-        if idpoint==true # interactive plot, click to identify point
-            global v2base=data.v2_baseline
-            global v2value=data.v2
-            global v2err=data.v2_err
-            global clickbase=data.v2_sta_index
-            global clickname=data.sta_name
-            global clickmjd=data.v2_mjd
-            global clickfile=[]
-            push!(clickfile,data.filename)
-            v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
-        else
-            v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
-        end
+    if idpoint==true # interactive plot, click to identify point
+        global v2base=data.v2_baseline
+        global v2value=data.v2
+        global v2err=data.v2_err
+        global clickbase=data.v2_sta_index
+        global clickname=data.sta_name
+        global clickmjd=data.v2_mjd
+        global clickfile=[]
+        push!(clickfile,data.filename)
+        v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
+    else
+        v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
+    end
 end
 
 
@@ -384,28 +394,28 @@ function t3phiplot(data::OIdata;fancy=true,filename="")
 end
 
 function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,sta_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
-  fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
-  clf();
-  ax=gca();
-  if fancy == true
-      baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
-      baseline = unique(baseline_list)
-      for i=1:length(baseline)
-          loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-          errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
-      end
-      ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
-  else
-      errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
-  end
-  title("Closure phase data")
-  xlabel(L"Maximum Baseline (M$\lambda$)")
-  ylabel("Closure phase (degrees)")
-  ax.grid(true,which="both",color="LightGrey")
-  tight_layout()
-  if filename !=""
-      savefig(filename)
-  end
+    fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
+    clf();
+    ax=gca();
+    if fancy == true
+        baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
+        baseline = unique(baseline_list)
+        for i=1:length(baseline)
+            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+            errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+        end
+        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
+    else
+        errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+    end
+    title("Closure phase data")
+    xlabel(L"Maximum Baseline (M$\lambda$)")
+    ylabel("Closure phase (degrees)")
+    ax.grid(true,which="both",color="LightGrey")
+    tight_layout()
+    if filename !=""
+        savefig(filename)
+    end
 end
 
 
@@ -414,104 +424,53 @@ function t3ampplot(data::OIdata;fancy=true,filename="")
 end
 
 function t3ampplot(baseline_t3,t3amp_data,t3amp_data_err,nt3amp,sta_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
-  fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
-  clf();
-  ax=gca();
-  if fancy == true
-      baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
-      baseline = unique(baseline_list)
-      for i=1:length(baseline)
-          loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-          errorbar(baseline_t3[loc]/1e6,t3amp_data[loc],yerr=t3amp_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
-      end
-      ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
-  else
-      errorbar(baseline_t3/1e6,t3amp_data,yerr=t3amp_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
-  end
-  title("Triple amplitude data")
-  xlabel(L"Maximum Baseline (M$\lambda$)")
-  ylabel("Triple amplitude")
-  ax.grid(true,which="both",color="LightGrey")
-  tight_layout()
-  if filename !=""
-      savefig(filename)
-  end
+    fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
+    clf();
+    ax=gca();
+    if fancy == true
+        baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
+        baseline = unique(baseline_list)
+        for i=1:length(baseline)
+            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+            errorbar(baseline_t3[loc]/1e6,t3amp_data[loc],yerr=t3amp_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+        end
+        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+    else
+        errorbar(baseline_t3/1e6,t3amp_data,yerr=t3amp_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+    end
+    title("Triple amplitude data")
+    xlabel(L"Maximum Baseline (M$\lambda$)")
+    ylabel("Triple amplitude")
+    ax.grid(true,which="both",color="LightGrey")
+    tight_layout()
+    if filename !=""
+        savefig(filename)
+    end
 end
 
 function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
- fig = figure(imtitle,figsize=(6,6),facecolor="White")
- clf();
- nx=ny=-1;
- pixmode = false;
- if pixscale == -1
-     pixmode = true;
-     pixscale = 1
- end
- scaling_factor = maximum(image);
- if abs.(scaling_factor) <  1e-20
-     scaling_factor = 1.0;
-     @warn("Maximum of image < tol");
- end
-
- img = []
- if ndims(image) ==1
-   ny=nx=Int64(sqrt(length(image)))
-   img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
- else
-   nx,ny = size(image);
-   img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
- end
- if pixmode == false
- xlabel("RA (mas)")
- ylabel("DEC (mas)")
-end
-
- ax = gca()
- ax.set_aspect("equal")
- mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
- ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
- ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
- ax.xaxis.set_tick_params(which="major",length=10,width=2)
- ax.xaxis.set_tick_params(which="minor",length=5,width=1)
- ax.yaxis.set_tick_params(which="major",length=10,width=2)
- ax.yaxis.set_tick_params(which="minor",length=5,width=1)
- if use_colorbar == true
-     divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
-     cax = divider.append_axes("right", size="5%", pad=0.2)
-     colorbar(img, cax=cax, ax=ax)
- end
-
-  if beamsize > 0
-   c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-   ax.add_artist(c)
-  end
- tight_layout()
-end
-
-#TODO: work for rectangular
-function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-if typeof(image_vector)==Array{Float64,2}
-    nwavs = size(image_vector,2)
-elseif typeof(image_vector)==Array{Float64,3}
-    nwavs = size(image_vector,3)
-end
-
-fig = figure(imtitle,figsize=(nwavs*10,4),facecolor="White")
-clf();
-images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
-  for i=1:nwavs
-    plotnum = 100+nwavs*10+i
-    subplot(plotnum)
-    title("Wave $i")
-    image = images_all[:,i]
+    fig = figure(imtitle,figsize=(6,6),facecolor="White")
+    clf();
     nx=ny=-1;
     pixmode = false;
     if pixscale == -1
-      pixmode = true;
-      pixscale = 1
+        pixmode = true;
+        pixscale = 1
     end
-    ny=nx=Int64.(sqrt(length(image)))
-    img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    scaling_factor = maximum(image);
+    if abs.(scaling_factor) <  1e-20
+        scaling_factor = 1.0;
+        @warn("Maximum of image < tol");
+    end
+
+    img = []
+    if ndims(image) ==1
+        ny=nx=Int64(sqrt(length(image)))
+        img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    else
+        nx,ny = size(image);
+        img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+    end
     if pixmode == false
         xlabel("RA (mas)")
         ylabel("DEC (mas)")
@@ -526,75 +485,126 @@ images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
     ax.xaxis.set_tick_params(which="minor",length=5,width=1)
     ax.yaxis.set_tick_params(which="major",length=10,width=2)
     ax.yaxis.set_tick_params(which="minor",length=5,width=1)
-
     if use_colorbar == true
-     divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
-     cax = divider.append_axes("right", size="5%", pad=0.2)
-     colorbar(img, cax=cax, ax=ax)
+        divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.2)
+        colorbar(img, cax=cax, ax=ax)
     end
 
-   if beamsize > 0
-    c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-    ax.add_artist(c)
-   end
-  tight_layout()
-  end
+    if beamsize > 0
+        c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+        ax.add_artist(c)
+    end
+    tight_layout()
+end
+
+#TODO: work for rectangular
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+    if typeof(image_vector)==Array{Float64,2}
+        nwavs = size(image_vector,2)
+    elseif typeof(image_vector)==Array{Float64,3}
+        nwavs = size(image_vector,3)
+    end
+
+    fig = figure(imtitle,figsize=(nwavs*10,4),facecolor="White")
+    clf();
+    images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
+    for i=1:nwavs
+        plotnum = 100+nwavs*10+i
+        subplot(plotnum)
+        title("Wave $i")
+        image = images_all[:,i]
+        nx=ny=-1;
+        pixmode = false;
+        if pixscale == -1
+            pixmode = true;
+            pixscale = 1
+        end
+        ny=nx=Int64.(sqrt(length(image)))
+        img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        if pixmode == false
+            xlabel("RA (mas)")
+            ylabel("DEC (mas)")
+        end
+
+        ax = gca()
+        ax.set_aspect("equal")
+        mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
+        ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
+        ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
+        ax.xaxis.set_tick_params(which="major",length=10,width=2)
+        ax.xaxis.set_tick_params(which="minor",length=5,width=1)
+        ax.yaxis.set_tick_params(which="major",length=10,width=2)
+        ax.yaxis.set_tick_params(which="minor",length=5,width=1)
+
+        if use_colorbar == true
+            divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.2)
+            colorbar(img, cax=cax, ax=ax)
+        end
+
+        if beamsize > 0
+            c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+            ax.add_artist(c)
+        end
+        tight_layout()
+    end
 end
 
 # TODO: rework for julia 1.0+
 function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Time-variable images",pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-  fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
-  images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
-  cols=6
-  rows=div(nepochs,cols)+1
-  for i=1:nepochs
-    #plotnum = 100*(div(nepochs,9)+1)
-    fig.add_subplot(rows,cols,i)
-    #subplot()
-    title("Epoch $i")
-    image = images_all[:,i]
-    nx=ny=-1;
-    pixmode = false;
-    if pixscale == -1
-      pixmode = true;
-      pixscale = 1
-  end
-  img = []
-  if ndims(image) ==1
-    ny=nx=Int64(sqrt(length(image)))
-    img = imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
-  else
-    nx,ny = size(image);
-    img = imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
-  end
-  if pixmode == false
-  xlabel("RA (mas)")
-  ylabel("DEC (mas)")
- end
+    fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
+    images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
+    cols=6
+    rows=div(nepochs,cols)+1
+    for i=1:nepochs
+        #plotnum = 100*(div(nepochs,9)+1)
+        fig.add_subplot(rows,cols,i)
+        #subplot()
+        title("Epoch $i")
+        image = images_all[:,i]
+        nx=ny=-1;
+        pixmode = false;
+        if pixscale == -1
+            pixmode = true;
+            pixscale = 1
+        end
+        img = []
+        if ndims(image) ==1
+            ny=nx=Int64(sqrt(length(image)))
+            img = imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        else
+            nx,ny = size(image);
+            img = imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        end
+        if pixmode == false
+            xlabel("RA (mas)")
+            ylabel("DEC (mas)")
+        end
 
-  ax = gca()
-  ax.set_aspect("equal")
-  mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
-  ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
-  ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
-  ax.xaxis.set_tick_params(which="major",length=10,width=2)
-  ax.xaxis.set_tick_params(which="minor",length=5,width=1)
-  ax.yaxis.set_tick_params(which="major",length=10,width=2)
-  ax.yaxis.set_tick_params(which="minor",length=5,width=1)
+        ax = gca()
+        ax.set_aspect("equal")
+        mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
+        ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
+        ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
+        ax.xaxis.set_tick_params(which="major",length=10,width=2)
+        ax.xaxis.set_tick_params(which="minor",length=5,width=1)
+        ax.yaxis.set_tick_params(which="major",length=10,width=2)
+        ax.yaxis.set_tick_params(which="minor",length=5,width=1)
 
-   if use_colorbar == true
-       divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
-       cax = divider.append_axes("right", size="5%", pad=0.2)
-       colorbar(img, cax=cax, ax=ax)
-   end
+        if use_colorbar == true
+            divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.2)
+            colorbar(img, cax=cax, ax=ax)
+        end
 
 
-   if beamsize > 0
-    c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-    ax.add_artist(c)
-   end
-  tight_layout()
-  end
+        if beamsize > 0
+            c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+            ax.add_artist(c)
+        end
+        tight_layout()
+    end
 end
 
 function get_baseline_list_v2(sta_names,v2_stations)
