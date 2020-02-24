@@ -22,8 +22,8 @@ end
 push!(regularizers,[ ["transspectral_tvsq", 1e6] ] ); #transspectral regularization ties the frames together
 
 
-#x_start = vec(repeat(ones(nx*nx)/(nx*nx), nwav));
-#x_start = vec(rand(nx*nx, nwav));
+x_start = vec(repeat(ones(nx*nx)/(nx*nx), nwav));
+x_start = vec(rand(nx*nx, nwav));
 pointsource = zeros(nx,nx); pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
 x_start = zeros(nx, nx, nwav);
 for i=1:nwav

@@ -504,6 +504,7 @@ end
 
 #TODO: work for rectangular
 function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+    nwav = 1;
     if typeof(image_vector)==Array{Float64,2}
         nwavs = size(image_vector,2)
     elseif typeof(image_vector)==Array{Float64,3}
@@ -536,10 +537,10 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
         mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
         ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
         ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
-        ax.xaxis.set_tick_params(which="major",length=10,width=2)
-        ax.xaxis.set_tick_params(which="minor",length=5,width=1)
-        ax.yaxis.set_tick_params(which="major",length=10,width=2)
-        ax.yaxis.set_tick_params(which="minor",length=5,width=1)
+        ax.xaxis.set_tick_params(which="major",length=5,width=2)
+        ax.xaxis.set_tick_params(which="minor",length=2,width=1)
+        ax.yaxis.set_tick_params(which="major",length=5,width=2)
+        ax.yaxis.set_tick_params(which="minor",length=2,width=1)
 
         if use_colorbar == true
             divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
