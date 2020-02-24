@@ -504,19 +504,19 @@ end
 
 #TODO: work for rectangular
 function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-    nwav = 1;
+    nwavs = 1;
     if typeof(image_vector)==Array{Float64,2}
         nwavs = size(image_vector,2)
     elseif typeof(image_vector)==Array{Float64,3}
         nwavs = size(image_vector,3)
     end
+    nside = ceil(Int64,sqrt(nwavs))
 
-    fig = figure(imtitle,figsize=(nwavs*10,4),facecolor="White")
+    fig = figure(imtitle,figsize=(10,10),facecolor="White")
     clf();
     images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
     for i=1:nwavs
-        plotnum = 100+nwavs*10+i
-        subplot(plotnum)
+        fig.add_subplot(nside,nside,i)
         title("Wave $i")
         image = images_all[:,i]
         nx=ny=-1;

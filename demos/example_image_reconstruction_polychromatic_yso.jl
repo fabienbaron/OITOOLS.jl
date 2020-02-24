@@ -2,7 +2,10 @@
 # Image reconstruction code with spectral regularization
 # This requires a private example file at the moment
 #
-using OITOOLS
+#using OITOOLS
+include("../src/OITOOLS.jl")
+using Main.OITOOLS
+
 using FITSIO
 
 oifitsfile = "./data/MWC480.oifits"
