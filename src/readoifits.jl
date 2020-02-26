@@ -108,7 +108,7 @@ mutable struct OIdata
     filename::String
 end
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true)
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5)
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
@@ -881,8 +881,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
                 # Filter OBVIOUSLY bad V2 data
                 v2_good = findall(  (v2_flag[iwavbin,itimebin].==false) .& (v2_err[iwavbin,itimebin].>0.0)
-                .& (v2_err[iwavbin,itimebin].<1.0) .& (v2[iwavbin,itimebin].>-0.2)
-                .& (v2[iwavbin,itimebin].<1.2)
+                .& (v2_err[iwavbin,itimebin].<1.0) .& (v2[iwavbin,itimebin].>cutoff_minv2)
+                .& (v2[iwavbin,itimebin].<cutoff_maxv2)
                 .& .!isnan.(v2[iwavbin,itimebin]) .& .!isnan.(v2_err[iwavbin,itimebin])
                 .& (abs.(v2[iwavbin,itimebin]./v2_err[iwavbin,itimebin]).>filter_v2_snr_threshold))
 
@@ -906,9 +906,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
                 t3_good = []
                 if force_full_t3 == false
-                    t3_good = findall(.!t3_flag[iwavbin,itimebin] .& (t3amp_good .| t3phi_good) )
+                    t3_good = findall(.!t3_flag[iwavbin,itimebin] .& (t3amp_good .| t3phi_good))
                 else
-                    t3_good = findall(.!t3_flag[iwavbin,itimebin] .& (t3amp_good .& t3phi_good) )
+                    t3_good = findall(.!t3_flag[iwavbin,itimebin] .& (t3amp_good .& t3phi_good) .& (t3amp[iwavbin,itimebin].>cutoff_mint3amp) .& (t3amp[iwavbin,itimebin].<cutoff_maxt3amp) )
                 end
                 good_uv_t3_1 = indx_t3_1[iwavbin,itimebin][t3_good]
                 good_uv_t3_2 = indx_t3_2[iwavbin,itimebin][t3_good]
@@ -1079,4 +1079,53 @@ function writefits(data, fitsfile)
     f = FITS(fitsfile, "w");
     write(f, data);
     close(f);
+end
+
+function oifits_prep(data::OIdata; min_v2_err_add = 0.0, min_v2_err_rel = 0.0 , v2_err_mult = 1.0, min_t3amp_err_add = 0.0,  min_t3amp_err_rel = 0.0, t3amp_err_mult = 1.0, min_t3phi_err_add = 0.0, t3phi_err_mult = 1.0, quad = false)
+# e.g. MIRC from Monnier et al. https://arxiv.org/pdf/1211.6055.pdf
+# min_v2_err_add = 2e-4, min_v2_err_rel = 0.066, min_t3amp_err_add = 1e-5, min_t3amp_err_rel = 0.1, min_t3phi_err_add = 1.0
+
+# Prep V2
+if quad == false
+    temperr  = v2_err_mult*data.v2_err
+    newerr   = abs.(data.v2*min_v2_err_rel) .+ min_v2_err_add
+    newerrin = findall(newerr.>temperr)
+    temperr[newerrin] = newerr[newerrin]
+else
+   temperr=sqrt.( (data.v2*min_v2_err_rel).^2.  + (v2_err_mult*data.v2_err).^2 .+ min_v2_err_add^2 )
+end
+
+data.v2_err = temperr
+
+# Prep t3amp
+if quad == false
+    temperr  = t3amp_err_mult*data.t3amp_err
+    newerr   = abs.(data.t3amp*min_t3amp_err_rel) .+ min_t3amp_err_add
+    newerrin = findall(newerr.>temperr)
+    temperr[newerrin] = newerr[newerrin]
+else
+   temperr=sqrt.( (data.t3amp*min_t3amp_err_rel).^2.  + (t3amp_err_mult*data.t3amp_err).^2 .+ min_t3amp_err_add^2 )
+end
+
+data.t3amp_err = temperr
+
+# Prep t3phi -- need to be in degrees
+if quad == true
+    temperr = t3phi_err_mult*data.t3phi_err
+    newerr  = min_t3phi_err_add*ones(length(data.t3phi_err))
+    newerrin = findall(newerr.>temperr)
+    temperr[newerrin] = newerr[newerrin]
+else
+    temperr = sqrt.( (t3phi_err_mult*data.t3phi_err).^2 .+ min_t3phi_err_add^2)
+end
+data.t3phi_err = temperr
+
+return data
+end
+
+function oifits_prep(data::Array{OIdata,1};kwargs...) # TODO: prep diff visibilities here
+    for i=1:length(data)
+        oifits_prep(data[i], kwargs...)
+    end
+return data
 end

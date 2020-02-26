@@ -457,7 +457,8 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
     f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
     g[tslice] = subg
   end
-  print("Total chi2 over wavelengths: $f \n");
+  ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:length(data)]);
+  print("Polychromatic global reduced chi2: $(f/ndof) \n");
 
   # transspectral regularization
    if length(regularizers)>nwavs
@@ -473,7 +474,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
          trsp_g[:,1] = 2*(y[:,1]-y[:,2]);
          trsp_g[:,2] = 2*(y[:,2]-y[:,1]);
       end
-      f+= regularizers[nwavs+1][1][2]*trsp_f
+      f    += regularizers[nwavs+1][1][2]*trsp_f
       g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
       if verb == true
         printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)

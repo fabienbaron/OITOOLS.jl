@@ -260,7 +260,7 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     tight_layout()
 end
 
-function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=false,fancy=true,markopt=false,ledgendcount=1)
+function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=false,fancy=true,markopt=false)
     if idpoint==true # interactive plot, click to identify point
         global v2base=data.v2_baseline
         global v2value=data.v2
@@ -277,7 +277,7 @@ function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=fals
 end
 
 
-function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, nv2::Int64,sta_name::Array{String,1},v2_sta_index::Array{Int64,2}; logplot = false, remove = false,idpoint=false,clean=true,color="Black",fancy=false,markopt=false,ledgendcount=1) # plots v2 data only
+function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, nv2::Int64,sta_name::Array{String,1},v2_sta_index::Array{Int64,2}; logplot = false, remove = false,idpoint=false,clean=true,color="Black",fancy=false,markopt=false) # plots v2 data only
     fig = figure("V2 data",figsize=(10,5),facecolor="White");
     if clean == true
         clf();
