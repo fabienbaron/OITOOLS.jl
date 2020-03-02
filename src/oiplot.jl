@@ -1,6 +1,5 @@
 # gather common display tasks
-using PyPlot,PyCall
-using LaTeXStrings
+using PyPlot,PyCall, LaTeXStrings, Statistics
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
@@ -182,7 +181,56 @@ function uvplot(data::OIdata;bybaseline=true,bywavelength=false,filename="")
     end
 end
 
+function uvplot(data::Array{OIdata,1};bybaseline=true,bywavelength=false,filename="")
+    if bywavelength==true
+        bybaseline=false
+    end
+    nuv = sum(data[i].nuv for i=1:length(data))
+    mean_mjd = mean(data[i].mean_mjd for i=1:length(data))
+    fig = figure("MJD: $(mean_mjd), nuv: $(nuv)",figsize=(8,8),facecolor="White")
+    clf();
+    ax = gca()
+    markeredgewidth=0.1
+    ax.locator_params(axis ="y", nbins=20)
+    ax.locator_params(axis ="x", nbins=20)
+    axis("equal")
 
+    u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
+    v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
+    if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
+        baseline_list_v2 = hcat([get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)]...);
+        baseline_list_t3 = cat([get_baseline_pairs_t3(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)]..., dims=3);;
+        baseline=sort(unique(vcat(vec(baseline_list_v2), vec(baseline_list_t3))))
+        indx_v2 = hcat([data[n].indx_v2 for n=1:length(data)]...)
+        indx_t3 = cat([hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]..., dims=3) ;
+        for i=1:length(baseline)
+            loc_v2 = indx_v2[findall(baseline_list_v2->baseline_list_v2==baseline[i],baseline_list_v2)]
+            loc_t3 = indx_t3[findall(baseline_list_t3->baseline_list_t3==baseline[i],baseline_list_t3)];
+            loc = vcat(loc_v2,loc_t3)
+            scatter( u[loc],  v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i])
+            scatter(-u[loc], -v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i])
+        end
+        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+    elseif bywavelength== true
+        wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
+        scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
+        scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
+        cbar = colorbar(aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.08, fraction=0.05)
+        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
+        cbar.set_ticks(cbar_range)
+    else
+        scatter(u, v,alpha=1.0, s = 12.0,color="Black")
+        scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
+    end
+    title("UV coverage -- MJD: $(mean_mjd), nuv: $(nuv)")
+    xlabel(L"U (M$\lambda$)")
+    ylabel(L"V (M$\lambda$)")
+    ax.grid(true,which="both",color="LightGrey");
+    tight_layout();
+    if filename !=""
+        savefig(filename)
+    end
+end
 
 
 
