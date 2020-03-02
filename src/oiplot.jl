@@ -133,57 +133,12 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::OIdata;bybaseline=true,bywavelength=false,filename="")
+function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength=false,filename="")
     if bywavelength==true
         bybaseline=false
     end
-    fig = figure("MJD: $(data.mean_mjd), nuv: $(data.nuv)",figsize=(8,8),facecolor="White")
-    clf();
-    ax = gca()
-    markeredgewidth=0.1
-    ax.locator_params(axis ="y", nbins=20)
-    ax.locator_params(axis ="x", nbins=20)
-    axis("equal")
-
-    u = data.uv[1,:]/1e6
-    v = data.uv[2,:]/1e6
-    if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
-        baseline_list_v2 = get_baseline_list_v2(data.sta_name,data.v2_sta_index);
-        baseline_list_t3 = get_baseline_pairs_t3(data.sta_name,data.t3_sta_index);
-        baseline=sort(unique(vcat(baseline_list_v2, vec(baseline_list_t3))))
-        for i=1:length(baseline)
-            loc_v2=data.indx_v2[findall(baseline_list_v2->baseline_list_v2==baseline[i],baseline_list_v2)]
-            t3indx = hcat(data.indx_t3_1,data.indx_t3_2, data.indx_t3_3)';
-            loc_t3=t3indx[findall(baseline_list_t3->baseline_list_t3==baseline[i],baseline_list_t3)];
-            loc = vcat(loc_v2,loc_t3)
-            scatter( u[loc],  v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i])
-            scatter(-u[loc], -v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i])
-        end
-        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
-    elseif bywavelength== true
-        wavcol = data.uv_lam*1e6
-        scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
-        scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
-        cbar = colorbar(aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.08, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
-        cbar.set_ticks(cbar_range)
-    else
-        scatter(u, v,alpha=1.0, s = 12.0,color="Black")
-        scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
-    end
-    title("UV coverage -- MJD: $(data.mean_mjd), nuv: $(data.nuv)")
-    xlabel(L"U (M$\lambda$)")
-    ylabel(L"V (M$\lambda$)")
-    ax.grid(true,which="both",color="LightGrey");
-    tight_layout();
-    if filename !=""
-        savefig(filename)
-    end
-end
-
-function uvplot(data::Array{OIdata,1};bybaseline=true,bywavelength=false,filename="")
-    if bywavelength==true
-        bybaseline=false
+    if typeof(data)==OIdata
+        data = [data]
     end
     nuv = sum(data[i].nuv for i=1:length(data))
     mean_mjd = mean(data[i].mean_mjd for i=1:length(data))
@@ -195,23 +150,23 @@ function uvplot(data::Array{OIdata,1};bybaseline=true,bywavelength=false,filenam
     ax.locator_params(axis ="x", nbins=20)
     axis("equal")
 
-    u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
-    v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
     if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
-        baseline_list_v2 = hcat([get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)]...);
-        baseline_list_t3 = cat([get_baseline_pairs_t3(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)]..., dims=3);;
-        baseline=sort(unique(vcat(vec(baseline_list_v2), vec(baseline_list_t3))))
-        indx_v2 = hcat([data[n].indx_v2 for n=1:length(data)]...)
-        indx_t3 = cat([hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]..., dims=3) ;
+        baseline_list_v2 = [get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
+        baseline_list_t3 = [get_baseline_pairs_t3(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
+        baseline=sort(unique(vcat(vcat(baseline_list_v2...),vec(hcat(baseline_list_t3...)))))
+        indx_v2 = [data[n].indx_v2 for n=1:length(data)]
+        indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
         for i=1:length(baseline)
-            loc_v2 = indx_v2[findall(baseline_list_v2->baseline_list_v2==baseline[i],baseline_list_v2)]
-            loc_t3 = indx_t3[findall(baseline_list_t3->baseline_list_t3==baseline[i],baseline_list_t3)];
-            loc = vcat(loc_v2,loc_t3)
-            scatter( u[loc],  v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i])
-            scatter(-u[loc], -v[loc], alpha=1.0, s=12.0, color=oiplot_colors[i])
+            loc =  [vcat(indx_v2[n][findall(baseline_list_v2[n] .== baseline[i])], indx_t3[n][findall(baseline_list_t3[n] .== baseline[i])]) for n=1:length(data)]
+            u = vcat([data[n].uv[1,loc[n]] for n=1:length(data)]...)/1e6;
+            v = vcat([data[n].uv[2,loc[n]] for n=1:length(data)]...)/1e6;
+            scatter( u,  v, alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i])
+            scatter(-u, -v, alpha=1.0, s=12.0, color=oiplot_colors[i])
         end
         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
     elseif bywavelength== true
+        u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
+        v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
         scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
         scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
@@ -219,6 +174,8 @@ function uvplot(data::Array{OIdata,1};bybaseline=true,bywavelength=false,filenam
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
         cbar.set_ticks(cbar_range)
     else
+        u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
+        v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         scatter(u, v,alpha=1.0, s = 12.0,color="Black")
         scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
     end
@@ -231,8 +188,6 @@ function uvplot(data::Array{OIdata,1};bybaseline=true,bywavelength=false,filenam
         savefig(filename)
     end
 end
-
-
 
 function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
@@ -308,23 +263,6 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     tight_layout()
 end
 
-function v2plot(data::OIdata;logplot=false,remove=false,idpoint=false,clean=false,fancy=true,markopt=false)
-    if idpoint==true # interactive plot, click to identify point
-        global v2base=data.v2_baseline
-        global v2value=data.v2
-        global v2err=data.v2_err
-        global clickbase=data.v2_sta_index
-        global clickname=data.sta_name
-        global clickmjd=data.v2_mjd
-        global clickfile=[]
-        push!(clickfile,data.filename)
-        v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
-    else
-        v2plot(data.v2_baseline,data.v2,data.v2_err,data.nv2,data.sta_name,data.v2_sta_index,logplot=logplot,remove=remove,clean=clean,idpoint=idpoint,fancy=fancy,markopt=markopt)
-    end
-end
-
-
 function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, nv2::Int64,sta_name::Array{String,1},v2_sta_index::Array{Int64,2}; logplot = false, remove = false,idpoint=false,clean=true,color="Black",fancy=false,markopt=false) # plots v2 data only
     fig = figure("V2 data",figsize=(10,5),facecolor="White");
     if clean == true
@@ -361,6 +299,54 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
     end
 end
+
+
+# function v2plot(data::Array{OIdata,1};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline,markopt=false)
+#     # if idpoint==true # interactive plot, click to identify point
+#     #     global v2base=data.v2_baseline
+#     #     global v2value=data.v2
+#     #     global v2err=data.v2_err
+#     #     global clickbase=data.v2_sta_index
+#     #     global clickname=data.sta_name
+#     #     global clickmjd=data.v2_mjd
+#     #     global clickfile=[]
+#     #     push!(clickfile,data.filename)
+#     # end
+#     fig = figure("V2 data",figsize=(10,5),facecolor="White");
+#     if clean == true
+#         clf();
+#     end
+#     ax = gca();
+#     if logplot==true
+#         ax.set_yscale("log")
+#     end
+#     if remove == true
+#         fig.canvas.mpl_connect("button_press_event",onclickv2)
+#     end
+#     if fancy == true
+#         baseline_list_v2 = hcat([get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)]...);
+#         baseline=sort(unique(baseline_list))
+#         for i=1:length(baseline)
+#             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+#             if markopt == false
+#                 errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
+#             else
+#                 errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
+#             end
+#         end
+#         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+#     else
+#         errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color=color,ecolor="Gainsboro",elinewidth=1.0)
+#     end
+#     title("Squared Visibility Amplitude Data")
+#     xlabel(L"Baseline (M$\lambda$)")
+#     ylabel("Squared Visibility Amplitudes")
+#     ax.grid(true,which="both",color="LightGrey")
+#     tight_layout()
+#     if idpoint==true
+#         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
+#     end
+# end
 
 
 function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="")
