@@ -157,11 +157,6 @@ function image_to_cvis_finufft(x, data)
   end
 end
 
-
-
-
-
-
 function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verb = true)
   cvis_model = image_to_cvis_dft(x, dft);
   # compute observables from all cvis

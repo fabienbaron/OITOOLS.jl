@@ -12,6 +12,8 @@ PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.width"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
+#PyDict(pyimport("matplotlib")."rcParams")["agg.path.chunksize"]=[10000]
+
 
 global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
 "fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
@@ -126,14 +128,14 @@ function uvplot(uv::Array{Float64,2};filename="")
     title("UV coverage")
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
-    ax.grid(true,which="both",color="LightGrey");
+    ax.grid(true,which="both",color="LightGrey", linestyle=":");
     tight_layout();
     if filename !=""
         savefig(filename)
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength=false,filename="")
+function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength=false,filename="", legend_below = false)
     if bywavelength==true
         bybaseline=false
     end
@@ -163,7 +165,11 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
             scatter( u,  v, alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i])
             scatter(-u, -v, alpha=1.0, s=12.0, color=oiplot_colors[i])
         end
-        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+        if legend_below == false
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+        else
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
+        end
     elseif bywavelength== true
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
@@ -182,7 +188,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     title("UV coverage -- MJD: $(mean_mjd), nuv: $(nuv)")
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
-    ax.grid(true,which="both",color="LightGrey");
+    ax.grid(true,which="both",color="LightGrey",linestyle=":");
     tight_layout();
     if filename !=""
         savefig(filename)
@@ -208,7 +214,7 @@ function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
-    ax.grid(true,which="both",color="LightGrey")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
 end
 
@@ -253,13 +259,13 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     title("Squared Visbility Amplitudes - Model vs data plot")
     #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
     subplot(212)
     plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
-    ax.grid(true,which="both",color="LightGrey")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
 end
 
@@ -293,7 +299,7 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
     title("Squared Visibility Amplitude Data")
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
     if idpoint==true
         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
@@ -301,52 +307,191 @@ function v2plot(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_
 end
 
 
-# function v2plot(data::Array{OIdata,1};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline,markopt=false)
-#     # if idpoint==true # interactive plot, click to identify point
-#     #     global v2base=data.v2_baseline
-#     #     global v2value=data.v2
-#     #     global v2err=data.v2_err
-#     #     global clickbase=data.v2_sta_index
-#     #     global clickname=data.sta_name
-#     #     global clickmjd=data.v2_mjd
-#     #     global clickfile=[]
-#     #     push!(clickfile,data.filename)
-#     # end
-#     fig = figure("V2 data",figsize=(10,5),facecolor="White");
-#     if clean == true
-#         clf();
-#     end
-#     ax = gca();
-#     if logplot==true
-#         ax.set_yscale("log")
-#     end
-#     if remove == true
-#         fig.canvas.mpl_connect("button_press_event",onclickv2)
-#     end
-#     if fancy == true
-#         baseline_list_v2 = hcat([get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)]...);
-#         baseline=sort(unique(baseline_list))
-#         for i=1:length(baseline)
-#             loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-#             if markopt == false
-#                 errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
-#             else
-#                 errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
-#             end
-#         end
-#         ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
-#     else
-#         errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=3,color=color,ecolor="Gainsboro",elinewidth=1.0)
-#     end
-#     title("Squared Visibility Amplitude Data")
-#     xlabel(L"Baseline (M$\lambda$)")
-#     ylabel("Squared Visibility Amplitudes")
-#     ax.grid(true,which="both",color="LightGrey")
-#     tight_layout()
-#     if idpoint==true
-#         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
-#     end
-# end
+function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+    # if idpoint==true # interactive plot, click to identify point
+    #     global v2base=data.v2_baseline
+    #     global v2value=data.v2
+    #     global v2err=data.v2_err
+    #     global clickbase=data.v2_sta_index
+    #     global clickname=data.sta_name
+    #     global clickmjd=data.v2_mjd
+    #     global clickfile=[]
+    #     push!(clickfile,data.filename)
+    # end
+    if typeof(data)==OIdata
+        data = [data]
+    end
+    if bywavelength==true
+        bybaseline=false
+    end
+    fig = figure("V2 data",figsize=(10,5),facecolor="White");
+    if clean == true # do not overplot on existing window by default
+        clf();
+    end
+    ax = gca();
+    if logplot==true
+        ax.set_yscale("log")
+    end
+    if remove == true
+        fig.canvas.mpl_connect("button_press_event",onclickv2)
+    end
+
+    if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
+        baseline_list_v2 = [get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
+        baseline=sort(unique(vcat(baseline_list_v2...)))
+        for i=1:length(baseline)
+            loc = [findall(baseline_list_v2[n] .== baseline[i]) for n=1:length(data)]
+            baseline_v2 = vcat([data[n].v2_baseline[loc[n]] for n=1:length(data)]...)/1e6
+            v2 = vcat([data[n].v2[loc[n]] for n=1:length(data)]...)
+            v2_err = vcat([data[n].v2_err[loc[n]] for n=1:length(data)]...)
+            if markopt == false
+                errorbar(baseline_v2,v2,yerr=v2_err,fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
+            else
+                errorbar(baseline_v2,v2,yerr=v2_err,fmt="o",marker=oiplot_markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
+            end
+        end
+        if legend_below == false
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
+        else
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+        end
+    elseif bywavelength == true
+        wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
+        baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
+        v2 = vcat([data[n].v2 for n=1:length(data)]...);
+        v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
+        sc = scatter(baseline_v2,v2, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
+        el = errorbar(baseline_v2,v2,yerr=v2_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
+        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
+        cbar.set_ticks(cbar_range)
+    else
+        baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
+        v2 = vcat([data[n].v2 for n=1:length(data)]...);
+        v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
+        errorbar(baseline_v2,v2,yerr=v2_err,fmt="o", markersize=3,color=color,ecolor="Gainsboro",elinewidth=1.0);
+    end
+    title("Squared Visibility Amplitude Data")
+    xlabel(L"Baseline (M$\lambda$)")
+    ylabel("Squared Visibility Amplitudes")
+    ax.grid(true,which="both",color="LightGrey", linestyle=":")
+    tight_layout()
+    if idpoint==true
+        cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
+    end
+end
+
+
+function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+    if typeof(data)==OIdata
+        data = [data]
+    end
+    if bywavelength==true
+        bybaseline=false
+    end
+    fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
+    clf();
+    ax=gca();
+    if bybaseline == true
+        baseline_list_t3 = [get_baseline_list_t3(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
+        baseline=sort(unique(vcat(baseline_list_t3...)))
+        #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
+        for i=1:length(baseline)
+            loc =  [findall(baseline_list_t3[n] .== baseline[i]) for n=1:length(data)]
+            baseline_t3 = vcat([data[n].t3_baseline[loc[n]] for n=1:length(data)]...)/1e6
+            t3phi = vcat([data[n].t3phi[loc[n]] for n=1:length(data)]...)
+            t3phi_err = vcat([data[n].t3phi[loc[n]] for n=1:length(data)]...)
+            errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+        end
+        if legend_below == false
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
+        else
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+        end
+    elseif bywavelength == true
+        wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
+        baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
+        t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
+        sc = scatter(baseline_t3, t3phi, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
+        el = errorbar(baseline_t3, t3phi,yerr=t3phi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
+        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
+        cbar.set_ticks(cbar_range)
+    else
+        baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
+        t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
+        errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+    end
+    title("Closure phase data")
+    xlabel(L"Maximum Baseline (M$\lambda$)")
+    ylabel("Closure phase (degrees)")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    tight_layout()
+    if filename !=""
+        savefig(filename)
+    end
+end
+
+function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,sta_name,t3_sta_index;color="Black",fancy=true,filename="", legend_below = false) # plots v2 data only
+    fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
+    clf();
+    ax=gca();
+    if fancy == true
+        baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
+        baseline = unique(baseline_list)
+        for i=1:length(baseline)
+            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+            errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+        end
+        if legend_below == false
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
+        else
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+        end
+    else
+        errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+    end
+    title("Closure phase data")
+    xlabel(L"Maximum Baseline (M$\lambda$)")
+    ylabel("Closure phase (degrees)")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    tight_layout()
+    if filename !=""
+        savefig(filename)
+    end
+end
+
+
+function t3ampplot(data::OIdata;fancy=true,filename="")
+    t3ampplot(data.t3_maxbaseline,data.t3amp,data.t3amp_err,data.nt3amp,data.sta_name,data.t3_sta_index;fancy=fancy,filename=filename);
+end
+
+function t3ampplot(baseline_t3,t3amp_data,t3amp_data_err,nt3amp,sta_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
+    fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
+    clf();
+    ax=gca();
+    if fancy == true
+        baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
+        baseline = unique(baseline_list)
+        for i=1:length(baseline)
+            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
+            errorbar(baseline_t3[loc]/1e6,t3amp_data[loc],yerr=t3amp_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+        end
+        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+    else
+        errorbar(baseline_t3/1e6,t3amp_data,yerr=t3amp_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+    end
+    title("Triple amplitude data")
+    xlabel(L"Maximum Baseline (M$\lambda$)")
+    ylabel("Triple amplitude")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    tight_layout()
+    if filename !=""
+        savefig(filename)
+    end
+end
 
 
 function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="")
@@ -415,7 +560,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
     title("Squared Visibility Amplitude Data")
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
     if idpoint==true
         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
@@ -425,66 +570,6 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
     end
 end
 
-
-
-function t3phiplot(data::OIdata;fancy=true,filename="")
-    t3phiplot(data.t3_maxbaseline,data.t3phi,data.t3phi_err,data.nt3phi,data.sta_name,data.t3_sta_index;fancy=fancy,filename=filename);
-end
-
-function t3phiplot(baseline_t3,t3phi_data,t3phi_data_err,nt3phi,sta_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
-    fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
-    clf();
-    ax=gca();
-    if fancy == true
-        baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
-        baseline = unique(baseline_list)
-        for i=1:length(baseline)
-            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-            errorbar(baseline_t3[loc]/1e6,t3phi_data[loc],yerr=t3phi_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
-        end
-        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
-    else
-        errorbar(baseline_t3/1e6,t3phi_data,yerr=t3phi_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
-    end
-    title("Closure phase data")
-    xlabel(L"Maximum Baseline (M$\lambda$)")
-    ylabel("Closure phase (degrees)")
-    ax.grid(true,which="both",color="LightGrey")
-    tight_layout()
-    if filename !=""
-        savefig(filename)
-    end
-end
-
-
-function t3ampplot(data::OIdata;fancy=true,filename="")
-    t3ampplot(data.t3_maxbaseline,data.t3amp,data.t3amp_err,data.nt3amp,data.sta_name,data.t3_sta_index;fancy=fancy,filename=filename);
-end
-
-function t3ampplot(baseline_t3,t3amp_data,t3amp_data_err,nt3amp,sta_name,t3_sta_index;color="Black",fancy=false,filename="") # plots v2 data only
-    fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
-    clf();
-    ax=gca();
-    if fancy == true
-        baseline_list=get_baseline_list_t3(sta_name,t3_sta_index)
-        baseline = unique(baseline_list)
-        for i=1:length(baseline)
-            loc=findall(baseline_list->baseline_list==baseline[i],baseline_list)
-            errorbar(baseline_t3[loc]/1e6,t3amp_data[loc],yerr=t3amp_data_err[loc],fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
-        end
-        ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
-    else
-        errorbar(baseline_t3/1e6,t3amp_data,yerr=t3amp_data_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
-    end
-    title("Triple amplitude data")
-    xlabel(L"Maximum Baseline (M$\lambda$)")
-    ylabel("Triple amplitude")
-    ax.grid(true,which="both",color="LightGrey")
-    tight_layout()
-    if filename !=""
-        savefig(filename)
-    end
-end
 
 function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
     fig = figure(imtitle,figsize=(6,6),facecolor="White")
@@ -645,6 +730,7 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
         tight_layout()
     end
 end
+
 
 function get_baseline_list_v2(sta_names,v2_stations)
     nbaselines = size(v2_stations,2)
