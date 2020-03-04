@@ -455,7 +455,7 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
     if bywavelength==true
         bybaseline=false
     end
-    fig = figure("viserential phase data",figsize=(10,5),facecolor="White");
+    fig = figure("Visibility phase data",figsize=(10,5),facecolor="White");
     clf();
     ax=gca();
     if bybaseline == true
