@@ -461,7 +461,6 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
     if bybaseline == true
         baseline_list_vis = [get_baseline_list_v2(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_visvis...)))
-        #indx_vis = [hcat(data[n].indx_vis_1,data[n].indx_vis_2, data[n].indx_vis_3)' for n=1:length(data)]
         for i=1:length(baseline)
             loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
             baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
@@ -475,7 +474,7 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
     elseif bywavelength == true
-        wavcol = vcat([data[n].uv_lam[data[n].indx_vis_1]*1e6 for n=1:length(data)]...)
+        wavcol = vcat([data[n].uv_lam[data[n].indx_vis]*1e6 for n=1:length(data)]...)
         baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
         visphi = vcat([data[n].visphi for n=1:length(data)]...);
         visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
