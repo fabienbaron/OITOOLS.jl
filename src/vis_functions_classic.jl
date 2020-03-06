@@ -27,7 +27,7 @@ return dV_dt.*dt_dp
 end
 
 function visibility_ellipse_uniform(param, uv) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
-ϵ = param[2]/180*pi;
+ϵ = param[2];
 ϕ = param[3]/180*pi;
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
 t = param[1]/2.0626480624709636e8*pi*ρ;
@@ -40,7 +40,7 @@ return V
 end
 
 function visibility_ellipse_quad(param, uv) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
-ϵ = param[4]/180*pi;
+ϵ = param[4];
 ϕ = param[5]/180*pi;
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
 theta = param[1]/2.0626480624709636e8;
@@ -133,6 +133,17 @@ end
 if visfunc == visibility_ldlin
  lbounds = [0.0, -1.0]
  hbounds = [1e9, 1.0]
+end
+
+if visfunc == visibility_ellipse_uniform
+ lbounds = [0.0,0.0,-180.0]
+ hbounds = [1e9,1.0,180.0]
+end
+
+
+if visfunc == visibility_ellipse_quad
+ lbounds = [0.0, -1.0, -1.0, 0.0, -180.0]
+ hbounds = [1e9, 1.0, 1.0, 0.0, 180.0]
 end
 
 return lbounds, hbounds
