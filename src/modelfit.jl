@@ -8,7 +8,7 @@ if in("NLopt",keys(Pkg.installed()))
 function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD, lbounds = [], hbounds = [], verbose = true, calculate_vis = true)
     nparams=length(init_param)
     nv2 = length(data.v2);
-    chisq=(param,g)->norm( (abs2.(visfunc(param,data.v2_baseline))-data.v2)./data.v2_err)^2/nv2;
+    chisq=(param,g)->norm((abs2.(visfunc(param, data.uv[:,data.indx_v2]))-data.v2)./data.v2_err)^2/nv2;
     opt = Opt(fitter, nparams);
     min_objective!(opt, chisq)
     xtol_rel!(opt,1e-5)
@@ -27,7 +27,7 @@ function fit_model_v2(data::OIdata, visfunc, init_param::Array{Float64,1}; fitte
     end
     cvis_model = [];
     if calculate_vis == true
-        cvis_model = visfunc(minx,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2))
+        cvis_model = visfunc(minx, data.uv)
     end
     return (minf,minx,cvis_model)
 end
@@ -73,7 +73,7 @@ end
 
 function model_chi2_v2(data::OIdata, visfunc, param::Array{Float64,1})
     nv2 = length(data.v2);
-    return norm( (abs2.(visfunc(param,data.v2_baseline))-data.v2)./data.v2_err)^2/nv2;
+    return norm( (abs2.(visfunc(param,data.uv[:,data.indx_v2]))-data.v2)./data.v2_err)^2/nv2;
 end
 
 

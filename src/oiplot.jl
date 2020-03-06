@@ -195,7 +195,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     end
 end
 
-function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
+function v2plot_modelvsdata(data::OIdata, model_v2::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
     subplot(211)
@@ -203,14 +203,14 @@ function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
-    plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
+    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=2,color="Black" ,ecolor="Gainsboro")
+    plot(data.v2_baseline/1e6, model_v2, color="Red", linestyle="none", marker="o", markersize=3)
     title("Squared Visibility Amplitudes - Model vs data plot")
     #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true);
     subplot(212)
-    plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
+    plot(data.v2_baseline/1e6, (model_v2 - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=3)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
@@ -226,15 +226,19 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     baseline_v2 = data.v2_baseline;
     v2_data = data.v2;
     v2_data_err = data.v2_err;
-    cvis_model = visfunc(params,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
+    cvis_model = visfunc(params,data.uv);
     v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
     # Compute model curve (continous)
     r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
-    xrange = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000);
-    cvis_func = visfunc(params,xrange);
+    r_range = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000); # sample r within range
+    angles = range(-pi, pi, length = 30) # but also sample various angles
+    uv = hcat(vec(r_range*cos.(angles)'), vec(r_range*sin.(angles)'))'
+    baseline_func = sqrt.(uv[1,:].^2+uv[2,:].^2);
+    cvis_func = visfunc(params,uv);
     v2_func = abs2.(cvis_func);
-
-
+    indx = sortperm(baseline_func)
+    baseline_func = baseline_func[indx]
+    v2_func = v2_func[indx]
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
     subplot(211)
@@ -247,21 +251,19 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
         ylim((yrange[1], yrange[2]))
     end
 
-    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
+    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black",ecolor="Gainsboro")
     if drawpoints == true
-        plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
+        plot(baseline_v2/1e6, v2_model, color="Red", linestyle=":", marker="o", markersize=3)
     end
 
     if drawfunc == true
-        plot(xrange/1e6, v2_func, color="Red", linestyle="-", markersize=3)
+        plot(baseline_func/1e6, v2_func, color="Red", linestyle=":", markersize=2)
     end
-
     title("Squared Visbility Amplitudes - Model vs data plot")
-    #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     subplot(212)
-    plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
+    plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err, color="Black", linestyle="none", marker="o", markersize=3)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
