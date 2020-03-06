@@ -462,7 +462,7 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
     ax=gca();
     if bybaseline == true
         baseline_list_vis = [get_baseline_list_v2(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_visvis...)))
+        baseline=sort(unique(vcat(baseline_list_vis...)))
         for i=1:length(baseline)
             loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
             baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
