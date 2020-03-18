@@ -153,8 +153,8 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     axis("equal")
 
     if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
-        baseline_list_v2 = [get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
-        baseline_list_t3 = [get_baseline_pairs_t3(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
+        baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
+        baseline_list_t3 = [get_triple_baselines_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(vcat(baseline_list_v2...),vec(hcat(baseline_list_t3...)))))
         indx_v2 = [data[n].indx_v2 for n=1:length(data)]
         indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
@@ -195,7 +195,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     end
 end
 
-function v2plot_modelvsdata(data::OIdata, model_v2::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
+function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
     subplot(211)
@@ -203,14 +203,14 @@ function v2plot_modelvsdata(data::OIdata, model_v2::Array{Float64,1}; logplot = 
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=2,color="Black" ,ecolor="Gainsboro")
-    plot(data.v2_baseline/1e6, model_v2, color="Red", linestyle="none", marker="o", markersize=3)
+    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
+    plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
     title("Squared Visibility Amplitudes - Model vs data plot")
     #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true);
     subplot(212)
-    plot(data.v2_baseline/1e6, (model_v2 - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=3)
+    plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
@@ -226,19 +226,15 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     baseline_v2 = data.v2_baseline;
     v2_data = data.v2;
     v2_data_err = data.v2_err;
-    cvis_model = visfunc(params,data.uv);
+    cvis_model = visfunc(params,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
     v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
     # Compute model curve (continous)
     r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
-    r_range = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000); # sample r within range
-    angles = range(-pi, pi, length = 30) # but also sample various angles
-    uv = hcat(vec(r_range*cos.(angles)'), vec(r_range*sin.(angles)'))'
-    baseline_func = sqrt.(uv[1,:].^2+uv[2,:].^2);
-    cvis_func = visfunc(params,uv);
+    xrange = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000);
+    cvis_func = visfunc(params,xrange);
     v2_func = abs2.(cvis_func);
-    indx = sortperm(baseline_func)
-    baseline_func = baseline_func[indx]
-    v2_func = v2_func[indx]
+
+
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
     subplot(211)
@@ -251,19 +247,21 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
         ylim((yrange[1], yrange[2]))
     end
 
-    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black",ecolor="Gainsboro")
+    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
     if drawpoints == true
-        plot(baseline_v2/1e6, v2_model, color="Red", linestyle=":", marker="o", markersize=3)
+        plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
     end
 
     if drawfunc == true
-        plot(baseline_func/1e6, v2_func, color="Red", linestyle=":", markersize=2)
+        plot(xrange/1e6, v2_func, color="Red", linestyle="-", markersize=3)
     end
+
     title("Squared Visbility Amplitudes - Model vs data plot")
+    #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     subplot(212)
-    plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err, color="Black", linestyle="none", marker="o", markersize=3)
+    plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
@@ -301,7 +299,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
     end
 
     if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
-        baseline_list_v2 = [get_baseline_list_v2(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
+        baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_v2...)))
         for i=1:length(baseline)
             loc = [findall(baseline_list_v2[n] .== baseline[i]) for n=1:length(data)]
@@ -357,7 +355,7 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
     clf();
     ax=gca();
     if bybaseline == true
-        baseline_list_t3 = [get_baseline_list_t3(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
+        baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_t3...)))
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
         for i=1:length(baseline)
@@ -409,7 +407,7 @@ function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
     clf();
     ax=gca();
     if bybaseline == true
-        baseline_list_t3 = [get_baseline_list_t3(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
+        baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_t3...)))
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
         for i=1:length(baseline)
@@ -461,8 +459,8 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
     clf();
     ax=gca();
     if bybaseline == true
-        baseline_list_vis = [get_baseline_list_v2(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_vis...)))
+        baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
+        baseline=sort(unique(vcat(baseline_list_visvis...)))
         for i=1:length(baseline)
             loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
             baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
@@ -553,7 +551,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
                 clickfile=cat(clickfile,basearray,dims=1)
             end
         end
-        baseline_list=get_baseline_list_v2(sta_name,v2_sta_index)
+        baseline_list=get_baseline_names(sta_name,v2_sta_index)
         for j=1:length(unique(baseline_list))
             baseline=unique(baseline_list)[j]
             loc=findall(baseline_list->baseline_list==baseline,baseline_list)
@@ -635,7 +633,6 @@ end
 
 #TODO: work for rectangular
 function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-    nwavs = 1;
     if typeof(image_vector)==Array{Float64,2}
         nwavs = size(image_vector,2)
     elseif typeof(image_vector)==Array{Float64,3}
@@ -658,31 +655,31 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
         end
         ny=nx=Int64.(sqrt(length(image)))
         img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
-        if pixmode == false
-            xlabel("RA (mas)")
-            ylabel("DEC (mas)")
-        end
-
-        ax = gca()
-        ax.set_aspect("equal")
-        mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
-        ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
-        ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
-        ax.xaxis.set_tick_params(which="major",length=5,width=2)
-        ax.xaxis.set_tick_params(which="minor",length=2,width=1)
-        ax.yaxis.set_tick_params(which="major",length=5,width=2)
-        ax.yaxis.set_tick_params(which="minor",length=2,width=1)
-
-        if use_colorbar == true
-            divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="5%", pad=0.2)
-            colorbar(img, cax=cax, ax=ax)
-        end
-
-        if beamsize > 0
-            c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-            ax.add_artist(c)
-        end
+        # if pixmode == false
+        #     xlabel("RA (mas)")
+        #     ylabel("DEC (mas)")
+        # end
+        #
+        # ax = gca()
+        # ax.set_aspect("equal")
+        # mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
+        # ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
+        # ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
+        # ax.xaxis.set_tick_params(which="major",length=5,width=2)
+        # ax.xaxis.set_tick_params(which="minor",length=2,width=1)
+        # ax.yaxis.set_tick_params(which="major",length=5,width=2)
+        # ax.yaxis.set_tick_params(which="minor",length=2,width=1)
+        #
+        # if use_colorbar == true
+        #     divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
+        #     cax = divider.append_axes("right", size="5%", pad=0.2)
+        #     colorbar(img, cax=cax, ax=ax)
+        # end
+        #
+        # if beamsize > 0
+        #     c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+        #     ax.add_artist(c)
+        # end
         tight_layout()
     end
 end
@@ -744,31 +741,31 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
 end
 
 
-function get_baseline_list_v2(sta_names,v2_stations)
-    nbaselines = size(v2_stations,2)
-    baseline_list=Array{String}(undef,nbaselines)
+function get_baseline_names(sta_names,sta_indx)
+    nbaselines = size(sta_indx,2)
+    baseline_names=Array{String}(undef,nbaselines)
     for i=1:nbaselines
-        baseline_list[i]=string(sta_names[v2_stations[1,i]],"-",sta_names[v2_stations[2,i]])
+        baseline_names[i]=string(sta_names[sta_indx[1,i]],"-",sta_names[sta_indx[2,i]])
     end
-    return baseline_list
+    return baseline_names
 end
 
-function get_baseline_list_t3(sta_names, t3_stations)
-    nt3=size(t3_stations,2)
-    baseline_list=Array{String}(undef,nt3)
+function get_triplet_names(sta_names, sta_indx)
+    nt3=size(sta_indx,2)
+    triplet_names=Array{String}(undef,nt3)
     for i=1:nt3
-        baseline_list[i]=string(sta_names[t3_stations[1,i]],"-",sta_names[t3_stations[2,i]],"-",sta_names[t3_stations[3,i]])
+        triplet_names[i]=string(sta_names[sta_indx[1,i]],"-",sta_names[sta_indx[2,i]],"-",sta_names[sta_indx[3,i]])
     end
-    return baseline_list
+    return triplet_names
 end
 
-function get_baseline_pairs_t3(sta_names, t3_stations)
-    nt3=size(t3_stations,2)
-    baseline_list=Array{String}(undef, 3, nt3)
+function get_triple_baselines_names(sta_names, sta_indx)
+    nt3=size(sta_indx,2)
+    baseline_names=Array{String}(undef, 3, nt3)
     for i=1:nt3
-        baseline_list[1, i]=string(sta_names[t3_stations[1,i]],"-",sta_names[t3_stations[2,i]])
-        baseline_list[2, i]=string(sta_names[t3_stations[2,i]],"-",sta_names[t3_stations[3,i]])
-        baseline_list[3, i]=string(sta_names[t3_stations[1,i]],"-",sta_names[t3_stations[3,i]])
+        baseline_names[1, i]=string(sta_names[sta_indx[1,i]],"-",sta_names[sta_indx[2,i]])
+        baseline_names[2, i]=string(sta_names[sta_indx[2,i]],"-",sta_names[sta_indx[3,i]])
+        baseline_names[3, i]=string(sta_names[sta_indx[1,i]],"-",sta_names[sta_indx[3,i]])
     end
-    return baseline_list
+    return baseline_names
 end

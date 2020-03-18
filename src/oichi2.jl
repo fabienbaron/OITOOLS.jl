@@ -340,8 +340,8 @@ function crit_dft_fg(x, g, dft, data; regularizers=[], verb = true) # regulariza
   return chi2_f + reg_f;
 end
 
-function crit_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; printcolor = :black, regularizers=[], verb = true)
-  chi2_f = chi2_nfft_fg(x, g, fftplan, data, verb = verb);
+function crit_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; cvis = [], printcolor = :black, regularizers=[], verb = true)
+  chi2_f = chi2_nfft_fg(x, g, fftplan, data, cvis = cvis, verb = verb);
   reg_f = regularization(x,g, regularizers=regularizers, printcolor = printcolor, verb = verb);
   flux = sum(x)
   g[:] = (g .- sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
@@ -371,10 +371,12 @@ function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Comple
    return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; printcolor =:black,  verb = false)
+function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; cvis = [], printcolor =:black,  verb = false)
   flux = sum(x);
-# Likelihood
   cvis_model = image_to_cvis_nfft(x, ftplan[1]);
+  if length(cvis)>0
+    cvis[:] = cvis_model[data.indx_vis]
+  end
   v2_model = cvis_to_v2(cvis_model, data.indx_v2);
   t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
   chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
@@ -435,7 +437,7 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
 end
 
 
-function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], verb = false)
+function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], regularizers=[], diffphi = false, verb = false)
   nwavs = length(ft);
   if printcolor == []
     printcolor=Array{Symbol}(undef,nwavs);
@@ -443,17 +445,34 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
   end
   npix = div(length(x),nwavs);
   f = 0.0;
+  cvis = []
+  if diffphi == true
+      #cvis = Array{Complex{Float64},2}(undef, length(data[1].indx_vis), nwavs);
+      cvis = Array{Array{Complex{Float64},1},1}(undef, nwavs);
+      for i=1:nwavs
+        cvis[i] = Array{Complex{Float64},1}(undef, length(data[1].indx_vis))
+      end
+  end
   for i=1:nwavs # weighted sum -- should probably do the computation in parallel
     tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
     subg = Array{Float64}(undef, npix);
     if verb == true
       printstyled("Spectral channel $i ",color=printcolor[i]);
     end
-    f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb);
+    f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], cvis = cvis[i], printcolor = printcolor[i], verb = verb);
     g[tslice] = subg
   end
   ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:length(data)]);
   print("Polychromatic global reduced chi2: $(f/ndof) \n");
+
+  # Differential phase
+  #  if data.nvisphi > 0
+  # Compute vis_ref
+  if diffphi == true
+    cvis = hcat(cvis...)
+    vis_avg = vec(sum(cvis, dims=2))
+    
+  end
 
   # transspectral regularization
    if length(regularizers)>nwavs
