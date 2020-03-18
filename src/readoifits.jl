@@ -213,7 +213,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     # as long as a give station always keep the same indexes in merged data sets
 
     # First test if there are unknown *station indexes*
-    # TODO: currently using only V2 tables, check for other data products
+    # TODO: currently using only V2 & T3 tables, add for other data products
     unknown_station_names = String[]
     unknown_tel_names = String[]
     unknown_station_indexes = Int64[]
@@ -236,6 +236,24 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
     end
 
+    for itable = 1:t3_ntables
+        iarray = findall(t3tables[itable][:arrname] .== arraytableref)
+        if length(iarray)>0 # Will fail if no corresponding OI_ARRAY table
+            iarray = iarray[1]
+            corresp_station_indexes = arraytables[iarray][:sta_index]
+            for jj in unique(t3tables[itable][:sta_index]) # Will fail if non-existent indexes in T3 tables
+                if !(jj in corresp_station_indexes)
+                    @warn("T3 table $itable refers to station index $jj, non existent in OI_ARRAY=$(t3tables[itable][:arrname]); available indexes are $(corresp_station_indexes)")
+                    push!(unknown_station_names, string("UNKN",jj))
+                    push!(unknown_tel_names, string("UNKN",jj))
+                    push!(unknown_station_indexes, jj);
+                end
+            end
+        else
+            @warn("T3 table $itable is missing its corresponding OI_ARRAY $(t3tables[itable][:arrname])")
+        end
+    end
+
     if unknown_station_names != []
         # Keep only non-redundant and sort them
         non_redundant_unknown_stations = indexin(unique(unknown_station_indexes), unknown_station_indexes)
@@ -249,14 +267,13 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         @warn("Unknown stations, creating station names $unknown_station_names with corresponding indexes = $unknown_station_indexes \n");
     end
 
-
-    # To simplify things, we immediately collapse all names
-    station_names = vec(vcat(station_name..., unknown_station_names))
-    telescope_names = vec(vcat(telescope_name..., unknown_tel_names))
-    station_indexes = vec(vcat(station_index..., unknown_station_indexes))
+    # To simplify things, we merge known and unknown stations
+    station_names_all = vec(vcat(station_name..., unknown_station_names))
+    telescope_names_all = vec(vcat(telescope_name..., unknown_tel_names))
+    station_indexes_all = vec(vcat(station_index..., unknown_station_indexes))
 
     # Check if index use is consistent
-    list_stations = unique(station_names)
+    list_stations = unique(station_names_all)
     nstations =  length(list_stations)
     new_station_name = Array{String}(undef, nstations)
     new_telescope_name = Array{String}(undef, nstations)
@@ -264,15 +281,15 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     for istation=1:length(list_stations)
         name = list_stations[istation]
-        loc = findall(station_names .== name)
-        tel = unique(telescope_names[loc])[1] # possible issue if several telescopes can be positioned onto the same station
-        indx = unique(station_indexes[loc])
+        loc = findall(station_names_all .== name)
+        tel = unique(telescope_names_all[loc])[1] # possible issue if several telescopes can be positioned onto the same station
+        indx = unique(station_indexes_all[loc])
         if length(indx)>1
             @warn("Station index vary for station $(name) in this file")
             # Give up -  Exit the for loop
-            new_station_name[:] = station_names;
-            new_telescope_name[:] = telescope_names;
-            new_station_index[:] = station_indexes;
+            new_station_name[:] = station_names_all;
+            new_telescope_name[:] = telescope_names_all;
+            new_station_index[:] = station_indexes_all;
             break;
         else
             # simple case -- we renumber all stations
@@ -282,8 +299,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
     end
     # we will need to convert the old indexes into the new ones
-    conversion_index = spzeros(Int64, array_ntables, max(maximum(station_indexes),length(unknown_station_indexes))+station_index_offset)
-
+    conversion_index = spzeros(Int64, array_ntables, maximum(station_indexes_all)+station_index_offset)
+    
     # Existing indexes in OI_ARRAY
     for itable = 1:array_ntables
         for istation = 1:length(station_name[itable])
@@ -294,7 +311,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
         # TODO: check logic
         if unknown_station_names != []
-            nmax = sum(conversion_index[itable,:] .!=0) ;
+            nmax = sum(conversion_index[itable,:] .!=0) ; # length(station_name) ?
             conversion_index[itable, unknown_station_indexes] = nmax+1:size(conversion_index,2);
         end
     end
