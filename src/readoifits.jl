@@ -282,7 +282,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
     end
     # we will need to convert the old indexes into the new ones
-    conversion_index = spzeros(Int64, array_ntables, max(maximum(station_indexes),maximum(unknown_station_indexes))+station_index_offset)
+    conversion_index = spzeros(Int64, array_ntables, max(maximum(station_indexes),length(unknown_station_indexes))+station_index_offset)
 
     # Existing indexes in OI_ARRAY
     for itable = 1:array_ntables
