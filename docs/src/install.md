@@ -1,6 +1,13 @@
 # Installation
 
-From a fresh Julia >1.1 installation, use the package manager (```]``` key) then do:
+OITOOLS uses matplotlib through the library ```PyPlot```.
+If you are starting from a fresh julia install, we recommend using the internal julia library instead of the OS-wide python matplotlib. To do so, just type:
+```
+ENV["PYTHON"]=""
+ENV["MPLBACKEND"]="qt5agg"
+```
+before proceeding with the following package installation.
+Use the package manager (```]``` key) then do:
 
 ``` add PyCall PyPlot LaTeXStrings FITSIO Libdl NLopt NFFT SpecialFunctions NearestNeighbors https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayTools.jl.git https://github.com/emmt/LazyAlgebra.jl.git https://github.com/emmt/OptimPackNextGen.jl.git https://github.com/fabienbaron/OITOOLS.jl.git```
 

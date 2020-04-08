@@ -168,7 +168,8 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
         if legend_below == false
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
         else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=6,loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            tight_layout();
         end
     elseif bywavelength== true
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
@@ -315,7 +316,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
         if legend_below == false
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
         else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=6,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
     elseif bywavelength == true
         wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
