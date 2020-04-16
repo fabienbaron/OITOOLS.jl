@@ -1,3 +1,7 @@
+#
+# TO DO: t3phiplotvsdata, t3phiplotvsmodel, everything should be able to take as input a 1D array of OIdata
+#
+
 # gather common display tasks
 using PyPlot,PyCall, LaTeXStrings, Statistics
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
@@ -194,9 +198,10 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     if filename !=""
         savefig(filename)
     end
+    show(block=false)
 end
 
-function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64,1},v2_data_err::Array{Float64,1}, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
+function v2plot_modelvsdata(data::OIdata, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
     subplot(211)
@@ -204,19 +209,20 @@ function v2plot_modelvsdata(baseline_v2::Array{Float64,1},v2_data::Array{Float64
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(baseline_v2/1e6,v2_data,yerr=v2_data_err,fmt="o", markersize=2,color="Black")
-    plot(baseline_v2/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
+    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=2,color="Black")
+    plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
     title("Squared Visibility Amplitudes - Model vs data plot")
     #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true);
     subplot(212)
-    plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
+    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=3)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
+    show(block=false)
 end
 
 
@@ -234,7 +240,6 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     xrange = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000);
     cvis_func = visfunc(params,xrange);
     v2_func = abs2.(cvis_func);
-
 
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
@@ -268,6 +273,7 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     ax = gca();
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
+    show(block=false)
 end
 
 function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
@@ -342,6 +348,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
     if idpoint==true
         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
     end
+    show(block=false)
 end
 
 
@@ -395,6 +402,7 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
     if filename !=""
         savefig(filename)
     end
+    show(block=false)
 end
 
 function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
@@ -447,6 +455,7 @@ function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
     if filename !=""
         savefig(filename)
     end
+    show(block=false)
 end
 
 function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
@@ -498,12 +507,8 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
     if filename !=""
         savefig(filename)
     end
+    show(block=false)
 end
-
-
-
-
-
 
 function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="")
     global v2base=[]
@@ -579,6 +584,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
     if filename !=""
         savefig(filename)
     end
+    show(block=false)
 end
 
 
@@ -630,6 +636,7 @@ function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale
         ax.add_artist(c)
     end
     tight_layout()
+    show(block=false)
 end
 
 #TODO: work for rectangular
@@ -683,6 +690,7 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
         # end
         tight_layout()
     end
+    show(block=false)
 end
 
 # TODO: rework for julia 1.0+
@@ -739,6 +747,7 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
         end
         tight_layout()
     end
+    show(block=false)
 end
 
 
