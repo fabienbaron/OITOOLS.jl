@@ -22,7 +22,7 @@ end
 
 using PyCall
 
-function query_simbad(targetname)
+function query_target_from_simbad(targetname)
     return pyimport("astroquery.simbad").Simbad.query_object(targetname)
 end
 

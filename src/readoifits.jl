@@ -121,8 +121,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     tables = OIFITS.load(oifitsfile);
 
     #  fluxtables = OIFITS.select(tables,"OI_FLUX");
-    wavtable = OIFITS.select(tables,"OI_WAVELENGTH");
-    wavtableref = [wavtable[i][:insname] for i=1:length(wavtable)];
+    wavtables = OIFITS.select(tables,"OI_WAVELENGTH");
+    if length(wavtables) ==0
+        error("No OI_WAVELENGTH table in $oifitsfile")
+    end
+    wavtableref = [wavtables[i][:insname] for i=1:length(wavtables)];
     # In case there are multiple targets per file (NPOI, some old MIRC), select only the wanted data
     targetid_filter = [];
     targettables = OIFITS.select(tables, "OI_TARGET");
@@ -181,6 +184,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     # OI_ARRAY
     arraytables=OIFITS.select(tables,"OI_ARRAY")
+    if length(arraytables) ==0
+        error("No OI_ARRAY table in $oifitsfile")
+    end
     arraytableref = [arraytables[i][:arrname] for i=1:length(arraytables)];
     array_ntables=length(arraytables)
 
@@ -300,7 +306,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     end
     # we will need to convert the old indexes into the new ones
     conversion_index = spzeros(Int64, array_ntables, maximum(station_indexes_all)+station_index_offset)
-    
+
     # Existing indexes in OI_ARRAY
     for itable = 1:array_ntables
         for istation = 1:length(station_name[itable])
@@ -361,8 +367,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             vis_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(vistables[itable][:sta_index][:,vis_targetid_filter],outer=[size(visamp_old[itable],1),1]);
         end
         whichwav = findall(vistables[itable][:insname].==wavtableref);
-        vis_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave], outer=[1,size(visamp_old[itable],2)]); # spectral channels
-        vis_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band], outer=[1,size(visamp_old[itable],2)]); # width of spectral channels
+        vis_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave], outer=[1,size(visamp_old[itable],2)]); # spectral channels
+        vis_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band], outer=[1,size(visamp_old[itable],2)]); # width of spectral channels
         vis_flag_old[itable] = vistables[itable][:flag][:,vis_targetid_filter]; # flag for vis table
         nvis_lam_old = length(vis_lam_old[itable][:,1]);
         vis_u_old[itable] = Float64[];
@@ -407,8 +413,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         if (length(whichwav) != 1)
             error("Wave table confusion -- Missing table ?\n");
         end
-        v2_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave],  outer=[1,size(v2_old[itable],2)]); # spectral channels
-        v2_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band], outer=[1,size(v2_old[itable],2)]); # width of spectral channels
+        v2_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave],  outer=[1,size(v2_old[itable],2)]); # spectral channels
+        v2_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band], outer=[1,size(v2_old[itable],2)]); # width of spectral channels
         v2_flag_old[itable] = v2tables[itable][:flag][:,v2_targetid_filter]; # flag for v2 table
         nv2_lam_old = length(v2_lam_old[itable][:,1]);
         v2_u_old[itable] = Float64[];
@@ -466,8 +472,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             t3_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(t3tables[itable][:sta_index][:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1]);
         end
         whichwav = findall(t3tables[itable][:insname].==wavtableref);
-        t3_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave], outer=[1,size(t3amp_old[itable],2)]); # spectral channels
-        t3_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band], outer=[1,size(t3amp_old[itable],2)]); # width of spectral channels
+        t3_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave], outer=[1,size(t3amp_old[itable],2)]); # spectral channels
+        t3_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band], outer=[1,size(t3amp_old[itable],2)]); # width of spectral channels
         t3_flag_old[itable] = t3tables[itable][:flag][:,t3_targetid_filter]; # flag for t3 table
         nt3_lam_old = length(t3_lam_old[itable][:,1]);
 
@@ -544,8 +550,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 t4_sta_index_old[itable]=1000 .+station_index_offset.+repeat(t4tables[itable][:sta_index][:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1]);
             end
             whichwav = findall(t4tables[itable][:insname].==wavtableref);
-            t4_lam_old[itable] = repeat(wavtable[whichwav[1]][:eff_wave], outer=[1,size(t4amp_old[itable],2)]); # spectral channels
-            t4_dlam_old[itable] = repeat(wavtable[whichwav[1]][:eff_band],outer=[1,size(t4amp_old[itable],2)]); # width of spectral channels
+            t4_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave], outer=[1,size(t4amp_old[itable],2)]); # spectral channels
+            t4_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band],outer=[1,size(t4amp_old[itable],2)]); # width of spectral channels
             t4_flag_old[itable] = t4tables[itable][:flag][:,t4_targetid_filter]; # flag for t4 table
             nt4_lam_old = length(t4_lam_old[itable][:,1]);
 
@@ -662,13 +668,13 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     end
 
     if ((polychromatic == true) && (get_specbin_file == true))
-        if length(wavtable)>1
+        if length(wavtables)>1
             @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels.");
             @warn("I will try to load the first one only")
-            wavarray = hcat(wavtable[1][:eff_wave]-wavtable[1][:eff_band]/2, wavtable[1][:eff_wave]+wavtable[1][:eff_band]/2);
+            wavarray = hcat(wavtables[1][:eff_wave]-wavtables[1][:eff_band]/2, wavtables[1][:eff_wave]+wavtables[1][:eff_band]/2);
             spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
         else
-            wavarray = hcat(wavtable[1][:eff_wave]-wavtable[1][:eff_band]/2, wavtable[1][:eff_wave]+wavtable[1][:eff_band]/2);
+            wavarray = hcat(wavtables[1][:eff_wave]-wavtables[1][:eff_band]/2, wavtables[1][:eff_wave]+wavtables[1][:eff_band]/2);
             spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
         end
     end

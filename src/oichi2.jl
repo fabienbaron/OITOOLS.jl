@@ -469,10 +469,14 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
   #  if data.nvisphi > 0
   # Compute vis_ref
   if diffphi == true
-    cvis = hcat(cvis...)
-    vis_avg = vec(sum(cvis, dims=2))
-    
+    phi_model = angle.(hcat(cvis...))*180/pi
+    phi_avg = vec(sum(phi_model, dims=2))/nwavs
+    diffphi_model = 2*phi_model .- phi_avg
+    diffphi     = hcat([data[i].visphi for i=1:nwavs]...)
+    diffphi_err = hcat([data[i].visphi_err for i=1:nwavs]...)
+    chi2_diffphi = norm(mod360(diffphi_model-diffphi)./diffphi_err)^2/nwavs # chi2 per wavelength
   end
+  print("Differential phase chi2: $(chi2_diffphi) \n");
 
   # transspectral regularization
    if length(regularizers)>nwavs

@@ -172,14 +172,16 @@ function updatefits_aspro(fitsfile_in,fitsfile_out;res=0.05)
     f = FITS(fitsfile_in);
     data = read(f[1])
     header = read_header(f[1])
-    header["CDELT1"] = -(res/1000.0)/(206265.0)
-    header["CDELT2"] = (res/1000.0)/(206265.0)
+    header["CDELT1"] = -res/1000.0
+    header["CDELT2"] = res/1000.0
     header["CRVAL1"] = 0.0
     header["CRVAL2"] = 0.0
     header["CRPIX1"] = (size(data)[1]/2)
     header["CRPIX2"] = (size(data)[1]/2)
-    set_comment!(header,"CDELT1","Radians per Pixel")
-    set_comment!(header,"CDELT2","Radians per Pixel")
+    header["CUNIT1"] = "arcsec"
+    header["CUNIT2"] = "arcsec"
+    set_comment!(header,"CDELT1","Arcseconds per Pixel")
+    set_comment!(header,"CDELT2","Arcseconds per Pixel")
     set_comment!(header,"CRVAL1","X-coordinate of reference pixel")
     set_comment!(header,"CRVAL2","Y-coordinate of reference pixel")
     set_comment!(header,"CRPIX1","reference pixel in X")

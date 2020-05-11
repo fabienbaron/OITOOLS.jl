@@ -139,7 +139,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength=false,filename="", legend_below = false)
+function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength=false,filename="", legend_below = false, figtitle = "")
     if bywavelength==true
         bybaseline=false
     end
@@ -148,7 +148,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     end
     nuv = sum(data[i].nuv for i=1:length(data))
     mean_mjd = mean(data[i].mean_mjd for i=1:length(data))
-    fig = figure("MJD: $(mean_mjd), nuv: $(nuv)",figsize=(8,8),facecolor="White")
+    fig = figure(string(figtitle, "MJD: $(mean_mjd), nuv: $(nuv)"),figsize=(8,8),facecolor="White")
     clf();
     ax = gca()
     markeredgewidth=0.1
@@ -276,7 +276,7 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     show(block=false)
 end
 
-function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false, figtitle="")
     # if idpoint==true # interactive plot, click to identify point
     #     global v2base=data.v2_baseline
     #     global v2value=data.v2
@@ -293,7 +293,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
     if bywavelength==true
         bybaseline=false
     end
-    fig = figure("V2 data",figsize=(10,5),facecolor="White");
+    fig = figure(string(figtitle, "V2 data"),figsize=(10,5),facecolor="White");
     if clean == true # do not overplot on existing window by default
         clf();
     end
@@ -304,6 +304,25 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
     if remove == true
         fig.canvas.mpl_connect("button_press_event",onclickv2)
     end
+
+    # baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
+    # baseline=sort(unique(vcat(baseline_list_vis...)))
+    # # Creating one subplot for each baseline
+    # rows = div(length(baseline),2)
+    # cols = 2
+    # for i=1:length(baseline)
+    #     fig.add_subplot(rows,cols,i)
+    #     title(baseline[i])
+    #     loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
+    #     baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
+    #     visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
+    #     visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
+    #     errorbar(baseline_vis,visphi,yerr=visphi_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+    #     xlabel(L"Maximum Baseline (M$\lambda$)")
+    #     ylabel("Diff phase (°)")
+    #     grid(true,which="both",color="LightGrey",linestyle=":")
+    #     tight_layout()
+    # end
 
     if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
@@ -470,7 +489,7 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
     ax=gca();
     if bybaseline == true
         baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_visvis...)))
+        baseline=sort(unique(vcat(baseline_list_vis...)))
         for i=1:length(baseline)
             loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
             baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
@@ -499,9 +518,9 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
         visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
         errorbar(baseline_vis,visphi,yerr=visphi_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
     end
-    title("viserential phase data")
+    title("Visibility phase phase data")
     xlabel(L"Maximum Baseline (M$\lambda$)")
-    ylabel("viserential phase (degrees)")
+    ylabel("Visibility phase (degrees)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
     if filename !=""
@@ -509,6 +528,74 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
     end
     show(block=false)
 end
+
+
+
+function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+    #
+    # Note: this is a special kind of plot, which doesn't follow the classic plotting recipe
+    #
+    if typeof(data)==OIdata
+        data = [data]
+    end
+    if bywavelength==true
+        bybaseline=false
+    end
+    fig = figure("Differential phase data",figsize=(10,5),facecolor="White");
+    clf();
+    ax=gca();
+    if bybaseline == true
+        baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
+        baseline=sort(unique(vcat(baseline_list_vis...)))
+        # Creating one subplot for each baseline
+        rows = div(length(baseline),2)
+        cols = 2
+        subplots_adjust(hspace=0.0)
+        axes = Array{PyObject,1}(undef, length(baseline))
+        for i=1:length(baseline)
+            if i<3
+                fig.add_subplot(rows,cols,i)
+            else
+                fig.add_subplot(rows,cols,i, sharex = axes[2-mod(i,2)])
+            end
+            axes[i] = gca();
+            setp(axes[i].get_xticklabels(),visible=false)
+            title(baseline[i])
+            loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
+            baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
+            wavcol = vcat([data[n].uv_lam[data[n].indx_vis[loc[n]]]*1e6 for n=1:length(data)]...)
+            visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
+            visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
+            errorbar(wavcol,visphi,yerr=visphi_err,fmt="o",markersize=0.5,ecolor="Gainsboro",elinewidth=.5)
+            xlabel(L"Wavelength")
+            ylabel("Diff phase (°)")
+            grid(true,which="both",color="LightGrey",linestyle=":")
+        end
+
+        if legend_below == false
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
+        else
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+        end
+    elseif bywavelength == true
+        wavcol = vcat([data[n].uv_lam[data[n].indx_vis]*1e6 for n=1:length(data)]...)
+        baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
+        visphi = vcat([data[n].visphi for n=1:length(data)]...);
+        visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
+        sc = scatter(baseline_vis, visphi, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
+        el = errorbar(baseline_vis, visphi,yerr=visphi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
+        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
+        cbar.set_ticks(cbar_range)
+    end
+    suptitle("Differential phase phase data")
+    tight_layout()
+    if filename !=""
+        savefig(filename)
+    end
+    show(block=false)
+end
+
 
 function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="")
     global v2base=[]
@@ -588,8 +675,8 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
 end
 
 
-function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-    fig = figure(imtitle,figsize=(6,6),facecolor="White")
+function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+    fig = figure(figtitle,figsize=(6,6),facecolor="White")
     clf();
     nx=ny=-1;
     pixmode = false;
@@ -640,7 +727,7 @@ function imdisp(image; imtitle="OITOOLS image", colormap = "gist_heat", pixscale
 end
 
 #TODO: work for rectangular
-function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; imtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; figtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
     if typeof(image_vector)==Array{Float64,2}
         nwavs = size(image_vector,2)
     elseif typeof(image_vector)==Array{Float64,3}
@@ -648,7 +735,7 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
     end
     nside = ceil(Int64,sqrt(nwavs))
 
-    fig = figure(imtitle,figsize=(10,10),facecolor="White")
+    fig = figure(figtitle,figsize=(10,10),facecolor="White")
     clf();
     images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
     for i=1:nwavs
