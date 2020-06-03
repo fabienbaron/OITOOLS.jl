@@ -144,13 +144,6 @@ function geometric_delay(lat_deg,h_deg,δ_deg,baselines)
     return Δgeo
 end
 
-
-#function cart_delay(baselines)
-#    Δcarts = -0.5*(geometric_delay(l,h,δ,baselines) - airpath_delay(baselines) + pop_delay(baselines))
-#    return Δcarts
-#end
-
-
 function dayofyear(day, month, year)
 N = floor(275 * month / 9) - floor((month + 9) / 12) * (1 + floor((year - 4 * floor(year / 4) + 2) / 3)) + day - 30
 return N

@@ -62,11 +62,11 @@ legend()
 ntel = facility.ntel[1]
 station_xyz= hcat([facility.sta_xyz[(i*3-2):i*3] for i=1:ntel]...)'
 nv2,v2_baselines,v2_stations,v2_indx,baseline_name         = get_v2_baselines(ntel,station_xyz,facility.tel_names);
-delay_geo   = geometric_delay(lat,ha,dec,v2_baselines)
+delay_geo   = geometric_delay(lat,ha,dec,v2_baselines);
 
 # POP DELAY
 include("../src/popranges.jl");
-pop = [1,2,2,3,2,5]
+pop = [1,2,4,5,2,5]
 delay_pop = zeros(nv2)
 delay_airpath = zeros(nv2)
 for i=1:nv2
@@ -78,12 +78,18 @@ end
 delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop )
 has_delay = (delay_carts.>-43).&(delay_carts.<43);
 has_delay_all_baselines = vec(prod(has_delay, dims=1));
-findall(has_delay_all_baselines.>0)
+has_delay_times = findall(has_delay_all_baselines.>0)
 # on first order length(findall(has_delay_all_baselines.>0)) is good
+start_date = hours_to_date(obsdate,lst[has_delay_times[1]])
+end_date   = hours_to_date(obsdate, lst[has_delay_times[end]])
+ax.barh(2, end_date - start_date, left=start_date, height=1.5, align="center", color=:blue, label="In Delay")
+legend()
 
-clf()
-plot(dark_UTCs, delay_carts[1,:], label="Delay")
-plot(dark_UTCs, alt, label = "Altitude")
+# LST vs delay
+figure()
+plot(lst, delay_carts[1,:], label="Delay")
+plt.axhline(y=alt_limit, label="Limit altitude", color=:red)
+plot(lst, alt, label = "Altitude")
 legend()
 xlabel("UT")
 ylabel("EL/DELAY")
