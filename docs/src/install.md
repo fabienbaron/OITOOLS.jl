@@ -14,3 +14,10 @@ Use the package manager (```]``` key) then do:
 !!! info
 
     OITOOLS uses the ```OIFITS```, ```NFFT```, ```SpecialFunctions``` and ```NearestNeighbors``` packages. For model fitting, ```NLopt``` (derivative-free local and global optimizers) and ```Multinest``` (model selection) are used. ```DNest4``` is likely to replace ```Multinest``` soon. For image reconstruction, we use ```OptimPackNextGen``` written by Éric Thiébaut.
+
+To install Astroquery:
+```    
+using Conda
+Conda.add("astropy", channel="astropy")
+Conda.add("astroquery", channel="astropy")
+```

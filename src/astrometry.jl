@@ -1,11 +1,16 @@
-function hours_to_hms(hours)
+using Dates
+
+function hours_to_date(obsdate, hours)
     h= floor.(hours)
     min = div.((hours-h)*3600.0, 60.0)
     sec = rem.((hours-h)*3600.0, 60.0)
-    return hcat(h, min, sec)
+    isec =  floor.(sec)
+    msec = round.((sec-floor.(sec))*1000)
+    return DateTime.(Dates.year(obsdate),Dates.month(obsdate),Dates.day(obsdate),h,min,isec,msec)
 end
 
-function hour_angle_calc(dates::Union{Array{Any,2},Array{Float64,2}},longitude::Float64, ra::Float64;dst="no",ldir="E",timezone="UTC")
+
+function hour_angle_calc(obsdates::Union{DateTime,Array{DateTime,1}}, longitude::Float64, ra::Float64; dst="no",ldir="E",timezone="UTC")
 
 """
 This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
@@ -26,20 +31,22 @@ Optional Inputs:
 Accuracy:
 * With preliminary testing the LST returned is accurate to within a few minutes when compared with other calculators (MORE TESTING AND QUANTITATIVE ERROR NEEDS TO BE ESTABLISHED).
 """
-
-
+alpha= 1
 if ldir == "W"
     alpha = -1.
 elseif ldir == "E"
     alpha = 1.
 end
 
-years=Int.(dates[:,1])
-months=Int.(dates[:,2])
-days = Int.(dates[:,3])
-hours=Float64.(Int.(dates[:,4]))
-minutes=Float64.(Int.(dates[:,5]))
-seconds=Float64.(dates[:,6])
+if typeof(obsdates) == DateTime
+    obsdates = [obsdates]
+end
+years=Dates.year.(obsdates)
+months= Dates.month.(obsdates)
+days = Dates.day.(obsdates)
+hours= Dates.hour.(obsdates) # CHARA UTC offset
+minutes= Dates.minute.(obsdates)
+seconds= Dates.second.(obsdates)+Dates.millisecond.(obsdates)/1000
 
 h_ad = alpha*longitude/15 #longitude in degrees, Measures the hours offset due to longitude
 
@@ -85,7 +92,7 @@ end
 
 
 
-function mjd_to_utc(mjd) # used in interactive plots in oiplot.jl to return utc of points TODO: replace this 
+function mjd_to_utc(mjd) # used in interactive plots in oiplot.jl to return utc of points TODO: replace this
     """
     This function calculates and returns the UTC given a specific mjd.  It is a julia implementation of the codes  by Peter J. Acklam found
         on http://www.radiativetransfer.org/misc/atmlabdoc/atmlab/time/mjd2date.html and linked pages, except for the error handling (for now)
@@ -129,7 +136,10 @@ function alt_az(dec_deg,lat_deg, ha_hours) #returns alt, az in degrees
     return alt*180/pi, mod.(az*180/pi.+360, 360)
 end
 
-function geometric_delay(l,h,δ,baselines)
+function geometric_delay(lat_deg,h_deg,δ_deg,baselines)
+    l = lat_deg/180*pi
+    h = h_deg'*pi/12
+    δ = δ_deg/180*pi
     Δgeo =  -(sin(l)*cos(δ)*cos.(h).-cos(l)*sin(δ) ).*baselines[1,:]-(cos(δ)*sin.(h)) .* baselines[2,:]+ (cos(l)*cos(δ)*cos.(h) .+ sin(l)*sin(δ)).*baselines[3,:]
     return Δgeo
 end
@@ -146,7 +156,7 @@ N = floor(275 * month / 9) - floor((month + 9) / 12) * (1 + floor((year - 4 * fl
 return N
 end
 
-function sunrise_sunset(day, month, year, latitude, longitude;zenith=102.0)
+function sunrise_sunset(obsdate::DateTime, latitude, longitude;zenith=102.0)
 #Source:
 #	Almanac for Computers, 1990
 #	published by Nautical Almanac Office
@@ -163,6 +173,10 @@ function sunrise_sunset(day, month, year, latitude, longitude;zenith=102.0)
 #	  astronomical twilight = 108 degrees
 
 #	NOTE: longitude is positive for East and negative for West
+
+year=Dates.year.(obsdate)
+month= Dates.month.(obsdate)
+day = Dates.day.(obsdate)
 
 dtr=pi/180.
 rtd = 180.0/pi
