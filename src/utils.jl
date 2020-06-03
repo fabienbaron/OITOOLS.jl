@@ -27,7 +27,7 @@ function query_target_from_simbad(targetname)
 end
 
 function ra_dec_from_simbad(targetname)
-res=query_simbad(targetname)
+res=query_target_from_simbad(targetname)
 ra = [parse(Float64, i) for i in split(get(get(res, "RA"),0))]
 dec = [parse(Float64, i) for i in split(get(get(res, "DEC"),0))]
 return ra, dec

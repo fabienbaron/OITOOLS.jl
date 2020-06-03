@@ -447,15 +447,14 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
         printcolor[:] .= :black
     end
     npix = div(length(x),nwavs);
-    f = 0.0;
-    cvis = []
+    cvis = fill((Complex{Float64}[]),nwavs);
     if use_diffphases == true
-        #cvis = Array{Complex{Float64},2}(undef, length(data[1].indx_vis), nwavs);
-        cvis = Array{Array{Complex{Float64},1},1}(undef, nwavs);
         for i=1:nwavs
-            cvis[i] = Array{Complex{Float64},1}(undef, length(data[1].indx_vis))
+            cvis[i] = Array{Complex{Float64},1}(undef, length(data[i].indx_vis))
         end
     end
+
+    f = 0.0;
     for i=1:nwavs # weighted sum -- should probably do the computation in parallel
         tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
         subg = Array{Float64}(undef, npix);
@@ -465,7 +464,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
         f += crit_nfft_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], cvis = cvis[i], printcolor = printcolor[i], verb = verb);
         g[tslice] = subg
     end
-    ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:length(data)]);
+    ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:nwavs]);
     print("V2+T3AMP+T3PHI chi2r: $(f/ndof) \n");
     # Differential phase
     #  if data.nvisphi > 0
@@ -475,7 +474,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
         diffphi_model = (nwavs*phi_model .- vec(sum(phi_model, dims=2))) /(nwavs-1)
         diffphi     = hcat([data[i].visphi for i=1:nwavs]...)
         diffphi_err = hcat([data[i].visphi_err for i=1:nwavs]...)
-        chi2_diffphi = norm(mod360(diffphi_model-diffphi)./diffphi_err)^2 # chi2 per wavelength
+        chi2_diffphi = norm(mod360(diffphi_model-diffphi)./diffphi_err)^2
         f += chi2_diffphi;
         print("Differential phase chi2r: $(chi2_diffphi/length(diffphi_model)) \n");
         # Compute differential phase gradient
