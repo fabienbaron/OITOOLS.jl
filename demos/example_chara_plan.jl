@@ -1,4 +1,5 @@
-using OITOOLS, PyPlot, PyCall, Dates
+using PyPlot, PyCall, Dates
+include("../src/OITOOLS.jl"); using Main.OITOOLS
 # To query simbad  uncomment the next line
 targetname = "AZ Cyg"
 radec = ra_dec_from_simbad(targetname)
@@ -31,67 +32,44 @@ legend()
 good_alt = findall(alt.>alt_limit);
 printstyled("HA range based on CHARA telescope elevation limit: from ", ha[good_alt][1], " to ",  ha[good_alt][end], color=:red )
 
-# NOW COMPUTE DELAYS
+# In this example we're finding the best pops
 ntel = facility.ntel[1]
 station_xyz= hcat([facility.sta_xyz[(i*3-2):i*3] for i=1:ntel]...)'
 nv2,v2_baselines,v2_stations,v2_indx,baseline_name         = get_v2_baselines(ntel,station_xyz,facility.tel_names);
 delay_geo   = geometric_delay(lat,ha,dec,v2_baselines);
 include("../src/popranges.jl");
-pop = [1,2,4,5,2,5]
-delay_pop = zeros(nv2)
-delay_airpath = zeros(nv2)
-for i=1:nv2
-    itel2 = v2_stations[2, i]
-    itel1 = v2_stations[1, i]
-    delay_pop[i]     = pop_array[ itel2 , pop[itel2]] -  pop_array[ itel1 , pop[itel1]]
-    delay_airpath[i] = airpath[itel2] - airpath[itel1]
+delay_airpath = [airpath[v2_stations[2, i]] - airpath[v2_stations[1, i]] for i=1:nv2]
+delay_pop = zeros(nv2, 1, 5,5,5,5,5,5);
+for i=1:5
+    for j=1:5
+        for k=1:5
+            for l=1:5
+                for m=1:5
+                    for n=1:5
+                        pop = [i,j,k,l,m,n]
+                        delay_pop[:,1, i,j,k,l,m,n] = [pop_array[ v2_stations[2, i] , pop[v2_stations[2, i]]] -  pop_array[ v2_stations[1, i] , pop[v2_stations[1, i]]] for i=1:nv2]
+                    end
+                end
+            end
+        end
+    end
 end
-delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop )
-has_delay = (delay_carts.>-43).&(delay_carts.<43);
-has_delay_times = findall(vec(prod(has_delay, dims=1)).>0);
+delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop ); # baselines x lst x pop1 x pop2 x pop3 xpop4 x pop5x pop6
+has_delay = prod((delay_carts.>-43).&(delay_carts.<43), dims=1); # 1 = delay on all baselines
+pop_score = reshape(sum(has_delay,dims=2),5,5,5,5,5,5); # assumes non-discontinous delay block, may be wrong
+#ok_pops = findall(pop_score.>0)
+best_pops = findmax(pop_score)
+good_delay = findall(vec(has_delay[:,:,best_pops[2]]).>0)
 
+# ALTERNATIVE EXAMPLE, IF WE REQUEST SPECIFIC POPS
+# pop = [1,2,4,5,2,5]
+#delay_airpath = [airpath[v2_stations[2, i]] - airpath[v2_stations[1, i]] for i=1:nv2]
+#delay_pop = [pop_array[ v2_stations[2, i] , pop[v2_stations[2, i]]] -  pop_array[ v2_stations[1, i] , pop[v2_stations[1, i]]] for i=1:nv2]
+#delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop )
+#has_delay = (delay_carts.>-43).&(delay_carts.<43);
+#good_delay = findall(vec(prod(has_delay, dims=1)).>0);'''
 
-# Gantt plot
-fig = figure(figsize=(20,10))
-ax = fig.add_subplot(111)
-ax.xaxis.set_major_locator(matplotlib.dates.HourLocator(interval=1))
-ax.xaxis.set_minor_locator(matplotlib.dates.MinuteLocator(interval=15))
-ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%H:%M"))
-offset = 4# 0 if we want to see delay during the day, 4 to keep mostly dark times
-xlim(hours_to_date(obsdate, lst_midnight[1]-12+offset), hours_to_date(obsdate+Dates.Day(1), lst_midnight[1]-12-offset) ); xlabel("LST")
-ylim(0, 10);
-df = DateFormat("h:m");
-title(string("Observing night: ", Date(obsdate), " - ", Date(obsdate+Dates.Day(1)), " -- Target: ", targetname))
-fig.autofmt_xdate(bottom=0.2,rotation=30,ha="right"); ax.xaxis_date(); grid()
-plt.axvline(x=hours_to_date(obsdate, lst_midnight[1]), color=:red) # nextday transition
-start_date = hours_to_date(obsdate,lst[1]+1.5)
-end_date   = hours_to_date(obsdate, lst[end]-1.5 )
-ax.barh(5, end_date - start_date, left=start_date, height=10, align="center", color=:lightgray, alpha = 0.75)
-start_date = hours_to_date(obsdate,lst[1]+2)
-end_date   = hours_to_date(obsdate, lst[end]-2 )
-ax.barh(5, end_date - start_date, left=start_date, height=10, align="center", color=:lightgray, alpha = 0.75)
-start_date = hours_to_date(obsdate,lst[1]+3)
-end_date   = hours_to_date(obsdate, lst[end]-3 )
-ax.barh(5, end_date - start_date, left=start_date, height=10, align="center", color=:gray, alpha = 0.75)
-start_date = hours_to_date(obsdate,lst[good_alt[1]])
-end_date   = hours_to_date(obsdate, lst[good_alt[end]])
-ax.barh(5, end_date - start_date, left=start_date, height=1.5, align="center", color=:orange, label="Altitude",zorder=3)
-
-
-start_date = hours_to_date(obsdate,lst[has_delay_times[1]])
-end_date   = hours_to_date(obsdate, lst[has_delay_times[end]])
-ax.barh(2, end_date - start_date, left=start_date, height=2, align="center", color=:blue, label="In Delay", zorder=3)
-text(start_date, 2, Dates.format(start_date, dateformat"H:M") , rotation=90,va="center", ha="right", color=:black)
-text(end_date, 2, Dates.format(end_date, dateformat"H:M"), rotation=90,va="center",ha="left",color=:black)
-text(start_date, 3.3, round(Int64,az[has_delay_times[1]]),va="top", ha="center", color=:black)
-text(start_date, 0.7, round(Int64,alt[has_delay_times[1]]),va="bottom",ha="center",color=:black)
-text(end_date, 3.3, round(Int64,az[has_delay_times[end]]),va="top", ha="right", color=:black)
-text(end_date, 0.7, round(Int64,alt[has_delay_times[end]]),va="bottom",ha="right",color=:black)
-
-
-yticks([2],[targetname])
-tight_layout()
-legend()
+gantt_onenight(targetname,obsdate, lst, lst_midnight, az, alt, good_alt, good_delay);tight_layout();
 
 # LST vs delay
 figure()
