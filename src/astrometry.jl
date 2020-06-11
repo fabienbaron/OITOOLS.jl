@@ -315,7 +315,7 @@ function get_baselines(facility; config = []) # similar to get_v2_baselines in s
           if i!=j
             baseline_xyz[:,ind] .= station_xyz[j,:]-station_xyz[i,:];
             baseline_stations[:,ind] = [i,j];
-            global ind += 1
+            ind += 1
             end
         end
     end
