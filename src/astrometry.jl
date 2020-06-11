@@ -280,3 +280,54 @@ yticks([2],[targetname])
 legend()
 tight_layout()
 end
+
+function get_baselines(facility; config = []) # similar to get_v2_baselines in simulate.jl, but here for planning
+    # determine baselines and make necessary arrays
+    N = facility.ntel[1]
+    station_xyz= hcat([facility.sta_xyz[(i*3-2):i*3] for i=1:N]...)'
+
+    # Use all scopes by default, without a specific reference cart
+    if config == []
+        config = ones(N)
+    end
+
+    # Example for CHARA, the facility.sta_names ["S1"  "S2"  "E1"  "E2"  "W1"  "W2"]
+    # config = [1, 1, 0, 1, 1, 2]# telescopes to use = 1, to not use = 0, reference = 2
+    iref  = findall(config .==2 )
+    use_ref = ( length(iref) == 1 ) # we discard several refs as a mistake
+    itels =  findall(config .== 1 )
+
+    list_one = []
+    if use_ref
+        list_one = iref
+    else
+        list_one = itels
+    end
+    list_two = itels
+
+    # Note: this should be done with push!
+    nbaselines = Int64(N*(N-1)/2);
+    baseline_xyz = Array{Float64}(undef,3,nbaselines);
+    baseline_stations  = Array{Int64}(undef,2,nbaselines);
+    ind = 1
+    for i in list_one
+      for j in list_two
+          if i!=j
+            baseline_xyz[:,ind] .= station_xyz[j,:]-station_xyz[i,:];
+            baseline_stations[:,ind] = [i,j];
+            global ind += 1
+            end
+        end
+    end
+
+    nbaselines = ind-1;
+    baseline_xyz = baseline_xyz[:,1:nbaselines]
+    baseline_stations = baseline_stations[:,1:nbaselines];
+
+    baseline_names = Array{String}(undef,nbaselines);
+    for i=1:nbaselines
+        baseline_names[i]=string(facility.sta_names[baseline_stations[1,i]],"-",facility.sta_names[baseline_stations[2,i]])
+    end
+
+    return nbaselines, baseline_xyz, baseline_stations, baseline_names
+end

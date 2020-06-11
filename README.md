@@ -14,3 +14,13 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 [travis-img]: https://travis-ci.com/fabienbaron/OITOOLS.jl.svg?branch=master
 [travis-url]: https://travis-ci.com/fabienbaron/OITOOLS.jl
+
+## Coming soon / TODO list
+
+- Observation planning: validate the entire chain, check daylight saving days, handle multiple targets,
+
+- Model fitting: multiple component models, polychromatism
+
+- Simulations: better noise models, examples for polychromatic and time-variable simulations.
+
+- Imaging: example with SPARCO model, port of SQUEEZE to Julia, image comparison tools.

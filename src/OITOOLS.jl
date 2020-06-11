@@ -10,7 +10,7 @@ include("modelfit.jl");
 include("utils.jl");
 include("astrometry.jl");
 export OIdata
-export uvplot, onclickidentify, v2plot,v2plot_timelapse, visphiplot, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot,t3ampplot,v2plot_multifile,get_baseline_list,get_baseline_list_t3phi,imdisp_multiwave,imdisp_polychromatic
+export uvplot, onclickidentify, v2plot,v2plot_timelapse, visphiplot, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot,t3ampplot,v2plot_multifile,imdisp_multiwave,imdisp_polychromatic
 export readoifits, readoifits_multiepochs, readfits, writefits
 export setup_dft, setup_nfft,setup_nfft_multiepochs, mod360, cvis_to_v2,cvis_to_t3, image_to_cvis_dft,image_to_cvis_nfft,chi2_dft_f,chi2_nfft_f,chi2_vis_nfft_f,chi2_vis_dft_fg,chi2_vis_nfft_fg,gaussian2d,cdg,reg_centering,tvsq,tv,regularization,crit_dft_fg,crit_nfft_fg, chi2_dft_fg,chi2_nfft_fg,crit_nfft_fg,crit_multitemporal_nfft_fg,reconstruct,reconstruct_multitemporal
 export visibility_ud, visibility_ldpow, visibility_ldquad, visibility_ldlin, visibility_annulus, visibility_ellipse_quad, visibility_ellipse_uniform
@@ -25,6 +25,6 @@ export setup_nfft_t4, cvis_to_t4
 export model_chi2_v2,chi2_sparco_nfft_f,chi2_sparco_nfft_f_alt, chi2_sparco_nfft_fg,reconstruct_sparco_gray
 export facility_info, obsv_info, combiner_info, wave_info, error_struct
 export hours_to_date, sunrise_sunset, hour_angle_calc, mjd_to_utc,dates_to_jd,jd_to_hour_angle,opd_limits,alt_az,geometric_delay,cart_delay
-export query_target_from_simbad, ra_dec_from_simbad
+export query_target_from_simbad, ra_dec_from_simbad, get_baselines
 export gantt_onenight
 end
