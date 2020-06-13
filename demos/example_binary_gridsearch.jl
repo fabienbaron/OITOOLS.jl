@@ -18,10 +18,11 @@ end
 
 function chi2_map(cvis::Array{Complex{Float64},2}, data::OIdata)
     @inbounds t3 = cvis[data.indx_t3_1,:].*cvis[data.indx_t3_2,:].*cvis[data.indx_t3_3,:];
-    @inbounds chi2_v2 = sum( ((abs2.(cvis[data.indx_v2,:]) .- data.v2)./data.v2_err).^2, dims=1)
-    @inbounds chi2_t3amp = sum(((abs.(t3) .- data.t3amp)./data.t3amp_err).^2, dims=1);
+    #NOTE: closure phases are often the only thing needed here
+    #@inbounds chi2_v2 = sum( ((abs2.(cvis[data.indx_v2,:]) .- data.v2)./data.v2_err).^2, dims=1)
+    #@inbounds chi2_t3amp = sum(((abs.(t3) .- data.t3amp)./data.t3amp_err).^2, dims=1);
     @inbounds chi2_t3phi = sum( (mod360.(angle.(t3)*(180.0/pi) .- data.t3phi)./data.t3phi_err).^2, dims=1);
-    return (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+data.nt3amp+data.nt3phi)
+    return chi2_t3phi/data.nt3phi #(chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+data.nt3amp+data.nt3phi)
 end
 
 #oifitsfile = "./data/HD196867_oifits_merged.fits";
