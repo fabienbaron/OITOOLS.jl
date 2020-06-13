@@ -125,7 +125,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     if length(wavtables) ==0
         error("No OI_WAVELENGTH table in $oifitsfile")
     end
-    wavtableref = [wavtables[i][:insname] for i=1:length(wavtables)];
+    wavtableref = [wavtables[i].insname for i=1:length(wavtables)];
     # In case there are multiple targets per file (NPOI, some old MIRC), select only the wanted data
     targetid_filter = [];
     targettables = OIFITS.select(tables, "OI_TARGET");
@@ -135,10 +135,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         else
             targettables = targettables[1];
         end
-        targetid_filter = targettables[:target_id][findall(targettables[:target].==targetname)]; # match target ids to target name
+        targetid_filter = targettables.target_id[findall(targettables.target .==targetname)]; # match target ids to target name
     else # we select everything = all target tables and all targets in these
 
-        targetid_filter = unique(vcat([targettables[i][:target_id] for i=1:length(targettables)]...));
+        targetid_filter = unique(vcat([targettables[i].target_id for i=1:length(targettables)]...));
     end
 
     vistables = []
@@ -187,7 +187,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     if length(arraytables) ==0
         error("No OI_ARRAY table in $oifitsfile")
     end
-    arraytableref = [arraytables[i][:arrname] for i=1:length(arraytables)];
+    arraytableref = [arraytables[i].arrname for i=1:length(arraytables)];
     array_ntables=length(arraytables)
 
     #get info from array tables_  #TBD -> update with knowledge from above
@@ -201,9 +201,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     station_index=Array{Array{Int64,1}}(undef, array_ntables);
 
     for itable = 1:array_ntables
-        station_name[itable] = arraytables[itable][:sta_name]; # station_names
-        telescope_name[itable] = arraytables[itable][:tel_name]; # tel_names
-        station_index[itable] = arraytables[itable][:sta_index]; # station_indexes for matchin names to indexes in v2 and t3
+        station_name[itable] = arraytables[itable].sta_name; # station_names
+        telescope_name[itable] = arraytables[itable].tel_name; # tel_names
+        station_index[itable] = arraytables[itable].sta_index; # station_indexes for matchin names to indexes in v2 and t3
     end
 
     station_index_offset = 0
@@ -225,38 +225,38 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     unknown_station_indexes = Int64[]
 
     for itable = 1:v2_ntables
-        iarray = findall(v2tables[itable][:arrname] .== arraytableref)
+        iarray = findall(v2tables[itable].arrname .== arraytableref)
         if length(iarray)>0 # Will fail if no corresponding OI_ARRAY table
             iarray = iarray[1]
-            corresp_station_indexes = arraytables[iarray][:sta_index]
-            for jj in unique(v2tables[itable][:sta_index]) # Will fail if non-existent indexes in V2 tables
+            corresp_station_indexes = arraytables[iarray].sta_index
+            for jj in unique(v2tables[itable].sta_index) # Will fail if non-existent indexes in V2 tables
                 if !(jj in corresp_station_indexes)
-                    @warn("V2 table $itable refers to station index $jj, non existent in OI_ARRAY=$(v2tables[itable][:arrname]); available indexes are $(corresp_station_indexes)")
+                    @warn("V2 table $itable refers to station index $jj, non existent in OI_ARRAY=$(v2tables[itable].arrname); available indexes are $(corresp_station_indexes)")
                     push!(unknown_station_names, string("UNKN",jj))
                     push!(unknown_tel_names, string("UNKN",jj))
                     push!(unknown_station_indexes, jj);
                 end
             end
         else
-            @warn("V2 table $itable is missing its corresponding OI_ARRAY $(v2tables[itable][:arrname])")
+            @warn("V2 table $itable is missing its corresponding OI_ARRAY $(v2tables[itable].arrname)")
         end
     end
 
     for itable = 1:t3_ntables
-        iarray = findall(t3tables[itable][:arrname] .== arraytableref)
+        iarray = findall(t3tables[itable].arrname .== arraytableref)
         if length(iarray)>0 # Will fail if no corresponding OI_ARRAY table
             iarray = iarray[1]
-            corresp_station_indexes = arraytables[iarray][:sta_index]
-            for jj in unique(t3tables[itable][:sta_index]) # Will fail if non-existent indexes in T3 tables
+            corresp_station_indexes = arraytables[iarray].sta_index
+            for jj in unique(t3tables[itable].sta_index) # Will fail if non-existent indexes in T3 tables
                 if !(jj in corresp_station_indexes)
-                    @warn("T3 table $itable refers to station index $jj, non existent in OI_ARRAY=$(t3tables[itable][:arrname]); available indexes are $(corresp_station_indexes)")
+                    @warn("T3 table $itable refers to station index $jj, non existent in OI_ARRAY=$(t3tables[itable].arrname); available indexes are $(corresp_station_indexes)")
                     push!(unknown_station_names, string("UNKN",jj))
                     push!(unknown_tel_names, string("UNKN",jj))
                     push!(unknown_station_indexes, jj);
                 end
             end
         else
-            @warn("T3 table $itable is missing its corresponding OI_ARRAY $(t3tables[itable][:arrname])")
+            @warn("T3 table $itable is missing its corresponding OI_ARRAY $(t3tables[itable].arrname)")
         end
     end
 
@@ -326,8 +326,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     # Quick OI-ARRAY check
     # TODO: update so that it's not redundant with previous checks
-    all_oitables_names = unique(vcat((arraytables[i][:arrname] for i=1:length(arraytables))...))
-    used_oiarray_tables = unique(vcat([v2tables[itable][:arrname] for itable = 1:v2_ntables], [t3tables[itable][:arrname] for itable = 1:t3_ntables]))
+    all_oitables_names = unique(vcat((arraytables[i].arrname for i=1:length(arraytables))...))
+    used_oiarray_tables = unique(vcat([v2tables[itable].arrname for itable = 1:v2_ntables], [t3tables[itable].arrname for itable = 1:t3_ntables]))
     if length(used_oiarray_tables)>length(all_oitables_names)
         missing_oiarray_tables =  used_oiarray_tables[.![used_oiarray_tables[i] in all_oitables_names for i=1:length(used_oiarray_tables)]]
         @warn("Missing at least $(length(used_oiarray_tables)-length(all_oitables_names)) OI-ARRAY tables in this file - won't be able to import stations properly although uv coverage will be fine.")
@@ -352,24 +352,24 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     vis_baseline_old = Array{Array{Float64,1}}(undef,vis_ntables);
     vis_sta_index_old=Array{Array{Int64,2}}(undef, vis_ntables);
     for itable = 1:vis_ntables
-        vis_targetid_filter = findall(sum([vistables[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-        visamp_old[itable] = vistables[itable][:visamp][:,vis_targetid_filter];
-        visamp_err_old[itable] = vistables[itable][:visamperr][:,vis_targetid_filter];
-        visphi_old[itable] = vistables[itable][:visphi][:,vis_targetid_filter];
-        visphi_err_old[itable] = vistables[itable][:visphierr][:,vis_targetid_filter];
-        vis_ucoord_old[itable] = vistables[itable][:ucoord][vis_targetid_filter];
-        vis_vcoord_old[itable] = vistables[itable][:vcoord][vis_targetid_filter];
-        vis_mjd_old[itable] = repeat(vistables[itable][:mjd][vis_targetid_filter]', outer=[size(visamp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-        iarray = findall(vistables[itable][:arrname] .== arraytableref)
+        vis_targetid_filter = findall(sum([vistables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
+        visamp_old[itable] = vistables[itable].visamp[:,vis_targetid_filter];
+        visamp_err_old[itable] = vistables[itable].visamperr[:,vis_targetid_filter];
+        visphi_old[itable] = vistables[itable].visphi[:,vis_targetid_filter];
+        visphi_err_old[itable] = vistables[itable].visphierr[:,vis_targetid_filter];
+        vis_ucoord_old[itable] = vistables[itable].ucoord[vis_targetid_filter];
+        vis_vcoord_old[itable] = vistables[itable].vcoord[vis_targetid_filter];
+        vis_mjd_old[itable] = repeat(vistables[itable].mjd[vis_targetid_filter]', outer=[size(visamp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
+        iarray = findall(vistables[itable].arrname .== arraytableref)
         if length(iarray)>0
-            vis_sta_index_old[itable]= conversion_index[iarray[1], station_index_offset.+repeat(vistables[itable][:sta_index][:,vis_targetid_filter],outer=[size(visamp_old[itable],1),1])];
+            vis_sta_index_old[itable]= conversion_index[iarray[1], station_index_offset.+repeat(vistables[itable].sta_index[:,vis_targetid_filter],outer=[size(visamp_old[itable],1),1])];
         else
-            vis_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(vistables[itable][:sta_index][:,vis_targetid_filter],outer=[size(visamp_old[itable],1),1]);
+            vis_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(vistables[itable].sta_index[:,vis_targetid_filter],outer=[size(visamp_old[itable],1),1]);
         end
-        whichwav = findall(vistables[itable][:insname].==wavtableref);
-        vis_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave], outer=[1,size(visamp_old[itable],2)]); # spectral channels
-        vis_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band], outer=[1,size(visamp_old[itable],2)]); # width of spectral channels
-        vis_flag_old[itable] = vistables[itable][:flag][:,vis_targetid_filter]; # flag for vis table
+        whichwav = findall(vistables[itable].insname.==wavtableref);
+        vis_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave, outer=[1,size(visamp_old[itable],2)]); # spectral channels
+        vis_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band, outer=[1,size(visamp_old[itable],2)]); # width of spectral channels
+        vis_flag_old[itable] = vistables[itable].flag[:,vis_targetid_filter]; # flag for vis table
         nvis_lam_old = length(vis_lam_old[itable][:,1]);
         vis_u_old[itable] = Float64[];
         vis_v_old[itable] = Float64[];
@@ -397,25 +397,25 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     v2_baseline_old = Array{Array{Float64,1}}(undef,v2_ntables);
     v2_sta_index_old=Array{Array{Int64,2}}(undef, v2_ntables);
     for itable = 1:v2_ntables
-        v2_targetid_filter = findall(sum([v2tables[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-        v2_old[itable] = v2tables[itable][:vis2data][:,v2_targetid_filter]; # Visibility squared
-        v2_err_old[itable] = v2tables[itable][:vis2err][:,v2_targetid_filter]; # error in Visibility squared
-        v2_ucoord_old[itable] = v2tables[itable][:ucoord][v2_targetid_filter]; # u coordinate in uv plane
-        v2_vcoord_old[itable] = v2tables[itable][:vcoord][v2_targetid_filter]; #  v coordinate in uv plane
-        v2_mjd_old[itable] = repeat(v2tables[itable][:mjd][v2_targetid_filter]', outer=[size(v2_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-        iarray = findall(v2tables[itable][:arrname] .== arraytableref)
+        v2_targetid_filter = findall(sum([v2tables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
+        v2_old[itable] = v2tables[itable].vis2data[:,v2_targetid_filter]; # Visibility squared
+        v2_err_old[itable] = v2tables[itable].vis2err[:,v2_targetid_filter]; # error in Visibility squared
+        v2_ucoord_old[itable] = v2tables[itable].ucoord[v2_targetid_filter]; # u coordinate in uv plane
+        v2_vcoord_old[itable] = v2tables[itable].vcoord[v2_targetid_filter]; #  v coordinate in uv plane
+        v2_mjd_old[itable] = repeat(v2tables[itable].mjd[v2_targetid_filter]', outer=[size(v2_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
+        iarray = findall(v2tables[itable].arrname .== arraytableref)
         if length(iarray)>0
-            v2_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(v2tables[itable][:sta_index][:,v2_targetid_filter],outer=[size(v2_old[itable],1),1])];
+            v2_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(v2tables[itable].sta_index[:,v2_targetid_filter],outer=[size(v2_old[itable],1),1])];
         else # TO DO (or just hope people use correct OIFITS !)
-            v2_sta_index_old[itable]=1000 .+station_index_offset.+repeat(v2tables[itable][:sta_index][:,v2_targetid_filter],outer=[size(v2_old[itable],1),1]);
+            v2_sta_index_old[itable]=1000 .+station_index_offset.+repeat(v2tables[itable]sta_index[:,v2_targetid_filter],outer=[size(v2_old[itable],1),1]);
         end
-        whichwav = findall(v2tables[itable][:insname].== wavtableref);
+        whichwav = findall(v2tables[itable].insname .== wavtableref);
         if (length(whichwav) != 1)
             error("Wave table confusion -- Missing table ?\n");
         end
-        v2_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave],  outer=[1,size(v2_old[itable],2)]); # spectral channels
-        v2_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band], outer=[1,size(v2_old[itable],2)]); # width of spectral channels
-        v2_flag_old[itable] = v2tables[itable][:flag][:,v2_targetid_filter]; # flag for v2 table
+        v2_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave,  outer=[1,size(v2_old[itable],2)]); # spectral channels
+        v2_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band, outer=[1,size(v2_old[itable],2)]); # width of spectral channels
+        v2_flag_old[itable] = v2tables[itable].flag[:,v2_targetid_filter]; # flag for v2 table
         nv2_lam_old = length(v2_lam_old[itable][:,1]);
         v2_u_old[itable] = Float64[];
         v2_v_old[itable] = Float64[];
@@ -453,28 +453,28 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t3_maxbaseline_old = Array{Array{Float64,1}}(undef,t3_ntables);
     t3_sta_index_old=Array{Array{Int64,2}}(undef, t3_ntables);
     for itable = 1:t3_ntables
-        t3_targetid_filter = findall(sum([t3tables[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-        t3amp_old[itable] = t3tables[itable][:t3amp][:,t3_targetid_filter];
-        t3amp_err_old[itable] = t3tables[itable][:t3amperr][:,t3_targetid_filter];
-        t3phi_old[itable] = t3tables[itable][:t3phi][:,t3_targetid_filter];
-        t3phi_err_old[itable] = t3tables[itable][:t3phierr][:,t3_targetid_filter];
-        t3_u1coord_old[itable] = t3tables[itable][:u1coord][t3_targetid_filter];
-        t3_v1coord_old[itable] = t3tables[itable][:v1coord][t3_targetid_filter];
-        t3_u2coord_old[itable] = t3tables[itable][:u2coord][t3_targetid_filter];
-        t3_v2coord_old[itable] = t3tables[itable][:v2coord][t3_targetid_filter];
+        t3_targetid_filter = findall(sum([t3tables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
+        t3amp_old[itable] = t3tables[itable].t3amp[:,t3_targetid_filter];
+        t3amp_err_old[itable] = t3tables[itable].t3amperr[:,t3_targetid_filter];
+        t3phi_old[itable] = t3tables[itable].t3phi[:,t3_targetid_filter];
+        t3phi_err_old[itable] = t3tables[itable].t3phierr[:,t3_targetid_filter];
+        t3_u1coord_old[itable] = t3tables[itable].u1coord[t3_targetid_filter];
+        t3_v1coord_old[itable] = t3tables[itable].v1coord[t3_targetid_filter];
+        t3_u2coord_old[itable] = t3tables[itable].u2coord[t3_targetid_filter];
+        t3_v2coord_old[itable] = t3tables[itable].v2coord[t3_targetid_filter];
         t3_u3coord_old[itable] = -(t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
         t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
-        t3_mjd_old[itable] = repeat(t3tables[itable][:mjd][t3_targetid_filter]', outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-        iarray = findall(t3tables[itable][:arrname] .== arraytableref)
+        t3_mjd_old[itable] = repeat(t3tables[itable].mjd[t3_targetid_filter]', outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
+        iarray = findall(t3tables[itable].arrname .== arraytableref)
         if length(iarray)>0
-            t3_sta_index_old[itable]= conversion_index[iarray[1], station_index_offset.+repeat(t3tables[itable][:sta_index][:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1])];
+            t3_sta_index_old[itable]= conversion_index[iarray[1], station_index_offset.+repeat(t3tables[itable].sta_index[:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1])];
         else
-            t3_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(t3tables[itable][:sta_index][:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1]);
+            t3_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(t3tables[itable].sta_index[:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1]);
         end
-        whichwav = findall(t3tables[itable][:insname].==wavtableref);
-        t3_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave], outer=[1,size(t3amp_old[itable],2)]); # spectral channels
-        t3_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band], outer=[1,size(t3amp_old[itable],2)]); # width of spectral channels
-        t3_flag_old[itable] = t3tables[itable][:flag][:,t3_targetid_filter]; # flag for t3 table
+        whichwav = findall(t3tables[itable].insname .==wavtableref);
+        t3_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave, outer=[1,size(t3amp_old[itable],2)]); # spectral channels
+        t3_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band, outer=[1,size(t3amp_old[itable],2)]); # width of spectral channels
+        t3_flag_old[itable] = t3tables[itable].flag[:,t3_targetid_filter]; # flag for t3 table
         nt3_lam_old = length(t3_lam_old[itable][:,1]);
 
         t3_u1_old[itable] = Float64[];
@@ -529,30 +529,30 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         t4_maxbaseline_old = Array{Array{Float64,1}}(undef,t4_ntables);
         t4_sta_index_old=Array{Array{Int64,2}}(undef, t4_ntables);
         for itable = 1:t4_ntables
-            t4_targetid_filter = findall(sum([t4tables[itable][:target_id].==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-            t4amp_old[itable] = t4tables[itable][:t4amp][:,t4_targetid_filter];
-            t4amp_err_old[itable] = t4tables[itable][:t4amperr][:,t4_targetid_filter];
-            t4phi_old[itable] = t4tables[itable][:t4phi][:,t4_targetid_filter];
-            t4phi_err_old[itable] = t4tables[itable][:t4phierr][:,t4_targetid_filter];
-            t4_u1coord_old[itable] = t4tables[itable][:u1coord][t4_targetid_filter];
-            t4_v1coord_old[itable] = t4tables[itable][:v1coord][t4_targetid_filter];
-            t4_u2coord_old[itable] = t4tables[itable][:u2coord][t4_targetid_filter];
-            t4_v2coord_old[itable] = t4tables[itable][:v2coord][t4_targetid_filter];
-            t4_u3coord_old[itable] = t4tables[itable][:u3coord][t4_targetid_filter];
-            t4_v3coord_old[itable] = t4tables[itable][:v3coord][t4_targetid_filter];
+            t4_targetid_filter = findall(sum([t4tables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
+            t4amp_old[itable] = t4tables[itable].t4amp[:,t4_targetid_filter];
+            t4amp_err_old[itable] = t4tables[itable].t4amperr[:,t4_targetid_filter];
+            t4phi_old[itable] = t4tables[itable].t4phi[:,t4_targetid_filter];
+            t4phi_err_old[itable] = t4tables[itable].t4phierr[:,t4_targetid_filter];
+            t4_u1coord_old[itable] = t4tables[itable].u1coord[t4_targetid_filter];
+            t4_v1coord_old[itable] = t4tables[itable].v1coord[t4_targetid_filter];
+            t4_u2coord_old[itable] = t4tables[itable].u2coord[t4_targetid_filter];
+            t4_v2coord_old[itable] = t4tables[itable].v2coord[t4_targetid_filter];
+            t4_u3coord_old[itable] = t4tables[itable].u3coord[t4_targetid_filter];
+            t4_v3coord_old[itable] = t4tables[itable].v3coord[t4_targetid_filter];
             t4_u4coord_old[itable] = -(t4_u1coord_old[itable] + t4_u2coord_old[itable] + t4_u3coord_old[itable]); # the minus takes care of complex conjugate
             t4_v4coord_old[itable] = -(t4_v1coord_old[itable] + t4_v2coord_old[itable] + t4_v3coord_old[itable]);
-            t4_mjd_old[itable] = repeat(t4tables[itable][:mjd][t4_targetid_filter]', outer=[size(t4amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-            iarray = findall(t4tables[itable][:arrname] .== arraytableref)
+            t4_mjd_old[itable] = repeat(t4tables[itable].mjd[t4_targetid_filter]', outer=[size(t4amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
+            iarray = findall(t4tables[itable].arrname .== arraytableref)
             if length(iarray)>0
-                t4_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(t4tables[itable][:sta_index][:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1])];
+                t4_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(t4tables[itable].sta_index[:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1])];
             else
-                t4_sta_index_old[itable]=1000 .+station_index_offset.+repeat(t4tables[itable][:sta_index][:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1]);
+                t4_sta_index_old[itable]=1000 .+station_index_offset.+repeat(t4tables[itable].sta_index[:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1]);
             end
-            whichwav = findall(t4tables[itable][:insname].==wavtableref);
-            t4_lam_old[itable] = repeat(wavtables[whichwav[1]][:eff_wave], outer=[1,size(t4amp_old[itable],2)]); # spectral channels
-            t4_dlam_old[itable] = repeat(wavtables[whichwav[1]][:eff_band],outer=[1,size(t4amp_old[itable],2)]); # width of spectral channels
-            t4_flag_old[itable] = t4tables[itable][:flag][:,t4_targetid_filter]; # flag for t4 table
+            whichwav = findall(t4tables[itable].insname .==wavtableref);
+            t4_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave, outer=[1,size(t4amp_old[itable],2)]); # spectral channels
+            t4_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band,outer=[1,size(t4amp_old[itable],2)]); # width of spectral channels
+            t4_flag_old[itable] = t4tables[itable].flag[:,t4_targetid_filter]; # flag for t4 table
             nt4_lam_old = length(t4_lam_old[itable][:,1]);
 
             t4_u1_old[itable] = Float64[];
@@ -671,10 +671,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         if length(wavtables)>1
             @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels.");
             @warn("I will try to load the first one only")
-            wavarray = hcat(wavtables[1][:eff_wave]-wavtables[1][:eff_band]/2, wavtables[1][:eff_wave]+wavtables[1][:eff_band]/2);
+            wavarray = hcat(wavtables[1].eff_wave-wavtables[1].eff_band/2, wavtables[1].eff_wave+wavtables[1].eff_band/2);
             spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
         else
-            wavarray = hcat(wavtables[1][:eff_wave]-wavtables[1][:eff_band]/2, wavtables[1][:eff_wave]+wavtables[1][:eff_band]/2);
+            wavarray = hcat(wavtables[1].eff_wave-wavtables[1].eff_band/2, wavtables[1].eff_wave+wavtables[1].eff_band/2);
             spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
         end
     end

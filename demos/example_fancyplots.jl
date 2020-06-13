@@ -16,10 +16,6 @@ uvplot(data1)
 #plot one v2 with baselines colored logscale --left click identifies the point
 v2plot(data1,logplot=true, idpoint = true)
 
-
 #plot two files by baseline, with different colors for each and different symbols for baselines, and id points on click
 #this also indicates from which file the point comes from
 v2plot_multifile(data, logplot = true, idpoint=true)
-
-#plot t3phi with baselines colored
-t3phiplot(data1,fancy=true)
