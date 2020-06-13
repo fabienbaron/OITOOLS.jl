@@ -12,7 +12,7 @@ function binary_dirac_primary_centered(flux_ratio::Float64, side::Array{Float64,
 nside = length(side)
 nuv = size(uv,2)
 # V = (1.0 .+ flux_ratio * cis.( (2*pi)* (uv[1,:] * grid_ra + uv[2,:] * grid_dec)))/(1.0+flux_ratio);  # this would be slower
-V = (1.0 .+ flux_ratio * repeat( cis.(uv[1,:]*side'), 1, nside).*reshape(repeat(cis.(-uv[2,:]*side'), nside), (nuv,nside*nside)) )/(1.0+flux_ratio);
+V = (1.0 .+ flux_ratio * repeat( cis.(uv[1,:]*side'), 1, nside).*reshape(repeat(cis.(uv[2,:]*side'), nside), (nuv,nside*nside)) )/(1.0+flux_ratio);
 return V
 end
 
