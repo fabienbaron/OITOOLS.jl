@@ -21,7 +21,7 @@ lcurve_reg = zeros(length(tv_weights))
 for i=1:length(tv_weights)
    regularizers = [["centering", 1e4], ["tv", tv_weights[i]]];
    x = reconstruct(x_start, data, fftplan, regularizers = regularizers, verb = false);
-   g = Array{Float64}(size(x));
+   g = similar(x);
    for t=1:3 # make sure we converged
        x = reconstruct(x, data, fftplan, regularizers = regularizers, verb = false);
    end

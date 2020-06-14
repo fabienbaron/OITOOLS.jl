@@ -1,3 +1,6 @@
+#
+# Note: this example requires an install of the MultiNest library
+#
 using OITOOLS
 oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1];

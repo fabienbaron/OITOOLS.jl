@@ -1,5 +1,5 @@
 #
-# Very Basic Image reconstruction code
+# Image reconstruction with EPLL -- This won't work unless you're part the the GSU group
 #
 include("oitools.jl");
 include("../MLIR/EPLL.jl")
