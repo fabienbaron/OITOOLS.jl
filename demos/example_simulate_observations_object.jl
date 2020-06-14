@@ -8,8 +8,14 @@ image_file="./data/2004true.fits";
 pixsize=0.101;
 out_file="./data/2004testsimulation.oifits";
 obs = read_obs_file("./data/default_obs.txt"); # read defaults (for OIFITS header)
-obs.raep0[1] =  [20, 57, 59.4437981]'*[1.0, 1/60., 1/3600] # UPDATE ra
-obs.decep0[1] = [46, 28, 00.5731825]'*[1.0, 1/60., 1/3600] # UPDATE DEC
+
+# Note: one can directly enter RA/DEC or look them up with Astroquery
+obs.target[1] = "AZ Cyg"
+#obs.raep0[1] =  [20, 57, 59.4437981]'*[1.0, 1/60., 1/3600] # UPDATE ra
+#obs.decep0[1] = [46, 28, 00.5731825]'*[1.0, 1/60., 1/3600] # UPDATE DEC
+# Next lines are using Astroquery -- see OITOOLS installation documentation
+radec = ra_dec_from_simbad(obs.target[1])
+obs.raep0[1], obs.decep0[1] = (radec[1]'*[1.0, 1/60., 1/3600], radec[2]'*[1.0, 1/60., 1/3600])
 
 facility    = read_facility_file("./data/CHARA_new.txt");
 combiner    = read_comb_file("./data/MIRC.txt");
