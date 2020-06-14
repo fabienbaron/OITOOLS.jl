@@ -1,6 +1,5 @@
-using OITOOLS
+using Dates,OITOOLS
 #Simulate an observation using an input image, given telescope parameters, and input object name and observation night
-
 dates = collect(DateTime(2018,8,13,5,00,00):Minute(15):DateTime(2018,8,13,7,30,00))
 
 # Object info
