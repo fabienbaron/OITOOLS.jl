@@ -1,5 +1,5 @@
-using PyPlot, PyCall, Dates
-include("../src/OITOOLS.jl"); using Main.OITOOLS
+using OITOOLS, PyPlot, PyCall, Dates
+
 # To query simbad  uncomment the next line
 targetname = "AZ Cyg"
 radec = ra_dec_from_simbad(targetname)
