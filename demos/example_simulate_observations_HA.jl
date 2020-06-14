@@ -1,12 +1,9 @@
-using OITOOLS
+using Dates, OITOOLS
 
 #EXAMPLE 8
 #Simulate an observation using an input image, given telescope parameters, and input hour angles
 #Note that you can determine hour angles for specific targets using example_chara_plan.jl
-
-dates=[2018 8 13 5 10 56.7; 2018 8 13 5 15 56.7; 2018 8 13 5 20 56.7; 2018 8 13 5 25 56.7; 2018 8 13 5 30 56.7;
-       2018 8 13 6 15 56.7; 2018 8 13 6 20 56.7; 2018 8 13 6 25 56.7; 2018 8 13 6 30 56.7; 2018 8 13 7 15 56.7;
-       2018 8 13 7 20 56.7; 2018 8 13 7 25 56.7; 2018 8 13 7 30 56.7;]
+dates = collect(DateTime(2018,8,13,5,00,00):Minute(15):DateTime(2018,8,13,7,30,00))
 
 # Object info
 image_file="./data/2004true.fits";

@@ -41,7 +41,7 @@ end
 function setup_nfft(uv::Array{Float64,2}, indx_vis, indx_v2, indx_t3_1, indx_t3_2,indx_t3_3, nx, pixsize)::Array{NFFTPlan{2,0,Float64},1}
     scale_rad = pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv;
     fftplan_uv  = NFFTPlan(scale_rad, (nx,nx), 4, 2.0);
-    fftplan_vis  = NFFTPlan(scale_rad[:, data.indx_vis], (nx,nx), 4, 2.0);
+    fftplan_vis  = NFFTPlan(scale_rad[:, indx_vis], (nx,nx), 4, 2.0);
     fftplan_v2   = NFFTPlan(scale_rad[:, indx_v2], (nx,nx), 4, 2.0);
     fftplan_t3_1 = NFFTPlan(scale_rad[:, indx_t3_1], (nx,nx), 4, 2.0);
     fftplan_t3_2 = NFFTPlan(scale_rad[:, indx_t3_2], (nx,nx), 4, 2.0);

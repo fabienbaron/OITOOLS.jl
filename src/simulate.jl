@@ -302,9 +302,9 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
      x = vec(image)/sum(image);
      # dft = setup_dft(uv, nx, pixsize);
      # cvis_model = image_to_cvis_dft(x, dft);
-     ft = setup_nfft(uv, v2_indx_w, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
+     # TODO: implement differential vis/phases -- placeholder is v2_indx_w at the moment
+     ft = setup_nfft(uv, v2_indx_w, v2_indx_w, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
      cvis_model = image_to_cvis_nfft(x, ft);
-
      v2_model = cvis_to_v2(cvis_model, v2_indx_w);
      t3_model, t3amp_model, t3phi_model = cvis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
      #Add noise

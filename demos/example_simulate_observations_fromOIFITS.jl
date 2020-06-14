@@ -33,4 +33,4 @@ f_chi2 = chi2_nfft_f(x_true, ft, data);
 # Compute |V|^2 observables and plot
 cvis_model = image_to_cvis_nfft(x_true, ft);
 v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-v2plot_modelvsdata(data.v2_baseline,data.v2,data.v2_err, v2_model);
+v2plot_modelvsdata(data, v2_model);
