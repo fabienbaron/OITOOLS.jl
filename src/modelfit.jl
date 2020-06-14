@@ -50,7 +50,7 @@ function bootstrap_v2_fit(nbootstraps, data::OIdata, visfunc, init_param::Array{
     for i=1:npars
     fig  = figure("Histogram $(i)",figsize=(5,5));
     clf();
-    plt[:hist](params[i,:],50);
+    plt.hist(params[i,:],50);
     title("Bootstrap for parameter $(i)");
     xlabel("Value of parameter $(i)");
     ylabel("Boostrap samples");
