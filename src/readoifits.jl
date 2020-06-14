@@ -114,7 +114,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true
     if !isfile(oifitsfile)
-        @error("Could not locate file\n")
+        @error("readoifits could not locate the requested data file -- please check path\n")
         return [[]];
     end
 
