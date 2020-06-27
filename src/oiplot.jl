@@ -75,7 +75,6 @@ function onclickv2(event)
         clf()
         errorbar(xdat,ydat,yerr=errdat,fmt="o", markersize=3,color="Black")
         # save
-
     end
 end
 
@@ -84,34 +83,29 @@ function onclickidentify(event)
     if clicktype == left_click    #left click to id
         xclick=event.xdata
         yclick=event.ydata
+        if !isnothing(xclick) & !isnothing(yclick)
         ax=gca()
         ymin,ymax=ax.get_ylim()
         xmin,xmax=ax.get_xlim()
         normfactor=abs(xmax-xmin)/abs(ymax-ymin)
-        xdat=v2base./1e6
-        ydat=v2value
-        errdat=v2err
-        #diffx=abs.(xdat.-xclicks[length(xclicks)])
-        #diffy=abs.(ydat.-yclicks[length(xclicks)])
-        diffr=sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2)
-        indx_id=argmin(diffr)
-        closestx=xdat[indx_id]
-        closesty=ydat[indx_id]
-        closesterr=errdat[indx_id]
-        clickbaseval=clickbase[:,indx_id].+1
-        clicksec,clickmin,clickhour,clickday,clickmonth,clickyear=mjd_to_utc(clickmjd[indx_id])
-        printstyled("Frequency: ",closestx," Squared Vis Amp (V2): ",closesty," V2 Error: ",closesterr,"\n",color=:blue)
-        printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red)
+        xdat = v2base./1e6
+        ydat = v2value
+        errdat = v2err
+        indx_id = argmin(sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2))
+        clickbaseval=clickbase[:,indx_id]
+        printstyled("----------------------------\n",color=:black);
         if length(clickfile)!=1
-            printstyled("Filename: ",clickfile[indx_id],"\n",color=:green)
+            printstyled("Filename: ",clickfile[indx_id],"\n",color=:orange)
         else
-            printstyled("Filename: ",clickfile[1],"\n",color=:green)
+            printstyled("Filename: ",clickfile[1],"\n",color=:orange)
         end
-        printstyled("MJD: ",clickmjd[indx_id],"\n",color=:black)
-        printstyled("Year: ", clickyear," Month: ",clickmonth," Day: ",clickday,"\n",color=:blue)
-        printstyled("Hour: ",clickhour, " Min: ",clickmin, " Sec: ", clicksec,"\n",color=:red )
+        printstyled("Radial frequency: ",xdat[indx_id]," V2: ",ydat[indx_id]," V2_err: ",errdat[indx_id],"\n",color=:blue);
+        printstyled("λ: ", clicklam[indx_id], " δλ: ", clickdlam[indx_id], "\n",color=:green);
+        printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red);
+        printstyled("MJD: ",clickmjd[indx_id], " UT: ", Dates.format(mjd_to_utdate(clickmjd[indx_id]),"Y-m-d H:M:S"), "\n",color=:red )
         #elseif clicktype == right_click
-        #    fig.canvas.mpl_disconnect(cid)
+        #    fig.canvas.mpl_disconnect(cid
+        end
     end
 end
 
@@ -172,7 +166,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
         if legend_below == false
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
         else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=6,loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
             tight_layout();
         end
     elseif bywavelength== true
@@ -277,16 +271,18 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
 end
 
 function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false, figtitle="")
-    # if idpoint==true # interactive plot, click to identify point
-    #     global v2base=data.v2_baseline
-    #     global v2value=data.v2
-    #     global v2err=data.v2_err
-    #     global clickbase=data.v2_sta_index
-    #     global clickname=data.sta_name
-    #     global clickmjd=data.v2_mjd
-    #     global clickfile=[]
-    #     push!(clickfile,data.filename)
-    # end
+    if idpoint==true # interactive plot, click to identify point
+         global v2base=data.v2_baseline
+         global v2value=data.v2
+         global v2err=data.v2_err
+         global clickbase=data.v2_sta_index
+         global clickname=data.sta_name
+         global clickmjd=data.v2_mjd
+         global clicklam=data.v2_lam
+         global clickdlam=data.v2_dlam
+         global clickfile=[]
+         push!(clickfile,data.filename)
+    end
     if typeof(data)==OIdata
         data = [data]
     end
@@ -341,7 +337,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
         if legend_below == false
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
         else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=6,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
     elseif bywavelength == true
         wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
@@ -597,7 +593,7 @@ function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavele
 end
 
 
-function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="")
+function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="",legend_below=true)
     global v2base=[]
     global v2value=[]
     global v2err=[]
@@ -651,7 +647,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
             errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[j], markeredgecolor=oiplot_colors[i],color=oiplot_colors[i],markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline)
             if axiscount==0
                 if (length(unique(baseline_list)))==15
-                    ax.legend(bbox_to_anchor=[0.925,1.0],loc=2,borderaxespad=0)
+                    ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
                     testaxis=1
                 end
             end

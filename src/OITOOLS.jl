@@ -24,7 +24,7 @@ export make_spot_move,place_spot,make_disk
 export setup_nfft_t4, cvis_to_t4
 export model_chi2_v2,chi2_sparco_nfft_f,chi2_sparco_nfft_f_alt, chi2_sparco_nfft_fg,reconstruct_sparco_gray
 export facility_info, obsv_info, combiner_info, wave_info, error_struct
-export hours_to_date, sunrise_sunset, hour_angle_calc, mjd_to_utc,dates_to_jd,jd_to_hour_angle,opd_limits,alt_az,geometric_delay,cart_delay
+export hours_to_date, sunrise_sunset, hour_angle_calc, mjd_to_utdate,dates_to_jd,jd_to_hour_angle,opd_limits,alt_az,geometric_delay,cart_delay
 export query_target_from_simbad, ra_dec_from_simbad, get_baselines
 export gantt_onenight
 end
