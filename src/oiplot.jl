@@ -600,6 +600,8 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
     global clickbase=Array{Int64,2}
     global clickname=[]
     global clickmjd=[]
+    global clicklam=[]
+    global clickdlam=[]
     global clickfile=[]
     axiscount=0
     testaxis=0
@@ -632,6 +634,8 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
             end
             clickname=vcat(clickname,data[i].sta_name)
             clickmjd=vcat(clickmjd,data[i].v2_mjd)
+            clicklam=vcat(clicklam,data[i].v2_lam)
+            clickdlam=vcat(clickdlam,data[i].v2_dlam)
             basearray=Array{String,1}(undef,data[i].nv2)
             basearray[1:data[i].nv2].=data[i].filename
             if i==1
