@@ -7,8 +7,9 @@ using OITOOLS
 
 oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
-#uvplot(data)
-#v2plot(data,logplot=true);
+uvplot(data)
+uvplot(data, bywavelength=true)
+v2plot(data,logplot=true);
 #t3phiplot(data);
 
 # Example of visibilities, here for Hestroffer with limb-darkening parameter 0.1

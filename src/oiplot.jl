@@ -120,7 +120,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     markeredgewidth=0.1
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
-    axis("equal")
+    ax.set_aspect("equal")
     scatter(u, v,alpha=1.0, s = 12.0,color="Black")
     scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
     title("UV coverage")
@@ -148,7 +148,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     markeredgewidth=0.1
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
-    axis("equal")
+    ax.set_aspect("equal")
 
     if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
@@ -164,9 +164,9 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
             scatter(-u, -v, alpha=1.0, s=12.0, color=oiplot_colors[i])
         end
         if legend_below == false
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3,loc="best")
+            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=3,loc="best")
         else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
             tight_layout();
         end
     elseif bywavelength== true
@@ -175,9 +175,13 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
         wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
         scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
         scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
-        cbar = colorbar(aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.08, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
-        cbar.set_ticks(cbar_range)
+        #divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
+        #cax = divider.append_axes("bottom", size="5%", pad=0.05)
+        cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
+        #cbar = colorbar(ax=cax, aspect=1, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.05)
+        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol),length=11))*100)/100
+        cbar.set_ticks(reverse(cbar_range))
+        cbar.set_ticklabels(cbar_range)
     else
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
@@ -188,10 +192,10 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
-    tight_layout();
     if filename !=""
         savefig(filename)
     end
+    tight_layout();
     show(block=false)
 end
 
