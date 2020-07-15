@@ -351,7 +351,6 @@ function crit_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, fftplan::Array{NF
     return chi2_f + reg_f;
 end
 
-
 function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata; printcolor =:black, verb=true)
     flux = sum(x);
     cvis_model = image_to_cvis_dft(x, dft);
