@@ -5,6 +5,7 @@
 # gather common display tasks
 using PyPlot,PyCall, LaTeXStrings, Statistics
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
+PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
@@ -178,10 +179,16 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
         #divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
         #cax = divider.append_axes("bottom", size="5%", pad=0.05)
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
-        #cbar = colorbar(ax=cax, aspect=1, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol),length=11))*100)/100
-        cbar.set_ticks(reverse(cbar_range))
-        cbar.set_ticklabels(cbar_range)
+        wavs=unique(wavcol)
+        cbar.ax.invert_xaxis()
+        if length(wavs)<10
+            cbar.set_ticks(round.(sort(wavs)*100)/100)
+            cbar.set_ticklabels(round.(sort(wavs)*100)/100)
+        else
+            cbar_range = round.(collect(range(minimum(wavcol), maximum(wavcol),length=11))*100)/100
+            cbar.set_ticks(cbar_range)
+            cbar.set_ticklabels(cbar_range)
+        end
     else
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
