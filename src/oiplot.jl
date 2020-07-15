@@ -235,10 +235,9 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
     # Compute model curve (continous)
     r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
-    xrange = range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000);
-    cvis_func = visfunc(params,xrange);
+    xrange = collect(range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000));
+    cvis_func = visfunc(params, xrange);
     v2_func = abs2.(cvis_func);
-
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
     subplot(211)
