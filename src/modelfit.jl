@@ -146,5 +146,7 @@ data_out.v2_mjd  = data_input.v2_mjd[indx_resampling]
 data_out.v2_lam  = data_input.v2_lam[indx_resampling]
 data_out.v2_dlam = data_input.v2_dlam[indx_resampling]
 data_out.v2_flag = data_input.v2_flag[indx_resampling]
+data_out.v2_sta_index = data_input.v2_sta_index[:,indx_resampling]
+data_out.indx_v2= data_input.indx_v2[indx_resampling]
 return data_out
 end
