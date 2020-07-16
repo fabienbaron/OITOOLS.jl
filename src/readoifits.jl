@@ -751,8 +751,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     vis_flag = fill((Bool[]),nwavbin,ntimebin);
     vis_uv = fill((vcat(Float64[]',Float64[]')),nwavbin,ntimebin);
     vis_baseline = fill((Float64[]),nwavbin,ntimebin);
-    indx_vis = Array{Array{Int64,1}}(undef,nwavbin,ntimebin);
-
+    indx_vis = fill(Int64[],nwavbin,ntimebin);
 
     nv2 = zeros(Int64,nwavbin,ntimebin);
     v2_sta_index=fill((vcat(Int64[]',Int64[]')),nwavbin,ntimebin);
