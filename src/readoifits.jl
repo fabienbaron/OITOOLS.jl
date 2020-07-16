@@ -839,7 +839,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                     bin_t4 = Bool.(ones(length(t4amp_all)))
                 end
             end
-
+            if use_vis
             visamp[iwavbin,itimebin] = visamp_all[bin_vis];
             visamp_err[iwavbin,itimebin] = visamp_err_all[bin_vis];
             visphi[iwavbin,itimebin] = visphi_all[bin_vis];
@@ -848,14 +848,13 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             vis_lam[iwavbin,itimebin] = vis_lam_all[bin_vis];
             vis_dlam[iwavbin,itimebin] = vis_dlam_all[bin_vis];
             vis_flag[iwavbin,itimebin] = vis_flag_all[bin_vis];
-            if use_vis
-                vis_uv[iwavbin,itimebin] = hcat(vis_uv_all[bin_vis,1],vis_uv_all[bin_vis,2])';
-                vis_sta_index[iwavbin,itimebin]= vis_sta_index_all[:,bin_vis];
-            end
+            vis_uv[iwavbin,itimebin] = hcat(vis_uv_all[bin_vis,1],vis_uv_all[bin_vis,2])';
+            vis_sta_index[iwavbin,itimebin]= vis_sta_index_all[:,bin_vis];
             vis_baseline[iwavbin,itimebin] = vis_baseline_all[bin_vis];
             nvisamp[iwavbin,itimebin] = length(visamp[iwavbin,itimebin]);
             nvisphi[iwavbin,itimebin] = length(visphi[iwavbin,itimebin]);
             indx_vis[iwavbin,itimebin] = collect(1:nvisamp[iwavbin,itimebin]);
+            end
 
             if use_v2
             v2[iwavbin,itimebin] = v2_all[bin_v2];
@@ -932,6 +931,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             #
             if (filter_bad_data==true) # TODO: move out and make its own function
 
+                if use_vis
                 visamp_good =  (.!isnan.(visamp[iwavbin,itimebin] )) .& (.!isnan.(visamp_err[iwavbin,itimebin] )) .& (visamp_err[iwavbin,itimebin].>0.0)
                 visphi_good =  (.!isnan.(visphi[iwavbin,itimebin] ) ).& (.!isnan.(visphi_err[iwavbin,itimebin] )) .& (visphi_err[iwavbin,itimebin].>0.0)
 
@@ -954,6 +954,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 vis_dlam[iwavbin,itimebin]      = vis_dlam[iwavbin,itimebin][vis_good];
                 vis_flag[iwavbin,itimebin]      = vis_flag[iwavbin,itimebin][vis_good];
                 vis_sta_index[iwavbin,itimebin] = vis_sta_index[iwavbin,itimebin][:,vis_good];
+                end
 
                 if use_v2
                 # Filter OBVIOUSLY bad V2 data
@@ -1040,7 +1041,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 # uv points filtering
                 uv_select  = Array{Bool}(undef, size(uv[iwavbin,itimebin],2))
                 uv_select[:]  .= false;
+                if use_vis
                 uv_select[good_uv_vis] .= true
+                end
                 if use_v2
                 uv_select[good_uv_v2] .= true
                 end
