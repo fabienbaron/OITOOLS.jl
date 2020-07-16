@@ -537,64 +537,46 @@ end
 
 
 
-function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",markopt=false, legend_below=false, filename="")
     #
     # Note: this is a special kind of plot, which doesn't follow the classic plotting recipe
     #
     if typeof(data)==OIdata
         data = [data]
     end
-    if bywavelength==true
-        bybaseline=false
-    end
-    fig = figure("Differential phase data",figsize=(10,5),facecolor="White");
+        fig = figure("Differential phase data",figsize=(10,5),facecolor="White");
     clf();
     ax=gca();
-    if bybaseline == true
         baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_vis...)))
         # Creating one subplot for each baseline
-        rows = div(length(baseline),2)
-        cols = 2
+        rows = length(baseline)
+        cols = 1
         subplots_adjust(hspace=0.0)
         axes = Array{PyObject,1}(undef, length(baseline))
         for i=1:length(baseline)
-            if i<3
-                fig.add_subplot(rows,cols,i)
+            if i>1
+                fig.add_subplot(rows,cols,i, sharex = axes[1])
             else
-                fig.add_subplot(rows,cols,i, sharex = axes[2-mod(i,2)])
+                fig.add_subplot(rows,cols,i)
             end
+
             axes[i] = gca();
-            setp(axes[i].get_xticklabels(),visible=false)
+            if i>2
+                setp(axes[i].get_xticklabels(),visible=false)
+            end
             title(baseline[i])
             loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
             baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
-            wavcol = vcat([data[n].uv_lam[data[n].indx_vis[loc[n]]]*1e6 for n=1:length(data)]...)
+            wavcol = vcat([data[n].uv_lam[data[n].indx_vis[loc[n]]]*1e9 for n=1:length(data)]...)
             visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
             visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
             errorbar(wavcol,visphi,yerr=visphi_err,fmt="o",markersize=0.5,ecolor="Gainsboro",elinewidth=.5)
-            xlabel(L"Wavelength")
+            xlabel("λ (nm)")
             ylabel("Diff phase (°)")
             grid(true,which="both",color="LightGrey",linestyle=":")
         end
-
-        if legend_below == false
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
-        else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
-        end
-    elseif bywavelength == true
-        wavcol = vcat([data[n].uv_lam[data[n].indx_vis]*1e6 for n=1:length(data)]...)
-        baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
-        visphi = vcat([data[n].visphi for n=1:length(data)]...);
-        visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
-        sc = scatter(baseline_vis, visphi, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
-        el = errorbar(baseline_vis, visphi,yerr=visphi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
-        cbar.set_ticks(cbar_range)
-    end
-    suptitle("Differential phase phase data")
+        title("Differential phase phase data")
     tight_layout()
     if filename !=""
         savefig(filename)
