@@ -112,7 +112,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
-    #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true
+    #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true; cutoff_minv2 = -1; cutoff_maxv2 = 2.0; cutoff_mint3amp = -1.0; cutoff_maxt3amp = 1.5;
     if !isfile(oifitsfile)
         @error("readoifits could not locate the requested data file -- please check path\n")
         return [[]];
@@ -129,6 +129,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     # In case there are multiple targets per file (NPOI, some old MIRC), select only the wanted data
     targetid_filter = [];
     targettables = OIFITS.select(tables, "OI_TARGET");
+    if minimum(vcat([targettables[i].target_id for i=1:length(targettables)]...)) == 0
+        @warn("This file does not follow the oifits standard - target indexing should start at 1, not 0.")
+    end
+
     if(targetname !="")
         if length(targettables)>1
             error("The OIFITS file has several target tables -- import not implemented yet for this case");
@@ -137,7 +141,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
         targetid_filter = targettables.target_id[findall(targettables.target .==targetname)]; # match target ids to target name
     else # we select everything = all target tables and all targets in these
-
         targetid_filter = unique(vcat([targettables[i].target_id for i=1:length(targettables)]...));
     end
 
@@ -208,7 +211,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     station_index_offset = 0
     if minimum(vcat(station_index...)) == 0  #determine if compliant with OIFITS format (min index = 1,not 0)
-        @warn("This file does not follow the oifits standard - station indexing should start at 1, not zero")
+        @warn("This file does not follow the oifits standard - station indexing should start at 1, not 0.")
         station_index_offset = 1
     end
 
@@ -427,6 +430,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         v2_baseline_old[itable] = vec(sqrt.(v2_u_old[itable].^2 + v2_v_old[itable].^2));
     end
 
+    if use_t3
     # same with T3, VIS
     # Get T3 data from tables
     t3amp_old = Array{Array{Float64,2}}(undef,t3_ntables);
@@ -495,7 +499,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         t3_baseline_old[itable] = vec((sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2).*sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2).*
         sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)).^(1.0/3.0));
         t3_maxbaseline_old[itable] = vec(max.(sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2), sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2), sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)));
-
+    end
     end
 
     if use_t4 == true
@@ -605,6 +609,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     v2_baseline_all = tablemerge(v2_baseline_old);
     v2_sta_index_all= hcat([ reshape(v2_sta_index_old[i], 2, div(length(v2_sta_index_old[i]), 2)) for i=1:length(v2_sta_index_old) ]...)
 
+    if use_t3 ==true
     t3amp_all = tablemerge(t3amp_old);
     t3amp_err_all = tablemerge(t3amp_err_old);
     t3phi_all = tablemerge(t3phi_old);
@@ -623,6 +628,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t3_maxbaseline_all = tablemerge(t3_maxbaseline_old);
     t3_sta_index_all= hcat([ reshape(t3_sta_index_old[i], 3, div(length(t3_sta_index_old[i]), 3)) for i=1:length(t3_sta_index_old) ]...)
     t3_uv_all = cat(hcat(t3_u1_all, t3_v1_all), hcat(t3_u2_all, t3_v2_all),hcat(t3_u3_all, t3_v3_all), dims=3);
+    end
 
     if use_t4 == true
         t4amp_all = tablemerge(t4amp_old);
@@ -714,7 +720,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     indx_vis = Array{Array{Int64,1}}(undef,nwavbin,ntimebin);
 
 
-    nv2 = Array{Int64}(undef,nwavbin,ntimebin);
+    nv2 = zeros(Int64,nwavbin,ntimebin);
     v2_sta_index=fill((vcat(Int64[]',Int64[]')),nwavbin,ntimebin);
     v2 = fill((Float64[]),nwavbin,ntimebin);
     v2_err = fill((Float64[]),nwavbin,ntimebin);
@@ -726,8 +732,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     v2_baseline = fill((Float64[]),nwavbin,ntimebin);
     indx_v2 = Array{Array{Int64,1}}(undef,nwavbin,ntimebin);
 
-    nt3amp = Array{Int64}(undef,nwavbin,ntimebin);
-    nt3phi = Array{Int64}(undef,nwavbin,ntimebin);
+
+    nt3amp = zeros(Int64,nwavbin,ntimebin);
+    nt3phi = zeros(Int64,nwavbin,ntimebin);
     t3amp = fill((Float64[]),nwavbin,ntimebin);
     t3amp_err = fill((Float64[]),nwavbin,ntimebin);
     t3phi = fill((Float64[]),nwavbin,ntimebin);
@@ -739,13 +746,14 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t3_uv = fill((vcat(Float64[]',Float64[]')),nwavbin,ntimebin);
     t3_baseline = fill((Float64[]),nwavbin,ntimebin);
     t3_maxbaseline = fill((Float64[]),nwavbin,ntimebin);
-    indx_t3_1 = Array{Array{Int64,1}}(undef,nwavbin,ntimebin);
-    indx_t3_2 = Array{Array{Int64,1}}(undef,nwavbin,ntimebin);
-    indx_t3_3 = Array{Array{Int64,1}}(undef,nwavbin,ntimebin);
+    indx_t3_1 = fill(Int64[],nwavbin,ntimebin);
+    indx_t3_2 = fill(Int64[],nwavbin,ntimebin);
+    indx_t3_3 = fill(Int64[],nwavbin,ntimebin);
+
     t3_sta_index=fill((vcat(Int64[]',Int64[]',Int64[]')),nwavbin,ntimebin);
 
-    nt4amp = Array{Int64}(undef, nwavbin,ntimebin);
-    nt4phi = Array{Int64}(undef, nwavbin,ntimebin);
+    nt4amp = zeros(Int64, nwavbin,ntimebin);
+    nt4phi = zeros(Int64, nwavbin,ntimebin);
     t4amp = fill((Float64[]),nwavbin,ntimebin);
     t4amp_err = fill((Float64[]),nwavbin,ntimebin);
     t4phi = fill((Float64[]),nwavbin,ntimebin);
@@ -760,7 +768,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     indx_t4_1 = fill(Int64[],nwavbin,ntimebin);
     indx_t4_2 = fill(Int64[],nwavbin,ntimebin);
     indx_t4_3 = fill(Int64[],nwavbin,ntimebin);
-    indx_t4_4 = fill(Int64[], nwavbin,ntimebin);
+    indx_t4_4 = fill(Int64[],nwavbin,ntimebin);
     t4_sta_index=fill((vcat(Int64[]',Int64[]',Int64[]',Int64[]')),nwavbin,ntimebin);
 
     # New iteration for splitting data
@@ -775,14 +783,18 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             if splitting == true
                 bin_vis = (vis_mjd_all.<=temporalbin[itimebin][2]).&(vis_mjd_all.>=temporalbin[itimebin][1]).&(vis_lam_all.<=spectralbin[iwavbin][2]).&(vis_lam_all.>=spectralbin[iwavbin][1]);
                 bin_v2 = (v2_mjd_all.<=temporalbin[itimebin][2]).&(v2_mjd_all.>=temporalbin[itimebin][1]).&(v2_lam_all.<=spectralbin[iwavbin][2]).&(v2_lam_all.>=spectralbin[iwavbin][1]);
-                bin_t3 = (t3_mjd_all.<=temporalbin[itimebin][2]).&(t3_mjd_all.>=temporalbin[itimebin][1]).&(t3_lam_all.<=spectralbin[iwavbin][2]).&(t3_lam_all.>=spectralbin[iwavbin][1]);
+                if use_t3
+                    bin_t3 = (t3_mjd_all.<=temporalbin[itimebin][2]).&(t3_mjd_all.>=temporalbin[itimebin][1]).&(t3_lam_all.<=spectralbin[iwavbin][2]).&(t3_lam_all.>=spectralbin[iwavbin][1]);
+                end
                 if use_t4
                     bin_t4 = (t4_mjd_all.<=temporalbin[itimebin][2]).&(t4_mjd_all.>=temporalbin[itimebin][1]).&(t4_lam_all.<=spectralbin[iwavbin][2]).&(t4_lam_all.>=spectralbin[iwavbin][1]);
                 end
             else # select all
                 bin_vis = Bool.(ones(length(visphi_all)))
                 bin_v2 = Bool.(ones(length(v2_all)))
-                bin_t3 = Bool.(ones(length(t3phi_all)))
+                if use_t3
+                    bin_t3 = Bool.(ones(length(t3phi_all)))
+                end
                 if use_t4
                     bin_t4 = Bool.(ones(length(t4amp_all)))
                 end
@@ -818,7 +830,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             nv2[iwavbin,itimebin] = length(v2[iwavbin,itimebin]);
             indx_v2[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin].+(1:nv2[iwavbin,itimebin]));
 
-
+            if use_t3 == true
             t3amp[iwavbin,itimebin] = t3amp_all[bin_t3];
             t3amp_err[iwavbin,itimebin] = t3amp_err_all[bin_t3];
             t3phi[iwavbin,itimebin] = t3phi_all[bin_t3];
@@ -836,7 +848,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             indx_t3_1[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin].+(1:nt3amp[iwavbin,itimebin]));
             indx_t3_2[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin].+(nt3amp[iwavbin,itimebin]+1:2*nt3amp[iwavbin,itimebin]));
             indx_t3_3[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin].+(2*nt3amp[iwavbin,itimebin]+1:3*nt3amp[iwavbin,itimebin]));
-
+            end
 
             if use_t4 == true
                 t4amp[iwavbin,itimebin] = t4amp_all[bin_t4];
@@ -921,10 +933,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 v2_flag[iwavbin,itimebin]       = v2_flag[iwavbin,itimebin][v2_good]
                 v2_sta_index[iwavbin,itimebin]  = v2_sta_index[iwavbin,itimebin][:,v2_good]
 
+
+
+
+                if use_t3 == true
                 t3amp_good =  (.!isnan.(t3amp[iwavbin,itimebin] )) .& (.!isnan.(t3amp_err[iwavbin,itimebin] )) .& (t3amp_err[iwavbin,itimebin].>0.0)
                 t3phi_good =  (.!isnan.(t3phi[iwavbin,itimebin] )) .& (.!isnan.(t3phi_err[iwavbin,itimebin] )) .& (t3phi_err[iwavbin,itimebin].>0.0)
-                t4amp_good =  (.!isnan.(t4amp[iwavbin,itimebin] )) .& (.!isnan.(t4amp_err[iwavbin,itimebin] )) .& (t4amp_err[iwavbin,itimebin].>0.0)
-                t4phi_good =  (.!isnan.(t4phi[iwavbin,itimebin] )) .& (.!isnan.(t4phi_err[iwavbin,itimebin] )) .& (t4phi_err[iwavbin,itimebin].>0.0)
 
                 #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
                 t3_good = []
@@ -949,7 +963,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 t3_dlam[iwavbin,itimebin] = t3_dlam[iwavbin,itimebin][t3_good]
                 t3_flag[iwavbin,itimebin] = t3_flag[iwavbin,itimebin][t3_good]
                 t3_sta_index[iwavbin,itimebin] = t3_sta_index[iwavbin,itimebin][:,t3_good]
+                end
 
+                if use_t4 == true
+                t4amp_good =  (.!isnan.(t4amp[iwavbin,itimebin] )) .& (.!isnan.(t4amp_err[iwavbin,itimebin] )) .& (t4amp_err[iwavbin,itimebin].>0.0)
+                t4phi_good =  (.!isnan.(t4phi[iwavbin,itimebin] )) .& (.!isnan.(t4phi_err[iwavbin,itimebin] )) .& (t4phi_err[iwavbin,itimebin].>0.0)
                 # t4_good = []
                 force_full_t4 = true;
                 if force_full_t4 == false
@@ -975,20 +993,24 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 t4_dlam[iwavbin,itimebin]       = t4_dlam[iwavbin,itimebin][t4_good]
                 t4_flag[iwavbin,itimebin]       = t4_flag[iwavbin,itimebin][t4_good]
                 t4_sta_index[iwavbin,itimebin]  = t4_sta_index[iwavbin,itimebin][:,t4_good]
+                end
 
                 # uv points filtering
                 uv_select  = Array{Bool}(undef, size(uv[iwavbin,itimebin],2))
                 uv_select[:]  .= false;
                 uv_select[good_uv_vis] .= true
                 uv_select[good_uv_v2] .= true
+                if use_t3==true
                 uv_select[good_uv_t3_1] .= true
                 uv_select[good_uv_t3_2] .= true
                 uv_select[good_uv_t3_3] .= true
+                end
+                if use_t4 == true
                 uv_select[good_uv_t4_1] .= true
                 uv_select[good_uv_t4_2] .= true
                 uv_select[good_uv_t4_3] .= true
                 uv_select[good_uv_t4_4] .= true
-
+                end
                 #indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)] # Performance pitfall
                 indx_conv = Array{Int64}(undef, length(uv_select))
                 acc = 0;
@@ -1009,13 +1031,17 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
                 indx_vis[iwavbin,itimebin]  = indx_conv[good_uv_vis]
                 indx_v2[iwavbin,itimebin]   = indx_conv[good_uv_v2]
+                if use_t3 == true
                 indx_t3_1[iwavbin,itimebin] = indx_conv[good_uv_t3_1]
                 indx_t3_2[iwavbin,itimebin] = indx_conv[good_uv_t3_2]
                 indx_t3_3[iwavbin,itimebin] = indx_conv[good_uv_t3_3]
+                end
+                if use_t4 == true
                 indx_t4_1[iwavbin,itimebin] = indx_conv[good_uv_t4_1]
                 indx_t4_2[iwavbin,itimebin] = indx_conv[good_uv_t4_2]
                 indx_t4_3[iwavbin,itimebin] = indx_conv[good_uv_t4_3]
                 indx_t4_4[iwavbin,itimebin] = indx_conv[good_uv_t4_4]
+                end
             end
 
 
@@ -1030,9 +1056,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 nuv[iwavbin,itimebin] = size(uv[iwavbin,itimebin],2);
                 indx_vis[iwavbin,itimebin] = indx_red_conv[indx_vis[iwavbin,itimebin]];
                 indx_v2[iwavbin,itimebin] = indx_red_conv[indx_v2[iwavbin,itimebin]];
-                indx_t3_1[iwavbin,itimebin] = indx_red_conv[indx_t3_1[iwavbin,itimebin]];
-                indx_t3_2[iwavbin,itimebin] = indx_red_conv[indx_t3_2[iwavbin,itimebin]];
-                indx_t3_3[iwavbin,itimebin] = indx_red_conv[indx_t3_3[iwavbin,itimebin]];
+
+                if use_t3 == true
+                    indx_t3_1[iwavbin,itimebin] = indx_red_conv[indx_t3_1[iwavbin,itimebin]];
+                    indx_t3_2[iwavbin,itimebin] = indx_red_conv[indx_t3_2[iwavbin,itimebin]];
+                    indx_t3_3[iwavbin,itimebin] = indx_red_conv[indx_t3_3[iwavbin,itimebin]];
+                end
                 if use_t4 == true
                     indx_t4_1[iwavbin,itimebin] = indx_red_conv[indx_t4_1[iwavbin,itimebin]];
                     indx_t4_2[iwavbin,itimebin] = indx_red_conv[indx_t4_2[iwavbin,itimebin]];
