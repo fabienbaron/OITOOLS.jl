@@ -1075,8 +1075,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 uv_mjd[iwavbin,itimebin] = uv_mjd[iwavbin,itimebin][indx_uv_sel]
                 uv_baseline[iwavbin,itimebin] = uv_baseline[iwavbin,itimebin][indx_uv_sel]
                 nuv[iwavbin,itimebin] = size(uv[iwavbin,itimebin],2)
-
+                if use_vis
                 indx_vis[iwavbin,itimebin]  = indx_conv[good_uv_vis]
+                end
                 if use_v2
                 indx_v2[iwavbin,itimebin]   = indx_conv[good_uv_v2]
                 end
