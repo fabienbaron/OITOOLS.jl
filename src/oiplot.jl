@@ -149,7 +149,6 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     markeredgewidth=0.1
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
-    ax.set_aspect("equal")
 
     if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
@@ -199,6 +198,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    ax.set_aspect("equal")
     if filename !=""
         savefig(filename)
     end

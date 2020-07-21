@@ -1,6 +1,10 @@
+#
+# This helps run Multinest with OITOOLS
+#
+
 module MultiNest
 import Base: run
-import Libdl  
+import Libdl
 export nested
 
 # find the symbol to invoke MultiNest
