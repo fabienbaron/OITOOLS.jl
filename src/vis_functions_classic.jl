@@ -7,18 +7,15 @@ using SpecialFunctions
 #param  : model parameter
 #param[1] = diameter in mas
 #ρ = radius in uv space
-function visibility_ud(param, uv::Array{Float64,2};tol=1e-14)
+function visibility_ud(param, uv::Array{Float64,2})
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
 t = param[1]/2.0626480624709636e8*pi*ρ;
 V = 2.0*besselj1.(t)./t
-indx= findall(abs.(t).<tol)
-if indx !=[]
-    V[indx].=1.0;
-end
+V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
-function dvisibility_ud(param, uv::Array{Float64,2};tol=1e-14)
+function dvisibility_ud(param, uv::Array{Float64,2})
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
 dt_dp = pi*ρ/2.0626480624709636e8
 t= param[1]*dt_dp
@@ -32,10 +29,7 @@ function visibility_ellipse_uniform(param, uv::Array{Float64,2}) # i: inclinatio
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
 t = param[1]/2.0626480624709636e8*pi*ρ;
 V = 2.0*besselj1.(t)./t
-indx= findall(abs.(t).<tol)
-if indx !=[]
-    V[indx].=1.0;
-end
+V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
@@ -49,6 +43,8 @@ zeta = (pi*ρ*theta);
 V = ((1.0-param[2]-param[3])*(besselj1.(zeta)./zeta)+((theta+2*param[3])/sqrt(2/pi))*(
 (sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2))-2*param[3]*
 (besselj.(2, zeta)./zeta.^2))./(0.5-param[2]/6-param[3]/12)
+indx= findall(abs.(zeta).<tol) #get rid of possible nan
+V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
@@ -101,17 +97,14 @@ end
 #
 # Overloaded functions of ρ
 #
-function visibility_ud(param, ρ::Array{Float64,1};tol=1e-14)
+function visibility_ud(param, ρ::Array{Float64,1})
 t = param[1]/2.0626480624709636e8*pi*ρ;
 V = 2.0*besselj1.(t)./t
-indx= findall(abs.(t).<tol)
-if indx !=[]
-    V[indx].=1.0;
-end
+V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
-function dvisibility_ud(param, ρ::Array{Float64,1};tol=1e-14)
+function dvisibility_ud(param, ρ::Array{Float64,1})
 dt_dp = pi*ρ/2.0626480624709636e8
 t= param[1]*dt_dp
 dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2
