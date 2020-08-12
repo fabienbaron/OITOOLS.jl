@@ -9,7 +9,7 @@ ENV["MPLBACKEND"]="qt5agg"
 before proceeding with the following package installation.
 Use the package manager (```]``` key) then do:
 
-``` add PyCall PyPlot LaTeXStrings FITSIO Libdl NLopt NFFT SpecialFunctions NearestNeighbors https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayTools.jl.git https://github.com/emmt/LazyAlgebra.jl.git https://github.com/emmt/OptimPackNextGen.jl.git https://github.com/fabienbaron/OITOOLS.jl.git```
+``` add PyCall PyPlot LaTeXStrings CFITSIO FITSIO Libdl NLopt NFFT SpecialFunctions NearestNeighbors https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayTools.jl.git https://github.com/emmt/LazyAlgebra.jl.git https://github.com/emmt/OptimPackNextGen.jl.git https://github.com/fabienbaron/OITOOLS.jl.git```
 
 !!! info
 

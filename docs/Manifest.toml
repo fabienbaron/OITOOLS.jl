@@ -7,7 +7,7 @@ uuid = "621f4979-c628-5d54-868e-fcf4e3e8185c"
 version = "0.5.0"
 
 [[ArrayTools]]
-git-tree-sha1 = "60b7975925edd5a9703e98e7ce435ea09e93ecf4"
+git-tree-sha1 = "6c8d1e1807262c920c82d02564c25969fdbbc5c9"
 repo-rev = "master"
 repo-url = "https://github.com/emmt/ArrayTools.jl.git"
 uuid = "1dc0ca97-c5ce-4e77-ac6d-c576ac9d7f27"
@@ -27,6 +27,18 @@ deps = ["Libdl", "SHA"]
 git-tree-sha1 = "5b08ed6036d9d3f0ee6369410b830f8873d4024c"
 uuid = "b99e7846-7c00-51b0-8f62-c81ae34c0232"
 version = "0.5.8"
+
+[[CFITSIO]]
+deps = ["CFITSIO_jll"]
+git-tree-sha1 = "6365034fd46c45de7c1329a380759940f769787a"
+uuid = "3b1b4be9-1499-4b22-8d78-7db3344d1961"
+version = "1.0.0"
+
+[[CFITSIO_jll]]
+deps = ["LibCURL_jll", "Libdl", "Pkg"]
+git-tree-sha1 = "262a3a9ab0b4f03efb57f58b20cbca8b47ab6af9"
+uuid = "b3e40c51-02ae-5482-8a39-3ace5868dcf4"
+version = "3.48.0+0"
 
 [[CMake]]
 deps = ["BinDeps"]
@@ -57,6 +69,12 @@ deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", 
 git-tree-sha1 = "ed2c4abadf84c53d9e58510b5fc48912c2336fbb"
 uuid = "34da2185-b29b-5c13-b0c7-acf172513d20"
 version = "2.2.0"
+
+[[CompilerSupportLibraries_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "7c4f882c41faa72118841185afc58a2eb00ef612"
+uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
+version = "0.3.3+0"
 
 [[Conda]]
 deps = ["JSON", "VersionParsing"]
@@ -144,14 +162,27 @@ version = "1.0.3"
 
 [[LazyAlgebra]]
 deps = ["AbstractFFTs", "ArrayTools", "FFTW", "LinearAlgebra", "Printf", "SparseArrays"]
-git-tree-sha1 = "dfe6e7cacfca2028027dc5e21d31d794e8de647f"
+git-tree-sha1 = "7b34932d77d5ed501e14a10f3d1dc84dfa638e72"
 repo-rev = "master"
 repo-url = "https://github.com/emmt/LazyAlgebra.jl.git"
 uuid = "aeaa251e-9d76-11e9-311b-83636bf44738"
 version = "0.1.0"
 
+[[LibCURL_jll]]
+deps = ["LibSSH2_jll", "Libdl", "MbedTLS_jll", "Pkg", "Zlib_jll", "nghttp2_jll"]
+git-tree-sha1 = "388cfc6274cb2a096fa62c6433c9369167d6d0c1"
+uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
+version = "7.71.1+0"
+
 [[LibGit2]]
+deps = ["Printf"]
 uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
+
+[[LibSSH2_jll]]
+deps = ["Libdl", "MbedTLS_jll", "Pkg"]
+git-tree-sha1 = "717705533148132e5466f2924b9a3657b16158e8"
+uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
+version = "1.9.0+3"
 
 [[Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -179,6 +210,12 @@ git-tree-sha1 = "3bf2e534e635df810e5f4b4f1a8b6de9004a0d53"
 uuid = "fdba3010-5040-5b88-9595-932c9decdf73"
 version = "0.7.7"
 
+[[MbedTLS_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "a0cb0d489819fa7ea5f9fa84c7e7eba19d8073af"
+uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
+version = "2.16.6+1"
+
 [[Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 
@@ -201,26 +238,40 @@ uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 version = "0.4.4"
 
 [[OIFITS]]
-deps = ["Compat", "FITSIO"]
-git-tree-sha1 = "19e5baa49adf9a60594b98795d8bbb5b74d8408f"
+deps = ["CFITSIO", "Compat", "FITSIO"]
+git-tree-sha1 = "95abd96d15aeeca6ea50d5bd55981666eded5521"
 repo-rev = "t4"
 repo-url = "https://github.com/fabienbaron/OIFITS.jl"
 uuid = "53eb397e-dec1-5dcf-8dc9-2db916067267"
-version = "0.4.0+"
+version = "0.4.0"
+
+[[OITOOLS]]
+deps = ["ArrayTools", "Dates", "DelimitedFiles", "Documenter", "DocumenterTools", "FITSIO", "LaTeXStrings", "LazyAlgebra", "Libdl", "LinearAlgebra", "NFFT", "NLopt", "NearestNeighbors", "OIFITS", "OptimPackNextGen", "Pkg", "PyCall", "PyPlot", "Random", "SparseArrays", "SpecialFunctions", "Statistics"]
+git-tree-sha1 = "75ddc3c29d8877ce59e836c51e87b24cad8b4867"
+repo-rev = "master"
+repo-url = "https://github.com/fabienbaron/OITOOLS.jl.git"
+uuid = "58da1ff6-845a-519d-b3ee-ddbcc77dda80"
+version = "0.5.1"
 
 [[OpenSpecFun_jll]]
-deps = ["Libdl", "Pkg"]
-git-tree-sha1 = "65f672edebf3f4e613ddf37db9dcbd7a407e5e90"
+deps = ["CompilerSupportLibraries_jll", "Libdl", "Pkg"]
+git-tree-sha1 = "d51c416559217d974a1113522d5919235ae67a87"
 uuid = "efe28fd5-8261-553b-a9e1-b2916fc3738e"
-version = "0.5.3+1"
+version = "0.5.3+3"
 
 [[OptimPackNextGen]]
-deps = ["ArrayTools", "BinDeps", "LazyAlgebra", "Libdl", "LinearAlgebra", "Printf"]
-git-tree-sha1 = "79eb075c200eca4b57a8d041b2dc064671cce69a"
+deps = ["ArrayTools", "BinDeps", "LazyAlgebra", "LinearAlgebra", "OptimPack_jll", "Printf"]
+git-tree-sha1 = "e7db23b0c3fef47a7281215fd1990d9e94f8ad63"
 repo-rev = "master"
 repo-url = "https://github.com/emmt/OptimPackNextGen.jl.git"
 uuid = "080ffe24-4a27-4ab0-ad71-7b624e73ef8d"
 version = "0.1.0"
+
+[[OptimPack_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "a1a1ecffa48e2056ec89ded8c91e104fadab945f"
+uuid = "8115cc2e-fb29-5d71-b5cb-a4fb1c5dcd4c"
+version = "3.1.0+0"
 
 [[OrderedCollections]]
 deps = ["Random", "Serialization", "Test"]
@@ -335,3 +386,15 @@ deps = ["Compat"]
 git-tree-sha1 = "c9d5aa108588b978bd859554660c8a5c4f2f7669"
 uuid = "81def892-9a0e-5fdd-b105-ffc91e053289"
 version = "1.1.3"
+
+[[Zlib_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "d5bba6485811931e4b8958e2d7ca3738273ac468"
+uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
+version = "1.2.11+15"
+
+[[nghttp2_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "8e2c44ab4d49ad9518f359ed8b62f83ba8beede4"
+uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
+version = "1.40.0+2"
