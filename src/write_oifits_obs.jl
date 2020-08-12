@@ -1,4 +1,4 @@
-using FITSIO.Libcfitsio;
+using CFITSIO;
 using OIFITS;
 using Dates;
 #=
@@ -226,9 +226,9 @@ function copy_oi_wavelength(fileout,hduin,arrays)
 
   #=OIFITS2 STUFF
   CHECK REVISION? if (wave.revision != revision) { printf("WARNING! wave.revision != %d on entry to %s. ""Writing revision %d table\n", revision, function, revision);}
-  FITSIO.Libcfitsio.fits_write_key(fout,"OI_REVN", revision,"Revision number of the table definition");
-  FITSIO.Libcfitsio.fits_write_key(fout, "INSNAME", wave.insname,"Detector name");
-  FITSIO.Libcfitsio.fits_write_key(fout,"EXTVER",extver,"ID number of this OI_WAVELENGTH"); #Normally 1 it seems
+  CFITSIO.fits_write_key(fout,"OI_REVN", revision,"Revision number of the table definition");
+  CFITSIO.fits_write_key(fout, "INSNAME", wave.insname,"Detector name");
+  CFITSIO.fits_write_key(fout,"EXTVER",extver,"ID number of this OI_WAVELENGTH"); #Normally 1 it seems
     #if error status ==1 return 0; this is an error check I might put in later
   #nwave=size(OIFITS.select(oifilein,"OI_WAVELENGTH"))[1]#
 =#

@@ -1,7 +1,7 @@
 using NFFT
 using DelimitedFiles
 using FITSIO
-using FITSIO.Libcfitsio
+using CFITSIO
 
 mutable struct facility_info
     facility_name::Array{Any,1}
