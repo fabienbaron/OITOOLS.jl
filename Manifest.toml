@@ -28,6 +28,18 @@ git-tree-sha1 = "ecdec412a9abc8db54c0efc5548c64dfce072058"
 uuid = "b99e7846-7c00-51b0-8f62-c81ae34c0232"
 version = "0.5.10"
 
+[[CFITSIO]]
+deps = ["CFITSIO_jll"]
+git-tree-sha1 = "6365034fd46c45de7c1329a380759940f769787a"
+uuid = "3b1b4be9-1499-4b22-8d78-7db3344d1961"
+version = "1.0.0"
+
+[[CFITSIO_jll]]
+deps = ["LibCURL_jll", "Libdl", "Pkg"]
+git-tree-sha1 = "262a3a9ab0b4f03efb57f58b20cbca8b47ab6af9"
+uuid = "b3e40c51-02ae-5482-8a39-3ace5868dcf4"
+version = "3.48.0+0"
+
 [[ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
 git-tree-sha1 = "c73d9cfc2a9d8433dc77f5bff4bddf46b1d78c20"
@@ -143,15 +155,27 @@ version = "1.1.0"
 
 [[LazyAlgebra]]
 deps = ["AbstractFFTs", "ArrayTools", "FFTW", "LinearAlgebra", "Printf", "SparseArrays"]
-git-tree-sha1 = "a42d29eb7a2bafaa570c2f181bf64be7586496c8"
+git-tree-sha1 = "7b34932d77d5ed501e14a10f3d1dc84dfa638e72"
 repo-rev = "master"
 repo-url = "https://github.com/emmt/LazyAlgebra.jl.git"
 uuid = "aeaa251e-9d76-11e9-311b-83636bf44738"
 version = "0.1.0"
 
+[[LibCURL_jll]]
+deps = ["LibSSH2_jll", "Libdl", "MbedTLS_jll", "Pkg", "Zlib_jll", "nghttp2_jll"]
+git-tree-sha1 = "388cfc6274cb2a096fa62c6433c9369167d6d0c1"
+uuid = "deac9b47-8bc7-5906-a0fe-35ac56dc84c0"
+version = "7.71.1+0"
+
 [[LibGit2]]
 deps = ["Printf"]
 uuid = "76f85450-5226-5b5a-8eaa-529ad045b433"
+
+[[LibSSH2_jll]]
+deps = ["Libdl", "MbedTLS_jll", "Pkg"]
+git-tree-sha1 = "717705533148132e5466f2924b9a3657b16158e8"
+uuid = "29816b5a-b9ab-546f-933c-edad1886dfa8"
+version = "1.9.0+3"
 
 [[Libdl]]
 uuid = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
@@ -185,6 +209,12 @@ git-tree-sha1 = "9abbe463a1e9fc507f12a69e7f29346c2cdc472c"
 uuid = "fdba3010-5040-5b88-9595-932c9decdf73"
 version = "0.7.8"
 
+[[MbedTLS_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "a0cb0d489819fa7ea5f9fa84c7e7eba19d8073af"
+uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
+version = "2.16.6+1"
+
 [[Mmap]]
 uuid = "a63ad114-7e13-5084-954f-fe012c677804"
 
@@ -213,8 +243,8 @@ uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 version = "0.4.6"
 
 [[OIFITS]]
-deps = ["Compat", "FITSIO"]
-git-tree-sha1 = "c64686e65c3d6380de38165d6a8e6c36be3a35d6"
+deps = ["CFITSIO", "Compat", "FITSIO"]
+git-tree-sha1 = "95abd96d15aeeca6ea50d5bd55981666eded5521"
 repo-rev = "t4"
 repo-url = "https://github.com/fabienbaron/OIFITS.jl"
 uuid = "53eb397e-dec1-5dcf-8dc9-2db916067267"
@@ -340,3 +370,15 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 git-tree-sha1 = "80229be1f670524750d905f8fc8148e5a8c4537f"
 uuid = "81def892-9a0e-5fdd-b105-ffc91e053289"
 version = "1.2.0"
+
+[[Zlib_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "d5bba6485811931e4b8958e2d7ca3738273ac468"
+uuid = "83775a58-1f1d-513f-b197-d71354ab007a"
+version = "1.2.11+15"
+
+[[nghttp2_jll]]
+deps = ["Libdl", "Pkg"]
+git-tree-sha1 = "8e2c44ab4d49ad9518f359ed8b62f83ba8beede4"
+uuid = "8e850ede-7688-5339-a07c-302acd2aaf8d"
+version = "1.40.0+2"
