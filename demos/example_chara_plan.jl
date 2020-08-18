@@ -36,7 +36,7 @@ printstyled("HA range based on CHARA telescope elevation limit: from ", ha[good_
 
 # ["S1"  "S2"  "E1"  "E2"  "W1"  "W2"]
 config = [1, 1, 1, 1, 1, 2]# telescopes to use = 1, to not use = 0, reference = 2
-nbaselines, baseline_xyz , baseline_stations, baseline_name = get_baselines(facility, config);
+nbaselines, baseline_xyz , baseline_stations, baseline_name = get_baselines(facility, config=config);
 delay_geo   = geometric_delay(lat,ha,dec,baseline_xyz);
 include("../src/popranges.jl");
 delay_airpath = [airpath[baseline_stations[2, i]] - airpath[baseline_stations[1, i]] for i=1:nbaselines]
