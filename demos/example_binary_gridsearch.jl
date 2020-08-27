@@ -1,77 +1,84 @@
-using OITOOLS
-using LinearAlgebra
-using PyPlot
-
 #
-# EXAMPLE: fast grid search for an unresolved binary, using closure phases only
-#           Note: - this is not meant to be precise
-#                 - a parallel implementation (splitting the grid into smaller chunks) would be an easy extension for better performance
+# EXAMPLE: clasic grid search for an unresolved binary
+#           Note: - this is the classic version with a loop on ra,dec of the secondary
+#                 - the primary visibilities are fixed. 
+#                 - NLopt is used with the Nelder-Mead simplex to fit the flux and diameter of secondary for (ra,dec) points
 
-function binary_dirac_primary_centered(flux_ratio::Float64, side::Array{Float64,1}, uv::Array{Float64,2} )  # flux ratio is primary/secondary
-# Note: we use the fact the grid is a circulant matrix
-nside = length(side)
-nuv = size(uv,2)
-# V = (1.0 .+ flux_ratio * cis.( (2*pi)* (uv[1,:] * grid_ra + uv[2,:] * grid_dec)))/(1.0+flux_ratio);  # this would be slower
-V = (1.0 .+ flux_ratio * repeat( cis.(uv[1,:]*side'), 1, nside).*reshape(repeat(cis.(uv[2,:]*side'), nside), (nuv,nside*nside)) )/(1.0+flux_ratio);
+using OITOOLS, SpecialFunctions, NLopt
+
+function binary_ud_primary_centered(vis_primary::Array{Complex{Float64},1}, params::Array{Float64,1}, ra::Float64, dec::Float64, uv::Array{Float64,2}, uv_baseline::Array{Float64,1})  # flux ratio is primary/secondary
+    t = params[1]/2.0626480624709636e8*pi*uv_baseline .+1e-8;
+    vis_secondary_centered = 2.0*besselj1.(t)./t
+    V = (vis_primary .+ params[2] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*ra + uv[2,:]*dec)))/(1.0+params[2]);
 return V
 end
 
-function chi2_map(cvis::Array{Complex{Float64},2}, data::OIdata)
-    @inbounds t3 = cvis[data.indx_t3_1,:].*cvis[data.indx_t3_2,:].*cvis[data.indx_t3_3,:];
-    #NOTE: closure phases are often the only thing needed here
-    #@inbounds chi2_v2 = sum( ((abs2.(cvis[data.indx_v2,:]) .- data.v2)./data.v2_err).^2, dims=1)
-    #@inbounds chi2_t3amp = sum(((abs.(t3) .- data.t3amp)./data.t3amp_err).^2, dims=1);
-    @inbounds chi2_t3phi = sum( (mod360.(angle.(t3)*(180.0/pi) .- data.t3phi)./data.t3phi_err).^2, dims=1);
-    return chi2_t3phi/data.nt3phi #(chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+data.nt3amp+data.nt3phi)
-end
-
-#oifitsfile = "./data/HD196867_oifits_merged.fits";
-oifitsfile = "./data/HD_189037_2019Aug07.fits";
+# Load Data
+#
+oifitsfile = "./data/2011Sep02.lam_And_prepped.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
 
+# Load visibilities for the primary (or compute them here from scratch)
+using HDF5
+vis_primary = h5read("./data/cvis_primary.h5","cvis_primary1")
 
 #
-# SQUARE GRID SEARCH
+# GRID SEARCH
 #
-# ng = size of grid in pixels
-nside = 100;
-# pixsize = grid mesh size in mas per grid point
-pixsize = 4.0; # 0.1 mas/grid pixel
-hwidth = nside*pixsize/2;
-side = collect(range(-hwidth,hwidth, length = nside)/ 206264806.2*2*pi);
-#grid_ra = vec(repeat(side,1,nside))'; # -10 to 10 mas, 0.1 mas precision
-#grid_dec = vec(repeat(side,1,nside)')';
+gridside = 100; # this will be rounded to respect steps
+gridstep = 0.1 #mas/pixel
+hwidth = gridside*gridstep/2;
+ra = collect(range(-hwidth, hwidth , step = gridstep)); # in mas
+dec = collect(range(-hwidth, hwidth, step = gridstep));  ; # in mas
 
-# Square grid search  - binary
+init_flux_ratio = .01 ; #initial guess for the flux ratio
+init_diameter_secondary = 0.01; # initial guess for diameter of the secondary
 
-#flux_ratio = range(0.05,1.0, length=20); # Every 5%
-flux_ratio = [0.01, 0.02, 0.05, 0.08, 0.1, 0.2, 0.4, 0.6, 0.8]; # Semilog strategy
-minchi2 = ones(length(flux_ratio));
-radec = Array{Array{Float64,1}}(undef,length(flux_ratio));
-for i=1:length(flux_ratio)
-    cvis = binary_dirac_primary_centered(flux_ratio[i], side, data.uv);
-    chi2 = reshape(chi2_map(cvis, data),nside,nside);
-    minchi2[i], loc = findmin(chi2)
-    radec[i] = range(-hwidth,hwidth, length = nside)[[loc[1], loc[2]]]
-    print("Flux ratio: $(flux_ratio[i]) \t Chi2_min: $(minchi2[i]) \t RA,DEC: $(radec[i]) mas \t r = $(norm(radec[i])) mas\t θ = $(180/pi*atan(-radec[i][1],radec[i][2]))°\n")
+visfunc=(params, uv)->binary_ud_primary_centered(vis_primary, params, 0.0, 0.0, uv, data.uv_baseline)  # flux ratio is primary/secondary
+minchi2 = model_to_chi2(data,visfunc,[1.0,0.0])
+
+chi2_map = minchi2*ones(length(ra), length(dec));
+best_par = []
+
+#
+# Grid search: single thread version, only optimizes flux ratio and diameter of secondary
+#
+for i=1:length(ra)
+    print("New row: ra = $(ra[i]) mas\n")
+    for j=1:length(dec)
+        visfunc=(params,uv)->binary_ud_primary_centered(vis_primary, params, ra[i], dec[j], uv, data.uv_baseline)  # flux ratio is primary/secondary 
+        #chi2_map[i,j] = model_to_chi2(data,visfunc,[init_diameter_secondary,init_flux_ratio]) # if we don't want to fit
+        chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio], lbounds=[0, 0], hbounds=[1.0, .2], calculate_vis = false, verbose=false);
+        if chi2_map[i,j] < minchi2
+            minchi2 = chi2_map[i,j];
+            best_par = opt_params;
+            print("New best chi2: $(chi2_map[i,j]) at ra=$(ra[i]) mas and dec=$(dec[j]) mas, diameter = $(opt_params[1]), flux = $(opt_params[2])\n");
+        end
+    end
+    # Update chi2_map view # comment out next line to speed up search
+    imdisp(chi2_map, pixscale = gridstep)
 end
-
-best_chi2, ibest = findmin(minchi2)
-cvis = binary_dirac_primary_centered(flux_ratio[ibest], side, data.uv);
-best_chi2_map = reshape(chi2_map(cvis, data),nside,nside);
-imshow(best_chi2_map, extent=[hwidth,-hwidth,-hwidth,hwidth],ColorMap(:gist_heat)) # Display map, slow
-scatter(radec[ibest][2], radec[ibest][1])
-
-print("Best solution: $best_chi2 \t Flux_ratio = $(flux_ratio[ibest]) \t RA, DEC: $(radec[ibest]) mas  \t r = $(norm(radec[ibest])) mas\t θ = $(180/pi*atan(-radec[ibest][1],radec[ibest][2]))°\n")
-
-# Once secondary found
-sec_ra = radec[ibest][1]/ 206264806.2
-sec_dec = radec[ibest][2]/ 206264806.2
-vis_binary = (1.0 .+ flux_ratio[ibest] *cis.(2*pi*(data.uv[1,:]*sec_ra-data.uv[2,:]*sec_dec)))/(1.0+flux_ratio[ibest]);
-chi2_map(reshape(vis_binary,length(vis_binary),1), data)
+elapsed = time() - start
+print(elapsed)
 
 #
-# Continue to next step to look for triple
+# Grid search: multi-threaded version, only optimizes flux ratio and diameter of secondary
 #
+chi2_map = minchi2*ones(length(ra), length(dec));
+best_par = []
+start = time()
+Threads.@threads for i = 1:length(ra)
+    for j=1:length(dec)
+        visfunc=(params,uv)->binary_ud_primary_centered(vis_primary, params, ra[i], dec[j], uv, data.uv_baseline)  # flux ratio is primary/secondary 
+        chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio], lbounds=[0, 0], hbounds=[4.0, .2],weights=[0.0,0.0,1.0], calculate_vis = false, verbose=false);
+    end
+end
+minchi2, radec = findmin(chi2_map)
+i=radec[1]; j = radec[2]
+visfunc=(params,uv)->binary_ud_primary_centered(vis_primary, params, ra[i], dec[j], uv, data.uv_baseline)  # flux ratio is primary/secondary 
+chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio], lbounds=[0, 0], hbounds=[4.0, .2], weights=[0.0,0.0,1.0], calculate_vis = false, verbose=false);
+print("Best chi2: $(chi2_map[i,j]) at ra=$(ra[i]) mas and dec=$(dec[j]) mas, diameter = $(opt_params[1]), flux = $(opt_params[2])\n")
+elapsed = time() - start
+print(elapsed)
 
-# Square grid search  - triple
+

@@ -170,6 +170,7 @@ function init_bounds(visfunc)
 #return default lower and upper bounds on parameters
 lbounds = []
 hbounds = []
+
 if visfunc==visibility_ud
  lbounds = [0.0]
  hbounds = [1e9]
