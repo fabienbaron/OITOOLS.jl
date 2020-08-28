@@ -1,13 +1,10 @@
-#
-# EXAMPLE: fast grid search for an unresolved binary, using closure phases only
-#           Note: - this is for a fast search
-#                 - the visibilities are computed for the entire field at once! No for loops. 
+# EXAMPLE: fast grid search for an unresolved binary
+#           Note: - used when trying to locate the secondary of an unresolved binary 
+#                 - there is no fitting, it's all grid search, including flux_ratio
+#                 - this is for a fast search where the visibilities are computed for the entire field at once! No for loops. 
 #                 - a parallel implementation (splitting the grid into smaller chunks) would be an easy extension for better performance
-
-using OITOOLS
-using LinearAlgebra
-using PyPlot
-
+#                 - not very useful in practice: see example_companion_gridsearch for a more flexible and reliable method
+using OITOOLS, LinearAlgebra, PyPlot
 
 function binary_dirac_primary_centered(flux_ratio::Float64, side::Array{Float64,1}, uv::Array{Float64,2} )  # flux ratio is primary/secondary
 # Note: we use the fact the grid is a circulant matrix to compute for all the field
@@ -19,17 +16,14 @@ end
 
 function chi2_map(cvis::Array{Complex{Float64},2}, data::OIdata)
     @inbounds t3 = cvis[data.indx_t3_1,:].*cvis[data.indx_t3_2,:].*cvis[data.indx_t3_3,:];
-    #NOTE: closure phases are often the only thing needed here
-    #@inbounds chi2_v2 = sum( ((abs2.(cvis[data.indx_v2,:]) .- data.v2)./data.v2_err).^2, dims=1)
-    #@inbounds chi2_t3amp = sum(((abs.(t3) .- data.t3amp)./data.t3amp_err).^2, dims=1);
+    @inbounds chi2_v2 = sum( ((abs2.(cvis[data.indx_v2,:]) .- data.v2)./data.v2_err).^2, dims=1)
+    @inbounds chi2_t3amp = sum(((abs.(t3) .- data.t3amp)./data.t3amp_err).^2, dims=1);
     @inbounds chi2_t3phi = sum( (mod360.(angle.(t3)*(180.0/pi) .- data.t3phi)./data.t3phi_err).^2, dims=1);
-    return chi2_t3phi/data.nt3phi #(chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+data.nt3amp+data.nt3phi)
+    return (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+data.nt3amp+data.nt3phi)
 end
 
-#oifitsfile = "./data/HD196867_oifits_merged.fits";
 oifitsfile = "./data/HD_189037_2019Aug07.fits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
-
 
 #
 # SQUARE GRID SEARCH
@@ -40,12 +34,8 @@ nside = 100;
 pixsize = 4.0; # 0.1 mas/grid pixel
 hwidth = nside*pixsize/2;
 side = collect(range(-hwidth,hwidth, length = nside)/ 206264806.2*2*pi);
-#grid_ra = vec(repeat(side,1,nside))'; # -10 to 10 mas, 0.1 mas precision
-#grid_dec = vec(repeat(side,1,nside)')';
 
 # Square grid search  - binary
-
-#flux_ratio = range(0.05,1.0, length=20); # Every 5%
 flux_ratio = [0.01, 0.02, 0.05, 0.08, 0.1, 0.2, 0.4, 0.6, 0.8]; # Semilog strategy
 minchi2 = ones(length(flux_ratio));
 radec = Array{Array{Float64,1}}(undef,length(flux_ratio));
