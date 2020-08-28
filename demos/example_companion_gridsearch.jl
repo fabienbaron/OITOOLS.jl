@@ -55,7 +55,7 @@ for i=1:length(ra)
         end
     end
     # Update chi2_map view # comment out next line to speed up search
-    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
+    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Companion search: lighter is more probable")
 end
 elapsed = time() - start
 print(elapsed)
@@ -72,7 +72,7 @@ Threads.@threads for i = 1:length(ra)
         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio], lbounds=[0, 0], hbounds=[.4, .2], calculate_vis = false, verbose=false);
     end
 end
-imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
+imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Companion search: lighter is more probable")
 minchi2, radec = findmin(chi2_map)
 i=radec[1]; j = radec[2]
 visfunc=(params,uv)->binary_ud_primary_centered(vis_primary, params, ra[i], dec[j], uv, data.uv_baseline)  # flux ratio is primary/secondary 
@@ -105,7 +105,7 @@ for i=1:length(ra)
         end
     end
     # Update chi2_map view # comment out next line to speed up search
-    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
+    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Companion search: lighter is more probable")
 end
 elapsed = time() - start
 print(elapsed)

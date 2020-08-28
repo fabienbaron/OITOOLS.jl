@@ -71,7 +71,7 @@ for i=1:length(ra)
     end
     # Update chi2_map view # comment out next line to speed up search
     if i%2==1
-        imdisp(chi2_map, pixscale = gridstep)
+        imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
     end
 end
 elapsed = time() - start
@@ -98,7 +98,7 @@ for i=1:length(ra)
          end
     end
     # Update chi2_map view # comment out next line to speed up search
-    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
+    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
 end
 elapsed = time() - start
 print(elapsed)
@@ -121,7 +121,7 @@ Threads.@threads for i=1:length(ra)
 end
 elapsed = time() - start
 print(elapsed)
-imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
+imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
 minchi2, radec = findmin(chi2_map)
 i=radec[1]; j = radec[2]
 chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
