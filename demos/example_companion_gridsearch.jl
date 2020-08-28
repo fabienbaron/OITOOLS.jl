@@ -94,6 +94,7 @@ end
 #
 # Grid search: single thread version, optimizes flux ratio, diameter of secondary and location
 #
+start = time()
 for i=1:length(ra)
     print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
