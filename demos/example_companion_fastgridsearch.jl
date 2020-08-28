@@ -10,7 +10,7 @@ function binary_dirac_primary_centered(flux_ratio::Float64, side::Array{Float64,
 # Note: we use the fact the grid is a circulant matrix to compute for all the field
 nside = length(side)
 nuv = size(uv,2)
-V = (1.0 .+ flux_ratio * repeat( cis.(uv[1,:]*side'), 1, nside).*reshape(repeat(cis.(uv[2,:]*side'), nside), (nuv,nside*nside)) )/(1.0+flux_ratio);
+V = (1.0 .+ flux_ratio * repeat( cis.(uv[1,:]*side'), 1, nside).*reshape(repeat(cis.(-uv[2,:]*side'), nside), (nuv,nside*nside)) )/(1.0+flux_ratio);
 return V
 end
 

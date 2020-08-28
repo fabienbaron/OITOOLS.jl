@@ -14,7 +14,7 @@ function binary_ud_fixedradec(params::Array{Float64,1}, ra::Float64, dec::Float6
      vis_primary_centered = 2.0*besselj1.(t1)./t1
      t2 = params[2]/2.0626480624709636e8*pi*uv_baseline .+1e-8;
      vis_secondary_centered = 2.0*besselj1.(t2)./t2
-     V = (vis_primary_centered .+ params[3] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*ra + uv[2,:]*dec)))/(1.0+params[3]);
+     V = (vis_primary_centered .+ params[3] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*ra - uv[2,:]*dec)))/(1.0+params[3]);
  return V
  end
 
@@ -28,7 +28,7 @@ function binary_ud(params::Array{Float64,1}, uv::Array{Float64,2}, uv_baseline::
     vis_primary_centered = 2.0*besselj1.(t1)./t1
     t2 = params[2]/2.0626480624709636e8*pi*uv_baseline .+1e-8;
     vis_secondary_centered = 2.0*besselj1.(t2)./t2
-    V = (vis_primary_centered .+ params[3] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*params[4] + uv[2,:]*params[5])))/(1.0+params[3]);
+    V = (vis_primary_centered .+ params[3] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*params[4] - uv[2,:]*params[5])))/(1.0+params[3]);
 return V
 end
 
@@ -80,16 +80,17 @@ elapsed = time() - start
 #
 # Grid search: single thread version, optimizes flux ratio, diameters of primary and secondary and location of secondary
 #
-start = time()
 minchi2 = 1e4; # placeholder value
 chi2_map = ones(length(ra), length(dec));
+
+start = time()
 best_par = []
 visfunc=(params,uv)->binary_ud(params, uv, data.uv_baseline)  # flux ratio is primary/secondary
 for i=1:length(ra)
     print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
         #chi2_map[i,j]= model_to_chi2(data,visfunc,[init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]]) # if we don't want to fit
-         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-5*gridstep, dec[j]-5*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+5*gridstep, dec[j]+5*gridstep], calculate_vis = false, verbose=false);
+         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
          if chi2_map[i,j] < minchi2
              minchi2 = chi2_map[i,j];
              best_par = opt_params;

@@ -8,7 +8,7 @@ using OITOOLS, SpecialFunctions, NLopt
 function binary_ud_primary_centered(vis_primary::Array{Complex{Float64},1}, params::Array{Float64,1}, ra::Float64, dec::Float64, uv::Array{Float64,2}, uv_baseline::Array{Float64,1})  # flux ratio is primary/secondary
     t = params[1]/2.0626480624709636e8*pi*uv_baseline .+1e-8;
     vis_secondary_centered = 2.0*besselj1.(t)./t
-    V = (vis_primary .+ params[2] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*ra + uv[2,:]*dec)))/(1.0+params[2]);
+    V = (vis_primary .+ params[2] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*ra - uv[2,:]*dec)))/(1.0+params[2]);
 return V
 end
 
@@ -81,13 +81,10 @@ elapsed = time() - start
 print(elapsed)
 
 
-
-
-
 function binary_ud_primary_centered_radec(vis_primary::Array{Complex{Float64},1}, params::Array{Float64,1}, uv::Array{Float64,2}, uv_baseline::Array{Float64,1})  # flux ratio is primary/secondary
     t = params[1]/2.0626480624709636e8*pi*uv_baseline .+1e-8;
     vis_secondary_centered = 2.0*besselj1.(t)./t
-    V = (vis_primary .+ params[2] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*params[3] + uv[2,:]*params[4])))/(1.0+params[2]);
+    V = (vis_primary .+ params[2] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*params[3] - uv[2,:]*params[4])))/(1.0+params[2]);
 return V
 end
 
