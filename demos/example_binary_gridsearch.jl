@@ -98,7 +98,31 @@ for i=1:length(ra)
          end
     end
     # Update chi2_map view # comment out next line to speed up search
-    imdisp(chi2_map, pixscale = gridstep)
+    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
 end
 elapsed = time() - start
 print(elapsed)
+
+
+
+#
+# Grid search: multiple thread version, optimizes flux ratio, diameters of primary and secondary and location of secondary
+#
+minchi2 = 1e4; # placeholder value
+chi2_map = ones(length(ra), length(dec));
+
+start = time()
+best_par = []
+visfunc=(params,uv)->binary_ud(params, uv, data.uv_baseline)  # flux ratio is primary/secondary
+Threads.@threads for i=1:length(ra)
+    for j=1:length(dec)
+         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
+    end
+end
+elapsed = time() - start
+print(elapsed)
+imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
+minchi2, radec = findmin(chi2_map)
+i=radec[1]; j = radec[2]
+chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
+print("Best chi2: $(chi2_map[i,j]) at Initial: ra=$(ra[i]) mas and dec=$(dec[j]) mas / Final: ra=$(opt_params[4]) mas and dec=$(opt_params[5]) mas, diameter_primary = $(opt_params[1]), diameter_secondary = $(opt_params[2]), flux_ratio = $(opt_params[3])\n");

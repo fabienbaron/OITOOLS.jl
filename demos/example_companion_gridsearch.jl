@@ -55,7 +55,7 @@ for i=1:length(ra)
         end
     end
     # Update chi2_map view # comment out next line to speed up search
-    imdisp(chi2_map, pixscale = gridstep)
+    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
 end
 elapsed = time() - start
 print(elapsed)
@@ -72,6 +72,7 @@ Threads.@threads for i = 1:length(ra)
         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio], lbounds=[0, 0], hbounds=[.4, .2], calculate_vis = false, verbose=false);
     end
 end
+imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
 minchi2, radec = findmin(chi2_map)
 i=radec[1]; j = radec[2]
 visfunc=(params,uv)->binary_ud_primary_centered(vis_primary, params, ra[i], dec[j], uv, data.uv_baseline)  # flux ratio is primary/secondary 
@@ -96,7 +97,6 @@ for i=1:length(ra)
     print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
         visfunc=(params,uv)->binary_ud_primary_centered_radec(vis_primary, params, uv, data.uv_baseline)  # flux ratio is primary/secondary 
-        #chi2_map[i,j] = model_to_chi2(data,visfunc,[init_diameter_secondary,init_flux_ratio]) # if we don't want to fit
         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, ra[i]-5*gridstep, dec[j]-5*gridstep], hbounds=[1.0, .2, ra[i]+5*gridstep, dec[j]+5*gridstep], calculate_vis = false, verbose=false);
         if chi2_map[i,j] < minchi2
             minchi2 = chi2_map[i,j];
@@ -105,7 +105,7 @@ for i=1:length(ra)
         end
     end
     # Update chi2_map view # comment out next line to speed up search
-    imdisp(chi2_map, pixscale = gridstep)
+    imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r")
 end
 elapsed = time() - start
 print(elapsed)
