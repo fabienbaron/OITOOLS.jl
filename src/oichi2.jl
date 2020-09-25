@@ -392,7 +392,10 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
     g[:] = vec(g_v2 + g_t3amp + g_t3phi)
     # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
     if verb==true
-        printstyled("V2: $(chi2_v2/data.nv2) T3A: $(chi2_t3amp/data.nt3amp) T3P: $(chi2_t3phi/data.nt3phi)  Flux: $(flux) ", color=printcolor)
+        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
+        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
+        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
+        printstyled("Flux: $(flux) ", color=:black);
     end
     return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
@@ -464,7 +467,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
         g[tslice] = subg
     end
     ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:nwavs]);
-    print("V2+T3AMP+T3PHI chi2r: $(f/ndof) \n");
+    printstyled("V2+T3AMP+T3PHI chi2r: $(f/ndof) \n", color=:yellow);
     # Differential phase
     #  if data.nvisphi > 0
     # Compute vis_ref
@@ -479,7 +482,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
         # Compute differential phase gradient
         d_diffphi = zeros(npix,nwavs)
         for i=1:nwavs
-        d_diffphi[:,i] = -360.0/pi*vec(imag.(nfft_adjoint(ft[i][2], ((mod360(diffphi_model[:,i]-diffphi[:,i])./diffphi_err[:,i].^2)./abs2.(cvis[i])).*cvis[i])))
+            d_diffphi[:,i] = -360.0/pi*vec(imag.(nfft_adjoint(ft[i][2], ((mod360(diffphi_model[:,i]-diffphi[:,i])./diffphi_err[:,i].^2)./abs2.(cvis[i])).*cvis[i])))
         end
         g_diffphi = vec(nwavs*d_diffphi .- vec(sum(d_diffphi, dims=2)))/(nwavs-1)
         #d_diffphi = [] # free local memory immediately after use

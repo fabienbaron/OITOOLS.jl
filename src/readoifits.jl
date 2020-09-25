@@ -108,7 +108,7 @@ mutable struct OIdata
     filename::String
 end
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5)
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false)
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
@@ -932,6 +932,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             if (filter_bad_data==true) # TODO: move out and make its own function
 
                 if use_vis
+                    
                 visamp_good =  (.!isnan.(visamp[iwavbin,itimebin] )) .& (.!isnan.(visamp_err[iwavbin,itimebin] )) .& (visamp_err[iwavbin,itimebin].>0.0)
                 visphi_good =  (.!isnan.(visphi[iwavbin,itimebin] ) ).& (.!isnan.(visphi_err[iwavbin,itimebin] )) .& (visphi_err[iwavbin,itimebin].>0.0)
 
@@ -941,8 +942,13 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 else
                     vis_good = findall(.!vis_flag[iwavbin,itimebin] .& (visamp_good .& visphi_good) )
                 end
+
+                if special_filter_diffvis==true # if we use the diff vis filter, we need to do this after all the data has been read in
+                                                # hence here we won't actually filter anything
+                    vis_good = findall( vis_flag[iwavbin,itimebin].!=2) 
+                end
                 good_uv_vis = indx_vis[iwavbin,itimebin][vis_good];
-                visamp[iwavbin,itimebin]    = visamp[iwavbin,itimebin][vis_good];
+                visamp[iwavbin,itimebin]        = visamp[iwavbin,itimebin][vis_good];
                 visamp_err[iwavbin,itimebin]    = visamp_err[iwavbin,itimebin][vis_good];
                 visphi[iwavbin,itimebin]        = visphi[iwavbin,itimebin][vis_good];
                 visphi_err[iwavbin,itimebin]    = visphi_err[iwavbin,itimebin][vis_good];
@@ -1130,6 +1136,25 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             uv[iwavbin,itimebin], uv_lam[iwavbin,itimebin], uv_dlam[iwavbin,itimebin],uv_mjd[iwavbin,itimebin], uv_baseline[iwavbin,itimebin], nvisamp[iwavbin,itimebin], nvisphi[iwavbin,itimebin], nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_vis[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
             indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],indx_t4_1[iwavbin,itimebin], indx_t4_2[iwavbin,itimebin], indx_t4_3[iwavbin,itimebin],indx_t4_4[iwavbin,itimebin],new_station_name,new_telescope_name,new_station_index,vis_sta_index[iwavbin,itimebin],v2_sta_index[iwavbin,itimebin],t3_sta_index[iwavbin,itimebin], t4_sta_index[iwavbin,itimebin],oifitsfile);
         end
+    end
+
+    # Post-treatment of data
+    # 
+    if special_filter_diffvis==true # remove diffphases when some spectral channels have been flagged 
+    for itimebin = 1:ntimebin
+        indx=findall(vec((prod(hcat([(1 .-OIdataArr[i, itimebin].vis_flag) for i=1:nwavbin]...),dims=2))).==1) # this selects the baselines for which all spectral channels are not flagged
+        for i=1:nwavbin
+        OIdataArr[i,itimebin].visphi = OIdataArr[i,itimebin].visphi[indx]
+        OIdataArr[i,itimebin].visphi_err = OIdataArr[i,itimebin].visphi_err[indx]
+        OIdataArr[i,itimebin].vis_baseline = OIdataArr[i,itimebin].vis_baseline[indx]
+        OIdataArr[i,itimebin].vis_mjd = OIdataArr[i,itimebin].vis_mjd[indx]
+        OIdataArr[i,itimebin].vis_lam = OIdataArr[i,itimebin].vis_lam[indx]
+        OIdataArr[i,itimebin].vis_dlam = OIdataArr[i,itimebin].vis_dlam[indx]
+        OIdataArr[i,itimebin].vis_sta_index = OIdataArr[i,itimebin].vis_sta_index[:,indx]
+        OIdataArr[i,itimebin].vis_flag= OIdataArr[i,itimebin].vis_flag[indx]
+        OIdataArr[i,itimebin].indx_vis = OIdataArr[i,itimebin].indx_vis[indx]
+        end
+    end
     end
 
     return OIdataArr;

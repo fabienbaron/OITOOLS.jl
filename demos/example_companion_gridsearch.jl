@@ -6,7 +6,7 @@
 using OITOOLS, SpecialFunctions, NLopt
 
 function binary_ud_primary_centered(vis_primary::Array{Complex{Float64},1}, params::Array{Float64,1}, ra::Float64, dec::Float64, uv::Array{Float64,2}, uv_baseline::Array{Float64,1})  # flux ratio is primary/secondary
-    t = params[1]/2.0626480624709636e8*pi*uv_baseline .+1e-8;
+    t = params[1]/2.062648062e8*pi*uv_baseline .+1e-8;
     vis_secondary_centered = 2.0*besselj1.(t)./t
     V = (vis_primary .+ params[2] * vis_secondary_centered .* cis.(2*pi/206264806.2*(uv[1,:]*ra - uv[2,:]*dec)))/(1.0+params[2]);
 return V
@@ -97,7 +97,7 @@ for i=1:length(ra)
     print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
         visfunc=(params,uv)->binary_ud_primary_centered_radec(vis_primary, params, uv, data.uv_baseline)  # flux ratio is primary/secondary 
-        chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, ra[i]-5*gridstep, dec[j]-5*gridstep], hbounds=[1.0, .2, ra[i]+5*gridstep, dec[j]+5*gridstep], calculate_vis = false, verbose=false);
+        chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0.0, 0.0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[4.0, .2, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
         if chi2_map[i,j] < minchi2
             minchi2 = chi2_map[i,j];
             best_par = opt_params;
