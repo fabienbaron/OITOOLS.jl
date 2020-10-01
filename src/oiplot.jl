@@ -547,7 +547,7 @@ function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",markopt=
         baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_vis...)))
         # Creating one subplot per baseline
-        fig, ax=  plt.subplots(nrows=length(baseline), sharex=true,figsize=(10,5),facecolor="White")
+        fig ,ax=  plt.subplots(num="Differential phase phase data",nrows=length(baseline), sharex=true,figsize=(10,5),facecolor="White")
         suptitle("Differential phase phase data")
         subplots_adjust(hspace=0.0)
         for i=1:length(baseline)
