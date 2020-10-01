@@ -550,14 +550,16 @@ function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",markopt=
         fig ,ax=  plt.subplots(num="Differential phase phase data",nrows=length(baseline), sharex=true,figsize=(10,5),facecolor="White")
         suptitle("Differential phase phase data")
         subplots_adjust(hspace=0.0)
+        mx=matplotlib[:ticker][:MultipleLocator](20)     
         for i=1:length(baseline)
-            title(baseline[i])
+            title(baseline[i], x=0.9, y=0.75)
             loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
             baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
             wavcol = vcat([data[n].uv_lam[data[n].indx_vis[loc[n]]]*1e9 for n=1:length(data)]...)
             visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
             visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
             plt.axes(ax[i])
+            ax[i][:xaxis][:set_minor_locator](mx)
             errorbar(wavcol,visphi,yerr=visphi_err,fmt="o",markersize=0.5,ecolor="Gainsboro",elinewidth=.5)
             if i==length(baseline)
                 xlabel("λ (nm)")
@@ -565,6 +567,8 @@ function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",markopt=
             ylabel("Diff phase (°)")
             grid(true,which="both",color="LightGrey",linestyle=":")
         end
+        ax[length(baseline)][:tick_params](axis="x", which="major", length=10.0)
+        ax[length(baseline)][:tick_params](axis="x", which="minor", length=5.0)
     if filename !=""
         savefig(filename)
     end
