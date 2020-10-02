@@ -467,7 +467,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
         g[tslice] = subg
     end
     ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:nwavs]);
-    printstyled("V2+T3AMP+T3PHI chi2r: $(f/ndof) \n", color=:yellow);
+    printstyled("Crit/dof: $(f/ndof) \n", color=:yellow);
     # Differential phase
     #  if data.nvisphi > 0
     # Compute vis_ref
@@ -505,9 +505,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
             end
             f    += regularizers[nwavs+1][1][2]*trsp_f
             g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
-            if verb == true
-                printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
-            end
+            printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
         end
     end
     return f;
