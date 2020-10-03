@@ -301,7 +301,7 @@ function tvsq(x,tvsq_g; verb = false)
     return tvsq_f
 end
 
-function tv(x,tv_g; verb = false, ϵ=1e-9)
+function tv(x,tv_g; verb = false, ϵ=1e-8)
     # Total variation
     # TODO: - treat edges properly
     #       - check vs matrix implementation
@@ -314,10 +314,10 @@ function tv(x,tv_g; verb = false, ϵ=1e-9)
     ximinus1j = circshift(y, (1,0))
     ximinus1jplus1 = circshift(y, (1,-1))
     xiplus1jminus1 = circshift(y, (-1,1))
-    d1 = sqrt.((xiplus1j-y).^2  + (xijplus1-y).^2  .+ ζ^2)
-    d2 = sqrt.((y-ximinus1j).^2 + (ximinus1jplus1-ximinus1j).^2 .+ ζ^2)
-    d3 = sqrt.((xiplus1jminus1-xijminus1).^2 + (y-xijminus1).^2 .+ ζ^2)
-    tv_f = sum(d1.-ζ) 
+    d1 = sqrt.((xiplus1j-y).^2  + (xijplus1-y).^2  .+ ϵ^2)
+    d2 = sqrt.((y-ximinus1j).^2 + (ximinus1jplus1-ximinus1j).^2 .+ ϵ^2)
+    d3 = sqrt.((xiplus1jminus1-xijminus1).^2 + (y-xijminus1).^2 .+ ϵ^2)
+    tv_f = sum(d1.-ϵ) 
     tv_g[:] = vec( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )
     
     if verb == true
