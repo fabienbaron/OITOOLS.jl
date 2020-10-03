@@ -317,16 +317,6 @@ function tv(x,tv_g; verb = false, ϵ=1e-9)
     return tv_f
 end
 
-# function dxsq(x,dxsq_g; verb = false)
-#     # Total squared variation
-#     nx = Int(sqrt(length(x)))
-#     y = reshape(x, nx, nx);
-#     dx = y-circshift(y,(0,1)); # y[i]-y[i-1]
-#     dxsq_f = norm(dx)^2
-#     dxsq_g[:] = 2*vec(2*y-circshift(y,(0,1))-circshift(y,(0,-1)))
-#     return dxsq_f
-# end
-
 function l2(x,l2_g; verb = false)
     nx = Int(sqrt(length(x)))
     l2_f = sum(x.^2)
