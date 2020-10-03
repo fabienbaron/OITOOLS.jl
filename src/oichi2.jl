@@ -303,14 +303,23 @@ end
 
 function tv(x,tv_g; verb = false, ϵ=1e-9)
     # Total variation
+    # TODO: - treat edges properly
+    #       - check vs matrix implementation
+    #       - check performance/precision vs FFT version
     nx = Int(sqrt(length(x)))
     y = reshape(x, nx, nx);
-    lx = circshift(y,(0,-1));
-    ly = circshift(y,(-1,0));
-    rx = circshift(y,(0,1));
-    ry = circshift(y,(1,0));
-    tv_f = sqrt(norm(y-rx)^2+norm(y-ry)^2 .+ϵ)
-    tv_g[:] = vec(4*y-lx-ly-rx-ry)./tv_f
+    xijplus1  = circshift(y, (0,-1))
+    xijminus1 = circshift(y, (0,1))
+    xiplus1j  = circshift(y, (-1,0))
+    ximinus1j = circshift(y, (1,0))
+    ximinus1jplus1 = circshift(y, (1,-1))
+    xiplus1jminus1 = circshift(y, (-1,1))
+    d1 = sqrt.((xiplus1j-y).^2  + (xijplus1-y).^2  .+ ζ^2)
+    d2 = sqrt.((y-ximinus1j).^2 + (ximinus1jplus1-ximinus1j).^2 .+ ζ^2)
+    d3 = sqrt.((xiplus1jminus1-xijminus1).^2 + (y-xijminus1).^2 .+ ζ^2)
+    tv_f = sum(d1.-ζ) 
+    tv_g[:] = vec( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )
+    
     if verb == true
         print(" TV:", tv_f);
     end
@@ -338,36 +347,29 @@ function l1hyp(x,l1_g; verb = false,ϵ=1e-9)
 end
 
 
-function checkgrad(func;x=[], dim=1, N=400, M = 100, δ = 1e-8)
-     # if dim==1
-     if x==[]
+function checkgrad_1D(func;x=[], N=400, δ = 1e-8)
+    if x==[]
         x = abs.(rand(N))
-     else 
+    else 
         N = length(x)
     end
-
     numerical_g = similar(x)
     analytic_g = similar(x)
     for i=1:N
-     orig = x[i]
-     x[i] = orig + 2*δ
-     f2r = func(x,analytic_g)
-     x[i] = orig + δ
-     f1r = func(x,analytic_g)
-     x[i] = orig - δ
-     f1l = func(x,analytic_g)
-     x[i] = orig - 2*δ
-     f2l = func(x,analytic_g)
-     numerical_g[i] = (-f2r+8*f1r-8*f1l+f2l)
-     x[i] = orig
+        orig = x[i]
+        x[i] = orig + 2*δ
+        f2r = func(x,analytic_g)
+        x[i] = orig + δ
+        f1r = func(x,analytic_g)
+        x[i] = orig - δ
+        f1l = func(x,analytic_g)
+        x[i] = orig - 2*δ
+        f2l = func(x,analytic_g)
+        numerical_g[i] = (-f2r+8*f1r-8*f1l+f2l)
+        x[i] = orig
     end
     numerical_g ./= (12*δ)
     fref = func(x,analytic_g)
-    # else if dim==2
-    # x = rand(N, M)
-    # numerical_g = similar(x)
-    # analytic_g = similar(x)
-    # end
     numerator = norm(analytic_g-numerical_g)
     denominator = norm(analytic_g) + norm(numerical_g)
     difference = numerator / denominator
@@ -375,14 +377,64 @@ function checkgrad(func;x=[], dim=1, N=400, M = 100, δ = 1e-8)
     return (numerical_g, analytic_g);
 end
 
-# function trans_structnorm(x, sn_g;verb=false)
-#     ϵ=1e-9
-#     #x is under the form (npix,nwavs)
-#     sn_f = sum(sqrt.(sum(y.^2, dims=2).+ϵ^2).-ϵ);
-#     sn_g[:] = vec((2*y./sqrt.(sum(y.^2, dims=2).+ϵ^2));
-#     return sn_f
-# end
 
+function checkgrad_2D(func;x=[], N=36, M= 25, δ = 1e-8)
+    if x==[]
+        x = abs.(rand(N,M))
+    else 
+        N,M = size(x)
+    end
+    numerical_g = similar(x)
+    analytic_g = vec(similar(x))
+    for i=1:N
+        for j=1:M
+            orig = x[i,j]
+            x[i,j] = orig + 2*δ
+            f2r = func(x,analytic_g)
+            x[i,j] = orig + δ
+            f1r = func(x,analytic_g)
+            x[i,j] = orig - δ
+            f1l = func(x,analytic_g)
+            x[i,j] = orig - 2*δ
+            f2l = func(x,analytic_g)
+            numerical_g[i,j] = (-f2r+8*f1r-8*f1l+f2l)
+            x[i,j] = orig
+        end
+    end
+    numerical_g = vec(numerical_g)/(12*δ)
+    fref = func(x,analytic_g)
+    numerator = norm(analytic_g-numerical_g)
+    denominator = norm(analytic_g) + norm(numerical_g)
+    difference = numerator / denominator
+    print(difference, "\n")
+    return (numerical_g, analytic_g);
+end
+
+
+
+function trans_structnorm(x, sn_g;verb=false, ϵ=1e-9)
+    #this x is under the form (npix,nwavs)
+    #but return the gradient as a 1D vector to use with Optimpack
+    d = sqrt.(sum(x.^2, dims=2).+ϵ^2)
+    sn_f = sum(d.-ϵ);
+    sn_g[:] = vec(x./d);
+    return sn_f
+end
+
+function trans_tv(x, tv_g;verb=false, ζ=1e-13)
+    # Transpectral or transtemporal regularization
+    #this x is under the form (npix,nwavs)
+    #but return the gradient as a 1D vector to use with Optimpack
+    xlplus1_minus_xl = circshift(x, (0,-1))-x
+   # xlplus1_minus_xl[:,end] .= 0
+    xl_minus_xminus1 = x-circshift(x, (0,1))
+    # xl_minus_xminus1[:,1] .=0 
+    d1 = sqrt.(xlplus1_minus_xl.^2 .+ ζ^2)
+    d2 = sqrt.(xl_minus_xminus1.^2 .+ ζ^2)
+    tv_f = sum(d1.-ζ)
+    tv_g[:] = vec(-xlplus1_minus_xl./d1 + xl_minus_xminus1./d2)
+    return tv_f
+end
 
 function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
     reg_f = 0.0;
