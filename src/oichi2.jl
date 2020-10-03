@@ -289,29 +289,109 @@ function tvsq(x,tvsq_g; verb = false)
     # Total squared variation
     nx = Int(sqrt(length(x)))
     y = reshape(x, nx, nx);
-    dx = circshift(y,(0,1))-y;
-    dy = circshift(y,(1,0))-y;
-    tvsq_f = norm(dx)^2+norm(dy)^2
-    tvsq_g[:] = 2*vec((dx+dy))
+    lx = circshift(y,(0,-1));
+    ly = circshift(y,(-1,0));
+    rx = circshift(y,(0,1));
+    ry = circshift(y,(1,0));
+    tvsq_f = norm(y-rx)^2+norm(y-ry)^2
+    tvsq_g[:] = 2*vec(4*y-lx-ly-rx-ry)
     if verb == true
         print(" TVSQ:", tvsq_f);
     end
     return tvsq_f
 end
 
-function tv(x,tv_g; verb = false)
-    ϵ=1e-10
+function tv(x,tv_g; verb = false, ϵ=1e-9)
+    # Total variation
     nx = Int(sqrt(length(x)))
     y = reshape(x, nx, nx);
-    yx = circshift(y,(0,-1));
-    yy = circshift(y,(-1,0));
-    tv_f = sum(sqrt.((y-yx).^2+(y-yy).^2 .+ ϵ))
-    tv_g[:] =  vec((2*y-yx-yy)./(sqrt.((y-yx).^2+(y-yy).^2 .+ ϵ)));
+    lx = circshift(y,(0,-1));
+    ly = circshift(y,(-1,0));
+    rx = circshift(y,(0,1));
+    ry = circshift(y,(1,0));
+    tv_f = sqrt(norm(y-rx)^2+norm(y-ry)^2 .+ϵ)
+    tv_g[:] = vec(4*y-lx-ly-rx-ry)./tv_f
     if verb == true
         print(" TV:", tv_f);
     end
     return tv_f
 end
+
+# function dxsq(x,dxsq_g; verb = false)
+#     # Total squared variation
+#     nx = Int(sqrt(length(x)))
+#     y = reshape(x, nx, nx);
+#     dx = y-circshift(y,(0,1)); # y[i]-y[i-1]
+#     dxsq_f = norm(dx)^2
+#     dxsq_g[:] = 2*vec(2*y-circshift(y,(0,1))-circshift(y,(0,-1)))
+#     return dxsq_f
+# end
+
+function l2(x,l2_g; verb = false)
+    nx = Int(sqrt(length(x)))
+    l2_f = sum(x.^2)
+    l2_g[:] =  2*x;
+    if verb == true
+        print(" L2:", l2_f);
+    end
+    return l2_f
+end
+
+function l1hyp(x,l1_g; verb = false,ϵ=1e-9)
+    nx = Int(sqrt(length(x)))
+    l1_f = sum(sqrt.(x.^2 .+ϵ^2).-ϵ)
+    l1_g[:] =  x./sqrt.(x.^2 .+ϵ^2);
+    if verb == true
+        print(" L1hyp:", l1_f);
+    end
+    return l1_f
+end
+
+
+function checkgrad(func;x=[], dim=1, N=400, M = 100, δ = 1e-8)
+     # if dim==1
+     if x==[]
+        x = abs.(rand(N))
+     else 
+        N = length(x)
+    end
+
+    numerical_g = similar(x)
+    analytic_g = similar(x)
+    for i=1:N
+     orig = x[i]
+     x[i] = orig + 2*δ
+     f2r = func(x,analytic_g)
+     x[i] = orig + δ
+     f1r = func(x,analytic_g)
+     x[i] = orig - δ
+     f1l = func(x,analytic_g)
+     x[i] = orig - 2*δ
+     f2l = func(x,analytic_g)
+     numerical_g[i] = (-f2r+8*f1r-8*f1l+f2l)
+     x[i] = orig
+    end
+    numerical_g ./= (12*δ)
+    fref = func(x,analytic_g)
+    # else if dim==2
+    # x = rand(N, M)
+    # numerical_g = similar(x)
+    # analytic_g = similar(x)
+    # end
+    numerator = norm(analytic_g-numerical_g)
+    denominator = norm(analytic_g) + norm(numerical_g)
+    difference = numerator / denominator
+    print(difference, "\n")
+    return (numerical_g, analytic_g);
+end
+
+# function trans_structnorm(x, sn_g;verb=false)
+#     ϵ=1e-9
+#     #x is under the form (npix,nwavs)
+#     sn_f = sum(sqrt.(sum(y.^2, dims=2).+ϵ^2).-ϵ);
+#     sn_g[:] = vec((2*y./sqrt.(sum(y.^2, dims=2).+ϵ^2));
+#     return sn_f
+# end
 
 
 function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
@@ -505,8 +585,25 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
             end
             f    += regularizers[nwavs+1][1][2]*trsp_f
             g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
-            printstyled("Trans-spectral regularization: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
+            printstyled("Trans-spectral TVSQ: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
         end
+        # if (regularizers[nwavs+1][1][1] == "transspectral_structnorm")  & (nwavs>2)
+        #     y = reshape(x,(npix,nwavs))
+        #     eps=1e-9
+        #     trsp_f = sum(sqrt.(sum(y.^2, dims=2 ) .+eps^2)-eps)
+        #     trsp_g = Array{Float64}(undef, npix,nwavs)
+        #     if nwavs>2
+        #         trsp_g[:,1] = 2*(y[:,1] - y[:,2])
+        #         trsp_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
+        #         trsp_g[:,end] = 2*(y[:,end] - y[:,end-1])
+        #     else
+        #         trsp_g[:,1] = 2*(y[:,1]-y[:,2]);
+        #         trsp_g[:,2] = 2*(y[:,2]-y[:,1]);
+        #     end
+        #     f    += regularizers[nwavs+1][1][2]*trsp_f
+        #     g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
+        #     printstyled("Trans-spectral Structured norm: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
+        # end
     end
     return f;
 end
