@@ -326,22 +326,48 @@ function tv(x,tv_g; verb = false, ϵ=1e-8)
     return tv_f
 end
 
+function l1l2(x, g; verb = false, ϵ=1e-8, α = 1.0)
+    # Isotropic L1-L2 / Fair loss function /  Mugnier-Brette expression 
+    nx = Int(sqrt(length(x)))
+    y = reshape(x, nx, nx);
+    xijplus1  = circshift(y, (0,-1))
+    xijminus1 = circshift(y, (0,1))
+    xiplus1j  = circshift(y, (-1,0))
+    ximinus1j = circshift(y, (1,0))
+    ximinus1jplus1 = circshift(y, (1,-1))
+    xiplus1jminus1 = circshift(y, (-1,1))
+    d1 = sqrt.((xiplus1j-y).^2  + (xijplus1-y).^2  .+ ϵ^2)
+    d2 = sqrt.((y-ximinus1j).^2 + (ximinus1jplus1-ximinus1j).^2 .+ ϵ^2)
+    d3 = sqrt.((xiplus1jminus1-xijminus1).^2 + (y-xijminus1).^2 .+ ϵ^2)
+    f = sum(d1/α - log.(1.0 .+ d1/α ) .-ϵ) 
+    g[:] = vec( (1/α .- 1.0 ./(α .+ d1) ).*( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3))
+    if verb == true
+        print(" ℓ1ℓ2:", f);
+    end
+    return f
+end
+
+
+
+
+
 function l2(x,l2_g; verb = false)
     nx = Int(sqrt(length(x)))
     l2_f = sum(x.^2)
     l2_g[:] =  2*x;
     if verb == true
-        print(" L2:", l2_f);
+        print(" ℓ2:", l2_f);
     end
     return l2_f
 end
+
 
 function l1hyp(x,l1_g; verb = false,ϵ=1e-9)
     nx = Int(sqrt(length(x)))
     l1_f = sum(sqrt.(x.^2 .+ϵ^2).-ϵ)
     l1_g[:] =  x./sqrt.(x.^2 .+ϵ^2);
     if verb == true
-        print(" L1hyp:", l1_f);
+        print(" ℓ1hyp:", l1_f);
     end
     return l1_f
 end
@@ -365,7 +391,7 @@ function checkgrad_1D(func;x=[], N=400, δ = 1e-8)
         f1l = func(x,analytic_g)
         x[i] = orig - 2*δ
         f2l = func(x,analytic_g)
-        numerical_g[i] = (-f2r+8*f1r-8*f1l+f2l)
+        numerical_g[i] = (f2l-f2r+8*(f1r-f1l))
         x[i] = orig
     end
     numerical_g ./= (12*δ)
@@ -389,19 +415,23 @@ function checkgrad_2D(func;x=[], N=36, M= 25, δ = 1e-8)
     for i=1:N
         for j=1:M
             orig = x[i,j]
-            x[i,j] = orig + 2*δ
-            f2r = func(x,analytic_g)
             x[i,j] = orig + δ
             f1r = func(x,analytic_g)
             x[i,j] = orig - δ
             f1l = func(x,analytic_g)
+            x[i,j] = orig + 2*δ
+            f2r = func(x,analytic_g)
             x[i,j] = orig - 2*δ
             f2l = func(x,analytic_g)
-            numerical_g[i,j] = (-f2r+8*f1r-8*f1l+f2l)
+            x[i,j] = orig + 3*δ
+            f3r = func(x,analytic_g)
+            x[i,j] = orig - 3*δ
+            f3l = func(x,analytic_g)
+            numerical_g[i,j] = (f3r-f3l+9*(f2l-f2r)+45*(f1r-f1l))
             x[i,j] = orig
         end
     end
-    numerical_g = vec(numerical_g)/(12*δ)
+    numerical_g = vec(numerical_g)/(60*δ)
     fref = func(x,analytic_g)
     numerator = norm(analytic_g-numerical_g)
     denominator = norm(analytic_g) + norm(numerical_g)
@@ -409,8 +439,6 @@ function checkgrad_2D(func;x=[], N=36, M= 25, δ = 1e-8)
     print(difference, "\n")
     return (numerical_g, analytic_g);
 end
-
-
 
 function trans_structnorm(x, sn_g;verb=false, ϵ=1e-9)
     #this x is under the form (npix,nwavs)
@@ -432,7 +460,7 @@ function trans_tv(x, tv_g;verb=false, ζ=1e-13)
     d1 = sqrt.(xlplus1_minus_xl.^2 .+ ζ^2)
     d2 = sqrt.(xl_minus_xminus1.^2 .+ ζ^2)
     tv_f = sum(d1.-ζ)
-    tv_g[:] = vec(-xlplus1_minus_xl./d1 + xl_minus_xminus1./d2)
+    tv_g[:] = vec((-xlplus1_minus_xl./d1 + xl_minus_xminus1./d2))
     return tv_f
 end
 
