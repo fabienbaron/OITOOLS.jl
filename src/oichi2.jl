@@ -326,7 +326,7 @@ function tv(x,tv_g; verb = false, ϵ=1e-8)
     return tv_f
 end
 
-function l1l2(x, g; verb = false, ϵ=1e-8, α = 1.0)
+function l1l2(x, g; verb = false, ϵ=1e-8, α = 2.0)
     # Isotropic L1-L2 / Fair loss function /  Mugnier-Brette expression 
     nx = Int(sqrt(length(x)))
     y = reshape(x, nx, nx);
@@ -339,41 +339,37 @@ function l1l2(x, g; verb = false, ϵ=1e-8, α = 1.0)
     d1 = sqrt.((xiplus1j-y).^2  + (xijplus1-y).^2  .+ ϵ^2)
     d2 = sqrt.((y-ximinus1j).^2 + (ximinus1jplus1-ximinus1j).^2 .+ ϵ^2)
     d3 = sqrt.((xiplus1jminus1-xijminus1).^2 + (y-xijminus1).^2 .+ ϵ^2)
-    f = sum(d1/α - log.(1.0 .+ d1/α ) .-ϵ) 
-    g[:] = vec( (1/α .- 1.0 ./(α .+ d1) ).*( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3))
+    f = sum(d1/α - log.(1.0 .+ d1/α ) .-ϵ)
+    g[:] = vec( ( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )/α -(2*y - xiplus1j - xijplus1)./(d1.*(α .+ d1)) + (y-ximinus1j)./(d2.*(α .+ d2)) + (y-xijminus1)./(d3.*(α .+ d3)) )
     if verb == true
         print(" ℓ1ℓ2:", f);
     end
     return f
 end
 
-
-
-
-
-function l2(x,l2_g; verb = false)
+function l2sq(x,g; verb = false)
     nx = Int(sqrt(length(x)))
-    l2_f = sum(x.^2)
-    l2_g[:] =  2*x;
+    f = sum(x.^2)
+    g[:] =  2*x;
     if verb == true
-        print(" ℓ2:", l2_f);
+        print(" ℓ2^2:", f);
     end
-    return l2_f
+    return f
 end
 
 
 function l1hyp(x,l1_g; verb = false,ϵ=1e-9)
     nx = Int(sqrt(length(x)))
-    l1_f = sum(sqrt.(x.^2 .+ϵ^2).-ϵ)
-    l1_g[:] =  x./sqrt.(x.^2 .+ϵ^2);
+    f = sum(sqrt.(x.^2 .+ϵ^2).-ϵ)
+    g[:] =  x./sqrt.(x.^2 .+ϵ^2);
     if verb == true
-        print(" ℓ1hyp:", l1_f);
+        print(" ℓ1hyp:", f);
     end
-    return l1_f
+    return f
 end
 
 
-function checkgrad_1D(func;x=[], N=400, δ = 1e-8)
+function checkgrad_1D(func;x=[], N=400, δ = 1e-6)
     if x==[]
         x = abs.(rand(N))
     else 
@@ -404,7 +400,7 @@ function checkgrad_1D(func;x=[], N=400, δ = 1e-8)
 end
 
 
-function checkgrad_2D(func;x=[], N=36, M= 25, δ = 1e-8)
+function checkgrad_2D(func;x=[], N=36, M= 25, δ = 1e-6)
     if x==[]
         x = abs.(rand(N,M))
     else 
@@ -440,16 +436,16 @@ function checkgrad_2D(func;x=[], N=36, M= 25, δ = 1e-8)
     return (numerical_g, analytic_g);
 end
 
-function trans_structnorm(x, sn_g;verb=false, ϵ=1e-9)
+function trans_structnorm(x, g;verb=false, ϵ=1e-9)
     #this x is under the form (npix,nwavs)
     #but return the gradient as a 1D vector to use with Optimpack
     d = sqrt.(sum(x.^2, dims=2).+ϵ^2)
-    sn_f = sum(d.-ϵ);
-    sn_g[:] = vec(x./d);
-    return sn_f
+    f = sum(d.-ϵ);
+    g[:] = vec(x./d);
+    return f
 end
 
-function trans_tv(x, tv_g;verb=false, ζ=1e-13)
+function trans_tv(x, g;verb=false, ζ=1e-13)
     # Transpectral or transtemporal regularization
     #this x is under the form (npix,nwavs)
     #but return the gradient as a 1D vector to use with Optimpack
@@ -459,9 +455,24 @@ function trans_tv(x, tv_g;verb=false, ζ=1e-13)
     # xl_minus_xminus1[:,1] .=0 
     d1 = sqrt.(xlplus1_minus_xl.^2 .+ ζ^2)
     d2 = sqrt.(xl_minus_xminus1.^2 .+ ζ^2)
-    tv_f = sum(d1.-ζ)
-    tv_g[:] = vec((-xlplus1_minus_xl./d1 + xl_minus_xminus1./d2))
-    return tv_f
+    f = sum(d1.-ζ)
+    g[:] = vec((-xlplus1_minus_xl./d1 + xl_minus_xminus1./d2))
+    return f
+end
+
+function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=1.0)
+    # Transpectral or transtemporal regularization using the L1L2 scheme
+    #  x is under the form (npix,nwavs)
+    #but return the gradient as a 1D vector to use with Optimpack
+    xlplus1_minus_xl = circshift(x, (0,-1))-x
+   # xlplus1_minus_xl[:,end] .= 0
+    xl_minus_xminus1 = x-circshift(x, (0,1))
+    # xl_minus_xminus1[:,1] .=0 
+    d1 = sqrt.(xlplus1_minus_xl.^2 .+ ζ^2)
+    d2 = sqrt.(xl_minus_xminus1.^2 .+ ζ^2)
+    f = sum(d1/δ - log.(1.0 .+d1/δ).-ζ)
+    g[:] = vec((-xlplus1_minus_xl./d1 + xl_minus_xminus1./d2)/δ-((-xlplus1_minus_xl./d1)./(δ .+ d1) + (xl_minus_xminus1./d2)./(δ .+d2)))
+    return f
 end
 
 function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
