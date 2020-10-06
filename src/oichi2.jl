@@ -340,7 +340,7 @@ function l1l2(x, g; verb = false, ϵ=1e-8, α = 2.0)
     d2 = sqrt.((y-ximinus1j).^2 + (ximinus1jplus1-ximinus1j).^2 .+ ϵ^2)
     d3 = sqrt.((xiplus1jminus1-xijminus1).^2 + (y-xijminus1).^2 .+ ϵ^2)
     f = sum(d1/α - log.(1.0 .+ d1/α ) .-ϵ)
-    g[:] = vec( ( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )/α -(2*y - xiplus1j - xijplus1)./(d1.*(α .+ d1)) + (y-ximinus1j)./(d2.*(α .+ d2)) + (y-xijminus1)./(d3.*(α .+ d3)) )
+    g[:] = vec( ( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )/α -(2*y - xiplus1j - xijplus1)./(d1.*(α .+ d1)) - (y-ximinus1j)./(d2.*(α .+ d2)) - (y-xijminus1)./(d3.*(α .+ d3)) )
     if verb == true
         print(" ℓ1ℓ2:", f);
     end
@@ -460,7 +460,7 @@ function trans_tv(x, g;verb=false, ζ=1e-13)
     return f
 end
 
-function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=1.0)
+function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=2.0)
     # Transpectral or transtemporal regularization using the L1L2 scheme
     #  x is under the form (npix,nwavs)
     #but return the gradient as a 1D vector to use with Optimpack
