@@ -339,8 +339,8 @@ function l1l2(x, g; verb = false, ϵ=1e-8, α = 2.0)
     d1 = sqrt.((xiplus1j-y).^2  + (xijplus1-y).^2  .+ ϵ^2)
     d2 = sqrt.((y-ximinus1j).^2 + (ximinus1jplus1-ximinus1j).^2 .+ ϵ^2)
     d3 = sqrt.((xiplus1jminus1-xijminus1).^2 + (y-xijminus1).^2 .+ ϵ^2)
-    f = sum(d1/α - log.(1.0 .+ d1/α ) .-ϵ)
-    g[:] = vec( ( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )/α -(2*y - xiplus1j - xijplus1)./(d1.*(α .+ d1)) - (y-ximinus1j)./(d2.*(α .+ d2)) - (y-xijminus1)./(d3.*(α .+ d3)) )
+    f = α^2*sum(d1/α - log.(1.0 .+ d1/α ) .-ϵ)
+    g[:] = α^2*vec( ( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )/α -(2*y - xiplus1j - xijplus1)./(d1.*(α .+ d1)) - (y-ximinus1j)./(d2.*(α .+ d2)) - (y-xijminus1)./(d3.*(α .+ d3)) )
     if verb == true
         print(" ℓ1ℓ2:", f);
     end
@@ -358,7 +358,7 @@ function l2sq(x,g; verb = false)
 end
 
 
-function l1hyp(x,l1_g; verb = false,ϵ=1e-9)
+function l1hyp(x,g; verb = false,ϵ=1e-9)
     nx = Int(sqrt(length(x)))
     f = sum(sqrt.(x.^2 .+ϵ^2).-ϵ)
     g[:] =  x./sqrt.(x.^2 .+ϵ^2);
@@ -367,6 +367,18 @@ function l1hyp(x,l1_g; verb = false,ϵ=1e-9)
     end
     return f
 end
+
+# function l1l2w(x,g; verb = false)
+#     nx = Int(sqrt(length(x)))
+#     f = sum(x-log.(1.0 .+ x))
+#     g[:] =  1.0 .- 1.0/(1.0 .+x);
+#     if verb == true
+#         print(" ℓ1ℓ2w:", f);
+#     end
+#     return f
+# end
+
+
 
 
 function checkgrad_1D(func;x=[], N=400, δ = 1e-6)
@@ -487,6 +499,12 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
             reg_f += regularizers[ireg][2]*tvsq(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "EPLL"
             reg_f += regularizers[ireg][2]*EPLL_fg(x,temp_g, regularizers[ireg][3])
+        elseif regularizers[ireg][1] == "l1l2"
+            reg_f += regularizers[ireg][2]*l1l2(x,temp_g, verb = verb, α = regularizers[ireg][3])
+        elseif regularizers[ireg][1] == "l1hyp"
+            reg_f += regularizers[ireg][2]*l1hyp(x,temp_g, verb = verb)
+        elseif regularizers[ireg][1] == "l2sq"
+            reg_f += regularizers[ireg][2]*l2sq(x,temp_g, verb = verb)
         end
         reg_g[:] += regularizers[ireg][2]*temp_g
     end
