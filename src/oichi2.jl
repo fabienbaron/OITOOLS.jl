@@ -469,6 +469,24 @@ function trans_tv(x, g;verb=false, ζ=1e-13)
     return f
 end
 
+
+function trans_tvsq(x, g;verb=false, ζ=1e-13)
+    # Transpectral or transtemporal regularization
+    #this x is under the form (npix,nwavs)
+    #but return the gradient as a 1D vector to use with Optimpack
+    xlplus1_minus_xl = circshift(x, (0,-1))-x
+   # xlplus1_minus_xl[:,end] .= 0
+    xl_minus_xminus1 = x-circshift(x, (0,1))
+    # xl_minus_xminus1[:,1] .=0 
+    d1 = xlplus1_minus_xl.^2
+    d2 = xl_minus_xminus1.^2
+    f = sum(d1.-ζ)
+    g[:] = 2*vec(-xlplus1_minus_xl + xl_minus_xminus1)
+    return f
+end
+
+
+
 function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=2.0)
     # Transpectral or transtemporal regularization using the L1L2 scheme
     #  x is under the form (npix,nwavs)
@@ -669,39 +687,35 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
 
     # transspectral regularization
     if length(regularizers)>nwavs
-        if (regularizers[nwavs+1][1][1] == "transspectral_tvsq")  & (nwavs>2)
-            y = reshape(x,(npix,nwavs))
-            trsp_f = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
-            trsp_g = Array{Float64}(undef, npix,nwavs)
-            if nwavs>2
-                trsp_g[:,1] = 2*(y[:,1] - y[:,2])
-                trsp_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
-                trsp_g[:,end] = 2*(y[:,end] - y[:,end-1])
-            else
-                trsp_g[:,1] = 2*(y[:,1]-y[:,2]);
-                trsp_g[:,2] = 2*(y[:,2]-y[:,1]);
+        ntransreg = length(regularizers)-nwavs;
+        y = reshape(x,(npix,nwavs))
+        tg = Array{Float64}(undef, npix*nwavs)
+        for i=1:ntransreg
+            if (regularizers[nwavs+i][1][1] == "transspectral_tv")
+                tf = trans_tv(y,tg)
+                f    += regularizers[nwavs+i][1][2]*tf
+                g[:] += regularizers[nwavs+i][1][2]*tg;
+                printstyled("Trans-spectral TV: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
             end
-            f    += regularizers[nwavs+1][1][2]*trsp_f
-            g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
-            printstyled("Trans-spectral TVSQ: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
+            if (regularizers[nwavs+i][1][1] == "transspectral_tvsq")
+                tf = trans_structnorm(y, tg)
+                f+= regularizers[nwavs+i][1][2]*tf
+                g[:] += regularizers[nwavs+i][1][2]*tg
+                printstyled("Trans-spectral squared TV: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
+            end
+            if (regularizers[nwavs+i][1][1] == "transspectral_structnorm")
+                tf = trans_structnorm(y,tg)
+                f    += regularizers[nwavs+i][1][2]*tf
+                g[:] += regularizers[nwavs+i][1][2]*tg;
+                printstyled("Trans-spectral Structured Norm: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
+            end
+            if (regularizers[nwavs+i][1][1] == "transspectral_l1l2")
+                tf = trans_l1l2(y, tg, δ=regularizers[nwavs+i][1][3])
+                f+= regularizers[nwavs+i][1][2]*tf
+                g[:] += regularizers[nwavs+i][1][2]*tg
+                printstyled("Trans-spectral l1l2 norm: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
+            end
         end
-        # if (regularizers[nwavs+1][1][1] == "transspectral_structnorm")  & (nwavs>2)
-        #     y = reshape(x,(npix,nwavs))
-        #     eps=1e-9
-        #     trsp_f = sum(sqrt.(sum(y.^2, dims=2 ) .+eps^2)-eps)
-        #     trsp_g = Array{Float64}(undef, npix,nwavs)
-        #     if nwavs>2
-        #         trsp_g[:,1] = 2*(y[:,1] - y[:,2])
-        #         trsp_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
-        #         trsp_g[:,end] = 2*(y[:,end] - y[:,end-1])
-        #     else
-        #         trsp_g[:,1] = 2*(y[:,1]-y[:,2]);
-        #         trsp_g[:,2] = 2*(y[:,2]-y[:,1]);
-        #     end
-        #     f    += regularizers[nwavs+1][1][2]*trsp_f
-        #     g[:] += regularizers[nwavs+1][1][2]*vec(trsp_g);
-        #     printstyled("Trans-spectral Structured norm: $(regularizers[nwavs+1][1][2]*trsp_f)\n", color=:yellow)
-        # end
     end
     return f;
 end
