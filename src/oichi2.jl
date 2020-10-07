@@ -368,18 +368,15 @@ function l1hyp(x,g; verb = false,ϵ=1e-9)
     return f
 end
 
-# function l1l2w(x,g; verb = false)
-#     nx = Int(sqrt(length(x)))
-#     f = sum(x-log.(1.0 .+ x))
-#     g[:] =  1.0 .- 1.0/(1.0 .+x);
-#     if verb == true
-#         print(" ℓ1ℓ2w:", f);
-#     end
-#     return f
-# end
-
-
-
+function l1l2w(x,g; verb = false)
+    nx = Int(sqrt(length(x)))
+    f = sum(x-log.(1.0 .+ x))
+    g[:] .=  1.0 .- 1.0./(1.0 .+x);
+    if verb == true
+        print(" ℓ1ℓ2w:", f);
+    end
+    return f
+end
 
 function checkgrad_1D(func;x=[], N=400, δ = 1e-6)
     if x==[]
@@ -501,6 +498,8 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
             reg_f += regularizers[ireg][2]*EPLL_fg(x,temp_g, regularizers[ireg][3])
         elseif regularizers[ireg][1] == "l1l2"
             reg_f += regularizers[ireg][2]*l1l2(x,temp_g, verb = verb, α = regularizers[ireg][3])
+        elseif regularizers[ireg][1] == "l1l2w"
+            reg_f += regularizers[ireg][2]*l1l2w(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "l1hyp"
             reg_f += regularizers[ireg][2]*l1hyp(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "l2sq"
