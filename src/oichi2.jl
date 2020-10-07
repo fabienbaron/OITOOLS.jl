@@ -687,33 +687,33 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
 
     # transspectral regularization
     if length(regularizers)>nwavs
-        ntransreg = length(regularizers)-nwavs;
+        ntransreg = length(regularizers[nwavs+1]);
         y = reshape(x,(npix,nwavs))
         tg = Array{Float64}(undef, npix*nwavs)
         for i=1:ntransreg
-            if (regularizers[nwavs+i][1][1] == "transspectral_tv")
+            if (regularizers[nwavs+1][i][1] == "transspectral_tv")
                 tf = trans_tv(y,tg)
-                f    += regularizers[nwavs+i][1][2]*tf
-                g[:] += regularizers[nwavs+i][1][2]*tg;
-                printstyled("Trans-spectral TV: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
+                f    += regularizers[nwavs+1][i][2]*tf
+                g[:] += regularizers[nwavs+1][i][2]*tg;
+                printstyled("Trans-spectral TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
-            if (regularizers[nwavs+i][1][1] == "transspectral_tvsq")
+            if (regularizers[nwavs+1][i][1] == "transspectral_tvsq")
                 tf = trans_structnorm(y, tg)
-                f+= regularizers[nwavs+i][1][2]*tf
-                g[:] += regularizers[nwavs+i][1][2]*tg
-                printstyled("Trans-spectral squared TV: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
+                f+= regularizers[nwavs+1][i][2]*tf
+                g[:] += regularizers[nwavs+1][i][2]*tg
+                printstyled("Trans-spectral squared TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
-            if (regularizers[nwavs+i][1][1] == "transspectral_structnorm")
+            if (regularizers[nwavs+1][i][1] == "transspectral_structnorm")
                 tf = trans_structnorm(y,tg)
-                f    += regularizers[nwavs+i][1][2]*tf
-                g[:] += regularizers[nwavs+i][1][2]*tg;
-                printstyled("Trans-spectral Structured Norm: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
+                f    += regularizers[nwavs+1][i][2]*tf
+                g[:] += regularizers[nwavs+1][i][2]*tg;
+                printstyled("Trans-spectral Structured Norm: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
-            if (regularizers[nwavs+i][1][1] == "transspectral_l1l2")
-                tf = trans_l1l2(y, tg, δ=regularizers[nwavs+i][1][3])
-                f+= regularizers[nwavs+i][1][2]*tf
-                g[:] += regularizers[nwavs+i][1][2]*tg
-                printstyled("Trans-spectral l1l2 norm: $(regularizers[nwavs+i][1][2]*tf)\n", color=:yellow)
+            if (regularizers[nwavs+1][i][1] == "transspectral_l1l2")
+                tf = trans_l1l2(y, tg, δ=regularizers[nwavs+1][i][3])
+                f+= regularizers[nwavs+1][i][2]*tf
+                g[:] += regularizers[nwavs+1][i][2]*tg
+                printstyled("Trans-spectral l1l2 norm: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
         end
     end
