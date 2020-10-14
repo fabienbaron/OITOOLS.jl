@@ -1,6 +1,7 @@
 #
 # Model fitting
 # TODO: - go beyond V2+T3 fits by adding complex vis and/or diffvis
+#       - currently we may feed data.uv or data.uv_baseline to visfunc to speed up calculation - however the polychromatic implementation is slightly different
 #       - update bootstrap for non equal number of T3amp and T3phi
 #       - update MultiNest fitter
 
@@ -36,11 +37,17 @@ function model_to_chi2(data::OIdata, visfunc, params::Array{Float64,1}; weights=
     chi2 = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
 end
 
-function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1}; weights=[1.0,1.0,1.0]) # polychromatic data case
+function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1}; chromatic_vector=[], weights=[1.0,1.0,1.0]) # polychromatic data case
     nwavs = length(data)
     chi2 = zeros(Float64, nwavs)
     for i=1:nwavs
-        cvis_model = visfunc(params, data[i].uv)
+        cvis_model = []
+        if chromatic_vector ==[]
+            cvis_model = visfunc(params, data[i].uv, data[i].uv_baseline)
+        else
+            cvis_model = visfunc(params, data[i].uv, data[i].uv_baseline, chromatic_vector[i]) # sometimes we need a chromatic constant term
+        end
+        
         chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
         if (data[i].nv2>0) && (weights[1]>0.0)
             v2_model = cvis_to_v2(cvis_model, data[i].indx_v2);
