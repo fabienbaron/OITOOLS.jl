@@ -36,6 +36,39 @@ function model_to_chi2(data::OIdata, visfunc, params::Array{Float64,1}; weights=
     chi2 = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
 end
 
+function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1}; weights=[1.0,1.0,1.0]) # polychromatic data case
+    nwavs = length(data)
+    chi2 = zeros(Float64, nwavs)
+    for i=1:nwavs
+        cvis_model = visfunc(params, data[i].uv)
+        chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
+        if (data[i].nv2>0) && (weights[1]>0.0)
+            v2_model = cvis_to_v2(cvis_model, data[i].indx_v2);
+            chi2_v2 = sum( ((v2_model - data[i].v2)./data[i].v2_err).^2)/data[i].nv2;
+        else
+            weights[1]=0.0
+        end
+        if (data[i].nt3amp>0 || data[i].nt3phi>0)  && (weights[2]>0 || weights[3]>0)
+            t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data[i].indx_t3_1, data[i].indx_t3_2 ,data[i].indx_t3_3);
+            if (data[i].nt3amp>0) && (weights[2]>0.0)
+            chi2_t3amp = sum( ((t3amp_model - data[i].t3amp)./data[i].t3amp_err).^2)/data[i].nt3amp;
+            else
+            weights[2]=0.0
+            end
+            if (data[i].nt3phi>0) && (weights[3]>0.0)
+            chi2_t3phi = sum( (mod360(t3phi_model - data[i].t3phi)./data[i].t3phi_err).^2)/data[i].nt3phi;
+            else
+            weights[3] = 0.0;
+            end
+        else
+            weights[2] = 0.0;
+            weights[3] = 0.0;
+        end
+        chi2[i] = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
+    end
+    return sum(chi2)/nwavs;
+end
+
 function fit_model(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:LN_NELDERMEAD, lbounds = [], hbounds = [], verbose = true, calculate_vis = true, weights=[1.0,1.0,1.0])
     nparams=length(init_param)
     chisq=(param,g)->model_to_chi2(data, visfunc, param, weights=weights)
