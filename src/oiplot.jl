@@ -716,7 +716,7 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
     elseif typeof(image_vector)==Array{Float64,3}
         nwavs = size(image_vector,3)
     end
-    nside = 4#ceil(Int64,sqrt(nwavs))
+    nside = ceil(Int64,sqrt(nwavs))
 
     fig = figure(figtitle,figsize=(10,10),facecolor="White")
     clf();

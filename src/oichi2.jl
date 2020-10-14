@@ -176,30 +176,28 @@ function chi2_dft_f(x::Array{Float64,1}, dft, data::OIdata; verb = true)
     return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-function chi2_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; verb = true ) # criterion function for nfft
-    cvis_model = image_to_cvis_nfft(x, fftplan[1]);
+function chi2_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; cvis = [], printcolor =:black,  verb = false)
+    flux = sum(x);
+    cvis_model = image_to_cvis_nfft(x, ftplan[1]);
+    if length(cvis)>0
+        #Note: cvis_model includes all the complex visibilities needed to compute V2, T3, etc.
+        #      while the cvis variable is used to export visibility observables (e.g. diff vis or diff phi)
+        cvis[:] = cvis_model[data.indx_vis]
+    end
     v2_model = cvis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
     chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
     chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
     chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-    if verb == true
-        println("Chi2r: ", (chi2_v2 + chi2_t3amp + chi2_t3phi)/(data.nv2+ data.nt3amp+ data.nt3phi)," V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+    if verb==true
+        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
+        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
+        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
+        printstyled("Flux: $(flux) ", color=:black);
     end
     return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-#
-# function chi2_vis_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata ) # criterion function plus its gradient w/r x
-#   cvis_model = image_to_cvis_nfft(x, fftplan[1]);
-#   # compute observables from all cvis
-#   visamp_model = abs.(cvis_model);
-#   visphi_model = angle.(cvis_model)*(180.0/pi);
-#   chi2_visamp = norm((visamp_model - data.visamp)./data.visamp_err)^2;
-#   chi2_visphi = norm(mod360(visphi_model - data.visphi)./data.visphi_err)^2;
-#   println("VISAMP: ", chi2_visamp/data.nvisamp, " VISPHI: ", chi2_visphi/data.nvisphi)
-#   return chi2_visamp+chi2_visphi
-# end
 
 #
 # function chi2_vis_dft_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
@@ -454,14 +452,12 @@ function trans_structnorm(x, g;verb=false, ϵ=1e-9)
     return f
 end
 
-function trans_tv(x, g;verb=false, ζ=1e-13)
+function trans_tv(x, g; ζ=1e-13)
     # Transpectral or transtemporal regularization
     #this x is under the form (npix,nwavs)
     #but return the gradient as a 1D vector to use with Optimpack
     xlplus1_minus_xl = circshift(x, (0,-1))-x
-   # xlplus1_minus_xl[:,end] .= 0
     xl_minus_xminus1 = x-circshift(x, (0,1))
-    # xl_minus_xminus1[:,1] .=0 
     d1 = sqrt.(xlplus1_minus_xl.^2 .+ ζ^2)
     d2 = sqrt.(xl_minus_xminus1.^2 .+ ζ^2)
     f = sum(d1.-ζ)
@@ -470,22 +466,18 @@ function trans_tv(x, g;verb=false, ζ=1e-13)
 end
 
 
-function trans_tvsq(x, g;verb=false, ζ=1e-13)
+function trans_tvsq(x, g;verb=false)
     # Transpectral or transtemporal regularization
     #this x is under the form (npix,nwavs)
     #but return the gradient as a 1D vector to use with Optimpack
     xlplus1_minus_xl = circshift(x, (0,-1))-x
-   # xlplus1_minus_xl[:,end] .= 0
     xl_minus_xminus1 = x-circshift(x, (0,1))
-    # xl_minus_xminus1[:,1] .=0 
     d1 = xlplus1_minus_xl.^2
     d2 = xl_minus_xminus1.^2
-    f = sum(d1.-ζ)
+    f = sum(d1)
     g[:] = 2*vec(-xlplus1_minus_xl + xl_minus_xminus1)
     return f
 end
-
-
 
 function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=2.0)
     # Transpectral or transtemporal regularization using the L1L2 scheme
@@ -546,6 +538,15 @@ function crit_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, fftplan::Array{NF
     g[:] = (g .- sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
     return chi2_f + reg_f;
 end
+
+function crit_nfft_f(x::Array{Float64,1}, fftplan::Array{NFFTPlan{2,0,Float64},1}, data::OIdata; cvis = [], printcolor = :black, regularizers=[], verb = true)
+    chi2_f = chi2_nfft_fg(x, g, fftplan, data, cvis = cvis, verb = verb);
+    reg_f = regularization(x,g, regularizers=regularizers, printcolor = printcolor, verb = verb);
+    return chi2_f + reg_f;
+end
+
+
+
 
 function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Complex{Float64},2}, data::OIdata; printcolor =:black, verb=true)
     flux = sum(x);
@@ -663,7 +664,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
         g[tslice] = subg
     end
     ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:nwavs]);
-    printstyled("Crit: $f Crit/dof: $(f/ndof) \n", color=:yellow);
+    printstyled("Indpt images -- Crit: $f Crit/dof: $(f/ndof) \n", color=:red);
     # Differential phase
     #  if data.nvisphi > 0
     # Compute vis_ref
@@ -717,7 +718,60 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
             end
         end
     end
+    printstyled("Post trans -- Crit: $f Crit/dof: $(f/ndof) \n", color=:blue);
     return f;
+end
+
+
+function chi2_polychromatic_nfft_f(x::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1}, data::Array{OIdata,1};printcolor= [], use_diffphases = false, verb = false)
+    nwavs = length(ft);
+    if printcolor == []
+        printcolor=Array{Symbol}(undef,nwavs);
+        printcolor[:] .= :black
+    end
+    npix = div(length(x),nwavs);
+    cvis = fill((Complex{Float64}[]),nwavs);
+    if use_diffphases == true
+        for i=1:nwavs
+            cvis[i] = Array{Complex{Float64},1}(undef, length(data[i].indx_vis))
+        end
+    end
+    f = zeros(nwavs)
+    for i=1:nwavs # weighted sum -- should probably do the computation in parallel
+        if use_diffphases == true
+            f[i] = chi2_nfft_f(x[1+(i-1)*npix:i*npix], ft[i], data[i], cvis=cvis[i], verb = verb);
+        else
+            f[i] = chi2_nfft_f(x[1+(i-1)*npix:i*npix], ft[i], data[i], verb = verb);
+        end
+        fr = f[i]/(data[i].nv2+data[i].nt3amp+data[i].nt3phi)    
+        if verb == true
+            printstyled("Spectral channel $i chi2= $(f[i]) chi2r = $(fr)\n",color=printcolor[i]);
+        end
+    end
+    chi2f = sum(f)
+    ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:nwavs]);
+    printstyled("All V2+T3AMP+T3PHI -- Chi2: $chi2f Chi2/dof: $(chi2f/ndof) \n", color=:red);
+    # Differential phase
+    if use_diffphases == true
+        phi_model = angle.(hcat(cvis...))*180/pi
+        diffphi_model = (nwavs*phi_model .- vec(sum(phi_model, dims=2))) /(nwavs-1)
+        diffphi     = hcat([data[i].visphi for i=1:nwavs]...)
+        diffphi_err = hcat([data[i].visphi_err for i=1:nwavs]...)
+        chi2_diffphi = norm(mod360(diffphi_model-diffphi)./diffphi_err)^2
+        chi2f += chi2_diffphi;
+        print("Differential phase chi2r: $(chi2_diffphi/length(diffphi_model)) \n");
+    end
+    return chi2f;
+end
+
+function image_to_cvis_polychromatic_nfft(x::Array{Float64,1}, ft::Array{Array{NFFTPlan{2,0,Float64},1},1})
+    nwavs = length(ft);
+    npix = div(length(x),nwavs);
+    cvis = fill((Complex{Float64}[]),nwavs);
+    for i=1:nwavs 
+        cvis[i] = image_to_cvis_nfft(x[1+(i-1)*npix:i*npix], ft[i]);
+    end
+    return cvis;
 end
 
 using OptimPackNextGen
