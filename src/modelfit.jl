@@ -47,7 +47,6 @@ function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1};
         else
             cvis_model = visfunc(params, data[i].uv, data[i].uv_baseline, chromatic_vector[i]) # sometimes we need a chromatic constant term
         end
-        
         chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
         if (data[i].nv2>0) && (weights[1]>0.0)
             v2_model = cvis_to_v2(cvis_model, data[i].indx_v2);
@@ -101,6 +100,46 @@ function fit_model(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:
     end
     return (minf,minx,cvis_model)
 end
+
+
+
+
+function fit_model(data::Array{OIdata,1}, visfunc, init_param::Array{Float64,1}; chromatic_vector=[], fitter=:LN_NELDERMEAD, lbounds = [], hbounds = [], verbose = true, calculate_vis = true, weights=[1.0,1.0,1.0])
+    nparams=length(init_param)
+    chisq=(param,g)->model_to_chi2(data, visfunc, param, weights=weights, chromatic_vector=chromatic_vector)
+    opt = Opt(fitter, nparams);
+    min_objective!(opt, chisq)
+    xtol_rel!(opt,1e-5)
+    if lbounds == []
+        lbounds,~ = init_bounds(visfunc)
+    end
+    if hbounds == []
+        ~,hbounds = init_bounds(visfunc)
+    end
+    # maybe not desirable for quadratic law ?
+    lower_bounds!(opt, lbounds);
+    upper_bounds!(opt, hbounds);
+    (minf,minx,ret) = optimize(opt, init_param);
+    if verbose == true
+        println("Chi2: $minf \t parameters:$minx \t \t $ret")
+    end
+    cvis_model = [];
+    # if calculate_vis == true
+    #     cvis_model = visfunc(minx, data.uv)
+    # end
+    return (minf,minx,cvis_model)
+end
+
+
+
+
+
+
+
+
+
+
+
 
 #
 # BOOSTRAPING
