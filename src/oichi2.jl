@@ -699,7 +699,7 @@ function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
                 printstyled("Trans-spectral TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
             if (regularizers[nwavs+1][i][1] == "transspectral_tvsq")
-                tf = trans_structnorm(y, tg)
+                tf = trans_tvsq(y, tg)
                 f+= regularizers[nwavs+1][i][2]*tf
                 g[:] += regularizers[nwavs+1][i][2]*tg
                 printstyled("Trans-spectral squared TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)

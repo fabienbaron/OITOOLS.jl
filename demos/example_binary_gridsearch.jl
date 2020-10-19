@@ -54,7 +54,7 @@ end
 # Load Data
 #
 oifitsfile = "./data/iota_peg4t.oifits";
-data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
+data = vec(readoifits(oifitsfile)); # data can be split by wavelength, time, etc.
 
 #
 # GRID SEARCH
