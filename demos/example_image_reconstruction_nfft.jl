@@ -11,8 +11,8 @@ ft = setup_nfft(data, nx, pixsize);
 x_start = gaussian2d(nx,nx,nx/6);
 x_start = vec(x_start)/sum(x_start);
 
-regularizers = [["centering", 1e3], ["tv", 1e4]];
-x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true, maxiter=2000);
+regularizers = [["centering", 1e3], ["l1l2", 7e6, 1e-3]];
+x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true, maxiter=500);
 imdisp(x,pixscale=pixsize)
 
 # Uncomment if you want to write the result
