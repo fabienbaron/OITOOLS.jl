@@ -854,6 +854,10 @@ end
 
 function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata,1}, ft; weights = [1.0,1.0,1.0], printcolor= [], verb = true, use_diffphases = false, maxiter = 100, regularizers =[])
     x_sol = []
+    if regularizers == []
+        regularizers = fill([],nwavs)
+    end
+
     if typeof(ft) == Array{Array{NFFTPlan{2,0,Float64},1},1}
         crit = (x,g)->crit_polychromatic_nfft_fg(x, g, ft, data, weights = weights, printcolor=printcolor, regularizers=regularizers, use_diffphases = use_diffphases, verb = verb)
         x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
