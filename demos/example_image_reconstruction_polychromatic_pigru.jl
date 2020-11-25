@@ -16,18 +16,17 @@ ft = setup_nfft_polychromatic(data, nx, pixsize);
 nwavs = length(ft)
 
 # Setup regularization
-regularizers = [   [ ["centering", 1e5], ["tv", 1e3] ]]  # Frame 1 is centered
-for i=1:nwavs-1
-    push!(regularizers,[["centering", 1e5], ["tv",1e3]]) # Total variation for all
-end
+regularizers = repeat( [[ ["centering", 1e5], ["l1l2", 1e4, 1e-2] ]], nwavs)
 push!(regularizers,[ ["transspectral_structnorm", 1.0], ["transspectral_tvsq", 20.0] ]); #transspectral regularization ties the frames together
 
-x_start = gaussian2d(nx,nx,nx/6);
-x_start /= sum(x_start);
-x_start = repeat(vec(x_start), nwavs)
-#x_start = repeat(vec(rand(nx, nx)), nwavs);
+#x_start = gaussian2d(nx,nx,nx/6);
+#x_start /= sum(x_start);
+#x_start = repeat(vec(x_start), nwavs)
+x_start = repeat(vec(rand(nx, nx)), nwavs);
 x = vec(x_start)
+imdisp_polychromatic(reshape(x,nx*nx,nwavs), pixscale=pixsize)
+
 for i=1:25
-global x = reconstruct_polychromatic(x, data, ft, regularizers = regularizers, weights=[1.0,0.0,1.0], maxiter = 2000, verb = false);
+global x = reconstruct_polychromatic(x, data, ft, regularizers = regularizers, weights=[1.0,1.0,1.0], maxiter = 2000, verb = true);
 imdisp_polychromatic(reshape(x,nx*nx,nwavs), pixscale=pixsize)
 end

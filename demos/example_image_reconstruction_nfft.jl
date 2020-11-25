@@ -3,8 +3,8 @@
 #
 using OITOOLS
 oifitsfile = "./data/2004-data1.oifits"
-pixsize = 0.2
-nx = 64
+pixsize = 0.2 # size of a pixel in milliarcseconds
+nx = 64 # width of image (number of pixels)
 data = readoifits(oifitsfile)[1,1];
 ft = setup_nfft(data, nx, pixsize);
 #initial image is a simple Gaussian

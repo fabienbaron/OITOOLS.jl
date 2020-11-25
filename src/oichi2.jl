@@ -535,7 +535,7 @@ function chi2_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFTPlan{2,0,Float64},1}
     if weights[3]>0
         chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
     end
-      if verb==true
+    if verb==true
         printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
         printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
         printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
