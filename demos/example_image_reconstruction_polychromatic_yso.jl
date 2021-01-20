@@ -27,15 +27,15 @@ for i=1:nwav-1
 end
 
 # Uncomment the desired transspectral regularization
-# push!(regularizers,[ ["transspectral_tvsq", 1e5] ] ); 
-push!(regularizers,[["transspectral_structnorm", 1e3], ["transspectral_tv", 1e3] ] ); 
+# push!(regularizers,[ ["transspectral_tvsq", 1e5] ] );
+push!(regularizers,[["transspectral_structnorm", 1e3], ["transspectral_tv", 1e3] ] );
 
-# pointsource = zeros(nx,nx); pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
-# x_start = zeros(nx, nx, nwav);
-# for i=1:nwav
-#     x_start[:,:,i]=pointsource
-# end
-x= rand(nx, nx, nwav);
+ pointsource = zeros(nx,nx); pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
+ x_start = zeros(nx, nx, nwav);
+ for i=1:nwav
+     x_start[:,:,i]=pointsource
+ end
+#x_start= rand(nx, nx, nwav);
 x = vec(x_start);
 for i=1:3
     global x = reconstruct_polychromatic(x, data, fftplan, regularizers = regularizers, maxiter = 200, verb=false);
