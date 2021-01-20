@@ -128,12 +128,12 @@ function image_to_cvis_dft(x, dft)
     cvis_model = dft * vec(x) / sum(x);
 end
 
-function image_to_cvis_nfft(x::Array{Float64,1}, nfft_plan::NFFTPlan)
+function image_to_cvis_nfft(x::Array{Float64,1}, nfft_plan::NFFT.NFFTPlan)
     nx = Int64(sqrt(length(x)))
     cvis_model = nfft(nfft_plan, Complex{Float64}.(reshape(x,(nx,nx)))) / sum(x);
 end
 
-function image_to_cvis_nfft(x::Array{Float64,2}, nfft_plan::NFFTPlan)
+function image_to_cvis_nfft(x::Array{Float64,2}, nfft_plan::NFFT.NFFTPlan)
     cvis_model = nfft(nfft_plan, Complex{Float64}.(x)) / sum(x);
 end
 
