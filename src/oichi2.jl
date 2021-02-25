@@ -337,6 +337,35 @@ function l1l2w(x,g; verb = false)
     return f
 end
 
+
+
+function numgrad_1D(func;x=[], N=100, δ = 1e-6)
+    if x==[]
+        x = abs.(rand(Float64,N))
+    else
+        N = length(x)
+    end
+    numerical_g = zeros(length(x),length(f(x)))
+    for i=1:N
+        orig = x[i]
+        x[i] = orig + 2*δ
+        f2r = func(x)
+        x[i] = orig + δ
+        f1r = func(x)
+        x[i] = orig - δ
+        f1l = func(x)
+        x[i] = orig - 2*δ
+        f2l = func(x)
+        numerical_g[i,:] = (f2l-f2r+8*(f1r-f1l))
+        x[i] = orig
+    end
+    numerical_g ./= (12*δ)
+    return numerical_g;
+end
+
+
+
+
 function checkgrad_1D(func;x=[], N=400, δ = 1e-6)
     if x==[]
         x = abs.(rand(N))
