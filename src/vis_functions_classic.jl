@@ -40,9 +40,7 @@ function visibility_ellipse_quad(param, uv::Array{Float64,2};tol=1e-6) #ϵ: elli
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
 theta = param[1]/2.0626480624709636e8;
 zeta = (pi*ρ*theta);
-V = ((1.0-param[2]-param[3])*(besselj1.(zeta)./zeta)+((theta+2*param[3])/sqrt(2/pi))*(
-(sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2))-2*param[3]*
-(besselj.(2, zeta)./zeta.^2))./(0.5-param[2]/6-param[3]/12)
+V = ( (1.0-param[2]-param[3])*besselj1.(zeta)./zeta +(param[2]+2*param[3])/sqrt(2/pi)*besselj.(1.5,zeta)./zeta.^(3/2)-2*param[3]*besselj.(2, zeta)./zeta.^2)/(.5-param[2]/6-param[3]/12)
 indx= findall(abs.(zeta).<tol) #get rid of possible nan
 V[findall(.!(isfinite.(V)))].=1.0;
 return V
@@ -63,9 +61,7 @@ function visibility_ldquad(param,uv::Array{Float64,2};tol=1e-6)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
 theta = param[1]/2.0626480624709636e8;
 zeta = (pi*ρ*theta);
-V = ((1.0-param[2]-param[3])*(besselj1.(zeta)./zeta)+((theta+2*param[3])/sqrt(2/pi))*(
-(sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2))-2*param[3]*
-(besselj.(2, zeta)./zeta.^2))./(0.5-param[2]/6-param[3]/12)
+V = ( (1.0-param[2]-param[3])*besselj1.(zeta)./zeta +(param[2]+2*param[3])/sqrt(2/pi)*besselj.(1.5,zeta)./zeta.^(3/2)-2*param[3]*besselj.(2, zeta)./zeta.^2)/(.5-param[2]/6-param[3]/12)
 indx= findall(abs.(zeta).<tol) #get rid of possible nan
 V[findall(.!(isfinite.(V)))].=1.0;
 return V
@@ -76,7 +72,7 @@ function visibility_ldlin(param,uv::Array{Float64,2};tol=1e-6)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
 theta = param[1]/2.0626480624709636e8;
 zeta = (pi*ρ*theta);
-V = ((1.0-param[2])*(besselj1.(zeta)./zeta)+theta/sqrt(2/pi)*((sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2)))./(0.5-param[2]/6)
+V = ( (1.0-param[2])*besselj1.(zeta)./zeta +param[2]/sqrt(2/pi)*besselj.(1.5,zeta)./zeta.^(3/2))/(.5-param[2]/6)
 indx= findall(abs.(zeta).<tol) #get rid of possible nan
 V[findall(.!(isfinite.(V)))].=1.0;
 return V

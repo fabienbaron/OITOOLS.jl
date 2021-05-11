@@ -23,7 +23,7 @@ uv[2,:] = vec(repeat(x,1, N)')
 # Setup model
 #V = Complex.(visibility_ud([10.0], uv)) # works
 #V = Complex.(visibility_ldpow([10.0, 0.3], uv)) # bug
-#V = Complex.(visibility_ldlin([10.0, 0.7], uv)) # does not seem limb darkened -> check expression
+#V = Complex.(visibility_ldlin([10.0, 0.7], uv)) # works
 #V = Complex.(visibility_ldquad([10.0, 0.5, 0.5], uv))  #  works
 #V = Complex.(visibility_ellipse_uniform([10.0,2.0,-45.0], uv))  # works
 #V = Complex.(visibility_ellipse_quad([10.0,0.5, 0.5, 2.0,-45.0], uv)) # works
