@@ -2,10 +2,14 @@
 # Model fitting
 # TODO: - go beyond V2+T3 fits by adding complex vis and/or diffvis
 #       - currently we may feed data.uv or data.uv_baseline to visfunc to speed up calculation - however the polychromatic implementation is slightly different
-#       - update bootstrap for non equal number of T3amp and T3phi
+#       - update bootstrap for non equal number of T3amp and T3phi + baseline bootstrap
 #       - update MultiNest fitter
 
 using Statistics, LinearAlgebra, NLopt
+
+# visfunc gets model params and returns complex visibilities
+# see how XXXX is defining models and use json file
+
 
 function model_to_chi2(data::OIdata, visfunc, params::Array{Float64,1}; weights=[1.0,1.0,1.0])
     cvis_model = visfunc(params, data.uv)
@@ -50,19 +54,19 @@ function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1};
         chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
         if (data[i].nv2>0) && (weights[1]>0.0)
             v2_model = cvis_to_v2(cvis_model, data[i].indx_v2);
-            chi2_v2 = sum( ((v2_model - data[i].v2)./data[i].v2_err).^2)/data[i].nv2;
+            chi2_v2 = norm((v2_model - data[i].v2)./data[i].v2_err)^2/data[i].nv2;
         else
             weights[1]=0.0
         end
         if (data[i].nt3amp>0 || data[i].nt3phi>0)  && (weights[2]>0 || weights[3]>0)
             t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data[i].indx_t3_1, data[i].indx_t3_2 ,data[i].indx_t3_3);
             if (data[i].nt3amp>0) && (weights[2]>0.0)
-            chi2_t3amp = sum( ((t3amp_model - data[i].t3amp)./data[i].t3amp_err).^2)/data[i].nt3amp;
+            chi2_t3amp = norm((t3amp_model - data[i].t3amp)./data[i].t3amp_err)^2/data[i].nt3amp;
             else
             weights[2]=0.0
             end
             if (data[i].nt3phi>0) && (weights[3]>0.0)
-            chi2_t3phi = sum( (mod360(t3phi_model - data[i].t3phi)./data[i].t3phi_err).^2)/data[i].nt3phi;
+            chi2_t3phi = norm(mod360(t3phi_model - data[i].t3phi)./data[i].t3phi_err)^2/data[i].nt3phi;
             else
             weights[3] = 0.0;
             end
@@ -87,7 +91,6 @@ function fit_model(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:
     if hbounds == []
         ~,hbounds = init_bounds(visfunc)
     end
-    # maybe not desirable for quadratic law ?
     lower_bounds!(opt, lbounds);
     upper_bounds!(opt, hbounds);
     (minf,minx,ret) = optimize(opt, init_param);
@@ -100,9 +103,6 @@ function fit_model(data::OIdata, visfunc, init_param::Array{Float64,1}; fitter=:
     end
     return (minf,minx,cvis_model)
 end
-
-
-
 
 function fit_model(data::Array{OIdata,1}, visfunc, init_param::Array{Float64,1}; chromatic_vector=[], fitter=:LN_NELDERMEAD, lbounds = [], hbounds = [], verbose = true, calculate_vis = true, weights=[1.0,1.0,1.0])
     nparams=length(init_param)
@@ -132,17 +132,8 @@ end
 
 
 
-
-
-
-
-
-
-
-
-
 #
-# BOOSTRAPING
+# DATA BOOSTRAP -- random points, does not use baseline info
 #
 
 function resample_data(data_input; weights=[1.0,1.0,1.0]) # weights=0 are used to disable resampling

@@ -596,7 +596,8 @@ function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Comple
 
     if (weights[3]>0)||(data.nt3phi==0)
     chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-    g_t3phi = 360.0/pi*imag(transpose(dft[data.indx_t3_1,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3].*conj(t3_model))
+# Can be sped up by factorizing
+    g_t3phi = 360.0/pi*imag(  transpose(dft[data.indx_t3_1,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3].*conj(t3_model))
                              +transpose(dft[data.indx_t3_2,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3].*conj(t3_model))
                              +transpose(dft[data.indx_t3_3,:])*(((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*conj(t3_model)))
     end

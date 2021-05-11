@@ -23,7 +23,7 @@ dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2
 return dV_dt.*dt_dp
 end
 
-function visibility_ellipse_uniform(param, uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
+function visibility_ellipse_uniform(param, uv::Array{Float64,2}) # ϕ: semi-major axis orientation (deg)
 ϵ = param[2];
 ϕ = param[3]/180*pi;
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
@@ -34,7 +34,7 @@ return V
 end
 
 
-function visibility_ellipse_quad(param, uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
+function visibility_ellipse_quad(param, uv::Array{Float64,2};tol=1e-6) #ϵ: ellipticity  i: inclination (deg), ϕ: semi-major axis orientation (deg)
 ϵ = param[4];
 ϕ = param[5]/180*pi;
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
@@ -59,23 +59,26 @@ return V
 end
 
 #quadratic law
-function visibility_ldquad(param,uv::Array{Float64,2})
+function visibility_ldquad(param,uv::Array{Float64,2};tol=1e-6)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
 theta = param[1]/2.0626480624709636e8;
 zeta = (pi*ρ*theta);
 V = ((1.0-param[2]-param[3])*(besselj1.(zeta)./zeta)+((theta+2*param[3])/sqrt(2/pi))*(
 (sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2))-2*param[3]*
 (besselj.(2, zeta)./zeta.^2))./(0.5-param[2]/6-param[3]/12)
+indx= findall(abs.(zeta).<tol) #get rid of possible nan
+V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
 #linear law
-function visibility_ldlin(param,uv::Array{Float64,2})
+function visibility_ldlin(param,uv::Array{Float64,2};tol=1e-6)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
 theta = param[1]/2.0626480624709636e8;
 zeta = (pi*ρ*theta);
-V = ((1.0-param[2])*(besselj1.(zeta)./zeta)+theta/sqrt(2/pi)*(
-(sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2)))./(0.5-param[2]/6)
+V = ((1.0-param[2])*(besselj1.(zeta)./zeta)+theta/sqrt(2/pi)*((sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2)))./(0.5-param[2]/6)
+indx= findall(abs.(zeta).<tol) #get rid of possible nan
+V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
@@ -89,13 +92,59 @@ else
 end
 end
 
-function visibility_thinring(param,uv::Array{Float64,2})
-ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-return besselj0.(pi*param[1]/2.0626480624709636e8*ρ)
+
+function visibility_thin_ring(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
+# Parameters
+#  1: diameter
+#  2: ϕ = position angle
+#  3: i = inclination
+ϕ = param[2]/180*pi;
+i = param[3]/180*pi;
+θ = param[1]/2.0626480624709636e8;
+uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
+vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
+ρ = sqrt.( uu.^2 + vv.^2)
+return besselj0.(pi*θ*ρ)
+end
+
+function visibility_Gaussian_ring(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
+# Parameters
+#  1: diameter
+#  2: ϕ = position angle
+#  3: i = inclination
+#  4: ratio of ring FWHM to radius
+# Note:  0.5*pi/(4*log(2))  = 0.5665450177283993
+θ = param[1]/2.0626480624709636e8;
+ϕ = param[2]/180*pi;
+i = param[3]/180*pi;
+uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
+vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
+ρ = sqrt.( uu.^2 + vv.^2)
+return besselj0.(pi*θ*ρ).*exp.(-0.5665450177283993*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
+end
+
+function visibility_Gaussian_ring_az(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
+# Parameters (see Kluska et al. 2019, "VLTI/PIONIER survey of disks around post AGB stars")
+#  1: θ = diameter
+#  2: ϕ = position angle
+#  3: i = inclination
+#  4: t = ratio of ring FWHM to radius
+#  5: α = azimuthal angle of the ring
+#  6,7,8,9:
+# Note:  0.5*pi/(4*log(2))  = 0.5665450177283993
+θ = param[1]/2.0626480624709636e8;
+ϕ = param[2]/180*pi;
+i = param[3]/180*pi;
+α = param[5]/180*pi;
+uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
+vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
+ρ = sqrt.( uu.^2 + vv.^2)
+V = besselj0.(pi*θ*ρ) - im*(param[6]*cos(α) + param[7]*sin(α))*besselj1.(pi*θ*ρ) - (param[8]*cos(2α)+param[9]*sin(2α))*besselj.(2,pi*θ*ρ)
+return V.*exp.(-0.5665450177283993*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
 end
 
 #
-# Overloaded functions of ρ
+# Overloaded functions of ρ   - TO REMOVE
 #
 function visibility_ud(param, ρ::Array{Float64,1})
 t = param[1]/2.0626480624709636e8*pi*ρ;

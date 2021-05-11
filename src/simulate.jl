@@ -500,7 +500,7 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     #TO GET OTHER PIECES OF INFO
 
 
-    #get OI_ARRY details (currently only handles one Array)
+    #get OI_ARRAY details (currently only handles one Array)
     for itable=1:length(ioiarraytables)
         telnames=read(oifits[ioiarraytables[itable]],"TEL_NAME")
                  read(oifits[ioiarraytables[1]],"TEL_NAME")
@@ -554,7 +554,6 @@ function simulate_obs(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true
     end
 
     #GET V2 INFO
-
     v2_model = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
     v2_model_err = data.v2_err
     v2_model += v2_model_err.*randn(length(v2_model))
