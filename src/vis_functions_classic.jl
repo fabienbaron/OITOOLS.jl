@@ -38,10 +38,10 @@ function visibility_ellipse_quad(param, uv::Array{Float64,2};tol=1e-6) #ϵ: elli
 ϵ = param[4];
 ϕ = param[5]/180*pi;
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
-theta = param[1]/2.0626480624709636e8;
-zeta = (pi*ρ*theta);
-V = ( (1.0-param[2]-param[3])*besselj1.(zeta)./zeta +(param[2]+2*param[3])/sqrt(2/pi)*besselj.(1.5,zeta)./zeta.^(3/2)-2*param[3]*besselj.(2, zeta)./zeta.^2)/(.5-param[2]/6-param[3]/12)
-indx= findall(abs.(zeta).<tol) #get rid of possible nan
+θ = param[1]/2.0626480624709636e8;
+ζ = pi*ρ*θ;
+V = ( (1.0-param[2]-param[3])*besselj1.(ζ)./ζ +(param[2]+2*param[3])/sqrt(2/pi)*besselj.(1.5,ζ)./ζ.^(3/2)-2*param[3]*besselj.(2, ζ)./ζ.^2)/(.5-param[2]/6-param[3]/12)
+indx= findall(abs.(ζ).<tol) #get rid of possible nan
 V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
@@ -49,20 +49,31 @@ end
 #power law
 function visibility_ldpow(param, uv::Array{Float64,2}; maxk = 200)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-theta = param[1]/2.0626480624709636e8;
-#f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*theta*ρ).^2).^k; # note: can lead to NaN due to typical gamma blow up
-f=k->(-1)^k*exp.(2k*log.(0.5*pi*theta*ρ).+(logabsgamma(param[2]/2+2)[1]-logabsgamma(param[2]/2+k+2)[1]-logabsgamma(k+1)[1]));
-V = sum(map(f,collect(0:maxk)));
+θ = param[1]/2.0626480624709636e8;
+#f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*θ*ρ).^2).^k; # note: can lead to NaN due to typical gamma blow up
+#f=k->(-1)^k*exp.(2k*log.(0.5*pi*θ*ρ).+(loggamma(param[2]/2+2)-loggamma(param[2]/2+k+2)-loggamma(k+1)));
+#V = sum(map(f,collect(0:maxk)));
+V = gamma(param[2]/2+2)*besselj.(param[2]/2+1, pi*θ*ρ).*(0.5*pi*θ*ρ).^-(param[2]/2+1)
 return V
 end
 
 #quadratic law
 function visibility_ldquad(param,uv::Array{Float64,2};tol=1e-6)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-theta = param[1]/2.0626480624709636e8;
-zeta = (pi*ρ*theta);
-V = ( (1.0-param[2]-param[3])*besselj1.(zeta)./zeta +(param[2]+2*param[3])/sqrt(2/pi)*besselj.(1.5,zeta)./zeta.^(3/2)-2*param[3]*besselj.(2, zeta)./zeta.^2)/(.5-param[2]/6-param[3]/12)
-indx= findall(abs.(zeta).<tol) #get rid of possible nan
+θ = param[1]/2.0626480624709636e8;
+ζ = (pi*ρ*θ);
+V = ( (1.0-param[2]-param[3])*besselj1.(ζ)./ζ +(param[2]+2*param[3])/sqrt(2/pi)*besselj.(1.5,ζ)./ζ.^1.5-2*param[3]*besselj.(2, ζ)./ζ.^2)/(.5-param[2]/6-param[3]/12)
+indx = findall(abs.(ζ).<tol) #get rid of possible nan
+V[findall(.!(isfinite.(V)))].=1.0;
+return V
+end
+
+#square root law
+function visibility_ldsquareroot(param,uv::Array{Float64,2};tol=1e-6)
+ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
+θ = param[1]/2.0626480624709636e8;
+ζ = pi*ρ*θ;
+V = ((1.0-param[2]-param[3])*besselj.(1, ζ)./ζ + param[2]*sqrt(pi/2)* besselj.(1.5, ζ)./ζ.^1.5 + param[3]*2^0.25*gamma(1.25)*besselj.(1.25, ζ)./ζ.^1.25)/(0.5-param[2]/6-param[3]/10)
 V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
@@ -70,10 +81,10 @@ end
 #linear law
 function visibility_ldlin(param,uv::Array{Float64,2};tol=1e-6)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-theta = param[1]/2.0626480624709636e8;
-zeta = (pi*ρ*theta);
-V = ( (1.0-param[2])*besselj1.(zeta)./zeta +param[2]/sqrt(2/pi)*besselj.(1.5,zeta)./zeta.^(3/2))/(.5-param[2]/6)
-indx= findall(abs.(zeta).<tol) #get rid of possible nan
+θ = param[1]/2.0626480624709636e8;
+ζ = (pi*ρ*θ);
+V = ( (1.0-param[2])*besselj1.(ζ)./ζ +param[2]/sqrt(2/pi)*besselj.(1.5,ζ)./ζ.^(3/2))/(.5-param[2]/6)
+indx = findall(abs.(ζ).<tol) #get rid of possible nan
 V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
@@ -109,14 +120,14 @@ function visibility_Gaussian_ring(param,uv::Array{Float64,2}) # i: inclination (
 #  2: ϕ = position angle
 #  3: i = inclination
 #  4: ratio of ring FWHM to radius
-# Note:  0.5*pi/(4*log(2))  = 0.5665450177283993
+# Note:  0.25*pi^2/(4*log(2))  = 0.889926832811719
 θ = param[1]/2.0626480624709636e8;
 ϕ = param[2]/180*pi;
 i = param[3]/180*pi;
 uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
 vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
 ρ = sqrt.( uu.^2 + vv.^2)
-return besselj0.(pi*θ*ρ).*exp.(-0.5665450177283993*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
+return besselj0.(pi*θ*ρ).*exp.(-0.889926832811719*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
 end
 
 function visibility_Gaussian_ring_az(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
@@ -126,8 +137,8 @@ function visibility_Gaussian_ring_az(param,uv::Array{Float64,2}) # i: inclinatio
 #  3: i = inclination
 #  4: t = ratio of ring FWHM to radius
 #  5: α = azimuthal angle of the ring
-#  6,7,8,9:
-# Note:  0.5*pi/(4*log(2))  = 0.5665450177283993
+#  6,7,8,9: azimuthal coefficients
+# Note:  0.25*pi^2/(4*log(2))  = 0.889926832811719
 θ = param[1]/2.0626480624709636e8;
 ϕ = param[2]/180*pi;
 i = param[3]/180*pi;
@@ -136,7 +147,7 @@ uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
 vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
 ρ = sqrt.( uu.^2 + vv.^2)
 V = besselj0.(pi*θ*ρ) - im*(param[6]*cos(α) + param[7]*sin(α))*besselj1.(pi*θ*ρ) - (param[8]*cos(2α)+param[9]*sin(2α))*besselj.(2,pi*θ*ρ)
-return V.*exp.(-0.5665450177283993*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
+return V.*exp.(-0.889926832811719*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
 end
 
 #
@@ -159,29 +170,29 @@ end
 
 
 function visibility_ldpow(param, ρ::Array{Float64,1}; maxk = 200)
-theta = param[1]/2.0626480624709636e8;
-#f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*theta*ρ).^2).^k; # note: can lead to NaN due to typical gamma blow up
-f=k->(-1)^k*exp.(2k*log.(0.5*pi*theta*ρ).+(logabsgamma(param[2]/2+2)[1]-logabsgamma(param[2]/2+k+2)[1]-logabsgamma(k+1)[1]));
+θ = param[1]/2.0626480624709636e8;
+#f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*θ*ρ).^2).^k; # note: can lead to NaN due to typical gamma blow up
+f=k->(-1)^k*exp.(2k*log.(0.5*pi*θ*ρ).+(logabsgamma(param[2]/2+2)[1]-logabsgamma(param[2]/2+k+2)[1]-logabsgamma(k+1)[1]));
 V = sum(map(f,collect(0:maxk)));
 return V
 end
 
 #quadratic law
 function visibility_ldquad(param,ρ::Array{Float64,1})
-theta = param[1]/2.0626480624709636e8;
-zeta = (pi*ρ*theta);
-V = ((1.0-param[2]-param[3])*(besselj1.(zeta)./zeta)+((theta+2*param[3])/sqrt(2/pi))*(
-(sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2))-2*param[3]*
-(besselj.(2, zeta)./zeta.^2))./(0.5-param[2]/6-param[3]/12)
+θ = param[1]/2.0626480624709636e8;
+ζ = (pi*ρ*θ);
+V = ((1.0-param[2]-param[3])*(besselj1.(ζ)./ζ)+((θ+2*param[3])/sqrt(2/pi))*(
+(sqrt.(2 ./(pi*ζ)).*((sin.(ζ)./ζ)-cos.(ζ)))./ζ.^(3/2))-2*param[3]*
+(besselj.(2, ζ)./ζ.^2))./(0.5-param[2]/6-param[3]/12)
 return V
 end
 
 #linear law
 function visibility_ldlin(param,ρ::Array{Float64,1})
-theta = param[1]/2.0626480624709636e8;
-zeta = (pi*ρ*theta);
-V = ((1.0-param[2])*(besselj1.(zeta)./zeta)+theta/sqrt(2/pi)*(
-(sqrt.(2 ./(pi*zeta)).*((sin.(zeta)./zeta)-cos.(zeta)))./zeta.^(3/2)))./(0.5-param[2]/6)
+θ = param[1]/2.0626480624709636e8;
+ζ = (pi*ρ*θ);
+V = ((1.0-param[2])*(besselj1.(ζ)./ζ)+θ/sqrt(2/pi)*(
+(sqrt.(2 ./(pi*ζ)).*((sin.(ζ)./ζ)-cos.(ζ)))./ζ.^(3/2)))./(0.5-param[2]/6)
 return V
 end
 
@@ -200,10 +211,10 @@ end
 
 
 # function visibility_ldsqrt(param,ρ)
-# theta = param[1]/2.0626480624709636e8;
-# bs1 = bessel(0, pi*ρ*theta, 2)
-# bs2 = bessel(0.5, pi*ρ*theta, 2)
-# bs3 = bessel(0.25, pi*ρ*theta, 2)
+# θ = param[1]/2.0626480624709636e8;
+# bs1 = bessel(0, pi*ρ*θ, 2)
+# bs2 = bessel(0.5, pi*ρ*θ, 2)
+# bs3 = bessel(0.25, pi*ρ*θ, 2)
 # x1 = ((1D0-alpha-beta)*(bs1(2)))/(pi*a*rho)
 # x2 = (alpha*(sqrt(pi/2D0))*bs2(2))/((pi*a*rho)**(1.5D0))
 # x3 = (beta*((2D0)**(0.25D0))*(gamma(1.25D0))*bs3(2))/((pi*a*rho)**(1.25D0))
@@ -235,6 +246,13 @@ if visfunc == visibility_ldlin
  lbounds = [0.0, -1.0]
  hbounds = [1e9, 1.0]
 end
+
+
+if visfunc == visibility_ldsquareroot
+ lbounds = [0.0, -1.0, -1.0]
+ hbounds = [1e9, 1.0, 1.0]
+end
+
 
 if visfunc == visibility_ellipse_uniform
  lbounds = [0.0,0.0,-180.0]

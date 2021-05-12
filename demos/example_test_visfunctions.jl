@@ -19,17 +19,21 @@ uv[2,:] = vec(repeat(x,1, N)')
 # uv[1,:] = vec(r'.*cos.(θ))
 # uv[2,:] = vec(r'.*sin.(θ))
 
-
 # Setup model
+
+#TODO: test square root
+
 #V = Complex.(visibility_ud([10.0], uv)) # works
 #V = Complex.(visibility_ldpow([10.0, 0.3], uv)) # bug
 #V = Complex.(visibility_ldlin([10.0, 0.7], uv)) # works
+
+#V = Complex.(visibility_ldsquareroot([10.0, 0.5, 0.3], uv))  #  works
 #V = Complex.(visibility_ldquad([10.0, 0.5, 0.5], uv))  #  works
 #V = Complex.(visibility_ellipse_uniform([10.0,2.0,-45.0], uv))  # works
 #V = Complex.(visibility_ellipse_quad([10.0,0.5, 0.5, 2.0,-45.0], uv)) # works
 #V = Complex.(visibility_thin_ring([10.0, 45, 60],uv)) # works
 #V = Complex.(visibility_Gaussian_ring([10.0, 90, 60, .1],uv))
-V = Complex.(visibility_Gaussian_ring_az([10.0, 50, 60, .3, 20, 0, 0.5,0,0],uv))
+V = Complex.(visibility_Gaussian_ring_az([10.0, 50, 60, .5, 20, 0, 0.5,0,0],uv))
 
 # Image of the model
 nx = 512       # number of pixels
