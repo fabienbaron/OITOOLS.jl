@@ -54,6 +54,7 @@ function visibility_ldpow(param, uv::Array{Float64,2}; maxk = 200)
 #f=k->(-1)^k*exp.(2k*log.(0.5*pi*θ*ρ).+(loggamma(param[2]/2+2)-loggamma(param[2]/2+k+2)-loggamma(k+1)));
 #V = sum(map(f,collect(0:maxk)));
 V = gamma(param[2]/2+2)*besselj.(param[2]/2+1, pi*θ*ρ).*(0.5*pi*θ*ρ).^-(param[2]/2+1)
+V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
