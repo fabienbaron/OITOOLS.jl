@@ -66,3 +66,6 @@ img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscal
 
 V = Complex.(visibility_Gaussian_ring_az([10.0, -90, 60, .15, 0, 0,0,0.5],uv))
 img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
+
+V = Complex.(visibility_GaussianLorentzian_ring_az([10.0, -90, 60, .15, 0, 0,0, 0, .4],uv))
+img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)

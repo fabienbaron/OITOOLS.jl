@@ -146,8 +146,6 @@ vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
 return besselj0.(2*pi*θ*ρ).*exp.(-2*pi/sqrt(3)*θ*param[4]*sqrt.(uv[1,:].^2+uv[2,:].^2))
 end
 
-
-
 function visibility_Gaussian_ring_az(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
 #  1: θ = radius of the ring
 #  2: ϕ = position angle
@@ -169,6 +167,33 @@ az_modulation = - im*(param[5]*uu + param[6]*vv).*(besselj1.(2*pi*θ*ρ)./ρ) - 
 az_modulation[findall(.!(isfinite.(az_modulation)))].=0.0; # prevents failure at ρ=0
 return (besselj0.(2*pi*θ*ρ) + az_modulation).*exp.(-pi^2/log(2)*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
 end
+
+function visibility_GaussianLorentzian_ring_az(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
+#  1: θ = radius of the ring
+#  2: ϕ = position angle
+#  3: i = inclination
+#  4: ratio = half flux radius / ring radius
+#  5,6,7,8: azimuthal coefficients
+#  9 : ratio Lorentzian/Gaussian
+θ = param[1]/2.0626480624709636e8;
+ϕ = param[2]/180*pi;
+i = param[3]/180*pi;
+uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
+vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
+ρ = sqrt.( uu.^2 + vv.^2)
+ρρ = sqrt.(uv[1,:].^2+uv[2,:].^2) # original ρ, no incl
+#cα = uu./ρ
+#sα = vv./ρ
+#s2α = 2*cα.*sα = 2*uu.*vv./ρ.^2
+#c2α = (uu.*uu - vv.*vv)/ρ^2
+#az_modulation = - im*(param[5]*cos(α) + param[6]*sin(α))*besselj1.(2*pi*θ*ρ) + (param[7]*cos(2α)+param[8]*sin(2α))*besselj.(2,2*pi*θ*ρ)
+az_modulation = - im*(param[5]*uu + param[6]*vv).*(besselj1.(2*pi*θ*ρ)./ρ) - (2*param[7]*uu.*vv+param[8]*(uu.*uu-vv.*vv)).*(besselj.(2,2*pi*θ*ρ)./ρ.^2)
+az_modulation[findall(.!(isfinite.(az_modulation)))].=0.0; # prevents failure at ρ=0
+return (besselj0.(2*pi*θ*ρ) + az_modulation).*(param[9]*exp.(-pi^2/log(2)*(θ*param[4])^2*ρρ.^2)+(1-param[9])*exp.(-2*pi/sqrt(3)*θ*param[4]*ρρ))
+end
+
+
+
 
 #
 # Overloaded functions of ρ   - TO REMOVE
