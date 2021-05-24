@@ -1,7 +1,6 @@
 #
 # Classic visibility functions (uniform disc, etc.)
 #
-
 using SpecialFunctions
 
 #param  : model parameter
@@ -9,27 +8,25 @@ using SpecialFunctions
 #ρ = radius in uv space
 function visibility_ud(param, uv::Array{Float64,2})
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-t = param[1]/2.0626480624709636e8*pi*ρ;
-V = 2.0*besselj1.(t)./t
-V[findall(.!(isfinite.(V)))].=1.0;
+t = param[1]/2.0626480624709636e8*ρ;
+V = jinc.(t)
 return V
 end
 
-function dvisibility_ud(param, uv::Array{Float64,2})
-ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-dt_dp = pi*ρ/2.0626480624709636e8
-t= param[1]*dt_dp
-dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2
-return dV_dt.*dt_dp
-end
+# function dvisibility_ud(param, uv::Array{Float64,2})
+# ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
+# dt_dp = pi*ρ/2.0626480624709636e8
+# t= param[1]*dt_dp
+# dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2   # ouch singularity!
+# return dV_dt.*dt_dp
+# end
 
 function visibility_ellipse_uniform(param, uv::Array{Float64,2}) # ϕ: semi-major axis orientation (deg)
 ϵ = param[2];
 ϕ = param[3]/180*pi;
 ρ = sqrt.(ϵ^2*(uv[1,:].*cos.(ϕ)-uv[2,:].*sin.(ϕ) ).^2+(uv[2,:].*cos.(ϕ)+uv[1,:].*sin.(ϕ)).^2)
-t = param[1]/2.0626480624709636e8*pi*ρ;
-V = 2.0*besselj1.(t)./t
-V[findall(.!(isfinite.(V)))].=1.0;
+t = param[1]/2.0626480624709636e8*ρ;
+V = jinc.(t)
 return V
 end
 
@@ -192,79 +189,63 @@ az_modulation[findall(.!(isfinite.(az_modulation)))].=0.0; # prevents failure at
 return (besselj0.(2*pi*θ*ρ) + az_modulation).*(param[9]*exp.(-pi^2/log(2)*(θ*param[4])^2*ρρ.^2)+(1-param[9])*exp.(-2*pi/sqrt(3)*θ*param[4]*ρρ))
 end
 
-
-
-
 #
 # Overloaded functions of ρ   - TO REMOVE
 #
-function visibility_ud(param, ρ::Array{Float64,1})
-t = param[1]/2.0626480624709636e8*pi*ρ;
-V = 2.0*besselj1.(t)./t
-V[findall(.!(isfinite.(V)))].=1.0;
-return V
-end
-
-function dvisibility_ud(param, ρ::Array{Float64,1})
-dt_dp = pi*ρ/2.0626480624709636e8
-t= param[1]*dt_dp
-dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2
-return dV_dt.*dt_dp
-end
-
-
-
-function visibility_ldpow(param, ρ::Array{Float64,1}; maxk = 200)
-θ = param[1]/2.0626480624709636e8;
-#f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*θ*ρ).^2).^k; # note: can lead to NaN due to typical gamma blow up
-f=k->(-1)^k*exp.(2k*log.(0.5*pi*θ*ρ).+(logabsgamma(param[2]/2+2)[1]-logabsgamma(param[2]/2+k+2)[1]-logabsgamma(k+1)[1]));
-V = sum(map(f,collect(0:maxk)));
-return V
-end
-
-#quadratic law
-function visibility_ldquad(param,ρ::Array{Float64,1})
-θ = param[1]/2.0626480624709636e8;
-ζ = (pi*ρ*θ);
-V = ((1.0-param[2]-param[3])*(besselj1.(ζ)./ζ)+((θ+2*param[3])/sqrt(2/pi))*(
-(sqrt.(2 ./(pi*ζ)).*((sin.(ζ)./ζ)-cos.(ζ)))./ζ.^(3/2))-2*param[3]*
-(besselj.(2, ζ)./ζ.^2))./(0.5-param[2]/6-param[3]/12)
-return V
-end
-
-#linear law
-function visibility_ldlin(param,ρ::Array{Float64,1})
-θ = param[1]/2.0626480624709636e8;
-ζ = (pi*ρ*θ);
-V = ((1.0-param[2])*(besselj1.(ζ)./ζ)+θ/sqrt(2/pi)*(
-(sqrt.(2 ./(pi*ζ)).*((sin.(ζ)./ζ)-cos.(ζ)))./ζ.^(3/2)))./(0.5-param[2]/6)
-return V
-end
-
-# visibility of an annulus of unit flux
-function visibility_annulus(r_in, r_out, ρ::Array{Float64,1};tol=1e-10)
-    if abs(r_out - r_in)<tol #
-        return zeros(Complex{Float64},length(ρ)); #shouldn't we use thin ring here ?
-    else
-        return (1.0+0*im).*(visibility_ud([2*r_out],ρ)*r_out^2-visibility_ud([2*r_in],ρ)*r_in^2)/(r_out^2-r_in^2);
-    end
-end
-
-function visibility_thinring(param,ρ::Array{Float64,1})
-return besselj0.(pi*param[1]/2.0626480624709636e8*ρ)
-end
-
-
-# function visibility_ldsqrt(param,ρ)
+# function visibility_ud(param, ρ::Array{Float64,1})
+# t = param[1]/2.0626480624709636e8*pi*ρ;
+# V = 2.0*besselj1.(t)./t
+# V[findall(.!(isfinite.(V)))].=1.0;
+# return V
+# end
+#
+# function dvisibility_ud(param, ρ::Array{Float64,1})
+# dt_dp = pi*ρ/2.0626480624709636e8
+# t= param[1]*dt_dp
+# dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2
+# return dV_dt.*dt_dp
+# end
+#
+#
+#
+# function visibility_ldpow(param, ρ::Array{Float64,1}; maxk = 200)
 # θ = param[1]/2.0626480624709636e8;
-# bs1 = bessel(0, pi*ρ*θ, 2)
-# bs2 = bessel(0.5, pi*ρ*θ, 2)
-# bs3 = bessel(0.25, pi*ρ*θ, 2)
-# x1 = ((1D0-alpha-beta)*(bs1(2)))/(pi*a*rho)
-# x2 = (alpha*(sqrt(pi/2D0))*bs2(2))/((pi*a*rho)**(1.5D0))
-# x3 = (beta*((2D0)**(0.25D0))*(gamma(1.25D0))*bs3(2))/((pi*a*rho)**(1.25D0))
-# x4 = (0.5D0)-((1D0/6D0)*alpha)-((1D0/10D0)*beta)
-# return (x1+x2+x3)/x4
+# #f=k->gamma(param[2]/2+2)/(gamma(param[2]/2+k+2)*gamma(k+1))*(-0.25*(pi*θ*ρ).^2).^k; # note: can lead to NaN due to typical gamma blow up
+# f=k->(-1)^k*exp.(2k*log.(0.5*pi*θ*ρ).+(logabsgamma(param[2]/2+2)[1]-logabsgamma(param[2]/2+k+2)[1]-logabsgamma(k+1)[1]));
+# V = sum(map(f,collect(0:maxk)));
+# return V
+# end
+#
+# #quadratic law
+# function visibility_ldquad(param,ρ::Array{Float64,1})
+# θ = param[1]/2.0626480624709636e8;
+# ζ = (pi*ρ*θ);
+# V = ((1.0-param[2]-param[3])*(besselj1.(ζ)./ζ)+((θ+2*param[3])/sqrt(2/pi))*(
+# (sqrt.(2 ./(pi*ζ)).*((sin.(ζ)./ζ)-cos.(ζ)))./ζ.^(3/2))-2*param[3]*
+# (besselj.(2, ζ)./ζ.^2))./(0.5-param[2]/6-param[3]/12)
+# return V
+# end
+#
+# #linear law
+# function visibility_ldlin(param,ρ::Array{Float64,1})
+# θ = param[1]/2.0626480624709636e8;
+# ζ = (pi*ρ*θ);
+# V = ((1.0-param[2])*(besselj1.(ζ)./ζ)+θ/sqrt(2/pi)*(
+# (sqrt.(2 ./(pi*ζ)).*((sin.(ζ)./ζ)-cos.(ζ)))./ζ.^(3/2)))./(0.5-param[2]/6)
+# return V
+# end
+#
+# # visibility of an annulus of unit flux
+# function visibility_annulus(r_in, r_out, ρ::Array{Float64,1};tol=1e-10)
+#     if abs(r_out - r_in)<tol #
+#         return zeros(Complex{Float64},length(ρ)); #shouldn't we use thin ring here ?
+#     else
+#         return (1.0+0*im).*(visibility_ud([2*r_out],ρ)*r_out^2-visibility_ud([2*r_in],ρ)*r_in^2)/(r_out^2-r_in^2);
+#     end
+# end
+#
+# function visibility_thinring(param,ρ::Array{Float64,1})
+# return besselj0.(pi*param[1]/2.0626480624709636e8*ρ)
 # end
 
 function init_bounds(visfunc)

@@ -56,6 +56,8 @@ mutable struct OIdata
     t3amp_err::Array{Float64,1}
     t3phi::Array{Float64,1}
     t3phi_err::Array{Float64,1}
+    t3phi_vonmises_err::Array{Float64,1}
+    t3phi_vonmises_chi2_offset::Array{Float64,1}
     t3_baseline::Array{Float64,1}
     t3_maxbaseline::Array{Float64,1}
     t3_mjd::Array{Float64,1}
@@ -932,7 +934,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             if (filter_bad_data==true) # TODO: move out and make its own function
 
                 if use_vis
-                    
+
                 visamp_good =  (.!isnan.(visamp[iwavbin,itimebin] )) .& (.!isnan.(visamp_err[iwavbin,itimebin] )) .& (visamp_err[iwavbin,itimebin].>0.0)
                 visphi_good =  (.!isnan.(visphi[iwavbin,itimebin] ) ).& (.!isnan.(visphi_err[iwavbin,itimebin] )) .& (visphi_err[iwavbin,itimebin].>0.0)
 
@@ -945,7 +947,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
                 if special_filter_diffvis==true # if we use the diff vis filter, we need to do this after all the data has been read in
                                                 # hence here we won't actually filter anything
-                    vis_good = findall( vis_flag[iwavbin,itimebin].!=2) 
+                    vis_good = findall( vis_flag[iwavbin,itimebin].!=2)
                 end
                 good_uv_vis = indx_vis[iwavbin,itimebin][vis_good];
                 visamp[iwavbin,itimebin]        = visamp[iwavbin,itimebin][vis_good];
@@ -1132,15 +1134,15 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             end
 
             OIdataArr[iwavbin,itimebin] = OIdata( visamp[iwavbin,itimebin], visamp_err[iwavbin,itimebin], visphi[iwavbin,itimebin], visphi_err[iwavbin,itimebin], vis_baseline[iwavbin,itimebin], vis_mjd[iwavbin,itimebin], vis_lam[iwavbin,itimebin], vis_dlam[iwavbin,itimebin], vis_flag[iwavbin,itimebin], v2[iwavbin,itimebin], v2_err[iwavbin,itimebin], v2_baseline[iwavbin,itimebin], v2_mjd[iwavbin,itimebin],
-            mean_mjd[iwavbin,itimebin], v2_lam[iwavbin,itimebin], v2_dlam[iwavbin,itimebin], v2_flag[iwavbin,itimebin], t3amp[iwavbin,itimebin], t3amp_err[iwavbin,itimebin], t3phi[iwavbin,itimebin], t3phi_err[iwavbin,itimebin], t3_baseline[iwavbin,itimebin],t3_maxbaseline[iwavbin,itimebin], t3_mjd[iwavbin,itimebin], t3_lam[iwavbin,itimebin], t3_dlam[iwavbin,itimebin], t3_flag[iwavbin,itimebin], t4amp[iwavbin,itimebin], t4amp_err[iwavbin,itimebin], t4phi[iwavbin,itimebin], t4phi_err[iwavbin,itimebin], t4_baseline[iwavbin,itimebin],t4_maxbaseline[iwavbin,itimebin],t4_mjd[iwavbin,itimebin], t4_lam[iwavbin,itimebin], t4_dlam[iwavbin,itimebin], t4_flag[iwavbin,itimebin],
+            mean_mjd[iwavbin,itimebin], v2_lam[iwavbin,itimebin], v2_dlam[iwavbin,itimebin], v2_flag[iwavbin,itimebin], t3amp[iwavbin,itimebin], t3amp_err[iwavbin,itimebin], t3phi[iwavbin,itimebin], t3phi_err[iwavbin,itimebin], [], [], t3_baseline[iwavbin,itimebin],t3_maxbaseline[iwavbin,itimebin], t3_mjd[iwavbin,itimebin], t3_lam[iwavbin,itimebin], t3_dlam[iwavbin,itimebin], t3_flag[iwavbin,itimebin], t4amp[iwavbin,itimebin], t4amp_err[iwavbin,itimebin], t4phi[iwavbin,itimebin], t4phi_err[iwavbin,itimebin], t4_baseline[iwavbin,itimebin],t4_maxbaseline[iwavbin,itimebin],t4_mjd[iwavbin,itimebin], t4_lam[iwavbin,itimebin], t4_dlam[iwavbin,itimebin], t4_flag[iwavbin,itimebin],
             uv[iwavbin,itimebin], uv_lam[iwavbin,itimebin], uv_dlam[iwavbin,itimebin],uv_mjd[iwavbin,itimebin], uv_baseline[iwavbin,itimebin], nvisamp[iwavbin,itimebin], nvisphi[iwavbin,itimebin], nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_vis[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
             indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],indx_t4_1[iwavbin,itimebin], indx_t4_2[iwavbin,itimebin], indx_t4_3[iwavbin,itimebin],indx_t4_4[iwavbin,itimebin],new_station_name,new_telescope_name,new_station_index,vis_sta_index[iwavbin,itimebin],v2_sta_index[iwavbin,itimebin],t3_sta_index[iwavbin,itimebin], t4_sta_index[iwavbin,itimebin],oifitsfile);
         end
     end
 
     # Post-treatment of data
-    # 
-    if special_filter_diffvis==true # remove diffphases when some spectral channels have been flagged 
+    #
+    if special_filter_diffvis==true # remove diffphases when some spectral channels have been flagged
     for itimebin = 1:ntimebin
         indx=findall(vec((prod(hcat([(1 .-OIdataArr[i, itimebin].vis_flag) for i=1:nwavbin]...),dims=2))).==1) # this selects the baselines for which all spectral channels are not flagged
         for i=1:nwavbin

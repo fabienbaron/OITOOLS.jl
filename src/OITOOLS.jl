@@ -9,6 +9,7 @@ include("vis_functions_classic.jl");
 include("modelfit.jl");
 include("utils.jl");
 include("astrometry.jl");
+include("vonmises.jl")
 export OIdata
 export uvplot, onclickidentify, v2plot,v2plot_timelapse, diffphiplot, visphiplot, t3phiplot, imdisp, imdisp_temporal, v2plot_modelvsdata, v2plot_modelvsfunc,v2plot,t3phiplot,t3ampplot,v2plot_multifile,imdisp_multiwave,imdisp_polychromatic
 export readoifits, readoifits_multiepochs, readfits, writefits
@@ -27,4 +28,5 @@ export facility_info, obsv_info, combiner_info, wave_info, error_struct
 export hours_to_date, sunrise_sunset, hour_angle_calc, mjd_to_utdate,dates_to_jd,jd_to_hour_angle,opd_limits,alt_az,geometric_delay,cart_delay
 export query_target_from_simbad, ra_dec_from_simbad, get_baselines
 export gantt_onenight
+export gaussianwrapped_to_vonmises_fast,logbesselI0
 end
