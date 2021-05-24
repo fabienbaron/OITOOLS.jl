@@ -28,21 +28,59 @@ oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.4# size of a pixel in milliarcseconds
 nx = 32 # width of image (number of pixels)
 data = readoifits(oifitsfile)[1,1];
-data.t3phi_vonmises_err = gaussianwrapped_to_vonmises_fast.(data.t3phi_err/180*pi)
-data.t3phi_vonmises_chi2_offset = log(2*pi) .+ 2*(logbesselI0.(data.t3phi_vonmises_err)-log.(data.t3phi_err/180*pi))
 dft = setup_dft(data, nx, pixsize);
 #initial image is a simple Gaussian
 x = 10*vec(gaussian2d(nx,nx,nx/6));
-#x =vec(readfits("./data/2004-64.fits"))
+
+# V2
+f = xx->chi2_dft_f(xx, dft, data, weights = [1,0,0], verb=false, vonmises=false);
+g = (xx,gg)->chi2_dft_fg(xx, gg, dft, data, weights = [1,0,0], verb=false, vonmises=false);
+numerical_g = numgrad_1D(f,x=x,δ=1e-5);
+analytic_g=similar(x);
+g(x, analytic_g); analytic_g[:] = (analytic_g .- sum(vec(x).*analytic_g) / sum(x) ) / sum(x); # gradient correction to take into account the non-normalized image
+#imdisp(reshape(numerical_g,nx,nx), figtitle="Numerical gradient")
+#imdisp(reshape(analytic_g,nx,nx), figtitle="Analytic Gradient")
+print("V2")
+norm(numerical_g-analytic_g)
+mean(numerical_g./analytic_g)
+
+# T3AMP
+f = xx->chi2_dft_f(xx, dft, data, weights = [0,1,0], verb=false, vonmises=false);
+g = (xx,gg)->chi2_dft_fg(xx, gg, dft, data, weights = [0,1,0], verb=false, vonmises=false);
+numerical_g = numgrad_1D(f,x=x,δ=1e-5);
+analytic_g=similar(x);
+g(x, analytic_g); analytic_g[:] = (analytic_g .- sum(vec(x).*analytic_g) / sum(x) ) / sum(x); # gradient correction to take into account the non-normalized image
+#imdisp(reshape(numerical_g,nx,nx), figtitle="Numerical gradient")
+#imdisp(reshape(analytic_g,nx,nx), figtitle="Analytic Gradient")
+norm(numerical_g-analytic_g)
+mean(numerical_g./analytic_g)
+
+# T3PHI - Haniff expression
 f = xx->chi2_dft_f(xx, dft, data, weights = [0,0,1], verb=false, vonmises=false);
 g = (xx,gg)->chi2_dft_fg(xx, gg, dft, data, weights = [0,0,1], verb=false, vonmises=false);
 numerical_g = numgrad_1D(f,x=x,δ=1e-5);
 analytic_g=similar(x);
 g(x, analytic_g); analytic_g[:] = (analytic_g .- sum(vec(x).*analytic_g) / sum(x) ) / sum(x); # gradient correction to take into account the non-normalized image
-imdisp(reshape(numerical_g,nx,nx), figtitle="Numerical gradient")
-imdisp(reshape(analytic_g,nx,nx), figtitle="Analytic Gradient")
+#imdisp(reshape(numerical_g,nx,nx), figtitle="Numerical gradient")
+#imdisp(reshape(analytic_g,nx,nx), figtitle="Analytic Gradient")
 norm(numerical_g-analytic_g)
 mean(numerical_g./analytic_g)
+
+# T3PHI - von Mises expression
+data.t3phi_vonmises_err = gaussianwrapped_to_vonmises_fast.(data.t3phi_err/180*pi);
+data.t3phi_vonmises_chi2_offset = log(2*pi) .+ 2*(logbesselI0.(data.t3phi_vonmises_err)-log.(data.t3phi_err/180*pi));
+f = xx->chi2_dft_f(xx, dft, data, weights = [0,0,1], verb=false, vonmises=true);
+g = (xx,gg)->chi2_dft_fg(xx, gg, dft, data, weights = [0,0,1], verb=false, vonmises=true);
+numerical_g = numgrad_1D(f,x=x,δ=1e-5);
+analytic_g=similar(x);
+g(x, analytic_g); analytic_g[:] = (analytic_g .- sum(vec(x).*analytic_g) / sum(x) ) / sum(x); # gradient correction to take into account the non-normalized image
+#imdisp(reshape(numerical_g,nx,nx), figtitle="Numerical gradient")
+#imdisp(reshape(analytic_g,nx,nx), figtitle="Analytic Gradient")
+norm(numerical_g-analytic_g)
+mean(numerical_g./analytic_g)
+
+
+
 
 
 #

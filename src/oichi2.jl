@@ -624,7 +624,7 @@ function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Comple
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
-function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false)
+function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_cvis_nfft(x, ftplan[1]);
     if length(cvis)>0
@@ -658,7 +658,7 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
             g_t3phi = imag(nfft_adjoint(ftplan[4], dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1])+nfft_adjoint(ftplan[5], dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2])+nfft_adjoint(ftplan[6], dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
         else
             chi2_t3phi =  sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) + data.t3phi_vonmises_chi2_offset)
-            dT3 = 2.0*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi)/180*pi)
+            dT3 = -2.0*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi)/180*pi)
             g_t3phi = imag( nfft_adjoint(ftplan[4], dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1]) + nfft_adjoint(ftplan[5], dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2]) + nfft_adjoint(ftplan[6], dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
         end
     end
