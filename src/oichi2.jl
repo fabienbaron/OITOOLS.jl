@@ -645,17 +645,17 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
         g_v2 = real(nfft_adjoint(ftplan[3], (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
     end
 
-    # if (weights[2]>0)||(data.nt3amp==0)
-    #     chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-    #     dT3 = 2.0*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
-    #     g_t3amp = real(nfft_adjoint(ftplan[4], dT3.*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3])) + real(nfft_adjoint(ftplan[5],dT3.*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3])) + real(nfft_adjoint(ftplan[6],dT3.*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]))
-    # end
+    if (weights[2]>0)||(data.nt3amp==0)
+        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+        dT3 = 2.0*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
+        g_t3amp = real(nfft_adjoint(ftplan[4], dT3.*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]))) + real(nfft_adjoint(ftplan[5],dT3.*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]))) + real(nfft_adjoint(ftplan[6],dT3.*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
+    end
 
     if (weights[3]>0)||(data.nt3phi==0)
         if vonmises == false
             chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
             dT3 = -360.0/pi*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
-            g_t3phi = imag(nfft_adjoint(ftplan[4], dT3.*./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1])+nfft_adjoint(ftplan[5], dT3.*./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2])+nfft_adjoint(ftplan[6], dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
+            g_t3phi = imag(nfft_adjoint(ftplan[4], dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1])+nfft_adjoint(ftplan[5], dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2])+nfft_adjoint(ftplan[6], dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
         else
             chi2_t3phi =  sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) + data.t3phi_vonmises_chi2_offset)
             dT3 = 2.0*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi)/180*pi)
@@ -664,7 +664,6 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
     end
 
     g[:] = vec(weights[1]*g_v2 .+ weights[2]*g_t3amp .+ weights[3]*g_t3phi)
-    # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
     if verb==true
         printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
         printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
