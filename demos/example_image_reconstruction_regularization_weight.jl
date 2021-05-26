@@ -1,10 +1,10 @@
 #
 # Very Basic Image reconstruction code
 #
-using OITOOLS
+using OITOOLS,PyPlot
 oifitsfile = "./data/2004-data1.oifits"
-pixsize = 0.2 # size of a pixel in milliarcseconds
-nx = 64 # width of image (number of pixels)
+pixsize = 0.101 # size of a pixel in milliarcseconds
+nx = 128 # width of image (number of pixels)
 data = readoifits(oifitsfile)[1,1];
 ft = setup_nfft(data, nx, pixsize);
 #initial image is a simple Gaussian
@@ -13,6 +13,7 @@ x_start = vec(x_start)/sum(x_start);
 
 x = readfits("./data/2004true.fits")[64:195,64:195]
 imdisp(recenter(x,mask=x.>maximum(x)/10),pixscale=pixsize,colormap="gist_earth");
+text(0,0,"Truth",color="white")
 savefig("tvsqtruth.png")
 
 regularizers = [["centering", 1e3], ["tvsq",1e4]];

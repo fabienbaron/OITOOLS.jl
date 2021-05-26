@@ -2,8 +2,7 @@
 # This file includes general purpose functions
 #
 
-using SparseArrays
-using LinearAlgebra
+using LinearAlgebra,SparseArrays, PyCall
 
 function x_start_from_V2_dft(data, dft; λ = 1e7 , μ = 1e6 )
 # estimate V and 1/sigma_V^2 from V2 and V2_err using equation 3.98a in Data Analysis (Sivia/Skilling)
@@ -20,7 +19,30 @@ end
 
 
 
-using PyCall
+function cdg(x::Array{Float64,2})
+    xvals=[i for i=1:size(x,1)]
+    return [sum(xvals'*x) sum(x*xvals)]/sum(x)
+end
+
+function recenter(x::Union{Array{Float64,1},Array{Float64,2}}; mask=[], max=false)
+    if ndims(x)==1 # assume square array
+        n=Int(sqrt(length(x)))
+        xtemp=reshape(x,(n,n))
+        if mask ==[]
+            δ = round.(Int,(n+1)/2 .- cdg(xtemp))
+        else
+            δ = round.(Int,(n+1)/2 .- cdg(reshape(mask,(n,n))))
+        end
+        return vec(circshift(xtemp, (δ[1], δ[2])))
+    else
+        if mask ==[]
+            δ = round.(Int,[size(x)[1] size(x)[2]]/2 .- cdg(x))
+        else
+            δ = round.(Int,[size(x)[1] size(x)[2]]/2 .- cdg(mask))
+        end
+        return circshift(x, (δ[1], δ[2]))
+    end
+end
 
 function query_target_from_simbad(targetname)
     return pyimport("astroquery.simbad").Simbad.query_object(targetname)

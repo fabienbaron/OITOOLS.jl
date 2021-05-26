@@ -3,11 +3,11 @@ include("readoifits.jl");
 include("write_oifits_ha.jl");
 include("write_oifits_obs.jl");
 include("simulate.jl");
+include("utils.jl");
 include("oichi2.jl");
 include("oiplot.jl");
 include("vis_functions_classic.jl");
 include("modelfit.jl");
-include("utils.jl");
 include("astrometry.jl");
 include("vonmises.jl")
 export OIdata
