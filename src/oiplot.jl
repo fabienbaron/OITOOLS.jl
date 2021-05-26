@@ -5,7 +5,7 @@
 # gather common display tasks
 using PyPlot,PyCall, LaTeXStrings, Statistics
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
-PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[10]
+PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[14]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
