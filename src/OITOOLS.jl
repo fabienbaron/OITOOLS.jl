@@ -21,12 +21,11 @@ export write_oi_header,write_oi_array,write_oi_target,write_oi_wavelength,write_
 export oifits_prep, updatefits_aspro
 export readoifits_multicolors,setup_nfft_polychromatic,imdisp_polychromatic,reconstruct_polychromatic, image_to_cvis_polychromatic_nfft,chi2_polychromatic_nfft_f
 export facility_info,obsv_info,combiner_info,wave_info,error_struct,read_facility_file,read_obs_file,read_wave_file,read_comb_file,define_errors
-export make_spot_move,place_spot,make_disk
 export setup_nfft_t4, cvis_to_t4
 export chi2_sparco_nfft_f,chi2_sparco_nfft_f_alt, chi2_sparco_nfft_fg,reconstruct_sparco_gray
 export facility_info, obsv_info, combiner_info, wave_info, error_struct
 export hours_to_date, sunrise_sunset, hour_angle_calc, mjd_to_utdate,dates_to_jd,jd_to_hour_angle,opd_limits,alt_az,geometric_delay,cart_delay
-export query_target_from_simbad, ra_dec_from_simbad, get_baselines
+export query_target_from_simbad, ra_dec_from_simbad, get_baselines, recenter
 export gantt_onenight
 export gaussianwrapped_to_vonmises_fast,logbesselI0
 end

@@ -4,7 +4,7 @@ using OITOOLS
 using PyPlot, NFFT
 N = 201 # uv sampling
 Bmax = 1000 #meters
-λ = 1.6e-6 # meters
+λ = 1.6e-6 # meters  infrared H band
 
 # UV GRID
 x = collect(range(-Bmax, Bmax, length=N))/λ
@@ -46,7 +46,7 @@ img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscal
 V = Complex.(visibility_ellipse_quad([10.0,0.5, 0.5, 2.0,-45.0], uv)) # works
 img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
 
-V = Complex.(visibility_thin_ring([10.0, 45, 60],uv)) # works
+V = Complex.(visibility_thin_ring([10.0, 0, 0],uv)) # works
 img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
 
 V = Complex.(visibility_Gaussian_ring([10.0, 90, 60, .1],uv))

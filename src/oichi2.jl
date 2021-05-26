@@ -909,7 +909,7 @@ function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata
 
     if typeof(ft) == Array{Array{NFFT.NFFTPlan{2,0,Float64},1},1}
         crit = (x,g)->crit_polychromatic_nfft_fg(x, g, ft, data, weights = weights, printcolor=printcolor, regularizers=regularizers, use_diffphases = use_diffphases, verb = verb)
-        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=true, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
     else
         error("Sorry, polychromatic DFT methods not implemented yet");
     end

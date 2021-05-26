@@ -8,8 +8,7 @@ using SpecialFunctions
 #ρ = radius in uv space
 function visibility_ud(param, uv::Array{Float64,2})
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-t = param[1]/2.0626480624709636e8*ρ;
-V = jinc.(t)
+V = jinc.(param[1]/2.0626480624709636e8*ρ)
 return V
 end
 
@@ -99,7 +98,7 @@ end
 
 function visibility_thin_ring(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
 # Parameters
-#  1: radius of the ring
+#  1: radius of the ring (radius and not diameter)
 #  2: ϕ = position angle
 #  3: i = inclination
 ϕ = param[2]/180*pi;

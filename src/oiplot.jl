@@ -5,7 +5,7 @@
 # gather common display tasks
 using PyPlot,PyCall, LaTeXStrings, Statistics
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
-PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[6]
+PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[10]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
@@ -550,7 +550,7 @@ function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",markopt=
         fig ,ax=  plt.subplots(num="Differential phase phase data",nrows=length(baseline), sharex=true,figsize=(10,5),facecolor="White")
         suptitle("Differential phase phase data")
         subplots_adjust(hspace=0.0)
-        mx=matplotlib[:ticker][:MultipleLocator](20)     
+        mx=matplotlib[:ticker][:MultipleLocator](20)
         for i=1:length(baseline)
             title(baseline[i], x=0.9, y=0.75)
             loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
