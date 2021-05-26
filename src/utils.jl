@@ -19,7 +19,7 @@ end
 
 
 
-function cdg(x::Array{Float64,2})
+function cdg(x) #2D array
     xvals=[i for i=1:size(x,1)]
     return [sum(xvals'*x) sum(x*xvals)]/sum(x)
 end
