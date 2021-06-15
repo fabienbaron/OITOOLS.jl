@@ -23,8 +23,8 @@ imdisp(recenter(x,mask=x.>maximum(x)/10),pixscale=pixsize,colormap="gist_earth")
 text(-6,5,"Positivity only",color="white",size="xx-large")
 savefig("types-positivity-only.png")
 
-x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = false, maxiter=500);
 regularizers = [["centering", 1e3], ["tvsq",5e7]];
+x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = false, maxiter=500);
 imdisp(recenter(x,mask=x.>maximum(x)/10),pixscale=pixsize,colormap="gist_earth");
 text(-6,5,"Squared Total Variation",color="white",size="xx-large")
 savefig("types-tvsq.png")
