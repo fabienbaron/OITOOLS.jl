@@ -537,13 +537,11 @@ end
 
 
 
-function diffphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",markopt=false, legend_below=false, filename="")
+function diffphiplot(data::Array{OIdata,1}; color="Black",markopt=false, legend_below=false, filename="")
     #
     # Note: this is a special kind of plot, which doesn't follow the classic plotting recipe
     #
-    if typeof(data)==OIdata
-        data = [data]
-    end
+
         baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_vis...)))
         # Creating one subplot per baseline

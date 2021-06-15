@@ -132,7 +132,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     targetid_filter = [];
     targettables = OIFITS.select(tables, "OI_TARGET");
     if minimum(vcat([targettables[i].target_id for i=1:length(targettables)]...)) == 0
-        @warn("This file does not follow the oifits standard - target indexing should start at 1, not 0.")
+        @warn("This file does not follow the latest OIFITS standard - target indexing should start at 1, not 0.")
     end
 
     if(targetname !="")

@@ -302,7 +302,6 @@ function l1l2(x, g; verb = false, ϵ=1e-8, α = 2.0)
 end
 
 function l2sq(x,g; verb = false)
-    nx = Int(sqrt(length(x)))
     f = sum(x.^2)
     g[:] =  2*x;
     if verb == true
@@ -313,7 +312,6 @@ end
 
 
 function l1hyp(x,g; verb = false,ϵ=1e-9)
-    nx = Int(sqrt(length(x)))
     f = sum(sqrt.(x.^2 .+ϵ^2).-ϵ)
     g[:] =  x./sqrt.(x.^2 .+ϵ^2);
     if verb == true
@@ -323,7 +321,6 @@ function l1hyp(x,g; verb = false,ϵ=1e-9)
 end
 
 function l1l2w(x,g; verb = false)
-    nx = Int(sqrt(length(x)))
     f = sum(x-log.(1.0 .+ x))
     g[:] .=  1.0 .- 1.0./(1.0 .+x);
     if verb == true
@@ -332,15 +329,35 @@ function l1l2w(x,g; verb = false)
     return f
 end
 
+function entropy(x,g; verb = false, ϵ=1e-12)
+    f = sum(x.*log.(abs.(x).+ϵ) - x)
+    g[:] .=  log.(abs.(x).+ϵ);
+    if verb == true
+        print(" MAXENT:", f);
+    end
+    return f
+end
 
+function compactness(x,g; verb = false)
+    nx = Int(sqrt(length(x)))
+    y = repeat(collect(1:nx).-0.5*(nx-1),1,nx)
+    yy = y.*y
+    rr = vec(yy+yy')/(nx*nx)
+    f = sum(x.*rr)
+    g[:] .=  rr;
+    if verb == true
+        print(" compactness:", f);
+    end
+    return f
+end
 
-function numgrad_1D(func;x=[], N=100, δ = 1e-6)
+function numgrad_1D(func;x=[], N=400, δ = 1e-6)
     if x==[]
         x = abs.(rand(Float64,N))
     else
         N = length(x)
     end
-    numerical_g = zeros(length(x),length(f(x)))
+    numerical_g = zeros(length(x),length(func(x)))
     for i=1:N
         orig = x[i]
         x[i] = orig + 2*δ
@@ -499,6 +516,10 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
             reg_f += regularizers[ireg][2]*l1hyp(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "l2sq"
             reg_f += regularizers[ireg][2]*l2sq(x,temp_g, verb = verb)
+        elseif regularizers[ireg][1] == "compactness"
+            reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb)
+        elseif regularizers[ireg][1] == "entropy"
+            reg_f += regularizers[ireg][2]*entropy(x,temp_g, verb = verb)
         end
         reg_g[:] += regularizers[ireg][2]*temp_g
     end
