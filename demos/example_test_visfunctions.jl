@@ -2,8 +2,8 @@
 #include("../src/OITOOLS.jl"); using Main.OITOOLS
 using OITOOLS
 using PyPlot, NFFT
-N = 201 # uv sampling
-Bmax = 1000 #meters
+N = 1001 # uv sampling
+Bmax = 3000 #meters
 λ = 1.6e-6 # meters  infrared H band
 
 # UV GRID

@@ -1,3 +1,5 @@
+__precompile__(true)
+
 module OITOOLS
 include("readoifits.jl");
 include("write_oifits_ha.jl");
