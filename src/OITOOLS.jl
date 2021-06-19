@@ -30,4 +30,5 @@ export hours_to_date, sunrise_sunset, hour_angle_calc, mjd_to_utdate,dates_to_jd
 export query_target_from_simbad, ra_dec_from_simbad, get_baselines, recenter
 export gantt_onenight
 export gaussianwrapped_to_vonmises_fast,logbesselI0
+precompile(readoifits, (Int,))
 end
