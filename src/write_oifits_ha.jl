@@ -1,7 +1,4 @@
-using CFITSIO;
-using OIFITS;
-using Dates
-using FITSIO
+using CFITSIO, FITSIO, OIFITS, Dates
 #=
 function get_extname(filein)
     num=fits_get_num_hdus(filein)

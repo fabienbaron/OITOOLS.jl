@@ -1,6 +1,4 @@
-using LinearAlgebra
-using SpecialFunctions
-using NFFT
+using LinearAlgebra, SpecialFunctions, NFFT
 
 function setup_dft(data::OIdata, nx, pixsize)
     scale_rad = pixsize * (pi / 180.0) / 3600000.0;

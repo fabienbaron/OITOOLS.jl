@@ -686,6 +686,11 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
 
     ax = gca()
     ax.set_aspect("equal")
+    if (size(image,1)*pixscale)>1000
+        tickinterval = 50.0
+    elseif (size(image,1)*pixscale)>100
+        tickinterval = 5.0
+    end
     mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
     ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
     ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks

@@ -10,8 +10,7 @@ using Statistics, LinearAlgebra, NLopt
 # visfunc gets model params and returns complex visibilities
 # see how XXXX is defining models and use json file
 
-
-function model_to_chi2(data::OIdata, visfunc, params::Array{Float64,1}; weights=[1.0,1.0,1.0])
+function model_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; weights=[1.0,1.0,1.0])
     cvis_model = visfunc(params, data.uv)
     chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
     if (data.nv2>0) && (weights[1]>0.0)

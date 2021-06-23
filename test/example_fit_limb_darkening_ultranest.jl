@@ -3,9 +3,7 @@ oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
 
 visfunc = visibility_ud
-init_param = [8.0]
 weights=[1.0,0,0]
-nparams=length(init_param)
 lbounds = 0.0
 hbounds = 10.0
 
@@ -19,7 +17,8 @@ prior_transform_vectorized = let trafo = prior_transform
     (U::AbstractMatrix{<:Real}) -> reduce(vcat, (u -> trafo(u)').(eachrow(U)))
 end
 
-loglikelihood=param->-0.5*model_to_chi2(data, visfunc, param, weights=weights);
+loglikelihood=param::AbstractVector{<:Real}->-0.5*model_to_chi2(data, visfunc, param, weights=weights);
+
 
 loglikelihood_vectorized = let loglikelihood = loglikelihood
     # UltraNest has variate in rows:

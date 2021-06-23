@@ -1,8 +1,4 @@
-using FITSIO
-
-using OIFITS
-
-using Statistics, SparseArrays
+using FITSIO, OIFITS, Statistics, SparseArrays
 
 # TO DO : * use the splat operator to simplify things
 #         * add differential and complex visibilities

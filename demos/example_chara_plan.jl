@@ -34,7 +34,7 @@ printstyled("HA range based on CHARA telescope elevation limit: from ", ha[good_
 
 # In this example we're finding the best pops
 
-# ["S1"  "S2"  "E1"  "E2"  "W1"  "W2"]
+tel_names= ["S1"  "S2"  "E1"  "E2"  "W1"  "W2"]
 config = [1, 1, 1, 1, 1, 2]# telescopes to use = 1, to not use = 0, reference = 2
 nbaselines, baseline_xyz , baseline_stations, baseline_name = get_baselines(facility, config=config);
 delay_geo   = geometric_delay(lat,ha,dec,baseline_xyz);
@@ -58,12 +58,24 @@ end
 delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop ); # baselines x lst x pop1 x pop2 x pop3 xpop4 x pop5x pop6
 has_delay = prod((delay_carts.>-43).&(delay_carts.<43), dims=1); # 1 = delay on all baselines
 pop_score = reshape(sum(has_delay,dims=2),5,5,5,5,5,5); # assumes non-discontinous delay block, may be wrong
-#minimum_minutes_on_object = 10; # we'll assume we need at least 10 minute on an object
-#pops_with_enough_delay_time = findall(pop_score.>minimum_minutes_on_object)
-#good_pops = sortperm(pop_score[pops_with_enough_delay_time],rev=true)
-#good_pops = good_pops[1:min(5, length(good_pops))] # only keep the 5 best ones
+
+# Best 5 POP configs
+minimum_minutes_on_object = 10; # we'll assume we need at least 10 minute on an object
+indx_good = findall(pop_score.>minimum_minutes_on_object)
+good_pops_loc = sortperm(pop_score[indx_good],rev=true)
+good_pops_loc = good_pops[1:min(5, length(good_pops))] # only keep the 5 best ones
+good_pops = indx_good[good_pops_loc]
+println("Good POP solutions:");
+for j=1:length(good_pops)
+println("\nSolution ranked #$j")
+[print(string(tel_names[i], " - POP ", good_pops[j][i])," | ") for i=1:length(tel_names)];
+end
+
 best_pops = findmax(pop_score)
-good_delay = findall(vec(has_delay[:,:,best_pops[2]]).>0)
+println("Best POP solution:");
+[println(string(tel_names[i], " - POP ", best_pops[2][i])) for i=1:length(tel_names)];
+#good_delay = findall(vec(has_delay[:,:,best_pops[2]]).>0)
+
 
 # ALTERNATIVE EXAMPLE, IF WE REQUEST SPECIFIC POPS
 pop = [1,2,4,5,2,5]
@@ -72,15 +84,17 @@ delay_pop = [pop_array[ baseline_stations[2, i] , pop[baseline_stations[2, i]]] 
 delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop )
 has_delay = (delay_carts.>-43).&(delay_carts.<43);
 good_delay = findall(vec(prod(has_delay, dims=1)).>0);
-
 gantt_onenight(targetname,obsdate, lst, lst_midnight, az, alt, good_alt, good_delay);tight_layout();
 
 # LST vs delay
 figure()
-plot(lst, delay_carts[1,:], label="Delay")
-plt.axhline(y=alt_limit, label="Limit altitude", color=:red)
+plot(lst, delay_carts[4,:], label="E2")
+plot(lst, delay_carts[3,:], label="E1")
+plt.axhline(y=alt_limit, label="Limit altitude = $(alt_limit)°", color=:red)
 plot(lst, alt, label = "Altitude")
 legend()
+ylim(-5,90)
+xlim(minimum(lst), maximum(lst))
 xlabel("UT")
 ylabel("EL/DELAY")
 tight_layout()
