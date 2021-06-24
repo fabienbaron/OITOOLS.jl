@@ -1,5 +1,12 @@
 # Model fitting
-using OITOOLS, Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit
+# TODO: - add differential visibilities
+#       - merge orbit code
+#       - expression evaluation for custom models
+#       - more parameter distributions than uniform (e.g. Gausian, von Mises or lognormal)
+#       - black body spectral law
+#       - spectral lines (Gaussian, Voigt)
+#       - custom r/μ profiles
+using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt
 
 @with_kw mutable struct OIparam
            name::String = "" # optional name of the compoment (e.g. "primary", "central source")
@@ -170,8 +177,8 @@ function model_to_chi2(data::OIdata, model::OImodel, params::AbstractVector{<:Re
     chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
 end
 
-function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], hbounds = Float64[],
-    verbose = true, calculate_vis = true, cornerplot = true, chi2_weights=[1.0,1.0,1.0], min_num_live_points = 1000, cluster_num_live_points = 400)
+
+function get_model_bounds(mode::OImodel)
     # Setup bounds
     lbounds = Float64[]
     hbounds = Float64[]
@@ -195,6 +202,55 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
             end
         end
     end
+    return lbounds, hbounds
+end
+
+
+function get_model_params(mode::OImodel)
+    # Setup bounds
+    params = Float64[]
+    for i=1:length(model.components)
+        for j=1:length(model.components[i].vis_params)
+            if(model.components[i].vis_params[j].free)
+                push!(params, model.components[i].vis_params[j].val)
+            end
+        end
+        for j=1:length(model.components[i].pos_params)
+            if(model.components[i].pos_params[j].free)
+                push!(params, model.components[i].vis_params[j].val)
+            end
+        end
+        for j=1:length(model.components[i].spectrum_params)
+            if(model.components[i].spectrum_params[j].free)
+                push!(params, model.components[i].vis_params[j].val)
+            end
+        end
+    end
+    return params
+end
+
+
+function get_model_pnames(mode::OImodel)
+    param_names = String[]
+    for n=1:length(model.param_map)
+        i,j,k = model.param_map[n]
+        if j==1
+            push!(param_names, string(model.components[i].name, " - ", model.components[i].vis_params[k].name))
+        elseif j==2
+            push!(param_names, string(model.components[i].name, " - ", model.components[i].pos_params[k].name))
+        elseif j==3
+            push!(param_names, string(model.components[i].name, " - ", model.components[i].spectrum_params[k].name))
+        end
+    end
+    return param_names
+end
+
+
+
+function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], hbounds = Float64[],
+    verbose = true, calculate_vis = true, cornerplot = true, chi2_weights=[1.0,1.0,1.0], min_num_live_points = 1000, cluster_num_live_points = 400)
+
+    lbounds, hbounds = get_model_bounds(model);
 
     function prior_transform(u::AbstractVector{<:Real}) # To be modified to accept other distributions via distributions.jl?
             Δx = hbounds - lbounds
@@ -213,17 +269,7 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
         (X::AbstractMatrix{<:Real}) -> loglikelihood.(eachrow(X))
     end
 
-    param_names = String[]
-    for n=1:length(model.param_map)
-        i,j,k = model.param_map[n]
-        if j==1
-            push!(param_names, string(model.components[i].name, " - ", model.components[i].vis_params[k].name))
-        elseif j==2
-            push!(param_names, string(model.components[i].name, " - ", model.components[i].pos_params[k].name))
-        elseif j==3
-            push!(param_names, string(model.components[i].name, " - ", model.components[i].spectrum_params[k].name))
-        end
-    end
+    param_names = get_model_pnames(model);
 
     smplr = ultranest.ReactiveNestedSampler(param_names, loglikelihood_vectorized, transform = prior_transform_vectorized, vectorized = true)
     result = smplr.run(min_num_live_points = min_num_live_points, cluster_num_live_points = cluster_num_live_points)
@@ -248,33 +294,9 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
 end
 
 
-function fit_model_levenberg(data::OIdata, model::OImodel; lbounds = Float64[], hbounds = Float64[],
-    verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
+function fit_model_levenberg(data::OIdata, model::OImodel, verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
 
-    println("OITOOLS Warning: LSQFIT doesn't support mod360() on residuals.");
-    # Setup bounds
-    lbounds = Float64[]
-    hbounds = Float64[]
-    for i=1:length(model.components)
-        for j=1:length(model.components[i].vis_params)
-            if(model.components[i].vis_params[j].free)
-                push!(lbounds, model.components[i].vis_params[j].minval)
-                push!(hbounds, model.components[i].vis_params[j].maxval)
-            end
-        end
-        for j=1:length(model.components[i].pos_params)
-            if(model.components[i].pos_params[j].free)
-                push!(lbounds, model.components[i].vis_params[j].minval)
-                push!(hbounds, model.components[i].vis_params[j].maxval)
-            end
-        end
-        for j=1:length(model.components[i].spectrum_params)
-            if(model.components[i].spectrum_params[j].free)
-                push!(lbounds, model.components[i].vis_params[j].minval)
-                push!(hbounds, model.components[i].vis_params[j].maxval)
-            end
-        end
-    end
+    println("OITOOLS Warning: LSQFIT doesn't support mod360() on residuals");
 
     # Setup chi2_weights and data for weighted least squares
     wt = Float64[]
@@ -323,12 +345,31 @@ function fit_model_levenberg(data::OIdata, model::OImodel; lbounds = Float64[], 
     return obs
     end
 
+    lbounds, hbounds = get_model_bounds(model);
+    pinit = get_model_params(model);
     m = (x,p)->lsqmodelobs(p, model, data);
-    p0 = rand(2)
-    fit = curve_fit(m, [], ydata, wt, p0); # todo: add lower/upper bounds
+    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=true); # todo: add lower/upper bounds
+    minx = fit.param
+    minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
+
+    if fit.converged == true
+        println("Levenberg-Marquardt fit converged to chi2 = $(minf) for p=$(minx)\n")
+    end
     sigma = stderror(fit)
+    println("Name       \t\tMinimum\t\tMaximum\t\tInit\t\tConverged ± Error");
+    pnames = get_model_pnames(model);
+    for i=1:length(pinit)
+        @printf("%s \t%f\t%f\t%f\t%f ± %f\n", pnames[i], lbounds[i], hbounds[i], pinit[i], minx[i], sigma[i]);
+    end
     covar = estimate_covar(fit)
-    return fit
+    println("Covariance matrix:\n");
+    display("text/plain", covar);
+    cvis_model = [];
+    if calculate_vis == true
+        dispatch_params(minx, model);
+        cvis_model = model_to_cvis(model, data);
+    end
+    return (minf, minx, cvis_model, fit)
 end
 
 
@@ -337,8 +378,8 @@ end
 model=create_model()
 oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
-fit_model_ultranest(data, model)
-
+minf, minx, cvis_model, result = fit_model_ultranest(data, model);
+minf, minx, cvis_model, result = fit_model_levenberg(data, model);
 
 
 
