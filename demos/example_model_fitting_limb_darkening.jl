@@ -20,7 +20,6 @@ using OITOOLS
 # minf, minx, cvis_model, result = fit_model_levenberg(data, model);
 # minf, minx, cvis_model, result = fit_model_nlopt(data, model);
 
-
 printstyled("WARNING --- DEPRECATED --- ", color=:red)
 
 oifitsfile = "./data/AlphaCenA.oifits";
