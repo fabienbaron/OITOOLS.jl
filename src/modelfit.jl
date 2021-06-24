@@ -403,13 +403,6 @@ function fit_model_nlopt(data::OIdata, model::OImodel; fitter=:LN_NELDERMEAD, ve
     return (minf,minx,cvis_model, ret)
 end
 
-model=create_model()
-oifitsfile = "./data/AlphaCenA.oifits";
-data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
-minf, minx, cvis_model, result = fit_model_ultranest(data, model);
-minf, minx, cvis_model, result = fit_model_levenberg(data, model);
-minf, minx, cvis_model, result = fit_model_nlopt(data, model);
-
 #
 #
 # #

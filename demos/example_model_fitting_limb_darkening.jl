@@ -1,9 +1,27 @@
+
+#
+#
+#   DEPRECATED - MODEL FITTING IS BEING REVAMPED
+#
+
+
 using OITOOLS
 #
 # EXAMPLE 2: fit uniform disc and limb-darkening law to data
 #
 
 # Check https://arxiv.org/abs/1610.06185 for official results
+
+# New interface -- coming soon
+# model=create_model()
+# oifitsfile = "./data/AlphaCenA.oifits";
+# data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
+# minf, minx, cvis_model, result = fit_model_ultranest(data, model);
+# minf, minx, cvis_model, result = fit_model_levenberg(data, model);
+# minf, minx, cvis_model, result = fit_model_nlopt(data, model);
+
+
+printstyled("WARNING --- DEPRECATED --- ", color=:red)
 
 oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
