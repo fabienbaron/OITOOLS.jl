@@ -66,7 +66,7 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 * CHARA-specific planning
 
-![chara_plan](docs/src/assets/chara_plan.svg)
+![chara_plan](docs/src/assets/chara_plan.png)
 
 ## Simulations
 
