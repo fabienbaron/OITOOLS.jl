@@ -24,7 +24,7 @@ This will install the packages in the same state that is given by the OITOOLS Ma
 
 In case the previous instantiation does not work, or if you want to install all dependencies globally, you can use the package manager (```]``` key) then do:
 
-``` add https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayTools.jl.git https://github.com/emmt/LazyAlgebra.jl.git https://github.com/emmt/OptimPackNextGen.jl.git CFITSIO Dates DelimitedFiles Documenter DocumenterTools FITSIO LaTeXStrings LinearAlgebra NFFT NLopt UltraNest LsqFit NearestNeighbors PyCall PyPlot Random SparseArrays SpecialFunctions Statistics https://github.com/fabienbaron/OITOOLS.jl.git```
+``` add https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayTools.jl.git https://github.com/emmt/LazyAlgebra.jl.git https://github.com/emmt/OptimPackNextGen.jl.git CFITSIO Dates DelimitedFiles Documenter DocumenterTools FITSIO LaTeXStrings LinearAlgebra NFFT NLopt UltraNest LsqFit NearestNeighbors PyCall PyPlot Random SparseArrays SpecialFunctions Statistics Parameters https://github.com/fabienbaron/OITOOLS.jl.git```
 
 !!! info
 

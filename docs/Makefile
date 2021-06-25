@@ -6,6 +6,6 @@ clean:
 	rm -f *~ */*~ */*/*~
 
 build/index.html: $(SOURCES)
-	julia --color=yes make.jl
+	julia make.jl
 
 .PHOONY: default clean
