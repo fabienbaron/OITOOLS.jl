@@ -1,7 +1,7 @@
 # See example script at https://github.com/JuliaLang/Example.jl
 language: julia
 env:
- - CONDA_JL_VERSION=2
+ - CONDA_JL_VERSION="3" CONDA_JL_USE_MINIFORGE="yes"
 
 os:
   - linux
@@ -9,9 +9,6 @@ os:
 
 julia:
   - 1.6
-
-python:
-  - "3.8"
 
 branches:
   only:
