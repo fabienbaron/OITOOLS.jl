@@ -22,7 +22,20 @@ Conda.add("astroquery", channel="astropy")
 
 ## Installation of Dependencies
 
-### Options 1: in a Julia environment
+Overview of dependency usage:
+
+| Package       | Usage     | Algorithm/Functions |
+| ------------- |:-------------:|:-------------:|
+| NFFT      | Compute Fourier transform | Non Equispaced Fourier Transform |
+| OptimPackNextGen | Image reconstruction | VLMBM (Éric Thiébaut)
+| LsqFit      | Model fitting | Levenberg-Marquardt
+| UltraNest | Model fitting and model comparison  |  Nested sampling    |
+| NLopt     | Model fitting | Several local (Nelder-Mead) and global (Genetic) optimizers |
+| SpecialFunctions | Complex visibility calculations | Bessel Functions
+| NearestNeighbors | simplify uv sampling | KD trees |
+| OIFITS | data import | read OIFITS files|
+
+### How to install dependencies: options 1, in a Julia environment
 
 Simply clone OITOOLS using ```git clone```, cd to the project directory and use the package manager (```]``` key) then:
 ```
@@ -32,7 +45,7 @@ Simply clone OITOOLS using ```git clone```, cd to the project directory and use 
 ```
 This will install the packages in the same state that is given by the OITOOLS Manifest.toml. Otherwise, it will resolve the latest versions of the dependencies compatible with the project.
 
-### Options 2: global Installation of dependencies
+### How to install dependencies: options 2, global installation
 
 In case the previous instantiation does not work, or if you want to install all dependencies globally, you can use the package manager (```]``` key) then do:
 
