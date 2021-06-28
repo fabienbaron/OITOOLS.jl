@@ -8,7 +8,7 @@
 As of version 0.6, OITOOLS uses UltraNest for model-fitting. You may install it as part of your local python install, or you may use Julia's Conda (see FAQ below), in which case you can type:
 ```    
 using Conda
-Conda.add("ultranest", channel="ultranest")
+Conda.add("ultranest", channel="conda-forge")
 ```
 
 ### Astroquery (optional)
@@ -17,7 +17,6 @@ If you're going to use OITOOLS to simulate observations, you may need to look up
 
 ```    
 using Conda
-Conda.add("astropy", channel="astropy")
 Conda.add("astroquery", channel="astropy")
 ```
 

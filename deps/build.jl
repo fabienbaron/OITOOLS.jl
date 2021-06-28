@@ -23,6 +23,7 @@ else
     ENV["PYTHON"]=""
     Pkg.add("PyCall")
     Pkg.build("PyCall")
-    pyimport_conda("ultranest", "ultranest")
-    pyimport_conda("astroquery", "astropy")
+    using Conda
+    Conda.add("astroquery", channel="astropy")
+    Conda.add("ultranest", channel="conda-forge")
 end
