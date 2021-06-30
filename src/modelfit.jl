@@ -17,7 +17,6 @@ using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, P
            free::Bool = true
 end
 
-
 function pos_fixed(pos_params::Array{OIparam,1})
     return (pos_params[1].val, pos_params[2].val)
 end
@@ -42,41 +41,129 @@ end
            spectrum_params::Array{OIparam,1} = [OIparam(name="flux", val=1.0, free=false)] # spectral law parameters for spectral law
 end
 
+function Base.display(comp::OIcomponent) # extend display for Components
+                pos_type ="Fixed location"
+                spec_type = "Unknown"
+                if comp.spectrum_function == spectrum_gray
+                    spec_type = "Spectrally Gray"
+                elseif comp.spectrum_function == spectrum_powerlaw
+                    spec_type = "Polychromatic (power law)"
+                end
+                println();
+                @printf("Component: %s -- Model: %s - %s - %s \n", comp.name, comp.type, pos_type, spec_type);
+                println();
+                println("Visibility Parameters\t\tCurrent Value\tMinimum\t\tMaximum\t\tStepsize\tFree");
+                println("---------------------------------------------------------------------");
+                color=:black
+                for i=1:length(comp.vis_params)
+                    marksym=Char(0x02716)
+                    color=:black
+                    if comp.vis_params[i].free==true
+                        color=:red
+                        marksym=Char(0x02714)
+                    end
+                    printstyled(@sprintf("%16s\t\t%f\t%f\t%f\t%f\t%s\n", comp.vis_params[i].name, comp.vis_params[i].val, comp.vis_params[i].minval, comp.vis_params[i].maxval,comp.vis_params[i].step,marksym),color=color)
+                end
+                println("---------------------------------------------------------------------");
+                println("Position Parameters\t\tCurrent Value\tMinimum\t\tMaximum\t\tStepsize\tFree");
+                println("---------------------------------------------------------------------");
+                for i=1:length(comp.pos_params)
+                    marksym=Char(0x02716)
+                    color=:black
+                    if comp.pos_params[i].free==true
+                        color=:red
+                        marksym=Char(0x02714)
+                    end
+                    printstyled(@sprintf("%16s\t\t%f\t%f\t%f\t%f\t%s\n", comp.pos_params[i].name, comp.pos_params[i].val, comp.pos_params[i].minval, comp.pos_params[i].maxval,comp.pos_params[i].step,marksym),color=color)
+                end
+                println("---------------------------------------------------------------------");
+                println("Spectral Parameters\t\tCurrent Value\tMinimum\t\tMaximum\t\tStepsize\tFree");
+                println("---------------------------------------------------------------------");
+                for i=1:length(comp.spectrum_params)
+                    marksym=Char(0x02716)
+                    color=:black
+                    if comp.spectrum_params[i].free==true
+                        color=:red
+                        marksym=Char(0x02714)
+                    end
+                    printstyled(@sprintf("%16s\t\t%f\t%f\t%f\t%f\t%s\n", comp.spectrum_params[i].name, comp.spectrum_params[i].val, comp.spectrum_params[i].minval, comp.spectrum_params[i].maxval,comp.spectrum_params[i].step,marksym),color=color)
+
+                end
+end
+
+
 @with_kw mutable struct OImodel
     components::Array{OIcomponent,1}
     param_map
 end
 
+function Base.display(model::OImodel)
+    for i=1:length(model.components)
+        display(components[i])
+    end
+    display(param_map)
+end
 
 
-function create_component(;type::String=[], name::String, vis_function,vis_params::Array{OIparam,1}, pos_function, pos_params::Array{OIparam,1}, spectrum_function, spectrum_params::Array{OIparam,1})
-
+function create_component(;type::String=[], name::String="") # this autofill defaults for arguments
 if type=="ud"
-    return OIcomponent(type="ud", name="Component1",
+    model = OIcomponent(type="ud", name=name,
                    vis_function=visibility_ud,
                    vis_params= [OIparam(name="diameter", val=1.0)],
                    pos_function = pos_fixed,
-                   pos_params = [OIparam(name="ra", val=0.0), OIparam(name="dec", val=0.0)],  # positional parameters
+                   pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0)])
+                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+    return model
 elseif type == "ldlin"
-    return OIcomponent(type="ldlin", name="Component1",
+    model = OIcomponent(type="ldlin", name=name,
                    vis_function=visibility_ldlin,
                    vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
                    pos_function = pos_fixed,
-                   pos_params = [OIparam(name="ra", val=0.0), OIparam(name="dec", val=0.0)],  # positional parameters
+                   pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0)])
-    elseif type == "ldquad"
-    return OIcomponent(vis_function=visibility_ldquad)
+                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+
+    return model
+elseif type == "ldquad"
+        model = OIcomponent(type="ldquad", name=name,
+                       vis_function=visibility_ldlquad,
+                       vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
+                       pos_function = pos_fixed,
+                       pos_params = [OIparam(name="ra", val=0.0), OIparam(name="dec", val=0.0)],  # positional parameters
+                       spectrum_function = spectrum_gray,
+                       spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+    return model
 elseif type == "ldpow"
-    return OImodel(vis_function=visibility_ldpow)
+    model = OIcomponent(type="ldpow", name=name,
+                   vis_function=visibility_ldpow,
+                   vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
+                   pos_function = pos_fixed,
+                   pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+                   spectrum_function = spectrum_gray,
+                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+    return model
 elseif type == "ldsqrt"
-    return OImodel(vis_function=visibility_ldsquareroot)
+    model = OIcomponent(type="ldsqrt", name=name,
+                   vis_function=visibility_ldsquareroot,
+                   vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
+                   pos_function = pos_fixed,
+                   pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+                   spectrum_function = spectrum_gray,
+                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+    return model
 elseif type == "ring"
-    return OImodel(vis_function=visibility_GaussianLorentzian_ring_az)
+    model = OIcomponent(type="ring", name=name,
+                   vis_function=visibility_GaussianLorentzian_ring_az,
+                   vis_params= [OIparam(name="Ring radius", val=1.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM/Radius", minval=0.0, maxval=1.0),
+                    OIparam(name="Az1", minval=-1.0, maxval=1.0),OIparam(name="Az2", minval=-1.0, maxval=1.0),OIparam(name="Az3", minval=-1.0, maxval=1.0),OIparam(name="Az4", minval=-1.0, maxval=1.0),OIparam(name="Gauss/Lorentz ratio", val=0, minval=0, maxval=1.0)],
+                   pos_function = pos_fixed,
+                   pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+                   spectrum_function = spectrum_gray,
+                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+    return model
 else
-    println("Wrong type definition for model");
+    @warn("Trying to call undefined model");
 end
 end
 
