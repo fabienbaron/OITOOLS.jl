@@ -22,7 +22,7 @@ function pos_fixed(pos_params::Array{OIparam,1})
 end
 
 function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, data::OIdata )
-    # (λ/λ0)^d  where λ0=spectrum[1] and d=spectrum[2]
+    # (λ/λ0)^d  where λ0=spectrum[2] and d=spectrum[3]
     return spectrum_params[1].val.*(data.uv_lam/spectrum_params[2].val).^spectrum_params[3].val
 end
 
@@ -99,9 +99,12 @@ end
 
 function Base.display(model::OImodel)
     for i=1:length(model.components)
-        display(components[i])
+        display(model.components[i])
     end
-    display(param_map)
+    println();
+    println("Parameter map:");
+    display(model.param_map)
+    println("Total number of free parameters: $(length(model.param_map))");
 end
 
 
@@ -109,7 +112,7 @@ function create_component(;type::String=[], name::String="") # this autofill def
 if type=="ud"
     model = OIcomponent(type="ud", name=name,
                    vis_function=visibility_ud,
-                   vis_params= [OIparam(name="diameter", val=1.0)],
+                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
@@ -118,7 +121,7 @@ if type=="ud"
 elseif type == "ldlin"
     model = OIcomponent(type="ldlin", name=name,
                    vis_function=visibility_ldlin,
-                   vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
+                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
@@ -128,7 +131,7 @@ elseif type == "ldlin"
 elseif type == "ldquad"
         model = OIcomponent(type="ldquad", name=name,
                        vis_function=visibility_ldlquad,
-                       vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
+                       vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
                        pos_function = pos_fixed,
                        pos_params = [OIparam(name="ra", val=0.0), OIparam(name="dec", val=0.0)],  # positional parameters
                        spectrum_function = spectrum_gray,
@@ -137,7 +140,7 @@ elseif type == "ldquad"
 elseif type == "ldpow"
     model = OIcomponent(type="ldpow", name=name,
                    vis_function=visibility_ldpow,
-                   vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
+                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
@@ -146,7 +149,7 @@ elseif type == "ldpow"
 elseif type == "ldsqrt"
     model = OIcomponent(type="ldsqrt", name=name,
                    vis_function=visibility_ldsquareroot,
-                   vis_params= [OIparam(name="diameter", val=1.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
+                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
@@ -155,27 +158,37 @@ elseif type == "ldsqrt"
 elseif type == "ring"
     model = OIcomponent(type="ring", name=name,
                    vis_function=visibility_GaussianLorentzian_ring_az,
-                   vis_params= [OIparam(name="Ring radius", val=1.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM/Radius", minval=0.0, maxval=1.0),
+                   vis_params= [OIparam(name="Ring radius", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM/Radius", minval=0.0, maxval=1.0),
                     OIparam(name="Az1", minval=-1.0, maxval=1.0),OIparam(name="Az2", minval=-1.0, maxval=1.0),OIparam(name="Az3", minval=-1.0, maxval=1.0),OIparam(name="Az4", minval=-1.0, maxval=1.0),OIparam(name="Gauss/Lorentz ratio", val=0, minval=0, maxval=1.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
                    spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
     return model
-else
-    @warn("Trying to call undefined model");
-end
-end
-
-
-function create_model()
-    components = [OIcomponent(type="ldlin", name="Component1",
-                   vis_function=visibility_ldlin,
-                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval=20.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
+elseif type == "ring-polychromatic"
+    model = OIcomponent(type="ring", name=name,
+                   vis_function=visibility_GaussianLorentzian_ring_az,
+                   vis_params= [OIparam(name="Ring radius", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM/Radius", minval=0.0, maxval=1.0),
+                    OIparam(name="Az1", minval=-1.0, maxval=1.0),OIparam(name="Az2", minval=-1.0, maxval=1.0),OIparam(name="Az3", minval=-1.0, maxval=1.0),OIparam(name="Az4", minval=-1.0, maxval=1.0),OIparam(name="Gauss/Lorentz ratio", val=0, minval=0, maxval=1.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
-                   spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])]
+                   spectrum_function = spectrum_powerlaw,
+                   spectrum_params = [OIparam(name="flux", val=0.5, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=1.0, minval=-5.0, maxval=2.0, free=false)])
+    return model
+else
+    @warn("Trying to call undefined component type");
+end
+end
+
+
+function create_model(args...)
+    components=OIcomponent[]
+    for i=1:length(args)
+        if typeof(args[i])!=OIcomponent
+            @warn("Warning: one of the arguments of create_model was not a component")
+        end
+        push!(components, args[i])
+    end
     param_map = []
     for i=1:length(components)
         for j=1:length(components[i].vis_params)
@@ -194,7 +207,6 @@ function create_model()
             end
         end
     end
-
     return OImodel(components, param_map);
 end
 
@@ -265,7 +277,7 @@ function model_to_chi2(data::OIdata, model::OImodel, params::AbstractVector{<:Re
 end
 
 
-function get_model_bounds(mode::OImodel)
+function get_model_bounds(model::OImodel)
     # Setup bounds
     lbounds = Float64[]
     hbounds = Float64[]
@@ -293,7 +305,7 @@ function get_model_bounds(mode::OImodel)
 end
 
 
-function get_model_params(mode::OImodel)
+function get_model_params(model::OImodel)
     # Setup bounds
     params = Float64[]
     for i=1:length(model.components)
@@ -317,7 +329,7 @@ function get_model_params(mode::OImodel)
 end
 
 
-function get_model_pnames(mode::OImodel)
+function get_model_pnames(model::OImodel)
     param_names = String[]
     for n=1:length(model.param_map)
         i,j,k = model.param_map[n]
@@ -381,7 +393,7 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
 end
 
 
-function fit_model_levenberg(data::OIdata, model::OImodel, verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
+function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
 
     println("OITOOLS Warning: LSQFIT doesn't support mod360() on residuals");
 
@@ -476,6 +488,8 @@ function fit_model_nlopt(data::OIdata, model::OImodel; fitter=:LN_NELDERMEAD, ve
     upper_bounds!(opt, hbounds);
     (minf,minx,ret) = optimize(opt, pinit);
     if verbose == true
+        numevals = opt.numevals # the number of function evaluations
+        println("NLopt found a minimum of chi2=$minf at $minx after $numevals iterations (returned $ret)")
         println("Name       \t\tMinimum\t\tMaximum\t\tInit\t\tConverged");
         pnames = get_model_pnames(model);
         for i=1:length(pinit)
