@@ -118,6 +118,15 @@ if type=="ud"
                    spectrum_function = spectrum_gray,
                    spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
     return model
+elseif type=="ud-polychromatic"
+        model = OIcomponent(type="ud", name=name,
+                       vis_function=visibility_ud,
+                       vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0)],
+                       pos_function = pos_fixed,
+                       pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+                       spectrum_function = spectrum_powerlaw,
+                       spectrum_params = [OIparam(name="flux", val=0.5, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false)])
+        return model
 elseif type == "ldlin"
     model = OIcomponent(type="ldlin", name=name,
                    vis_function=visibility_ldlin,
@@ -173,7 +182,7 @@ elseif type == "ring-polychromatic"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_powerlaw,
-                   spectrum_params = [OIparam(name="flux", val=0.5, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=1.0, minval=-5.0, maxval=2.0, free=false)])
+                   spectrum_params = [OIparam(name="flux", val=0.5, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=1.0, minval=-5.0, maxval=2.0, free=true)])
     return model
 else
     @warn("Trying to call undefined component type");
