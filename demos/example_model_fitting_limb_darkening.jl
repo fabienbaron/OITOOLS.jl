@@ -22,12 +22,12 @@ model = create_model(create_component(type="ud", name="Model"));
 
 display(model);
 
-# We can choose three main packages for optimization
+# We can choose between three main packages for optimization
 # NLopt: several local and global optimizers
 minf, minx, cvis_model, result = fit_model_nlopt(data, model, chi2_weights=[1.0,0,0]);
 
 # LsqFit: Levenberg-Marquardt (fast but inaccurate statistical uncertainties)
-#minf, minx, cvis_model, result = fit_model_levenberg(data, model, chi2_weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_levenberg(data, model, chi2_weights=[1.0,0,0]);
 
 # UltraNest: Nested Sampling (best for statistical uncertainties)
 minf, minx, cvis_model, result = fit_model_ultranest(data, model, chi2_weights=[1.0,0,0]);
@@ -47,9 +47,4 @@ chi2v2 = model_to_chi2(data, model, [8.3,0.2], chi2_weights=[1.0,0,0])
 v2_model = cvis_to_v2(cvis_model, data.indx_v2);
 v2plot_modelvsdata(data, v2_model,logplot=true);
 
-
-#chi2v2 = model_to_chi2(data, visibility_ud, [8.306655883789062], weights=[1.0,0,0])
-#chi2v2 = model_to_chi2(data, visibility_ldquad, [8.410184002460234, 0.1917095059503015, -0.03404992047596201], weights=[1.0,0,0])
-
-# # Example of fitting with bound constraints
-# f_chi2, params, cvis_model = fit_model(data, visibility_ud, [8.0], lbounds=[7.5], hbounds=[8.2], weights=[1.0,0,0]);# will stop at upper bound
+# Example of fitting with bound constraints : COMING SOON

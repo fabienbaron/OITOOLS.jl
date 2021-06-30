@@ -393,6 +393,29 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
 end
 
 
+function lsqmodelobs(params, model::OImodel, data::OIdata; chi2_weights=[1.0,1.0,1.0]) # LsqFit observables
+# Dispatch params to model
+dispatch_params(params, model);
+#Compute vis
+cvis_model = model_to_cvis(model, data);
+# Compute observables
+obs = Float64[]
+if (chi2_weights[1]>0) && (data.nv2>0)
+    append!(obs, cvis_to_v2(cvis_model, data.indx_v2))
+end
+if ((chi2_weights[2]>0) && (data.nt3amp>0))||(((chi2_weights[3]>0) && (data.t3phi>0)))
+
+    t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+    if ((chi2_weights[2]>0) && (data.nt3amp>0))
+        append!(obs, t3amp_model)
+    end
+    if ((chi2_weights[3]>0) && (data.nt3phi>0))
+        append!(obs, t3phi_model)
+    end
+end
+return obs
+end
+
 function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
 
     println("OITOOLS Warning: LSQFIT doesn't support mod360() on residuals");
@@ -421,32 +444,9 @@ function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calcu
     end
 
 
-    function lsqmodelobs(params, model::OImodel, data::OIdata; chi2_weights=[1.0,1.0,1.0])
-    # Dispatch params to model
-    dispatch_params(params, model);
-    #Compute vis
-    cvis_model = model_to_cvis(model, data);
-    # Compute observables
-    obs = Float64[]
-    if (chi2_weights[1]>0) && (data.nv2>0)
-        append!(obs, cvis_to_v2(cvis_model, data.indx_v2))
-    end
-    if ((chi2_weights[2]>0) && (data.nt3amp>0))||(((chi2_weights[3]>0) && (data.t3phi>0)))
-
-        t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-        if ((chi2_weights[2]>0) && (data.nt3amp>0))
-            append!(obs, t3amp_model)
-        end
-        if ((chi2_weights[3]>0) && (data.nt3phi>0))
-            append!(obs, t3phi_model)
-        end
-    end
-    return obs
-    end
-
     lbounds, hbounds = get_model_bounds(model);
     pinit = get_model_params(model);
-    m = (x,p)->lsqmodelobs(p, model, data);
+    m = (x,p)->lsqmodelobs(p, model, data, chi2_weights=chi2_weights);
     fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=true); # todo: add lower/upper bounds
     minx = fit.param
     minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
