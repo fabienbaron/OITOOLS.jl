@@ -128,7 +128,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     targetid_filter = [];
     targettables = OIFITS.select(tables, "OI_TARGET");
     if minimum(vcat([targettables[i].target_id for i=1:length(targettables)]...)) == 0
-        @warn("This file does not follow the latest OIFITS standard - target indexing should start at 1, not 0.")
+        for i=1:length(targettables)
+            if targettables[i].revn!=1 # only OIFITSv2 enforces indexing
+                @warn("OI_TARGET table $i does not follow the OIFITSv2 standard - target indexing should start at 1, not 0.")
+            end
+        end
     end
 
     if(targetname !="")
@@ -209,7 +213,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     station_index_offset = 0
     if minimum(vcat(station_index...)) == 0  #determine if compliant with OIFITS format (min index = 1,not 0)
-        @warn("This file does not follow the oifits standard - station indexing should start at 1, not 0.")
+        revn = maximum([arraytables[i].revn for i=1:length(arraytables)])
+        if revn==2
+            @warn("This file does not follow the OIFITSv2 standard - station indexing should start at 1, not 0.")
+        else
+            @warn("OIFITSv1 detected. To be compliant with OIFITSv2 standard, OITOOLS will internally reindex stations from 1.")
+        end
         station_index_offset = 1
     end
 
