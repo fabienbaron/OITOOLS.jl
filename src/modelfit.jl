@@ -38,7 +38,7 @@ end
            pos_function = pos_fixed
            pos_params::Array{OIparam,1} = [OIparam(name="ra", val=0.0,free=false), OIparam(name="dec", val=0.0, free=false)]  # positional parameters
            spectrum_function = spectrum_gray
-           spectrum_params::Array{OIparam,1} = [OIparam(name="flux", val=1.0, free=false)] # spectral law parameters for spectral law
+           spectrum_params::Array{OIparam,1} = [OIparam(name="flux", val=1.0, free=false, minval=0.0, maxval=1.0)] # spectral law parameters for spectral law
 end
 
 function Base.display(comp::OIcomponent) # extend display for Components
@@ -87,8 +87,8 @@ function Base.display(comp::OIcomponent) # extend display for Components
                         marksym=Char(0x02714)
                     end
                     printstyled(@sprintf("%16s\t\t%f\t%f\t%f\t%f\t%s\n", comp.spectrum_params[i].name, comp.spectrum_params[i].val, comp.spectrum_params[i].minval, comp.spectrum_params[i].maxval,comp.spectrum_params[i].step,marksym),color=color)
-
                 end
+
 end
 
 
@@ -105,6 +105,36 @@ function Base.display(model::OImodel)
     println("Parameter map:");
     display(model.param_map)
     println("Total number of free parameters: $(length(model.param_map))");
+    # Sanity check here:
+    # minval >= maxval for free parameters
+    # or val < minval or val > maxval
+    for n=1:length(model.param_map)
+        i,j,k = model.param_map[n]
+                if j==1
+            if (model.components[i].vis_params[k].minval >= model.components[i].vis_params[k].maxval)
+                @warn("Wrong bounds values for $(model.components[i].name) $(model.components[i].vis_params[k].name)")
+            end
+            if ((model.components[i].vis_params[k].minval > model.components[i].vis_params[k].val) || (model.components[i].vis_params[k].maxval < model.components[i].vis_params[k].val))
+                @warn("Value not within bounds for $(model.components[i].name) $(model.components[i].vis_params[k].name)")
+            end
+
+        elseif j==2
+            if (model.components[i].pos_params[k].minval >= model.components[i].pos_params[k].maxval)
+                @warn("Wrong bounds values for $(model.components[i].name) $(model.components[i].pos_params[k].name)")
+            end
+            if ((model.components[i].pos_params[k].minval > model.components[i].pos_params[k].val) || (model.components[i].pos_params[k].maxval < model.components[i].pos_params[k].val))
+                @warn("Value not within bounds for $(model.components[i].name) $(model.components[i].vis_params[k].name)")
+            end
+        elseif j==3
+            if (model.components[i].spectrum_params[k].minval >= model.components[i].spectrum_params[k].maxval)
+                @warn("Wrong bounds values for $(model.components[i].name) $(model.components[i].spectrum_params[k].name)")
+            end
+            if ((model.components[i].spectrum_params[k].minval > model.components[i].spectrum_params[k].val) || (model.components[i].spectrum_params[k].maxval < model.components[i].spectrum_params[k].val))
+                @warn("Value not within bounds for $(model.components[i].name) $(model.components[i].vis_params[k].name)")
+            end
+
+        end
+    end
 end
 
 
@@ -116,7 +146,16 @@ if type=="ud"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+                   spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
+    return model
+elseif type=="Gaussian"
+    model = OIcomponent(type="Gaussian", name=name,
+                       vis_function=visibility_Gaussian,
+                       vis_params= [OIparam(name="FWHM", val=1.0, minval=0.0, maxval = 400.0, free=true), OIparam(name="Inclination", val=0.0, minval=-180.0, maxval = 180.0, free=false), OIparam(name="Position angle", val=0.0, minval=-90.0, maxval = 90.0, free=false)  ],
+                       pos_function = pos_fixed,
+                       pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+                       spectrum_function = spectrum_gray,
+                       spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
     return model
 elseif type=="ud-polychromatic"
         model = OIcomponent(type="ud", name=name,
@@ -125,7 +164,7 @@ elseif type=="ud-polychromatic"
                        pos_function = pos_fixed,
                        pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                        spectrum_function = spectrum_powerlaw,
-                       spectrum_params = [OIparam(name="flux", val=0.5, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false)])
+                       spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false)])
         return model
 elseif type == "ldlin"
     model = OIcomponent(type="ldlin", name=name,
@@ -134,7 +173,7 @@ elseif type == "ldlin"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+                   spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
 
     return model
 elseif type == "ldquad"
@@ -144,7 +183,7 @@ elseif type == "ldquad"
                        pos_function = pos_fixed,
                        pos_params = [OIparam(name="ra", val=0.0), OIparam(name="dec", val=0.0)],  # positional parameters
                        spectrum_function = spectrum_gray,
-                       spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+                       spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
     return model
 elseif type == "ldpow"
     model = OIcomponent(type="ldpow", name=name,
@@ -153,7 +192,7 @@ elseif type == "ldpow"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+                   spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
     return model
 elseif type == "ldsqrt"
     model = OIcomponent(type="ldsqrt", name=name,
@@ -162,7 +201,7 @@ elseif type == "ldsqrt"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+                   spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
     return model
 elseif type == "ring"
     model = OIcomponent(type="ring", name=name,
@@ -172,7 +211,7 @@ elseif type == "ring"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
-                   spectrum_params = [OIparam(name="flux", val=1.0, free=false)])
+                   spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
     return model
 elseif type == "ring-polychromatic"
     model = OIcomponent(type="ring", name=name,
@@ -182,7 +221,7 @@ elseif type == "ring-polychromatic"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_powerlaw,
-                   spectrum_params = [OIparam(name="flux", val=0.5, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=1.0, minval=-5.0, maxval=2.0, free=true)])
+                   spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=1.0, minval=-5.0, maxval=2.0, free=true)])
     return model
 else
     @warn("Trying to call undefined component type");
@@ -299,14 +338,14 @@ function get_model_bounds(model::OImodel)
         end
         for j=1:length(model.components[i].pos_params)
             if(model.components[i].pos_params[j].free)
-                push!(lbounds, model.components[i].vis_params[j].minval)
-                push!(hbounds, model.components[i].vis_params[j].maxval)
+                push!(lbounds, model.components[i].pos_params[j].minval)
+                push!(hbounds, model.components[i].pos_params[j].maxval)
             end
         end
         for j=1:length(model.components[i].spectrum_params)
             if(model.components[i].spectrum_params[j].free)
-                push!(lbounds, model.components[i].vis_params[j].minval)
-                push!(hbounds, model.components[i].vis_params[j].maxval)
+                push!(lbounds, model.components[i].spectrum_params[j].minval)
+                push!(hbounds, model.components[i].spectrum_params[j].maxval)
             end
         end
     end

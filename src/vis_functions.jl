@@ -142,6 +142,19 @@ vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
 return besselj0.(2*pi*θ*ρ).*exp.(-pi^2/log(2)*(θ*param[4])^2*(uv[1,:].^2+uv[2,:].^2))
 end
 
+function visibility_Gaussian(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
+# Parameters
+#  1: θ=FWHM
+#  2: i: inclination (used for aspect ratio too)
+#  3: ϕ = position angle
+θ = param[1]/2.0626480624709636e8;
+i = param[2]/180*pi;
+ϕ = param[3]/180*pi;
+uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
+vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
+return exp.(-pi^2/log(2)*θ^2*(uu.^2+vv.^2))
+end
+
 
 function visibility_Lorentzian_ring(param,uv::Array{Float64,2}) # i: inclination (deg), ϕ: semi-major axis orientation (deg)
 # Parameters
