@@ -364,12 +364,12 @@ function get_model_params(model::OImodel)
         end
         for j=1:length(model.components[i].pos_params)
             if(model.components[i].pos_params[j].free)
-                push!(params, model.components[i].vis_params[j].val)
+                push!(params, model.components[i].pos_params[j].val)
             end
         end
         for j=1:length(model.components[i].spectrum_params)
             if(model.components[i].spectrum_params[j].free)
-                push!(params, model.components[i].vis_params[j].val)
+                push!(params, model.components[i].spectrum_params[j].val)
             end
         end
     end
