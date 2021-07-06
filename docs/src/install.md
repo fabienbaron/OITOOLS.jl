@@ -6,6 +6,7 @@
 ### UltraNest
 
 As of version 0.6, OITOOLS uses UltraNest for model-fitting. You may install it as part of your local python install, or you may use Julia's Conda (see FAQ below), in which case you can type:
+
 ```    
 using Conda
 Conda.add("ultranest", channel="conda-forge")
@@ -58,14 +59,18 @@ add https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayToo
 ### How do I install/use Python?
     OITOOLS uses matplotlib through the library ```PyPlot```, which will call whatever version of Python you have installed.
     If you are starting from scratch, we recommend using Julia's Conda package for Python instead of your OS-wide python. To do so, just type:
+
     ```
     ENV["PYTHON"]=""  # this will tell Julia there is currently no usable python
     ```
+
     before installing the Conda package ```]add Conda```.
 
 ### Which Matplotlib backend should I use?
     You will have to select a Matplotlib backend for rendering plots. Qt5 works well in our experience. To set it up you will need to call
+
     ```
     ENV["MPLBACKEND"]="qt5agg"
     ```
+
     before using Matplotlib (or even better, before installing PyPlot).
