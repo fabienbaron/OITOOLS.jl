@@ -18,6 +18,15 @@ c2.vis_params[7].free = false
 c2.vis_params[8].free = false
 c2.vis_params[9].free = false
 
+# If one wants to fit the ring a little better, uncomment this
+# More free parameters, so much slower
+# c2.vis_params[5].free = true
+# c2.vis_params[6].free = true
+# c2.vis_params[7].free = true
+# c2.vis_params[8].free = true
+
+
+
 # Put the model together
 model = create_model(c1,c2)
 display(model) # tis shows all the model parameters and does a few tests
