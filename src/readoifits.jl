@@ -133,12 +133,14 @@ function set_data_filter(data::OIdata; filter_wav = false, minwav = -1.0, maxwav
     # Can select MJDs in a range
     use_visphi = (data.nvisphi > 0) && (filter_visphi == true)
     use_visamp = (data.nvisamp > 0) && (filter_visamp == true)
+    use_vis = use_visphi || use_visamp
     use_v2 = (data.nv2 > 0) && (filter_v2 == true)
     use_t3amp = (data.nt3amp > 0) && (filter_t3amp == true)
     use_t3phi = (data.nt3phi > 0) && (filter_t3phi == true)
+    use_t3 = use_t3phi || use_t3amp
     use_t4amp = (data.nt4amp > 0) && (filter_t4amp == true)
     use_t4phi = (data.nt4phi > 0) && (filter_t4phi == true)
-
+    use_t4 = use_t4phi || use_t4amp
 
     # Bad points are easier to track/concatenate/union than good points are to intersect
     vis_bad = Int64[]
