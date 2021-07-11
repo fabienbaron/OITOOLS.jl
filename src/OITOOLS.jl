@@ -17,7 +17,9 @@ include("vonmises.jl")
 export OIdata
 export readoifits, readoifits_multiepochs, readfits, writefits
 export oifits_prep, updatefits_aspro,readoifits_multicolors
+export remove_redundant_uv!,filter_data,set_data_filter
 precompile(readoifits, (String,))
+
 
 #modelfit
 export pos_fixed,spectrum_powerlaw,spectrum_gray

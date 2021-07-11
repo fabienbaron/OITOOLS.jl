@@ -106,6 +106,283 @@ mutable struct OIdata
     filename::String
 end
 
+
+function Base.display(data::OIdata)
+println("OIdata")
+println("Original data file: $(data.filename)")
+println("Mean MJD: $(data.mean_mjd)")
+println("Wavelength range: $(minimum(data.uv_lam)) - $(maximum(data.uv_lam))")
+println("nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | nvisphi: $(data.nvisphi) | nv2: $(data.nv2) | nt3amp: $(data.nt3amp) | nt3phi: $(data.nt3phi)")
+end
+
+function Base.display(data::Array{OIdata})
+println("Array{OIdata}")
+println("Original data file: $(data[1].filename)")
+println("Number of wavelength bins: $(size(data,1))")
+println("Number of time/epoch bins: $(size(data,2))")
+end
+
+function set_data_filter(data::OIdata; filter_wav = false, minwav = -1.0, maxwav=1e99, filter_mjd = false, minmjd = -1.0, maxmjd = 1e99,
+    filter_bad_data = false, filter_vis = true, filter_v2 = true, filter_t3amp = true, filter_t3phi = true,
+    cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, force_full_vis = false, force_full_t3 = false, filter_v2_snr_threshold=0.01, uv_bad=Int64[])
+
+    # Select points (to keep) in the uv plane
+    # one can directly deselect/disable uv points by setting the list of bad uv point in uv_bad
+    # One can disable the selection of e.g. V2 observables by setting filter_v2 = false
+    # Can select wavelengths in a range
+    # Can select MJDs in a range
+    use_visphi = (data.nvisphi > 0) && (filter_visphi == true)
+    use_visamp = (data.nvisamp > 0) && (filter_visamp == true)
+    use_v2 = (data.nv2 > 0) && (filter_v2 == true)
+    use_t3amp = (data.nt3amp > 0) && (filter_t3amp == true)
+    use_t3phi = (data.nt3phi > 0) && (filter_t3phi == true)
+    use_t4amp = (data.nt4amp > 0) && (filter_t4amp == true)
+    use_t4phi = (data.nt4phi > 0) && (filter_t4phi == true)
+
+
+    # Bad points are easier to track/concatenate/union than good points are to intersect
+    vis_bad = Int64[]
+    v2_bad = Int64[]
+    t3_bad = Int64[]
+    t4_bad = Int64[]
+
+    if filter_bad_data == true
+        if use_vis
+            visamp_good =  (.!isnan.(data.visamp )) .& (.!isnan.(data.visamp_err )) .& (data.visamp_err.>0.0)
+            visphi_good =  (.!isnan.(data.visphi ) ).& (.!isnan.(data.visphi_err )) .& (data.visphi_err.>0.0)
+            vis_good = []
+            if force_full_vis == false
+                vis_good = findall(.!data.vis_flag .& (visamp_good .| visphi_good) )
+            else
+                vis_good = findall(.!data.vis_flag .& (visamp_good .& visphi_good) )
+            end
+
+            if special_filter_diffvis==true # if we use the diff vis filter, we need to do this after all the data has been read in
+                # hence here we won't actually filter anything
+                vis_good = findall( data.vis_flag.!=2)
+            end
+            vis_bad = setdiff(collect(1:length(data.vis_flag)), vis_good)
+        end
+        if use_v2
+            # Filter OBVIOUSLY bad V2 data
+            v2_good = findall(  (data.v2_flag.==false) .& (data.v2_err.>0.0).& (data.v2_err.<1.0) .& (data.v2.>cutoff_minv2) .& (data.v2.<cutoff_maxv2) .& .!isnan.(data.v2) .& .!isnan.(data.v2_err) .& (abs.(data.v2./data.v2_err).>filter_v2_snr_threshold))
+            v2_bad  = setdiff(collect(1:length(data.v2_flag)), v2_good)
+        end
+
+        if use_t3
+            t3amp_good =  (.!isnan.(data.t3amp )) .& (.!isnan.(data.t3amp_err )) .& (data.t3amp_err.>0.0)
+            t3phi_good =  (.!isnan.(data.t3phi )) .& (.!isnan.(data.t3phi_err )) .& (data.t3phi_err.>0.0)
+
+            #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
+            t3_good = Int64[]
+            if force_full_t3 == false
+                t3_good = findall(.!data.t3_flag .& (t3amp_good .| t3phi_good))
+            else
+                t3_good = findall(.!data.t3_flag .& (t3amp_good .& t3phi_good) .& (data.t3amp.>cutoff_mint3amp) .& (data.t3amp.<cutoff_maxt3amp) )
+            end
+            t3_bad  = setdiff(collect(1:length(data.t3_flag)), t3_good)
+        end
+
+        if use_t4 == true
+            t4amp_good =  (.!isnan.(data.t4amp )) .& (.!isnan.(data.t4amp_err )) .& (data.t4amp_err.>0.0)
+            t4phi_good =  (.!isnan.(data.t4phi )) .& (.!isnan.(data.t4phi_err )) .& (data.t4phi_err.>0.0)
+            # t4_good = []
+            force_full_t4 = true;
+            if force_full_t4 == false
+                t4_good = findall(.!data.t4_flag .& (t4amp_good .| t4phi_good) )
+            else
+                t4_good = findall(.!data.t4_flag .& (t4amp_good .& t4phi_good) )
+            end
+            t4_bad  = setdiff(collect(1:length(data.t4_flag)), t4_good)
+        end
+    end
+
+    # Filtering the uv plane (this will filter the observables too)
+    # We define the uv indexes we keep as uv_good
+    uv_good = setdiff(collect(1:data.nuv), uv_bad) # select all as good except in the uv_bad list
+    if filter_mjd == true
+        uv_good = intersect(uv_good, findall( minmjd  .<= data.uv_mjd .<= maxmjd))
+    end
+    if filter_wav == true
+        uv_good = intersect(uv_good,findall( minwav  .<= data.uv_lam .<= maxwav))
+    end
+    uv_bad = setdiff(collect(1:data.nuv), uv_good)
+
+    if (data.nvisamp>0 || data.nvisphi >0)
+        vis_bad = union(vis_bad, findall([data.indx_vis[i] ∉ uv_good for i=1:length(data.indx_vis)]))
+    end
+    if data.nv2>0
+        v2_bad = union(v2_bad, findall([data.indx_v2[i] ∉ uv_good for i=1:length(data.indx_v2)]))
+    end
+    if (data.nt3amp>0 || data.nt3phi>0)
+        t3_bad = union(t3_bad, findall([((data.indx_t3_1[i] ∉ uv_good) || (data.indx_t3_2[i] ∉ uv_good) ||  (data.indx_t3_3[i] ∉ uv_good)) for i=1:length(data.indx_t3_1)]))
+    end
+    if (data.nt4amp>0 || data.nt4phi>0)
+        t4_bad = union(t4_bad, findall([((data.indx_t4_1[i] ∉ uv_good) || (data.indx_t4_2[i] ∉ uv_good) ||  (data.indx_t4_3[i] ∉ uv_good) || (data.indx_t4_4[i] ∉ uv_good)) for i=1:length(data.indx_t3_1)]))
+    end
+    return [uv_bad, vis_bad, v2_bad, t3_bad, t4_bad]
+end
+
+
+function filter_data(data_in::OIdata, indexes_to_discard = Int64[])
+    data = deepcopy(data_in)
+    good_uv_vis = Int64[]
+    good_uv_v2 = Int64[]
+    good_uv_t3_1 = Int64[]
+    good_uv_t3_2 = Int64[]
+    good_uv_t3_3 = Int64[]
+    good_uv_t4_1 = Int64[]
+    good_uv_t4_2 = Int64[]
+    good_uv_t4_3 = Int64[]
+    good_uv_t4_4 = Int64[]
+
+    if (data.nvisamp>0 || data.nvisphi >0)
+        vis_good = setdiff(collect(1:length(data.indx_vis)), indexes_to_discard[2])
+        good_uv_vis        = data.indx_vis[vis_good];
+        data.visamp        = data.visamp[vis_good];
+        data.visamp_err    = data.visamp_err[vis_good];
+        data.visphi        = data.visphi[vis_good];
+        data.visphi_err    = data.visphi_err[vis_good];
+        data.vis_baseline  = data.vis_baseline[vis_good];
+        data.vis_mjd       = data.vis_mjd[vis_good];
+        data.vis_lam       = data.vis_lam[vis_good];
+        data.vis_dlam      = data.vis_dlam[vis_good];
+        data.vis_flag      = data.vis_flag[vis_good];
+        data.vis_sta_index = data.vis_sta_index[:,vis_good];
+        data.nvisamp       = length(data.visamp);
+        data.nvisphi       = length(data.visphi);
+    end
+
+
+    if (data.nv2>0)
+        v2_good = setdiff(collect(1:length(data.indx_v2)), indexes_to_discard[3])
+        good_uv_v2         = data.indx_v2[v2_good]
+        data.v2            = data.v2[v2_good]
+        data.v2_err        = data.v2_err[v2_good]
+        data.v2_baseline   = data.v2_baseline[v2_good]
+        data.v2_mjd        = data.v2_mjd[v2_good]
+        data.v2_lam        = data.v2_lam[v2_good]
+        data.v2_dlam       = data.v2_dlam[v2_good]
+        data.v2_flag       = data.v2_flag[v2_good]
+        data.v2_sta_index  = data.v2_sta_index[:,v2_good]
+        data.nv2           = length(data.v2)
+    end
+
+    if (data.nt3amp>0 || data.nt3phi >0)
+        t3_good = setdiff(collect(1:length(data.indx_t3_1)), indexes_to_discard[4])
+        good_uv_t3_1 = data.indx_t3_1[t3_good]
+        good_uv_t3_2 = data.indx_t3_2[t3_good]
+        good_uv_t3_3 = data.indx_t3_3[t3_good]
+        data.t3amp = data.t3amp[t3_good]
+        data.t3amp_err = data.t3amp_err[t3_good]
+        data.t3phi = data.t3phi[t3_good]
+        data.t3phi_err = data.t3phi_err[t3_good]
+        data.t3_baseline  = data.t3_baseline[t3_good]
+        data.t3_maxbaseline  = data.t3_maxbaseline[t3_good]
+        data.t3_mjd  = data.t3_mjd[t3_good]
+        data.t3_lam  = data.t3_lam[t3_good]
+        data.t3_dlam = data.t3_dlam[t3_good]
+        data.t3_flag = data.t3_flag[t3_good]
+        data.t3_sta_index = data.t3_sta_index[:,t3_good]
+        data.nt3amp = length(data.t3amp)
+        data.nt3phi = length(data.t3phi)
+    end
+
+    if (data.nt4amp>0 || data.nt4phi >0)
+        t3_good = setdiff(collect(1:length(data.indx_t4_1)), indexes_to_discard[5])
+        good_uv_t4_1 = indx_t4_1[t4_good]
+        good_uv_t4_2 = indx_t4_2[t4_good]
+        good_uv_t4_3 = indx_t4_3[t4_good]
+        good_uv_t4_4 = indx_t4_4[t4_good]
+        data.t4amp         = data.t4amp[t4_good]
+        data.t4amp_err     = data.t4amp_err[t4_good]
+        data.t4phi         = data.t4phi[t4_good]
+        data.t4phi_err     = data.t4phi_err[t4_good]
+        data.t4_baseline   = data.t4_baseline[t4_good]
+        data.t4_maxbaseline= data.t4_maxbaseline[t4_good]
+        data.t4_mjd        = data.t4_mjd[t4_good]
+        data.t4_lam        = data.t4_lam[t4_good]
+        data.t4_dlam       = data.t4_dlam[t4_good]
+        data.t4_flag       = data.t4_flag[t4_good]
+        data.t4_sta_index  = data.t4_sta_index[:,t4_good]
+        data.nt4amp        = length(data.t4amp)
+        data.nt4phi        = length(data.t4phi)
+    end
+
+    # uv points filtering
+    uv_select  = Array{Bool}(undef, data.nuv)
+    uv_select[:]  .= false;
+    uv_select[good_uv_vis] .= true
+    uv_select[good_uv_v2] .= true
+    uv_select[good_uv_t3_1] .= true
+    uv_select[good_uv_t3_2] .= true
+    uv_select[good_uv_t3_3] .= true
+    uv_select[good_uv_t4_1] .= true
+    uv_select[good_uv_t4_2] .= true
+    uv_select[good_uv_t4_3] .= true
+    uv_select[good_uv_t4_4] .= true
+    uv_select[indexes_to_discard[1]] .= false # disable wanted bad uv
+
+    indx_conv = Array{Int64}(undef, length(uv_select))
+    acc = 0;
+    for i=1:length(uv_select)
+        if uv_select[i]
+            acc+=1;
+        end
+        indx_conv[i]=acc;
+    end
+
+    indx_uv_sel = findall(uv_select.==true)
+    data.uv = data.uv[:,indx_uv_sel]
+    data.uv_lam = data.uv_lam[indx_uv_sel]
+    data.uv_dlam = data.uv_dlam[indx_uv_sel]
+    data.uv_mjd = data.uv_mjd[indx_uv_sel]
+    data.uv_baseline = data.uv_baseline[indx_uv_sel]
+    data.nuv = size(data.uv,2)
+    data.indx_vis  = indx_conv[good_uv_vis]
+    data.indx_v2   = indx_conv[good_uv_v2]
+    data.indx_t3_1 = indx_conv[good_uv_t3_1]
+    data.indx_t3_2 = indx_conv[good_uv_t3_2]
+    data.indx_t3_3 = indx_conv[good_uv_t3_3]
+    data.indx_t4_1 = indx_conv[good_uv_t4_1]
+    data.indx_t4_2 = indx_conv[good_uv_t4_2]
+    data.indx_t4_3 = indx_conv[good_uv_t4_3]
+    data.indx_t4_4 = indx_conv[good_uv_t4_4]
+    return data
+end
+
+
+
+function remove_redundant_uv!(data::OIdata; uvtol=2e2)
+# removes redundant uv points and reassigns observable indexes accordingly
+     indx_red_conv, to_keep = rm_redundance_kdtree(data.uv,uvtol);
+     data.uv           =  data.uv[:,to_keep]
+     data.uv_lam       =  data.uv_lam[to_keep]
+     data.uv_dlam      =  data.uv_dlam[to_keep]
+     data.uv_mjd       =  data.uv_mjd[to_keep]
+     data.uv_baseline  = data.uv_baseline[to_keep];
+     data.nuv          = length(to_keep)
+     if (data.nvisphi>0 || data.nvisamp > 0)
+         data.indx_vis = indx_red_conv[data.indx_vis];
+     end
+     if data.nv2>0
+         data.indx_v2 = indx_red_conv[data.indx_v2];
+     end
+     if (data.nt3amp>0 || data.nt3phi>0)
+         data.indx_t3_1 = indx_red_conv[data.indx_t3_1];
+         data.indx_t3_2 = indx_red_conv[data.indx_t3_2];
+         data.indx_t3_3 = indx_red_conv[data.indx_t3_3];
+     end
+     if (data.nt4amp>0 || data.nt4phi>0)
+         data.indx_t4_1 = indx_red_conv[data.indx_t4_1];
+         data.indx_t4_2 = indx_red_conv[data.indx_t4_2];
+         data.indx_t4_3 = indx_red_conv[data.indx_t4_3];
+         data.indx_t4_4 = indx_red_conv[data.indx_t4_4];
+     end
+     return data
+end
+
+
 function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false)
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
