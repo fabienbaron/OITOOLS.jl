@@ -20,7 +20,6 @@ data3 = filter_data(data, filter)
 
 # "Bad" data (NaN, negative errors, etc.) and flagged data can be read in first
 # then filtered out afterwards
-oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile,filter_bad_data=false))[1,1]
 filter = set_data_filter(data, filter_bad_data=true)
 data3 = filter_data(data, filter)
