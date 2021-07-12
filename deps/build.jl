@@ -1,15 +1,14 @@
 using Pkg
 
 if lowercase(get(ENV, "CI", "false")) == "true"
-    #ENV["PYTHON"]=""; using Pkg; Pkg.add("PyCall"); Pkg.build("PyCall"); Pkg.add("PyPlot"); Pkg.add("Conda"); using Conda; Conda.add_channel("anaconda"); Conda.update(); Conda.add("numpy"); Conda.add("scipy"); Conda.add("matplotlib");
-    let basepython = get(ENV, "PYTHON", "python2")
+    let basepython = get(ENV, "PYTHON", "python3")
         envpath = joinpath(@__DIR__, "env")
         run(`pip install --user virtualenv`)
         run(`virtualenv --python=$basepython $envpath`)
         if Sys.iswindows()
             python = joinpath(envpath, "Scripts", "python.exe")
         else
-            python = joinpath(envpath, "bin", "python2")
+            python = joinpath(envpath, "bin", "python")
         end
         run(`$python -m pip install numpy`)
         run(`$python -m pip install scipy`)
@@ -23,6 +22,7 @@ else
     ENV["PYTHON"]=""
     Pkg.add("PyCall")
     Pkg.build("PyCall")
+    Pkg.add("Conda")
     using Conda
     Conda.add("astroquery", channel="astropy")
     Conda.add("ultranest", channel="conda-forge")
