@@ -8,6 +8,9 @@ os:
 julia:
   - 1.6
 
+python:
+  - "3.7"
+
 env:
     - CONDA_JL_VERSION="3" CONDA_JL_USE_MINIFORGE="yes"
 
