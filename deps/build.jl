@@ -1,14 +1,14 @@
 using Pkg
 
 if lowercase(get(ENV, "CI", "false")) == "true"
-    let basepython = get(ENV, "PYTHON", "python")
+    let basepython = get(ENV, "PYTHON", "python3")
         envpath = joinpath(@__DIR__, "env")
-        run(`pip install --user virtualenv`)
+        run(`pip3 install --user virtualenv`)
         run(`virtualenv --python=$basepython $envpath`)
         if Sys.iswindows()
             python = joinpath(envpath, "Scripts", "python.exe")
         else
-            python = joinpath(envpath, "bin", "python")
+            python = joinpath(envpath, "bin", "python3")
         end
         run(`$python -m pip install numpy`)
         run(`$python -m pip install scipy`)
