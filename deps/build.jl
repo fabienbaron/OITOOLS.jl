@@ -1,7 +1,7 @@
 using Pkg
 
 if lowercase(get(ENV, "CI", "false")) == "true"
-    let basepython = get(ENV, "PYTHON", "python3")
+    let basepython = get(ENV, "PYTHON", "python")
         envpath = joinpath(@__DIR__, "env")
         run(`pip install --user virtualenv`)
         run(`virtualenv --python=$basepython $envpath`)
