@@ -9,9 +9,10 @@ data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, e
 diameters=range(1.0,10.0, step=0.1) #mas
 ld=range(0.0,1.0, step=0.01) # limb darkening
 chi2 = zeros(length(diameters), length(ld))
-Threads.@threads for i= 1:length(diameters)
+model = create_model(create_component(type="ldlin", name="Model"));
+for i= 1:length(diameters)
     for j=1:length(ld)
-     chi2[i,j] = model_to_chi2(data, visibility_ldlin, [diameters[i], ld[j]], weights=[1.0,0,0])
+     chi2[i,j] = model_to_chi2(data, model, [diameters[i], ld[j]], chi2_weights=[1.0,0,0])
  end
 end
 res = findmin(chi2)

@@ -26,9 +26,23 @@ function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, data::OIdata )
     return spectrum_params[1].val.*(data.uv_lam/spectrum_params[2].val).^spectrum_params[3].val
 end
 
+
+function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1})
+    # (λ/λ0)^d  where λ0=spectrum[2] and d=spectrum[3]
+    return spectrum_params[1].val.*(λ/spectrum_params[2].val).^spectrum_params[3].val
+end
+
+function spectrum_gray(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1} )
+    return spectrum_params[1].val #*ones(Float64,length(data.uv_lam))
+end
+
+
 function spectrum_gray(spectrum_params::Array{OIparam,1}, data::OIdata )
     return spectrum_params[1].val #*ones(Float64,length(data.uv_lam))
 end
+
+
+
 
 @with_kw mutable struct OIcomponent
            type::String  # Type of component ("UD","LDLIN", "Ring")
@@ -276,6 +290,20 @@ return V./flux
 end
 
 
+function model_to_cvis(model::OImodel, uv::Array{Float64,2}, λ::Array{Float64,1})
+    V=zeros(Complex{Float64},size(uv,2))
+    flux = zeros(Float64, size(uv,2)); # normalization
+    for i=1:length(model.components)
+        # Estimate the flux polychromatic behavior
+        f = model.components[i].spectrum_function(model.components[i].spectrum_params, λ)
+        x,y = model.components[i].pos_function(model.components[i].pos_params)
+        # Visibility calculation
+        visparams = [model.components[i].vis_params[j].val for j=1:length(model.components[i].vis_params)]  # slow step... any way to speed this up?
+        V += f.*model.components[i].vis_function(visparams, uv).*cis.(2*pi/206264806.2*(uv[1,:]*x - uv[2,:]*y))
+        flux .+= f
+    end
+return V./flux
+end
 
 function dispatch_params(params::AbstractVector{<:Real}, model::OImodel)
   # we should have length(params) == length(model.param_map)
@@ -557,35 +585,35 @@ end
 # #
 # # OLD model interface -- by visibility function
 # #
-# function model_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; chi2_weights=[1.0,1.0,1.0])
-#     cvis_model = visfunc(params, data.uv)
-#     chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
-#     if (data.nv2>0) && (chi2_weights[1]>0.0)
-#         v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-#         chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
-#     else
-#         chi2_weights[1]=0.0
-#     end
-#
-#     if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
-#         t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-#         if (data.nt3amp>0) && (chi2_weights[2]>0.0)
-#         chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
-#         else
-#             chi2_weights[2]=0.0
-#         end
-#         if (data.nt3phi>0) && (chi2_weights[3]>0.0)
-#         chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2)/data.nt3phi;
-#         else
-#             chi2_weights[3] = 0.0;
-#         end
-#     else
-#         chi2_weights[2] = 0.0;
-#         chi2_weights[3] = 0.0;
-#     end
-#
-#     chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
-# end
+function visfunc_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; chi2_weights=[1.0,1.0,1.0])
+    cvis_model = visfunc(params, data.uv)
+    chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
+    if (data.nv2>0) && (chi2_weights[1]>0.0)
+        v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+        chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
+    else
+        chi2_weights[1]=0.0
+    end
+
+    if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
+        t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        if (data.nt3amp>0) && (chi2_weights[2]>0.0)
+        chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
+        else
+            chi2_weights[2]=0.0
+        end
+        if (data.nt3phi>0) && (chi2_weights[3]>0.0)
+        chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2)/data.nt3phi;
+        else
+            chi2_weights[3] = 0.0;
+        end
+    else
+        chi2_weights[2] = 0.0;
+        chi2_weights[3] = 0.0;
+    end
+
+    chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
+end
 #
 # function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1}; chromatic_vector=[], chi2_weights=[1.0,1.0,1.0]) # polychromatic data case
 #     nwavs = length(data)
