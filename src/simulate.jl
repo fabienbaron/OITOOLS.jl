@@ -329,7 +329,6 @@ function prep_arrays(_info)
 
 #user input
 #δ=+18.594234/180*pi #ce tau 10 mas 32w 0.37 pix
-
 #include("chara_config.jl")
 #include("npoi_config.jl")
 #hour_angles = range(-6,6,20);

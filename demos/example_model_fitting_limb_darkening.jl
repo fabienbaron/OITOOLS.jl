@@ -16,7 +16,7 @@ data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, e
 #
 # UNIFORM DISC FITTING
 #
-model = create_model(create_component(type="ud", name="Model"));
+model = create_model(create_component(type="ldlin", name="Model"));
 
 # You can check which parameters are free just by displaying the models
 
@@ -24,13 +24,18 @@ display(model);
 
 # We can choose between three main packages for optimization
 # NLopt: several local and global optimizers
+# Default is Nelder Mead
 minf, minx, cvis_model, result = fit_model_nlopt(data, model, chi2_weights=[1.0,0,0]);
+# One could use ISRES as a global optimization strategy
+minf, minx, cvis_model, result = fit_model_nlopt(data, model, fitter=:GN_ISRES, chi2_weights=[1.0,0,0]);
 
 # LsqFit: Levenberg-Marquardt (fast but inaccurate statistical uncertainties)
 minf, minx, cvis_model, result = fit_model_levenberg(data, model, chi2_weights=[1.0,0,0]);
 
 # UltraNest: Nested Sampling (best for statistical uncertainties)
 minf, minx, cvis_model, result = fit_model_ultranest(data, model, chi2_weights=[1.0,0,0]);
+
+
 
 # Note: the result structures are different and depend on the packages
 
