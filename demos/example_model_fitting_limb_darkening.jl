@@ -14,7 +14,7 @@ data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, e
 #t3phiplot(data);
 
 #
-# UNIFORM DISC FITTING
+# LIMB DARKENED DISC FITTING
 #
 model = create_model(create_component(type="ldlin", name="Model"));
 
