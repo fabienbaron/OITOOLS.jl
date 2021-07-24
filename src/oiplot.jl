@@ -134,10 +134,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength=false,filename="", legend_below = false, figtitle = "")
-    if bywavelength==true
-        bybaseline=false
-    end
+function uvplot(data::Union{OIdata,Array{OIdata,1}};color::String="baseline",filename="", legend_below = false, figtitle = "")
     if typeof(data)==OIdata
         data = [data]
     end
@@ -150,7 +147,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
     ax.locator_params(axis ="y", nbins=20)
     ax.locator_params(axis ="x", nbins=20)
 
-    if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
+    if (color == "baseline" || color =="base") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline_list_t3 = [get_triple_baselines_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(vcat(baseline_list_v2...),vec(hcat(baseline_list_t3...)))))
@@ -169,7 +166,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
             ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
             tight_layout();
         end
-    elseif bywavelength== true
+    elseif (color == "wavelength" || color == "wav")
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
@@ -185,6 +182,23 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};bybaseline=true,bywavelength
             cbar.set_ticklabels(round.(sort(wavs)*100)/100)
         else
             cbar_range = round.(collect(range(minimum(wavcol), maximum(wavcol),length=11))*100)/100
+            cbar.set_ticks(cbar_range)
+            cbar.set_ticklabels(cbar_range)
+        end
+    elseif (color == "mjd" || color == "time")
+        u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
+        v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
+        mjdcol = vcat([data[n].uv_mjd for n=1:length(data)]...)
+        scatter(u, v,alpha=1.0, s = 12.0, c=mjdcol, cmap="gist_rainbow_r")
+        scatter(-u, -v,alpha=1.0, s = 12.0, c=mjdcol, cmap="gist_rainbow_r")
+        cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="MJD", pad=0.1, fraction=0.02)
+        mjds=unique(mjdcol)
+        cbar.ax.invert_xaxis()
+        if length(mjds)<10
+            cbar.set_ticks(round.(sort(mjds)*100)/100)
+            cbar.set_ticklabels(round.(sort(mjds)*100)/100)
+        else
+            cbar_range = round.(collect(range(minimum(mjdcol), maximum(mjdcol),length=11))*100)/100
             cbar.set_ticks(cbar_range)
             cbar.set_ticklabels(cbar_range)
         end

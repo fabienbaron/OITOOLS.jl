@@ -5,7 +5,7 @@ targetname = "AZ Cyg"
 radec = ra_dec_from_simbad(targetname)
 ra, dec = (radec[1]'*[1.0, 1/60., 1/3600], radec[2]'*[1.0, 1/60., 1/3600])
 
-# Night limits for a given day
+# Night limits for a given date
 obsdate = DateTime(2020, 6, 03);
 
 # Observatory location

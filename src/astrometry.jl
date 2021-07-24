@@ -1,4 +1,4 @@
-using Dates
+using AstroTime
 
 function hours_to_date(obsdate, hours)
     h= floor.(hours)
@@ -6,31 +6,17 @@ function hours_to_date(obsdate, hours)
     sec = rem.((hours-h)*3600.0, 60.0)
     isec =  floor.(sec)
     msec = round.((sec-floor.(sec))*1000)
-    return DateTime.(Dates.year(obsdate),Dates.month(obsdate),Dates.day(obsdate),h,min,isec,msec)
+    return Dates.DateTime.(Dates.year(obsdate),Dates.month(obsdate),Dates.day(obsdate),h,min,isec,msec)
 end
 
 
-function hour_angle_calc(obsdates::Union{DateTime,Array{DateTime,1}}, longitude::Float64, ra::Float64; dst="no",ldir="E",timezone="UTC")
+function hour_angle_calc(dates::Union{Array{Epoch{CoordinatedUniversalTime, Float64}, 1}, Epoch{CoordinatedUniversalTime, Float64}}, longitude::Float64, ra::Float64;ldir="E")
 
 """
 This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
-of observations.  The program assumes UTC but changing the timezone argument to "local" will adjust the
-input times accordingly.
-
-Arguments:
-Manual Inputs:
-* date [2018  3 5 21 13 56.7; 2018 3 5 21 14 12.7] day,month,year,hour,min,sec: Correction to UTC is done within code if necessary/dictated.
-* longitude: degree (in decimal form) value of the longitudinal location of the telescope.
-* ra: [h,m,s] array of the right ascension of the desired object.
-
-Optional Inputs:
-* dst: ["yes","no"] whether daylight savings time needs to be accounted for.
-* ldir: ["W","E"] defines the positive direction for change in longitude (should be kept to W for best applicability).
-* timezone: ["UTC","LST"] states whether the time inputs are UTC or not.  If not the code will adjust the times as needed with the given longitude.
-
-Accuracy:
-* With preliminary testing the LST returned is accurate to within a few minutes when compared with other calculators (MORE TESTING AND QUANTITATIVE ERROR NEEDS TO BE ESTABLISHED).
+of observations. This function assumes UTC.
 """
+
 alpha= 1
 if ldir == "W"
     alpha = -1.
@@ -38,41 +24,27 @@ elseif ldir == "E"
     alpha = 1.
 end
 
-if typeof(obsdates) == DateTime
-    obsdates = [obsdates]
+if typeof(dates) == Epoch{CoordinatedUniversalTime, Float64} # transform single epochs into Array
+    dates = [dates]
 end
-years=Dates.year.(obsdates)
-months= Dates.month.(obsdates)
-days = Dates.day.(obsdates)
-hours= Dates.hour.(obsdates) # CHARA UTC offset
-minutes= Dates.minute.(obsdates)
-seconds= Dates.second.(obsdates)+Dates.millisecond.(obsdates)/1000
+
+Y= year.(dates)
+M= month.(dates)
+D = day.(dates)
+H= hour.(dates) # CHARA UTC offset
+MIN= minute.(dates)
+SEC= second.(dates)+millisecond.(dates)/1000
 
 h_ad = alpha*longitude/15 #longitude in degrees, Measures the hours offset due to longitude
-
-if timezone == "LST" # else we assume UTC
-    if dst=="no"
-        hours .-= h_ad
-    elseif dst=="yes"
-        h_ad += 1
-        hours .-= h_ad
-    end
-    wrap_hours_over = findall(hours.>24)
-    hours[wrap_hours_over] .-= 24
-    days[wrap_hours_over] .+= 1
-    wrap_hours_under = findall(hours.<0)
-    hours[wrap_hours_under] .+=24
-    days[wrap_hours_under] .-= 1
-end
 
 #Below: the code calculates first the Julian Date given the input time and then determines the GMST based
 #on this JD.  This is then converted to LST and finally to Local Hour Angle (LHA or HA).  The final result
 #is in terms of hours for both LST and HA.
-jdn = floor.((1461*(years .+4800 .+(months.-14)/12))/4+(367*(months .-2-12*((months.-14)/12)))/12-(3*((years .+4900 +(months.-14)/12)/100))/4 .+days.-32075)
-jdn = jdn + ((hours.-12)/24)+(minutes/1440)+(seconds/86400)
+jdn = floor.((1461*(Y .+4800 .+(M.-14)/12))/4+(367*(M .-2-12*((M.-14)/12)))/12-(3*((Y .+4900 +(M.-14)/12)/100))/4 .+D.-32075)
+jdn = jdn + ((H.-12)/24)+(MIN/1440)+(SEC/86400)
 jd0 = jdn .-2451545.0
 t = jd0/36525.0
-gmst = 24110.54841 .+ 8640184.812866*t + 0.093104*t.^2 - 6.2E-6*t.^3 + (1.00273790935 .+ 5.9e-11*t).*(hours*3600 + minutes*60 + seconds) #seconds
+gmst = 24110.54841 .+ 8640184.812866*t + 0.093104*t.^2 - 6.2E-6*t.^3 + (1.00273790935 .+ 5.9e-11*t).*(H*3600 + MIN*60 + SEC) #seconds
 gmst = gmst/3600 #hours
 
 gmst_over = findall(gmst.>24)
@@ -86,11 +58,6 @@ hour_angle = lst .-ra
 hour_angle[findall(hour_angle.<-12)] .+= 24; # had to add this, normal ???? FB
 return lst,hour_angle
 end
-
-
-
-
-
 
 function mjd_to_utdate(mjd::Float64) # used in interactive plots in oiplot.jl to return utc of points TODO: replace this
     """
@@ -118,7 +85,7 @@ function mjd_to_utdate(mjd::Float64) # used in interactive plots in oiplot.jl to
     secs = secs - 60*mins; #seconds
     msecs = round(Int64,1000*(secs - floor(Int64, secs)));
     secs = floor(Int64, secs);
-    return DateTime(year, month, day, hour, mins, secs, msecs)
+    return Dates.DateTime(year, month, day, hour, mins, secs, msecs)
 end
 
 
@@ -151,7 +118,7 @@ N = floor(275 * month / 9) - floor((month + 9) / 12) * (1 + floor((year - 4 * fl
 return N
 end
 
-function sunrise_sunset(obsdate::DateTime, latitude, longitude;zenith=102.0)
+function sunrise_sunset(obsdate::Epoch{CoordinatedUniversalTime, Float64}, latitude, longitude;zenith=102.0)
 #Source:
 #	Almanac for Computers, 1990
 #	published by Nautical Almanac Office
@@ -169,9 +136,9 @@ function sunrise_sunset(obsdate::DateTime, latitude, longitude;zenith=102.0)
 
 #	NOTE: longitude is positive for East and negative for West
 
-year=Dates.year.(obsdate)
-month= Dates.month.(obsdate)
-day = Dates.day.(obsdate)
+year   = year.(obsdate)
+month  = month.(obsdate)
+day    = day.(obsdate)
 
 dtr=pi/180.
 rtd = 180.0/pi

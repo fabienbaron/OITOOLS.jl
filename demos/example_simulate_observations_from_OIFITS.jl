@@ -1,16 +1,17 @@
 using OITOOLS
 #
 #EXAMPLE 9
-#Simulate an observation using an input image and input oifits file
+#Simulate an observation using an input oifits file (copying the uv coverage and SNR)
 
 image_file="./data/2004true.fits"
 pixsize=0.101
-oifitsin="./data/2004-data1.oifits"
-out_file="!./data/2004testsimulation.oifits"
 
-simulate_obs(oifitsin,out_file,image_file,pixsize,dft=true,nfft=false)
+oifitsin  = "./data/2004-data1.oifits"
+out_file  = "!./data/2004testsimulation.oifits"
 
-#Compare simulated data to impate
+simulate_from_file(oifitsin,out_file,image_file,pixsize,dft=true,nfft=false)
+
+#Compare simulated data to input
 
 #display the image
 fitsfile = "./data/2004true.fits";
