@@ -4,8 +4,10 @@
 
 # gather common display tasks
 using PyPlot,PyCall, LaTeXStrings, Statistics
+
+function set_plot_defaults()
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
-PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[14]
+PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[12]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
@@ -18,7 +20,7 @@ PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
 PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
 #PyDict(pyimport("matplotlib")."rcParams")["agg.path.chunksize"]=[10000]
-
+end
 
 global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
 "fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
@@ -116,6 +118,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     u = uv[1,:]/1e6
     v = uv[2,:]/1e6
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
+    set_plot_defaults()
     clf();
     ax = gca()
     markeredgewidth=0.1
@@ -134,18 +137,21 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}};color::String="baseline",filename="", legend_below = false, figtitle = "")
+function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", legend_below = false, figtitle = "")
     if typeof(data)==OIdata
         data = [data]
+    end
+    if typeof(data)==Array{OIdata,2}
+        data = vec(data)
     end
     nuv = sum(data[i].nuv for i=1:length(data))
     mean_mjd = mean(data[i].mean_mjd for i=1:length(data))
     fig = figure(string(figtitle, "MJD: $(mean_mjd), nuv: $(nuv)"),figsize=(8,8),facecolor="White")
+    set_plot_defaults()
     clf();
     ax = gca()
-    markeredgewidth=0.1
-    ax.locator_params(axis ="y", nbins=20)
-    ax.locator_params(axis ="x", nbins=20)
+    ax.locator_params(axis ="y", nbins=10)
+    ax.locator_params(axis ="x", nbins=10)
 
     if (color == "baseline" || color =="base") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
@@ -176,8 +182,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};color::String="baseline",fil
         #cax = divider.append_axes("bottom", size="5%", pad=0.05)
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
         wavs=unique(wavcol)
-        cbar.ax.invert_xaxis()
-        if length(wavs)<10
+        if length(wavs)<15
             cbar.set_ticks(round.(sort(wavs)*100)/100)
             cbar.set_ticklabels(round.(sort(wavs)*100)/100)
         else
@@ -193,7 +198,6 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}};color::String="baseline",fil
         scatter(-u, -v,alpha=1.0, s = 12.0, c=mjdcol, cmap="gist_rainbow_r")
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="MJD", pad=0.1, fraction=0.02)
         mjds=unique(mjdcol)
-        cbar.ax.invert_xaxis()
         if length(mjds)<10
             cbar.set_ticks(round.(sort(mjds)*100)/100)
             cbar.set_ticklabels(round.(sort(mjds)*100)/100)
