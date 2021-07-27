@@ -1,7 +1,8 @@
 using OITOOLS
 #
 #EXAMPLE 9
-#Simulate an observation using an input oifits file (copying the uv coverage and SNR)
+#Simulate an observation using an input oifits file as base
+# The uv coverage and SNR of data points will be copied
 
 image_file="./data/2004true.fits"
 pixsize=0.101
@@ -9,7 +10,7 @@ pixsize=0.101
 oifitsin  = "./data/2004-data1.oifits"
 out_file  = "!./data/2004testsimulation.oifits"
 
-simulate_from_file(oifitsin,out_file,image_file,pixsize,dft=true,nfft=false)
+simulate_from_oifits(oifitsin,out_file,image=image_file,pixsize=pixsize)
 
 #Compare simulated data to input
 

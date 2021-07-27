@@ -181,12 +181,16 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         #divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
         #cax = divider.append_axes("bottom", size="5%", pad=0.05)
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
-        wavs=unique(wavcol)
-        if length(wavs)<15
-            cbar.set_ticks(round.(sort(wavs)*100)/100)
-            cbar.set_ticklabels(round.(sort(wavs)*100)/100)
-        else
-            cbar_range = round.(collect(range(minimum(wavcol), maximum(wavcol),length=11))*100)/100
+        wavs=sort(unique(wavcol))
+        if 2<length(wavs)<9
+            cbar.set_ticks([ceil(wavs[1]*1000)/1000; round.(wavs[2:end-1]*1000)/1000; floor(wavs[end]*1000)/1000])
+            cbar.set_ticklabels([ceil(wavs[1]*1000)/1000; round.(wavs[2:end-1]*1000)/1000; floor(wavs[end]*1000)/1000])
+        elseif length(wavs)<=2
+            cbar_range = round.(collect(range(ceil(minimum(wavcol)*1000)/1000, floor(maximum(wavcol)*1000)/1000,length=2))*1000)/1000
+            cbar.set_ticks(cbar_range)
+            cbar.set_ticklabels(cbar_range)
+        else # >= 9
+            cbar_range = round.(collect(range(ceil(minimum(wavcol)*1000)/1000, floor(maximum(wavcol)*1000)/1000,length=9))*1000)/1000
             cbar.set_ticks(cbar_range)
             cbar.set_ticklabels(cbar_range)
         end
@@ -198,11 +202,11 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         scatter(-u, -v,alpha=1.0, s = 12.0, c=mjdcol, cmap="gist_rainbow_r")
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="MJD", pad=0.1, fraction=0.02)
         mjds=unique(mjdcol)
-        if length(mjds)<10
+        if length(mjds)<5
             cbar.set_ticks(round.(sort(mjds)*100)/100)
             cbar.set_ticklabels(round.(sort(mjds)*100)/100)
         else
-            cbar_range = round.(collect(range(minimum(mjdcol), maximum(mjdcol),length=11))*100)/100
+            cbar_range = round.(collect(range(ceil(minimum(mjdcol)*100)/100, floor(maximum(mjdcol)*100)/100,length=5))*100)/100
             cbar.set_ticks(cbar_range)
             cbar.set_ticklabels(cbar_range)
         end

@@ -407,40 +407,33 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
     fits_close_file(f);
 end
 
-function simulate_from_file(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nfft=true)
-    #simulate observation from input oifits and input image.
-    if typeof(fitsfiles)== String
-        num_files = 1.0
-    else
-        num_files=length(fitsfiles)
-    end
-
-    data = (readoifits(oifitsin))[1,1]; # data can be split by wavelength, time, etc.
-    oifits = FITS(oifitsin);
-
+function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model())
+    outfilename= string("!", out_file)
+    data = (readoifits(in_oifits))[1,1];
+    oifits = FITS(in_oifits);
     #setup simulation
     nuv = data.nuv
-
-    #x = (read((FITS(fitsfiles))[1])); x=x[:,end:-1:1]; nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
-    x = (read((FITS(fitsfiles))[1])); nx = (size(x))[1]; x=vec(x)/sum(x); #read in images
-    #nfft_plan = setup_nfft(-uv, nx, pixsize)
-    #cvis_model = image_to_cvis_nfft(x, nfft_plan)
-    cvis_model=[]
-    if dft==true
-        ft = setup_dft(data, nx, pixsize);
-        cvis_model = image_to_cvis_dft(x, ft);
-    end
-
-    if nfft==true
+    # Compute complex visibilities from either a truth image or a model
+    cvis_model = ComplexF64[]
+    # Determine if image or model
+    if (((typeof(image) == String) && (image !="")) || ((typeof(image) != String) && (image !="")) )
+        # Truth image
+        # TODO: Polychromatic and dynamic imaging
+        x = readfits(image)
+        nx = size(x,1);
+        x = vec(x)/sum(x);
         ft = setup_nfft(data, nx, pixsize);
         cvis_model = image_to_cvis_nfft(x, ft);
+    elseif model.components !=[]
+        # Model
+        cvis_model = model_to_cvis(model, data.uv, data.uv_lam);
+    else
+        error("Bad image or model definition in call to simulate()");
     end
-    #setup new file
-    f = fits_create_file(outfilename);
 
+    f = fits_create_file(outfilename);
     #setup initial table
     copy_oi_header(f,oifits[1]);
-
     ioiarraytables=[]
     iotargettables=[]
     swavetables=[]
@@ -473,8 +466,6 @@ function simulate_from_file(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nff
         end
     end
     #TO GET OTHER PIECES OF INFO
-
-
     #get OI_ARRAY details (currently only handles one Array)
     for itable=1:length(ioiarraytables)
         telnames=read(oifits[ioiarraytables[itable]],"TEL_NAME")
@@ -517,8 +508,6 @@ function simulate_from_file(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nff
     para_err=read(oifits["OI_TARGET"],"PARA_ERR");
     spectyp=read(oifits["OI_TARGET"],"SPECTYP");
     target_array=[target_id,target,raep0,decep0,equinox,ra_err,dec_err,sysvel,veltyp,veldef,pmra,pmdec,pmra_err,pmdec_err,parallax,para_err,spectyp];
-    #copy_oi_target(f,oifits[ioiarraytables[length(ioiarraytables)]+1],target_array);
-    #copy_oi_target(f,oifits[ioiarraytables[length(ioiarraytables)]-1],target_array); comment out to deal with EXTNAME issue check this
     copy_oi_target(f,oifits[iotargettables[length(iotargettables)]],target_array);
     #GET WAVE TABLES
     for itable=1:length(iwavetables)
@@ -530,12 +519,19 @@ function simulate_from_file(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nff
 
     #GET V2 INFO
     v2_model = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
-    v2_model_err = data.v2_err
+    v2_model_err = Float64[]
+    if mode == "copy_errors"
+        v2_model_err = data.v2_err
+    elseif mode == "copy_snr"
+        v2_model_err = abs.(v2_model./data.v2.*data.v2_err)
+    elseif mode == "noise_model"
+        # TODO
+        @warn("Unimplemented feature")
+    end
+
     v2_model += v2_model_err.*randn(length(v2_model))
+
     #Now to fill the tables_
-    #uvis_lam=[];
-    #vvis_lam=[];
-    #v2_stations=[];
     visindxstart=1
     for itable=1:length(ivistables); #for each table
         v2_model_table=[]
@@ -568,17 +564,18 @@ function simulate_from_file(oifitsin,outfilename,fitsfiles,pixsize;dft=false,nff
 
     #GET T3 NOW
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3);
-
-    #t3amp_model_err =0.007*t3amp_model+1e-6
-    t3amp_model_err=data.t3amp_err
-    #t3amp_model_err=abs.(t3amp_model./(data.t3amp./data.t3amp_err))
+    if mode == "copy_errors"
+        t3amp_model_err = data.t3amp_err
+        t3phi_model_err = data.t3phi_err
+    elseif mode == "copy_snr"
+        t3amp_model_err=abs.(t3amp_model./(data.t3amp./data.t3amp_err))
+        t3phi_model_err=abs.(t3phi_model./(data.t3phi./data.t3phi_err))
+    elseif mode == "noise_model"
+        # TODO
+        @warn("Unimplemented feature")
+    end
     t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
-
-    #t3phi_model_err = zeros(length(t3phi_model))+2. # degree  -- there is another way of setting this with Haniff formula
-    t3phi_model_err=data.t3phi_err
-    #t3phi_model_err=abs.(t3phi_model./(data.t3phi./data.t3phi_err))
     t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
-
     t3indxstart=1
     for itable=1:length(it3tables); #for each table
         t3amp_model_table=[]
