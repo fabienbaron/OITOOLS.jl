@@ -146,7 +146,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     end
     nuv = sum(data[i].nuv for i=1:length(data))
     mean_mjd = mean(data[i].mean_mjd for i=1:length(data))
-    fig = figure(string(figtitle, "MJD: $(mean_mjd), nuv: $(nuv)"),figsize=(8,8),facecolor="White")
+    fig = figure(string(figtitle, "Mean MJD: $(round(mean_mjd*100)/100), nuv: $(nuv)"),figsize=(8,8),facecolor="White")
     set_plot_defaults()
     clf();
     ax = gca()
