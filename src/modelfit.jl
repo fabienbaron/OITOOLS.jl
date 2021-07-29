@@ -193,9 +193,9 @@ elseif type == "ldlin"
 elseif type == "ldquad"
         model = OIcomponent(type="ldquad", name=name,
                        vis_function=visibility_ldquad,
-                       vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
+                       vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=-1.0, maxval=1.0)],
                        pos_function = pos_fixed,
-                       pos_params = [OIparam(name="ra", val=0.0), OIparam(name="dec", val=0.0)],  # positional parameters
+                       pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                        spectrum_function = spectrum_gray,
                        spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
     return model
@@ -211,7 +211,7 @@ elseif type == "ldpow"
 elseif type == "ldsqrt"
     model = OIcomponent(type="ldsqrt", name=name,
                    vis_function=visibility_ldsquareroot,
-                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=0.0, maxval=1.0)],
+                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=-1.0, maxval=1.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
