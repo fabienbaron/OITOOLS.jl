@@ -211,7 +211,7 @@ elseif type == "ldpow"
 elseif type == "ldsqrt"
     model = OIcomponent(type="ldsqrt", name=name,
                    vis_function=visibility_ldsquareroot,
-                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=-1.0, maxval=1.0)],
+                   vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=-1.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=-1.0, maxval=1.0)],
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_gray,
@@ -271,6 +271,31 @@ function create_model(args...)
     end
     return OImodel(components, param_map);
 end
+
+
+# function to update param_map in case one modifies free parameters
+function update_model(model::OImodel)
+# recompute the param map
+    model.param_map = []
+    for i=1:length(model.components)
+        for j=1:length(model.components[i].vis_params)
+            if(model.components[i].vis_params[j].free)
+                push!(model.param_map, [i,1,j])
+            end
+        end
+        for j=1:length(model.components[i].pos_params)
+            if(model.components[i].pos_params[j].free)
+                push!(model.param_map, [i,2,j])
+            end
+        end
+        for j=1:length(model.components[i].spectrum_params)
+            if(model.components[i].spectrum_params[j].free)
+                push!(model.param_map, [i,3,j])
+            end
+        end
+    end
+end
+
 
 
 

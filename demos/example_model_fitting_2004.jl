@@ -9,7 +9,6 @@ c1 = create_component(type="ud", name="star")
 c1.spectrum_params[1].free = true; # we have two components, we just need to fit the flux of the first
 c1.vis_params[1].free = true; # diameter in mas
 c1.vis_params[1].maxval = 1.0; # maximum diameter in mas (we expect a barely reslved star)
-
 c2 = create_component(type="ring", name="ring")
 c2.spectrum_params[1].free = false; # we have two components, we just need to fit the flux of the first
 c2.vis_params[5].free = false
@@ -25,14 +24,18 @@ c2.vis_params[9].free = false
 # c2.vis_params[7].free = true
 # c2.vis_params[8].free = true
 
-
-
 # Put the model together
 model = create_model(c1,c2)
+
+# Note: after ceating the model, changing component parameters from free or fixed (or opposite) *will* affect the model
+# We need to update the internal model parameter map using update_model(model) in such a case
+
 display(model) # tis shows all the model parameters and does a few tests
+minf, minx, cvis_model, result = fit_model_ultranest(data, model, min_num_live_points = 400, cluster_num_live_points = 200)
 
 
-minf, minx, cvis_model, result = fit_model_ultranest(data, model, min_num_live_points = 100, cluster_num_live_points = 50)
+
+
 # Smaller numbers -> faster convergence but worse posterior characterization
 # For optimization, min_num_live_points= 100-400 works fine
 # For logZ estimation, >1000 would typically be OK
