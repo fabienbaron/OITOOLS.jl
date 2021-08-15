@@ -10,7 +10,7 @@ function hours_to_date(obsdate, hours)
 end
 
 
-function hour_angle_calc(dates::Union{Array{Epoch{CoordinatedUniversalTime, Float64}, 1}, Epoch{CoordinatedUniversalTime, Float64}}, longitude::Float64, ra::Float64;ldir="E")
+function hour_angle_calc(dates::Union{Array{Epoch{InternationalAtomicTime, Float64}, 1}, Epoch{InternationalAtomicTime, Float64}}, longitude::Float64, ra::Float64;ldir="E")
 
 """
 This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
@@ -24,7 +24,7 @@ elseif ldir == "E"
     alpha = 1.
 end
 
-if typeof(dates) == Epoch{CoordinatedUniversalTime, Float64} # transform single epochs into Array
+if typeof(dates) == Epoch{InternationalAtomicTime, Float64} # transform single epochs into Array
     dates = [dates]
 end
 
@@ -118,7 +118,7 @@ N = floor(275 * month / 9) - floor((month + 9) / 12) * (1 + floor((year - 4 * fl
 return N
 end
 
-function sunrise_sunset(obsdate::Epoch{CoordinatedUniversalTime, Float64}, latitude, longitude;zenith=102.0)
+function sunrise_sunset(obsdate::Epoch{InternationalAtomicTime, Float64}, latitude, longitude;zenith=102.0)
 #Source:
 #	Almanac for Computers, 1990
 #	published by Nautical Almanac Office

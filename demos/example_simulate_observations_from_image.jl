@@ -2,7 +2,7 @@ using OITOOLS
 using AstroTime
 #Simulate an observation using an input image, given telescope parameters, and input image or image filename and observation times
 #In this example, observations start at UT 2018-08-13 at 3:00:00AM and last until 2018-08-13 8:30:00AM, with a period of 15 minutes
-dates = collect(UTCEpoch(2018,8,13,3,0,0.0):15minutes:UTCEpoch(2018,8,13,8,30,0.0))
+dates = collect(TAIEpoch(2018,8,13,3,0,0.0):15minutes:TAIEpoch(2018,8,13,8,30,0.0))
 
 # Input image defining the target brightness distribution
 image_file="./data/2004true.fits";

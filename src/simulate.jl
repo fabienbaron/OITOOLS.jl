@@ -364,13 +364,13 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
     #input telescope data
     target_id_vis2   = ones(nv2*nhours).*target.target_id[1]
     time_vis2        = zeros(nv2*nhours)     # OIFITS v2 requires zeros
-    mjd_vis2         = repeat([modified_julian(dates[i]).Δt for i=1:length(dates)], nv2) # TOCHECK (could be transposed)
+    mjd_vis2         = repeat(value.(modified_julian.(dates)), nv2) # TOCHECK (could be transposed)
     int_time_vis2    = ones(Float64,nv2*nhours)      # TODO
     flag_vis2        = fill(false,nv2*nhours,1)
     #need to get vis2,vis2err,u,v,sta_index from DATA
     target_id_t3     = ones(nt3*nhours).*target.target_id[1]
     time_t3          = zeros(nt3*nhours) #change
-    mjd_t3           = repeat([modified_julian(dates[i]).Δt for i=1:length(dates)], nt3)  #change
+    mjd_t3           = repeat(value.(modified_julian.(dates)), nt3)  #change
     int_time_t3      = ones(Float64, nt3*nhours)      #  TODO;
     flag_t3          = fill(false,(nt3*nhours),1);
 
