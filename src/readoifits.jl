@@ -122,9 +122,21 @@ println("Number of wavelength bins: $(size(data,1))")
 println("Number of time/epoch bins: $(size(data,2))")
 end
 
-function set_data_filter(data::OIdata; filter_wav = false, minwav = -1.0, maxwav=1e99, filter_mjd = false, minmjd = -1.0, maxmjd = 1e99,
+function set_data_filter(data::OIdata; wav_intervals::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], mjd_intervals::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99],
     filter_bad_data = false, filter_vis = true, filter_v2 = true, filter_t3amp = true, filter_t3phi = true,
     cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, force_full_vis = false, force_full_t3 = false, filter_v2_snr_threshold=0.01, uv_bad=Int64[], filter_visphi=false, filter_visamp=false)
+
+    if !isempty(wav_intervals)
+        if typeof(wav_intervals) == Array{Float64,1}
+            wav_intervals = [wav_intervals]
+        end
+    end
+
+    if !isempty(mjd_intervals)
+        if typeof(mjd_intervals) == Array{Float64,1}
+            mjd_intervals = [mjd_intervals]
+        end
+    end
 
     # Select points (to keep) in the uv plane
     # one can directly deselect/disable uv points by setting the list of bad uv point in uv_bad
@@ -202,11 +214,11 @@ function set_data_filter(data::OIdata; filter_wav = false, minwav = -1.0, maxwav
     # Filtering the uv plane (this will filter the observables too)
     # We define the uv indexes we keep as uv_good
     uv_good = setdiff(collect(1:data.nuv), uv_bad) # select all as good except in the uv_bad list
-    if filter_mjd == true
-        uv_good = intersect(uv_good, findall( minmjd  .<= data.uv_mjd .<= maxmjd))
+    if !isempty(mjd_intervals)
+        uv_good = intersect(uv_good, vcat([findall( mjd_intervals[i][1]  .<= data.uv_mjd .<=  mjd_intervals[i][2]) for i=1:length(mjd_intervals)]...))
     end
-    if filter_wav == true
-        uv_good = intersect(uv_good,findall( minwav  .<= data.uv_lam .<= maxwav))
+    if !isempty(wav_intervals)
+        uv_good = intersect(uv_good, vcat([findall( wav_intervals[i][1]  .<= data.uv_lam .<=  wav_intervals[i][2]) for i=1:length(wav_intervals)]...))
     end
     uv_bad = setdiff(collect(1:data.nuv), uv_good)
 
