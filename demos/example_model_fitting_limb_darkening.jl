@@ -7,12 +7,6 @@ using OITOOLS
 
 oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.
-# If you want to check the data:
-# uvplot(data)
-# uvplot(data, bywavelength=true)
-# v2plot(data,logplot=true);
-#t3phiplot(data);
-
 #
 # LIMB DARKENED DISC FITTING
 #
@@ -35,21 +29,17 @@ minf, minx, cvis_model, result = fit_model_levenberg(data, model, chi2_weights=[
 # UltraNest: Nested Sampling (best for statistical uncertainties)
 minf, minx, cvis_model, result = fit_model_ultranest(data, model, chi2_weights=[1.0,0,0]);
 
-
-
 # Note: the result structures are different and depend on the packages
 
 # How to compute complex visibilities
 # Here for Hestroffer power law with diameter = 8.0 and limb-darkening parameter 0.1
 model = create_model(create_component(type="ldlin", name="Model"));
 dispatch_params([8.0,0.1], model);
-cvis = model_to_cvis(model, data)
+cvis_model = model_to_cvis(model, data)
 
 # How to compute chi2 for given model (note: you don't need to compute cvis first)
 chi2v2 = model_to_chi2(data, model, [8.3,0.2], chi2_weights=[1.0,0,0])
 
 # Plot model vs data
 v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-v2plot_modelvsdata(data, v2_model,logplot=true);
-
-# Example of fitting with bound constraints : COMING SOON
+v2plot_model_vs_data(data, v2_model,logplot=true);

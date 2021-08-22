@@ -12,13 +12,13 @@ V = jinc.(param[1]/2.0626480624709636e8*ρ)
 return V
 end
 
-# function dvisibility_ud(param, uv::Array{Float64,2})
-# ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
-# dt_dp = pi*ρ/2.0626480624709636e8
-# t= param[1]*dt_dp
-# dV_dt = (t.*besselj0.(t)-2*besselj1.(t))./t.^2   # ouch singularity!
-# return dV_dt.*dt_dp
-# end
+function dvisibility_ud(param, uv::Array{Float64,2})
+ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
+dt_dp = pi*ρ/2.0626480624709636e8
+t = param[1]*dt_dp
+dV_dt = 2.0*(t.*besselj0.(t)-2*besselj1.(t))./t.^2   # ouch singularity!
+return dV_dt.*dt_dp
+end
 
 function visibility_ellipse_uniform(param, uv::Array{Float64,2}) # ϕ: semi-major axis orientation (deg)
 ϵ = param[2];

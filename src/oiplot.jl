@@ -5,7 +5,7 @@
 # gather common display tasks
 using PyPlot,PyCall, LaTeXStrings, Statistics
 
-function set_plot_defaults()
+function set_oiplot_defaults()
 PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
 PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[12]
 PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
@@ -118,7 +118,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     u = uv[1,:]/1e6
     v = uv[2,:]/1e6
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
-    set_plot_defaults()
+    set_oiplot_defaults()
     clf();
     ax = gca()
     markeredgewidth=0.1
@@ -147,7 +147,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     nuv = sum(data[i].nuv for i=1:length(data))
     mean_mjd = mean(data[i].mean_mjd for i=1:length(data))
     fig = figure(string(figtitle, "Mean MJD: $(round(mean_mjd*100)/100), nuv: $(nuv)"),figsize=(8,8),facecolor="White")
-    set_plot_defaults()
+    set_oiplot_defaults()
     clf();
     ax = gca()
     ax.locator_params(axis ="y", nbins=10)
@@ -228,7 +228,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     show(block=false)
 end
 
-function v2plot_modelvsdata(data::OIdata, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
+function v2plot_model_vs_data(data::OIdata, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
     subplot(211)
@@ -252,20 +252,24 @@ function v2plot_modelvsdata(data::OIdata, v2_model::Array{Float64,1}; logplot = 
     show(block=false)
 end
 
-
-
 # This draws a continuous line based on the analytic function
-function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
+function v2plot_model_vs_func(data::OIdata, model::OImodel, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
     # Compute model points (discrete)
     baseline_v2 = data.v2_baseline;
     v2_data = data.v2;
     v2_data_err = data.v2_err;
-    cvis_model = visfunc(params,sqrt.(data.uv[1,:].^2+data.uv[2,:].^2));
+    update_model(model)
+    dispatch_params(params, model);
+    cvis_model = model_to_cvis(model, data)
     v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
-    # Compute model curve (continous)
+    # Compute model curve (pseudo-continous) by setting up cyclindrical uv plane
     r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
-    xrange = collect(range(minimum(r),maximum(r),step=(maximum(r)-minimum(r))/1000));
-    cvis_func = visfunc(params, xrange);
+    r_range = collect(range(minimum(r),maximum(r),length=100));
+    r_proj = collect(range(minimum(r),maximum(r),length=100));
+    θ_range = collect(range(-pi,pi,length=100));
+    uv = repeat(hcat(vec(r_range'.*cos.(θ_range)), vec(r_range'.*sin.(θ_range)))',1,100)
+    λ = repeat(collect(range(minimum(data.uv_lam),maximum(data.uv_lam),step=100)), size(uv,2));
+    cvis_func = model_to_cvis(model,uv, λ)
     v2_func = abs2.(cvis_func);
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
@@ -285,7 +289,7 @@ function v2plot_modelvsfunc(data::OIdata, visfunc, params; drawpoints = false, y
     end
 
     if drawfunc == true
-        plot(xrange/1e6, v2_func, color="Red", linestyle="-", markersize=3)
+        plot(r_proj/1e6, v2_func, color="Red", linestyle="-", markersize=3)
     end
 
     title("Squared Visbility Amplitudes - Model vs data plot")

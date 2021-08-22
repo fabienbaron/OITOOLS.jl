@@ -22,15 +22,31 @@ function pos_fixed(pos_params::Array{OIparam,1})
 end
 
 function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, data::OIdata )
-    # (λ/λ0)^d  where λ0=spectrum[2] and d=spectrum[3]
-    return spectrum_params[1].val.*(data.uv_lam/spectrum_params[2].val).^spectrum_params[3].val
+    return spectrum_powerlaw(spectrum_params, data.uv_lam)
 end
-
 
 function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1})
-    # (λ/λ0)^d  where λ0=spectrum[2] and d=spectrum[3]
+    # (λ/λ0)^d  where d=spectrum[2] and λ0=spectrum[3]
     return spectrum_params[1].val.*(λ/spectrum_params[2].val).^spectrum_params[3].val
 end
+
+function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, data::OIdata )
+    return spectrum_bb_law(spectrum_params, data.uv_lam)
+end
+
+function spectrum_bb_law(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1})
+    # BB(λ, Tring )/BB(λ0, Tring ) where Tring=spectrum[2] and λ0=spectrum[3]
+    return spectrum_params[1].val.*(bb(λ,spectrum[2])./bb(spectrum[3], spectrum[2]))
+end
+
+
+function bb(λ,T::Float64)  # Note: we dropped the multiplicative constants
+    # h*c/k = 0.0143877735
+ return 1.0 ./ (λ.^5 .* exp.(0.0143877735./(λ*T) .-1.0))
+end
+
+
+
 
 function spectrum_gray(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1} )
     return spectrum_params[1].val #*ones(Float64,length(data.uv_lam))
@@ -178,7 +194,7 @@ elseif type=="ud-polychromatic"
                        pos_function = pos_fixed,
                        pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                        spectrum_function = spectrum_powerlaw,
-                       spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false)])
+                       spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false)])
         return model
 elseif type == "ldlin"
     model = OIcomponent(type="ldlin", name=name,
@@ -235,7 +251,7 @@ elseif type == "ring-polychromatic"
                    pos_function = pos_fixed,
                    pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
                    spectrum_function = spectrum_powerlaw,
-                   spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false), OIparam(name="Spectral index", val=1.0, minval=-5.0, maxval=2.0, free=true)])
+                   spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="Temperature", val=3000.0, minval=1000.0, maxval=8000.0, free=true),OIparam(name="λ0", val=1.6e-6, free=false)])
     return model
 else
     @warn("Trying to call undefined component type");

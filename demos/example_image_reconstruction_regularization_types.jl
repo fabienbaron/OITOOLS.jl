@@ -2,7 +2,7 @@
 # Demonstrating different types of classic regularizations
 #
 using PyPlot
-include("../src/OITOOLS.jl"); using Main.OITOOLS
+using OITOOLS
 oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.101 # size of a pixel in milliarcseconds
 nx = 128 # width of image (number of pixels)
@@ -22,6 +22,14 @@ x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = false, ma
 imdisp(recenter(x,mask=x.>maximum(x)/10),pixscale=pixsize,colormap="gist_earth");
 text(-6,5,"Positivity only",color="white",size="xx-large")
 savefig("types-positivity-only.png")
+
+
+regularizers = [["centering", 1e3], ["l1hyp",1e3]];
+x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = false, maxiter=500);
+imdisp(recenter(x,mask=x.>maximum(x)/10),pixscale=pixsize,colormap="gist_earth");
+text(-6,5,"ℓ1 hyperbolic approx",color="white",size="xx-large")
+savefig("types-l1hyp.png")
+
 
 regularizers = [["centering", 1e3], ["tvsq",5e7]];
 x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = false, maxiter=500);
