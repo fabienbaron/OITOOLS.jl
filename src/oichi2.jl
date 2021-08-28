@@ -494,7 +494,7 @@ function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=2.0)
     return f
 end
 
-function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
+function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true, goffset::Int64=1) # compound regularization
     reg_f = 0.0;
     for ireg =1:length(regularizers)
         temp_g = Array{Float64}(undef,length(x))
@@ -519,7 +519,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
         elseif regularizers[ireg][1] == "entropy"
             reg_f += regularizers[ireg][2]*entropy(x,temp_g, verb = verb)
         end
-        reg_g[:] += regularizers[ireg][2]*temp_g
+        reg_g[goffset:end] += regularizers[ireg][2]*temp_g
     end
     if (verb==true)
         print("\n");
@@ -983,15 +983,13 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0
     v2_model = cvis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
     chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
-    chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-    chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+    chi2_t3amp = 0*norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+    chi2_t3phi = 0*norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
     if verb == true
         println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
     end
     return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
-
-
 
 function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, nparams::Int64; verb = true ) # criterion function for nfft
     params=x[1:nparams]  # extract parameters
@@ -1004,12 +1002,13 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     fluxenv = (1.0-params[1]-params[2])*β;
     Vstar = visibility_ud([params[3]], data.uv);
     Venv = image_to_cvis_nfft(x[nparams+1:end], ftplan[1]);
+
     cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
     v2_model = cvis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
     chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
-    chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-    chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+    chi2_t3amp = 0*norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+    chi2_t3phi = 0*norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
     if verb == true
         println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
     end
@@ -1033,10 +1032,9 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     dcvis_model_dD = (du.*v-u.*dv)./(v.*v)
 
     # Derivative with respect to spectral index
-    du =  params[4]*(1.0-params[1]-params[2])*(λ/λ0).^(params[4]-1).*Venv
-    dv =  params[4]*(1.0-params[1]-params[2])*(λ/λ0).^(params[4]-1)  # dv/dinx
+    du = log.(λ/λ0).*fluxenv.*Venv
+    dv = log.(λ/λ0).*fluxenv
     dcvis_model_dindx = (du.*v-u.*dv)./(v.*v)
-
 
     # Fill up gradient of parameters
     g[1] = Δchi2(dcvis_model_dfs0, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
@@ -1045,40 +1043,52 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     g[4] = Δchi2(dcvis_model_dindx, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
     g[5] = 0.0;
 
-
     # Gradient with respect to pixel fluxes
-    g_v2 = real(nfft_adjoint(ftplan[3], (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2])));
-    g_t3amp = real(nfft_adjoint(ftplan[4], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) )))
-    + real(nfft_adjoint(ftplan[5], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) )))
-    + real(nfft_adjoint(ftplan[6], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
-    g_t3phi = -360.0/pi*imag(nfft_adjoint(ftplan[4], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
-    + nfft_adjoint(ftplan[5], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
-    + nfft_adjoint(ftplan[6], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-    g_unnormalized = vec(g_v2 + g_t3amp + g_t3phi)
-    flux = sum(g_unnormalized)
-    g[nparams+1:end] = (g_unnormalized .- sum(vec(x[nparams+1:end]).*g_unnormalized) / flux ) / flux
+    imratio = fluxenv./(fluxstar+fluxenv+fluxbg)
+    g_v2 = real(nfft_adjoint(ftplan[3], (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2].*imratio[data.indx_v2])));
+    g_t3amp = real(nfft_adjoint(ftplan[4], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1].*imratio[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) )))
+    + real(nfft_adjoint(ftplan[5], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2].*imratio[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) )))
+    + real(nfft_adjoint(ftplan[6], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_3].*imratio[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) )))
+
+    #dt3 = dcvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3] + cvis_model[data.indx_t3_1].*dcvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3] + cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*dcvis_model[data.indx_t3_3]
+    #dt3phi = 360.0/pi*sum( (mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2).*imag(conj(t3).*dt3)./abs2.(t3))
+    g_t3phi = -360.0/pi*imag(nfft_adjoint(ftplan[4], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*imratio[data.indx_t3_1].*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
+    + nfft_adjoint(ftplan[5], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*imratio[data.indx_t3_2].*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
+    + nfft_adjoint(ftplan[6], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*imratio[data.indx_t3_3].*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
+    g[nparams+1:end] = vec(g_v2 + 0*g_t3amp + 0*g_t3phi)
+    #Normalization done later
+    #flux = sum(x[nparams+1:end])
+    #g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux ) / flux; # gradient correction to take into account the non-normalized image
 
     return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 
-
-# TODO: complete this function to finish SPARCO
 function Δchi2(dcvis_model::Union{Array{Complex{Float64},1}, Array{Float64,1}}, cvis_model::Union{Array{Complex{Float64},1},Array{Float64,1}}, v2_model::Array{Float64,1}, t3_model::Array{Complex{Float64},1}, t3amp_model::Array{Float64,1}, t3phi_model::Array{Float64,1}, data::OIdata) # return gradient of chi2 when cvis and dvis_model are known
     dv2 = 4*sum( ( (v2_model-data.v2)./data.v2_err.^2 ).*real.(cvis_model[data.indx_v2].*dcvis_model[data.indx_v2]))
     dt3amp = 2.0*sum(((t3amp_model-data.t3amp)./data.t3amp_err.^2).* ( real(cvis_model[data.indx_t3_1].*conj(dcvis_model[data.indx_t3_1]))./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3])
     + real(cvis_model[data.indx_t3_2].*conj(dcvis_model[data.indx_t3_2]))./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3])
     + real(cvis_model[data.indx_t3_3].*conj(dcvis_model[data.indx_t3_3]))./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
-    dt3phi = 360.0/pi*sum( (mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2).* ( imag(conj(dcvis_model[data.indx_t3_1]))./abs2.(cvis_model[data.indx_t3_1]) +imag(conj(dcvis_model[data.indx_t3_3]))./abs2.(cvis_model[data.indx_t3_2]) +imag(conj(dcvis_model[data.indx_t3_3]))./abs2.(cvis_model[data.indx_t3_3])) )
-    println("dv2:", dv2, " dt3amp:", dt3amp, " dt3phi:", dt3phi);
+    t3 = cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]
+    dt3 = dcvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3] + cvis_model[data.indx_t3_1].*dcvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3] + cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*dcvis_model[data.indx_t3_3]
+    dt3phi = 360.0/pi*sum( (mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2).*imag(conj(t3).*dt3)./abs2.(t3))
+    # println("dv2:", dv2, " dt3amp:", dt3amp, " dt3phi:", dt3phi);
     return dv2+dt3amp+dt3phi
 end
 
+function crit_sparco_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, nparams::Int64; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
+    chi2_f = chi2_sparco_nfft_fg(x,  g, ftplan, data, nparams)
+    reg_f = regularization(x[nparams+1:end], g, regularizers=regularizers, printcolor = printcolor, verb = verb, goffset=nparams);
+    # Gradient correction for the image (parameters are left untouched)
+    flux = sum(x[nparams+1:end])
+    g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux ) / flux; # gradient correction to take into account the non-normalized image
+    return chi2_f + reg_f;
+end
 
 function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[]) #grey environment
     x_sol = []
-    crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, params_start, verb = verb)
-    sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
-    return sol
+    crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, length(params_start), verb = verb)
+    sol = OptimPackNextGen.vmlmb(crit, [params_start;x_start], verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+    return (sol[1:length(params_start)], sol[length(params_start)+1:end])
 end
 
 # if Pkg.installed("Wavelets") !=nothing
