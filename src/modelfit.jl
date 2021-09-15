@@ -27,7 +27,7 @@ end
 
 function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1})
     # (λ/λ0)^d  where d=spectrum[2] and λ0=spectrum[3]
-    return spectrum_params[1].val.*(λ/spectrum_params[2].val).^spectrum_params[3].val
+    return spectrum_params[1].val.*(λ/spectrum_params[3].val).^spectrum_params[2].val
 end
 
 function spectrum_bb_law(spectrum_params::Array{OIparam,1}, data::OIdata )
