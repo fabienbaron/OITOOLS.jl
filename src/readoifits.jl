@@ -586,7 +586,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     # Check if index use is consistent
     list_stations = unique(station_names_all)
     nstations =  length(list_stations)
-    println("Counting ", nstations, " unique stations");
+    #println("Counting ", nstations, " unique stations");
 
     new_station_name = Array{String}(undef, nstations)
     new_telescope_name = Array{String}(undef, nstations)

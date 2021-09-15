@@ -24,7 +24,7 @@ end
 
 global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
 "fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
-"sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen"]
+"sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen","salmon","slategray","lime","coral","maroon","mistyrose","sandybrown","tan","olivedrab"]
 
 global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
 
@@ -157,13 +157,16 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline_list_t3 = [get_triple_baselines_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(vcat(baseline_list_v2...),vec(hcat(baseline_list_t3...)))))
+        if length(baseline)>length(oiplot_colors)
+            @warn("I ran out of colors!")
+        end
         indx_v2 = [data[n].indx_v2 for n=1:length(data)]
         indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
         for i=1:length(baseline)
             loc =  [vcat(indx_v2[n][findall(baseline_list_v2[n] .== baseline[i])], indx_t3[n][findall(baseline_list_t3[n] .== baseline[i])]) for n=1:length(data)]
             u = vcat([data[n].uv[1,loc[n]] for n=1:length(data)]...)/1e6;
             v = vcat([data[n].uv[2,loc[n]] for n=1:length(data)]...)/1e6;
-            scatter( u,  v, alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i])
+            scatter( u,  v, alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i]) #TBD: handle case where length(baseline)>length(oiplot_colors)
             scatter(-u, -v, alpha=1.0, s=12.0, color=oiplot_colors[i])
         end
         if legend_below == false
