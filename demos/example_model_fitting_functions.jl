@@ -44,6 +44,9 @@ img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscal
 
 #imdisp((abs.(fftshift(ifft(reshape(V,(N,N)))))).^.5)
 
+V=  Complex.(visibility_annulus([1.0,2.0],uv))
+img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
+
 V = Complex.(visibility_ldpow([10.0, 0.3], uv)) # works
 img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
 
@@ -86,5 +89,23 @@ img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscal
 V = Complex.(visibility_GaussianLorentzian_ring_az([10.0, -90, 60, .15, 0, 0,0, 0, .4],uv))
 img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
 
-V=  Complex.(visibility_annulus([1.0,2.0],uv))
-img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
+
+# Example with the new interface
+model = create_model(create_component(type="ring", name="ring"));
+dispatch_params([10.0, -90, 60, .15, 0, 0,0, 0, .4],model)
+fakeimage(model)
+
+using NFFT
+function fakeimage(model::OImodel;nx=128, pixsize=0.1, nuv=1024, Bmax=3000, λ = 1.6e-6, display=true)
+uv = Array{Float64}(undef,2, nuv*nuv);
+x = collect(range(-Bmax, Bmax, length=nuv))/λ
+uv[1,:] = vec(repeat(x,1, nuv))
+uv[2,:] = vec(repeat(x,1, nuv)')
+V = model_to_cvis(model, uv, [λ])
+fftplan  = plan_nfft(pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv, (nx,nx), 4, 2.0);
+img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0);
+if display == true
+    imdisp(img, pixscale=pixsize);
+end
+return img
+end

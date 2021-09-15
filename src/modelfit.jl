@@ -6,7 +6,7 @@
 #       - black body spectral law
 #       - spectral lines (Gaussian, Voigt)
 #       - custom r/μ profiles
-using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, Printf
+using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, Printf,NFFT
 
 @with_kw mutable struct OIparam
     name::String = "" # optional name of the compoment (e.g. "primary", "central source")
@@ -30,13 +30,13 @@ function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, λ::Array{Float64,
     return spectrum_params[1].val.*(λ/spectrum_params[2].val).^spectrum_params[3].val
 end
 
-function spectrum_powerlaw(spectrum_params::Array{OIparam,1}, data::OIdata )
+function spectrum_bb_law(spectrum_params::Array{OIparam,1}, data::OIdata )
     return spectrum_bb_law(spectrum_params, data.uv_lam)
 end
 
 function spectrum_bb_law(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1})
     # BB(λ, Tring )/BB(λ0, Tring ) where Tring=spectrum[2] and λ0=spectrum[3]
-    return spectrum_params[1].val.*(bb(λ,spectrum[2])./bb(spectrum[3], spectrum[2]))
+    return spectrum_params[1].val.*(bb(λ,spectrum_params[2])./bb(spectrum_params[3], spectrum_params[2]))
 end
 
 
@@ -191,6 +191,15 @@ function create_component(;type::String=[], name::String="") # this autofill def
         model = OIcomponent(type="ud", name=name,
         vis_function=visibility_ud,
         vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0)],
+        pos_function = pos_fixed,
+        pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+        spectrum_function = spectrum_powerlaw,
+        spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false)])
+        return model
+    elseif type=="point-polychromatic"
+        model = OIcomponent(type="ud", name=name,
+        vis_function=visibility_ud,
+        vis_params= [OIparam(name="diameter", val=0.0, minval=0.0, maxval = 0.0,free=false)],
         pos_function = pos_fixed,
         pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
         spectrum_function = spectrum_powerlaw,
@@ -464,7 +473,7 @@ end
 
 
 function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], hbounds = Float64[],
-    verbose = true, calculate_vis = true, cornerplot = true, chi2_weights=[1.0,1.0,1.0], min_num_live_points = 400, cluster_num_live_points = 100)
+    verbose = true, calculate_vis = true, cornerplot = true, chi2_weights=[1.0,1.0,1.0], min_num_live_points = 400, cluster_num_live_points = 100, use_stepsampler=false, nsteps=400,frac_remain=0.1)
 
     lbounds, hbounds = get_model_bounds(model);
 
@@ -488,7 +497,11 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
     param_names = get_model_pnames(model);
 
     smplr = ultranest.ReactiveNestedSampler(param_names, loglikelihood_vectorized, transform = prior_transform_vectorized, vectorized = true)
-    result = smplr.run(min_num_live_points = min_num_live_points, cluster_num_live_points = cluster_num_live_points)
+    if use_stepsampler==true
+        smplr.stepsampler = pyimport("ultranest.stepsampler").RegionSliceSampler(nsteps=nsteps, adaptive_nsteps="move-distance")
+    end
+
+    result = smplr.run(min_num_live_points = min_num_live_points, cluster_num_live_points = cluster_num_live_points, frac_remain=frac_remain)
 
     minx = result["maximum_likelihood"]["point"]
     minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
@@ -782,4 +795,18 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
     println("Boostrap mean: $(params_mean)");
     println("Bootstrap standard deviation: $(params_err)");
     return params_mode, params_mean,params_err
+end
+
+function fakeimage(model::OImodel;nx=128, pixsize=0.1, nuv=1024, Bmax=3000, λ = 1.6e-6, display=true)
+uv = Array{Float64}(undef,2, nuv*nuv);
+x = collect(range(-Bmax, Bmax, length=nuv))/λ
+uv[1,:] = vec(repeat(x,1, nuv))
+uv[2,:] = vec(repeat(x,1, nuv)')
+V = model_to_cvis(model, uv, [λ])
+fftplan  = plan_nfft(pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv, (nx,nx), 4, 2.0);
+img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0);
+if display == true
+    imdisp(img, pixscale=pixsize);
+end
+return img
 end
