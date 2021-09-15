@@ -428,7 +428,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     if(targetname !="")
         if length(targettables)>1
-            error("The OIFITS file has several target tables -- import not implemented yet for this case");
+            error("The OIFITS file has several target tables -- please specify which target you want");
         else
             targettables = targettables[1];
         end
@@ -519,7 +519,11 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     # This code can handle simple situations (pure CHARA or VLTI data) as well as CHARA + VLTI combined data
     # as long as a give station always keep the same indexes in merged data sets
 
-    # First test if there are unknown *station indexes*
+
+    #
+    # Test if there are unknown station indexes
+    #
+
     # TODO: currently using only V2 & T3 tables, add for other data products
     unknown_station_names = String[]
     unknown_tel_names = String[]
@@ -582,28 +586,25 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     # Check if index use is consistent
     list_stations = unique(station_names_all)
     nstations =  length(list_stations)
+    println("Counting ", nstations, " unique stations");
+
     new_station_name = Array{String}(undef, nstations)
     new_telescope_name = Array{String}(undef, nstations)
     new_station_index = zeros(Int64,nstations)
 
+
     for istation=1:length(list_stations)
         name = list_stations[istation]
         loc = findall(station_names_all .== name)
-        tel = unique(telescope_names_all[loc])[1] # possible issue if several telescopes can be positioned onto the same station
-        indx = unique(station_indexes_all[loc])
-        if length(indx)>1
-            @warn("Station index vary for station $(name) in this file")
-            # Give up -  Exit the for loop
-            new_station_name[:] = station_names_all;
-            new_telescope_name[:] = telescope_names_all;
-            new_station_index[:] = station_indexes_all;
-            break;
-        else
-            # simple case -- we renumber all stations
-            new_station_name[istation]   = name
-            new_telescope_name[istation] = tel
-            new_station_index[istation] = istation
+        tel = unique(telescope_names_all[loc])
+        if length(tel)>1
+            @warn("Several telescopes can be at the same station -- Not sure I know how to do this right")
         end
+        tel=tel[1]
+        # Renumber all stations
+        new_station_name[istation]   = name
+        new_telescope_name[istation] = tel
+        new_station_index[istation] = istation
     end
     # we will need to convert the old indexes into the new ones
     conversion_index = spzeros(Int64, array_ntables, maximum(station_indexes_all)+station_index_offset)
