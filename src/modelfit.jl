@@ -260,7 +260,7 @@ function create_component(;type::String=[], name::String="") # this autofill def
         pos_function = pos_fixed,
         pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
         spectrum_function = spectrum_powerlaw,
-        spectrum_params = [OIparam(name="flux", val=0.5, minval=0.0, maxval=1.0, free=false), OIparam(name="Temperature", val=3000.0, minval=1000.0, maxval=8000.0, free=true),OIparam(name="λ0", val=1.6e-6, free=false)])
+        spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false)])
         return model
     else
         @warn("Trying to call undefined component type");
