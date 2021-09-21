@@ -13,7 +13,7 @@ python:
 
 env:
     - CONDA_JL_VERSION="3" CONDA_JL_USE_MINIFORGE="yes"
-
+    - MYCONDAPY=3.7
 branches:
   only:
     - master
