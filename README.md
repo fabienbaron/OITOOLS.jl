@@ -19,7 +19,7 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 ## Installation and Documentation
 
-[How To Install](https://fabienbaron.github.io/OITOOLS.jl/dev/install/)
+[How To Install](https://github.com/fabienbaron/OITOOLS.jl/blob/master/docs/src/install.md)
 
 [Documentation](https://fabienbaron.github.io/OITOOLS.jl/dev/)
 
