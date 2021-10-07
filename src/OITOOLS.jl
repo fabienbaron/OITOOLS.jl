@@ -12,6 +12,7 @@ include("oiplot.jl");
 include("astrometry.jl");
 include("vonmises.jl")
 include("simulate.jl");
+include("oifitslib.jl");
 
 #readoifits
 export OIdata
@@ -45,4 +46,7 @@ export query_target_from_simbad, ra_dec_from_simbad, get_baselines, recenter
 export gantt_onenight
 #von mises
 export gaussianwrapped_to_vonmises_fast,logbesselI0
+
+#oifitslib
+export oifits_check, oifits_merge, oifits_filter
 end
