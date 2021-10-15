@@ -16,9 +16,9 @@ jobs:
         with:
           version: '1.6'
       - run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --upgrade cython
-          python3 -m pip install numpy matplotlib astropy ultranest
+          python3.8 -m pip install --upgrade pip
+          python3.8 -m pip install --upgrade cython
+          python3.8 -m pip install numpy matplotlib astropy ultranest
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-docdeploy@releases/v1
         env:
