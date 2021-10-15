@@ -1,10 +1,12 @@
-![oitools-logo](docs/src/assets/logo.png)
+
 # OITOOLS: the All-in-One Tool Package for Optical Interferometry
 
-| **Documentation**               | **License**                     |**Build**                      |
-|:--------------------------------|:--------------------------------|:------------------------------|
-| [![][doc-dev-img]][doc-dev-url] | [![][license-img]][license-url] | [![][travis-img]][travis-url] |
+|     **Status**                  | **Documentation**               | **License**                     |**Build**                      |
+|:--------------------------------|:--------------------------------|:--------------------------------|:------------------------------|
+| [![][proj-img]][proj-url] | [![][doc-dev-img]][doc-dev-url] | [![][license-img]][license-url] | [![][build-img]][build-url] |
 
+[proj-img]: http://www.repostatus.org/badges/latest/active.svg
+[proj-url]: http://www.repostatus.org/#active
 
 [doc-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
 [doc-dev-url]: https://fabienbaron.github.io/OITOOLS.jl/dev
@@ -12,8 +14,14 @@
 [license-url]: ./LICENSE.md
 [license-img]: http://img.shields.io/badge/license-GPL3-brightgreen.svg?style=flat
 
-[travis-img]: https://travis-ci.com/fabienbaron/OITOOLS.jl.svg?branch=master
-[travis-url]: https://travis-ci.com/fabienbaron/OITOOLS.jl
+[build-img]: https://github.com/fabienbaron/OITOOLS/.workflows/CI/badge.svg
+[build-url]: https://github.com/fabienbaron/OITOOLS/actions
+
+<center>
+
+![oitools-logo](docs/src/assets/logo-small.png)
+
+</center>
 
 OITOOLS is a Julia package to read, plot, model-fit and image optical interferometric data coming from astronomical arrays such as CHARA, VLTI, and NPOI. Note that despite having the same name as [JMMC's oitools](https://github.com/JMMC-OpenDev/oitools), they are completely unrelated and were developed independently.
 
@@ -29,10 +37,11 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 * All the classic plots: uv coverage, V2, T3, etc. by baseline or wavelengths
 
-![uvplot](docs/src/assets/uvplot.png)
-![v2plot](docs/src/assets/v2plot.png)
+|    **uv coverage**                  | **V2**               |
+|:--------------------------------:|:--------------------------------:|
+| ![uvplot](docs/src/assets/uvplot.png)  | ![v2plot](docs/src/assets/v2plot.png) |
 
-## Imaging
+## Image reconstruction
 
 * Classic image reconstruction
 
@@ -42,7 +51,10 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 * Polychromatic and dynamical imaging with several regularizations
 
-* OITOOLS is used by the [ROTIR](https://github.com/fabienbaron/ROTIR.jl/) package to do stellar surface imaging.
+* The [ROTIR](https://github.com/fabienbaron/ROTIR.jl/) package uses OITOOLS to do stellar surface imaging with:
+  + light curve inversion
+  + Doppler imaging
+  + interferometric imaging
 
 ![rotir](docs/src/assets/rotir.png)
 
@@ -50,32 +62,43 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 * Fast multiple component fitting.
 
-* Polychromatic models (power law, black-body) with spectral line fitting.
+* Polychromatic models
+  + Power and black-body laws
+  + Spectral line fitting
+  + Add your own laws!
 
-* Dynamical models (temporal)
+* Dynamical models (time variable parameters)
 
-* Optimization with NLOpt and UltraNest.
+* Optimization with several libraries
+  + Levenberg for classic error analysis
+  + NLOpt for flexibility in the parameter search (local and global optimizers including Nelder Mead and Genetic Algorithm)
+  + UltraNest for Bayesan model selection
 
-* Make images from models.
+* Derive boostrap errors
+  + Boostrap by baseline, time, or wavelengths
+
+* Quickly make images from models.
 
 ## Observation planning
 
-*Gantt plots like ASPRO (including best POPs solutions)
+|     **ASPRO-like Gantt chart**                  | **chara_plan-like plots**               |
+|:--------------------------------:|:--------------------------------:|
+| ![gantt](docs/src/assets/gantt.svg) | ![chara_plan](docs/src/assets/chara_plan.png) |
 
-![gantt](docs/src/assets/gantt.svg)
-
-* CHARA-specific planning
-
-![chara_plan](docs/src/assets/chara_plan.png)
 
 ## Simulations
 
-* Simulate future telescope observations
+* Can simulate fake data from models or images
+
+* Can create your own telescope and/or instrumental configurations
 
 ## How to speed up the use of OITOOLS with PackageCompiler
 
-Julia compiles your code on the fly, and functions from OITOOLS are no exception. To significantly decrease the time to run OITOOLS function, you can use PackageCompiler to create a library file that includes OITOOLS. The functions that will be accelerated are the ones included in precompile_oitools.jl from the OITOOLS.jl/demos/ directory. Feel free to add OITOOLS functions that you frequenly use.
-
+Julia compiles your code on the fly, and OITOOLS functions are no exception.
+The so-called "time to first plot" will significantly decrease if you take the time to compile OITOOLS with PackageCompiler,
+The functions that will be accelerated are in precompile_oitools.jl from the OITOOLS.jl/demos/ directory.
+Feel free to add OITOOLS functions that you frequenly use.
+To precompile OITOOLS:
 ```julia
 using PackageCompiler
 create_sysimage([:OITOOLS], sysimage_path="oitools.so", precompile_execution_file="precompile_oitools.jl")
