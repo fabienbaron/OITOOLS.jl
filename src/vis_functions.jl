@@ -29,6 +29,13 @@ V = jinc.(t)
 return V
 end
 
+function visibility_sigmoid(param, uv::Array{Float64,2})
+ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
+V = -im*pi*csch.(pi*param[1]/2.0626480624709636e8*ρ)
+return V
+end
+
+
 
 function visibility_ellipse_quad(param, uv::Array{Float64,2};tol=1e-6) #ϵ: ellipticity  i: inclination (deg), ϕ: position angle (deg)
 ϵ = param[4];

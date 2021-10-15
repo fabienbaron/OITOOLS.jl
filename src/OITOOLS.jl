@@ -23,7 +23,7 @@ precompile(readoifits, (String,))
 
 
 #modelfit
-export pos_fixed,spectrum_powerlaw,spectrum_gray,fakeimage
+export pos_fixed,spectrum_powerlaw,spectrum_gray,model_to_image
 export OIparam, OIcomponent,OImodel
 export create_component,create_model,update_model, model_to_cvis,dispatch_params,model_to_chi2,visfunc_to_chi2, get_model_bounds,get_model_params,get_model_pnames,fit_model_ultranest, fit_model_levenberg, fit_model_nlopt, resample_data, bootstrap_fit
 

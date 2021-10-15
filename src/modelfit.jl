@@ -797,7 +797,7 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
     return params_mode, params_mean,params_err
 end
 
-function fakeimage(model::OImodel;nx=128, pixsize=0.1, nuv=1024, Bmax=3000, λ = 1.6e-6, display=true)
+function model_to_image(model::OImodel;nx=128, pixsize=0.1, nuv=1024, Bmax=3000, λ = 1.6e-6, display=false)
 uv = Array{Float64}(undef,2, nuv*nuv);
 x = collect(range(-Bmax, Bmax, length=nuv))/λ
 uv[1,:] = vec(repeat(x,1, nuv))

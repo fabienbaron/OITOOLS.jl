@@ -84,7 +84,7 @@ function gaussianwrapped_to_vonmises(σ)
 end
 
 function gaussianwrapped_to_vonmises_fast(σ)
-    #Best and Fisher approximation - usually better than fiddling with the exact expression 
+    #Best & Fisher approximation - usually better than fiddling with the exact expression 
     x = exp.(-0.5*σ.^2)
     if x<0.53
         return 2*x+x^3+5*x^5/6
