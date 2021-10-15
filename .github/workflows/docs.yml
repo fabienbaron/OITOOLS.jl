@@ -16,8 +16,7 @@ jobs:
         with:
           version: '1.6'
       - run: |
-        julia --project=docs/ -e 'using Pkg, Conda; Conda.add("astropy", channel="astropy"); Conda.add("astroquery", channel="astropy");
-        Conda.add("astroquery", channel="astropy");Conda.add("ultranest", channel="conda-forge");' 
+          julia --project=docs/ -e 'using Pkg, Conda; Conda.add("astropy", channel="astropy"); Conda.add("astroquery", channel="astropy"); Conda.add("astroquery", channel="astropy");Conda.add("ultranest", channel="conda-forge");' 
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-docdeploy@releases/v1
         env:
