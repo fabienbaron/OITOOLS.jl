@@ -14,8 +14,8 @@
 [license-url]: ./LICENSE.md
 [license-img]: http://img.shields.io/badge/license-GPL3-brightgreen.svg?style=flat
 
-[build-img]: https://github.com/fabienbaron/OITOOLS/workflows/CI/badge.svg
-[build-url]: https://github.com/fabienbaron/OITOOLS/actions
+[build-img]: https://github.com/fabienbaron/OITOOLS.jl/workflows/CI/badge.svg
+[build-url]: https://github.com/fabienbaron/OITOOLS.jl/actions
 
 <center>
 
