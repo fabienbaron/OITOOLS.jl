@@ -1,5 +1,5 @@
 using Pkg
-CI = lowercase(get(ENV, "CI", nothing) == "true")
+CI = get(ENV, "CI", nothing) == "true"
 if CI
     let basepython = get(ENV, "PYTHON", "python3")
         envpath = joinpath(@__DIR__, "env")
