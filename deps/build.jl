@@ -13,7 +13,7 @@ if CI
         run(`$python -m pip install numpy`)
         run(`$python -m pip install scipy`)
         run(`$python -m pip install matplotlib`)
-        run(`$python -m pip install ultranest`)
+#        run(`$python -m pip install ultranest`)
         run(`$python -m pip install astroquery`)
         ENV["PYTHON"] = python
         Pkg.build("PyCall")
