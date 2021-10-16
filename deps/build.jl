@@ -3,7 +3,7 @@ CI = get(ENV, "CI", nothing) == "true"
 if CI
     let basepython = get(ENV, "PYTHON", "python3")
         envpath = joinpath(@__DIR__, "env")
-        run(`pip install --user virtualenv`)
+        run(`$python -m pip install --user virtualenv`)
         run(`virtualenv --python=$basepython $envpath`)
         if Sys.iswindows()
             python = joinpath(envpath, "Scripts", "python.exe")
@@ -13,7 +13,7 @@ if CI
         run(`$python -m pip install numpy`)
         run(`$python -m pip install scipy`)
         run(`$python -m pip install matplotlib`)
-#        run(`$python -m pip install ultranest`)
+        run(`$python -m pip install ultranest`)
         run(`$python -m pip install astroquery`)
         ENV["PYTHON"] = python
         Pkg.build("PyCall")
