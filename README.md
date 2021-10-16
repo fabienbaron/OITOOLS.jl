@@ -25,12 +25,6 @@
 
 OITOOLS is a Julia package to read, plot, model-fit and image optical interferometric data coming from astronomical arrays such as CHARA, VLTI, and NPOI. Note that despite having the same name as [JMMC's oitools](https://github.com/JMMC-OpenDev/oitools), they are completely unrelated and were developed independently.
 
-## Installation and Documentation
-
-[How To Install](https://github.com/fabienbaron/OITOOLS.jl/blob/master/docs/src/install.md)
-
-[Documentation](https://fabienbaron.github.io/OITOOLS.jl/dev/)
-
 ## Plotting and loading data
 
 * Load and filter data on the fly: split by spectral channel or time
