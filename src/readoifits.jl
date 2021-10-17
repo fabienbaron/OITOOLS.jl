@@ -1560,3 +1560,14 @@ function oifits_prep(data::Array{OIdata,1};kwargs...) # TODO: prep diff visibili
     end
 return data
 end
+
+function list_oifits_targets(oifitsfile)
+    if !isfile(oifitsfile)
+        @error("Could not locate the requested data file -- please check path\n")
+        return [[]];
+    end
+    tables = OIFITS.load(oifitsfile);
+    targettables = OIFITS.select(tables, "OI_TARGET");
+    list_target = unique(vcat([targettables[i].target for i=1:length(targettables)]...));
+    return list_target
+end
