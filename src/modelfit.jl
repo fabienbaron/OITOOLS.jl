@@ -39,14 +39,10 @@ function spectrum_bb_law(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1}
     return spectrum_params[1].val.*(bb(λ,spectrum_params[2])./bb(spectrum_params[3], spectrum_params[2]))
 end
 
-
 function bb(λ,T::Float64)  # Note: we dropped the multiplicative constants
     # h*c/k = 0.0143877735
     return 1.0 ./ (λ.^5 .* exp.(0.0143877735./(λ*T) .-1.0))
 end
-
-
-
 
 function spectrum_gray(spectrum_params::Array{OIparam,1}, λ::Array{Float64,1} )
     return spectrum_params[1].val #*ones(Float64,length(data.uv_lam))
@@ -56,9 +52,6 @@ end
 function spectrum_gray(spectrum_params::Array{OIparam,1}, data::OIdata )
     return spectrum_params[1].val #*ones(Float64,length(data.uv_lam))
 end
-
-
-
 
 @with_kw mutable struct OIcomponent
     type::String  # Type of component ("UD","LDLIN", "Ring")
@@ -548,8 +541,9 @@ end
 
 function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
 
-    println("OITOOLS Warning: LSQFIT doesn't support mod360() on residuals");
-
+    if verbose == true
+        println("OITOOLS Warning: LSQFIT doesn't support mod360() on residuals");
+    end
     # Setup chi2_weights and data for weighted least squares
     wt = Float64[]
     if ((chi2_weights[1]>0) && (data.nv2>0))
@@ -577,7 +571,7 @@ function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calcu
     lbounds, hbounds = get_model_bounds(model);
     pinit = get_model_params(model);
     m = (x,p)->lsqmodelobs(p, model, data, chi2_weights=chi2_weights);
-    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=true); # todo: add lower/upper bounds
+    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose); # todo: add lower/upper bounds
     minx = fit.param
     minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
 
