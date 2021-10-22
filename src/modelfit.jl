@@ -473,7 +473,7 @@ end
 
 
 function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], hbounds = Float64[],
-    verbose = true, calculate_vis = true, cornerplot = true, chi2_weights=[1.0,1.0,1.0], min_num_live_points = 400, cluster_num_live_points = 100, use_stepsampler=false, nsteps=400,frac_remain=0.01)
+    verbose = true, calculate_vis = true, cornerplot = true, chi2_weights=[1.0,1.0,1.0], min_num_live_points = 400, cluster_num_live_points = 100, use_stepsampler=false, nsteps=400,frac_remain=0.001)
 
     lbounds, hbounds = get_model_bounds(model);
 

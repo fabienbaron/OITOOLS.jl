@@ -397,7 +397,7 @@ function remove_redundant_uv!(data::OIdata; uvtol=2e2)
 end
 
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false)
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, verbose=true)
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
@@ -421,7 +421,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     if minimum(vcat([targettables[i].target_id for i=1:length(targettables)]...)) == 0
         for i=1:length(targettables)
             if targettables[i].revn!=1 # only OIFITSv2 enforces indexing
-                @warn("OI_TARGET table $i does not follow the OIFITSv2 standard - target indexing should start at 1, not 0.")
+                if verbose == true
+                    @warn("OI_TARGET table $i does not follow the OIFITSv2 standard - target indexing should start at 1, not 0.")
+                end
             end
         end
     end
@@ -505,10 +507,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     station_index_offset = 0
     if minimum(vcat(station_index...)) == 0  #determine if compliant with OIFITS format (min index = 1,not 0)
         revn = maximum([arraytables[i].revn for i=1:length(arraytables)])
-        if revn==2
-            @warn("This file does not follow the OIFITSv2 standard - station indexing should start at 1, not 0.")
-        else
-            @warn("OIFITSv1 detected. To be compliant with OIFITSv2 standard, OITOOLS will internally reindex stations from 1.")
+        if verbose==true
+            if revn==2
+                @warn("This file does not follow the OIFITSv2 standard - station indexing should start at 1, not 0.")
+            else
+                @warn("OIFITSv1 detected. To be compliant with OIFITSv2 standard, OITOOLS will internally reindex stations from 1.")
+            end
         end
         station_index_offset = 1
     end
