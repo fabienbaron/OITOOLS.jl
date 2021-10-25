@@ -11,5 +11,4 @@ The sources are [here](https://github.com/fabienbaron/OITOOLS.jl).
 
 ```@index
 Pages=["install.md"]
-Modules=[OIFITS]
 ```
