@@ -58,20 +58,23 @@ add https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayToo
 
 ### How do I install/use Python?
 
-    OITOOLS uses matplotlib through the Julia library [PyPlot](https://github.com/JuliaPy/PyPlot.jl), which will use your system Python. If you do not want to deal with python package management, using Julia's Conda package instead of the system-wide python is recommended. To do so, just type:
+OITOOLS uses matplotlib through the Julia library [PyPlot](https://github.com/JuliaPy/PyPlot.jl), which will use your system Python. If you do not want to deal with python package management, using Julia's Conda package instead of the system-wide python is recommended. To do so, just type:
 
-    ```julia
-    ENV["PYTHON"]=""  # this will tell Julia there is currently no usable python
-    ```
+```julia
+ENV["PYTHON"]=""  # this will tell Julia there is currently no usable python
+```
 
-    before installing the Conda package ```]add Conda```.
+before installing the Conda package via:
+```julia
+]add Conda
+```
 
 ### Which Matplotlib backend should I use?
 
-    You will have to select a Matplotlib backend for rendering plots. Qt5 works well in our experience. To set it up you will need to call
+You will have to select a Matplotlib backend for rendering plots. Qt5 works well in our experience. To set it up you will need to call
 
-    ```julia
-    ENV["MPLBACKEND"]="qt5agg"
-    ```
+```julia
+ENV["MPLBACKEND"]="qt5agg"
+```
 
-    before using Matplotlib (or even better, before installing PyPlot).
+before using Matplotlib (or even better, before installing PyPlot).
