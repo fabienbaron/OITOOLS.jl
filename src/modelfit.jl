@@ -571,7 +571,7 @@ function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calcu
     lbounds, hbounds = get_model_bounds(model);
     pinit = get_model_params(model);
     m = (x,p)->lsqmodelobs(p, model, data, chi2_weights=chi2_weights);
-    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose); # todo: add lower/upper bounds
+    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose); 
     minx = fit.param
     minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
 

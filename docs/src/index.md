@@ -10,4 +10,6 @@ The sources are [here](https://github.com/fabienbaron/OITOOLS.jl).
 ## Index
 
 ```@index
+Pages=["install.md"]
+Modules=[OIFITS]
 ```

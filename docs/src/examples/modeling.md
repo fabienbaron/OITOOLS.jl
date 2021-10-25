@@ -2,13 +2,13 @@
 
 ## Simple model fitting
 
-`example_limb_darkening_fit.jl` : given OIFITS data, do model-fitting (uniform disc, limb-darkened disc)
-`example_satlas_fit.jl`         : model OIFITS data using a SATLAS model (open-source stellar atmosphere model code)
+`example_model_fitting_limb_darkening.jl` : showcase how to handle model components and parameters (uniform disc, limb-darkened disc)
+`example_model_fitting_functions.jl`      : showcases how to call and use visibility functions
 
 ## Bootstrapping errors in fits
 
-`example_bootstrap_fit.jl`      : use the boostrap method to estimate error bars
+`example_model_fitting_bootstrap.jl`      : use the boostrap method to estimate error bars
 
 ## Bayesian model selection
 
-`example_nested_sampling_fit.jl`: use Bayesian model selection via nested sampling to compare limb-darkening laws
+`example_model_fitting_ultranest.jl`      : use Bayesian model selection via nested sampling to compare limb-darkening laws
