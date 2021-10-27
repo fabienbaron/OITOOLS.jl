@@ -201,7 +201,7 @@ function create_component(;type::String=[], name::String="") # this autofill def
     elseif type == "ldlin"
         model = OIcomponent(type="ldlin", name=name,
         vis_function=visibility_ldlin,
-        vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
+        vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="u1", val=0.2, minval=0.0, maxval=1.0)],
         pos_function = pos_fixed,
         pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
         spectrum_function = spectrum_gray,
@@ -211,7 +211,16 @@ function create_component(;type::String=[], name::String="") # this autofill def
     elseif type == "ldquad"
         model = OIcomponent(type="ldquad", name=name,
         vis_function=visibility_ldquad,
-        vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="ld2", val=0.2, minval=-1.0, maxval=1.0)],
+        vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="u1", val=0.2, minval=0.0, maxval=2.0), OIparam(name="u2", val=0.2, minval=-1.0, maxval=1.0)],
+        pos_function = pos_fixed,
+        pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+        spectrum_function = spectrum_gray,
+        spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
+        return model
+    elseif type == "ldquad_tri"
+        model = OIcomponent(type="ldquad_tri", name=name,
+        vis_function=visibility_ldquad,
+        vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="q1", val=0.2, minval=0.0, maxval=1.0), OIparam(name="q2", val=0.2, minval=0.0, maxval=1.0)],
         pos_function = pos_fixed,
         pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
         spectrum_function = spectrum_gray,
@@ -220,7 +229,7 @@ function create_component(;type::String=[], name::String="") # this autofill def
     elseif type == "ldpow"
         model = OIcomponent(type="ldpow", name=name,
         vis_function=visibility_ldpow,
-        vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="ld1", val=0.2, minval=0.0, maxval=1.0)],
+        vis_params= [OIparam(name="diameter", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="α", val=0.2, minval=0.0, maxval=1.0)],
         pos_function = pos_fixed,
         pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
         spectrum_function = spectrum_gray,
@@ -571,7 +580,7 @@ function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calcu
     lbounds, hbounds = get_model_bounds(model);
     pinit = get_model_params(model);
     m = (x,p)->lsqmodelobs(p, model, data, chi2_weights=chi2_weights);
-    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose); 
+    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose);
     minx = fit.param
     minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
 

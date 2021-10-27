@@ -69,6 +69,22 @@ V[findall(.!(isfinite.(V)))].=1.0;
 return V
 end
 
+#quadratic law, alternative formulation with "triangular sampling"
+#  Kipping et al. 2013, https://arxiv.org/abs/1308.0009# eq 15 and 16
+function visibility_ldquad_tri(param,uv::Array{Float64,2};tol=1e-6)
+ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
+θ = param[1]/2.0626480624709636e8;
+u1 = 2*sqrt(param[2])*param[3]
+u2 = sqrt(param[2])*(1-2*param[3])
+ζ = (pi*ρ*θ);
+V = ( (1.0-u1-u2)*besselj1.(ζ)./ζ +(u1+2*u2)/sqrt(2/pi)*besselj.(1.5,ζ)./ζ.^1.5-2*u2*besselj.(2, ζ)./ζ.^2)/(.5-u1/6-u2/12)
+indx = findall(abs.(ζ).<tol) #get rid of possible nan
+V[findall(.!(isfinite.(V)))].=1.0;
+return V
+end
+
+
+
 #square root law
 function visibility_ldsquareroot(param,uv::Array{Float64,2};tol=1e-6)
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
@@ -236,9 +252,15 @@ if visfunc==visibility_ldpow
 end
 
 if visfunc == visibility_ldquad
- lbounds = [0.0, -1.0, -1.0]
+ lbounds = [0.0, 0.0, -1.0]
+ hbounds = [1e9, 2.0, 1.0]
+end
+
+if visfunc == visibility_ldquad_alt
+ lbounds = [0.0, 0.0, 0.0]
  hbounds = [1e9, 1.0, 1.0]
 end
+
 
 if visfunc == visibility_ldlin
  lbounds = [0.0, -1.0]
