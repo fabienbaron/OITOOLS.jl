@@ -1,27 +1,17 @@
 using LinearAlgebra, SpecialFunctions, NFFT
 
-function setup_dft(data::OIdata, nx, pixsize)
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-    nuv = size(data.uv,2)
-    dft = zeros(Complex{Float64}, nuv, nx*nx);
-    xvals = 2.0 * pi * scale_rad * ([(mod(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
-    yvals=  2.0 * pi * scale_rad * ([(div(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
-    for uu=1:nuv
-        dft[uu,:] = cis.( (data.uv[1,uu] * xvals - data.uv[2,uu] * yvals)); # to keep orientation
-    end
+function setup_dft(uv::Array{Float64,2}, nx, pixsize)
+    scale_rad = pixsize * (pi / 180.0) / 3600000.0
+    nuv = size(uv, 2)
+    span = collect((2 * (1:nx) .- (nx + 1)) * scale_rad * pi)
+    xvals = reshape(span, 1, nx, 1)
+    yvals = reshape(span, 1, 1, nx)
+    dft = reshape(cis.((uv[1, :] .* xvals) .- (uv[2, :] .* yvals)), nuv, nx^2)
     return dft
 end
 
-function setup_dft(uv::Array{Float64,2}, nx, pixsize)
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-    nuv = size(uv,2)
-    dft = zeros(Complex{Float64}, nuv, nx*nx);
-    xvals = 2 * pi * scale_rad * ([(mod(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
-    yvals=  2 * pi * scale_rad * ([(div(i-1,nx)+1) for i=1:nx*nx] .- (nx+1)/2);
-    for uu=1:nuv
-        dft[uu,:] = cis.( (uv[1,uu] * xvals - uv[2,uu] * yvals));
-    end
-    return dft
+function setup_dft(data::OIdata, nx, pixsize)
+    return setup_dft(data.uv, nx, pixsize)
 end
 
 function setup_nfft(data::OIdata, nx, pixsize)::Array{NFFT.NFFTPlan{2,0,Float64},1}
