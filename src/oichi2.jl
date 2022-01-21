@@ -921,7 +921,7 @@ function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata
 end
 
 
-function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, params::Array{Float64,1}; verb = true ) # criterion function for nfft
+function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, params::Array{Float64,1}; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
     # Image x is of length = N*N
     # Nparams are passed as an array
 
@@ -948,12 +948,7 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0
     cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
     v2_model = cvis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-    chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
-    chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-    chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-    if verb == true
-        println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
-    end
+
     return chi2_v2 + chi2_t3amp + chi2_t3phi
 end
 # TBD: merge with previous function
@@ -972,16 +967,28 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0
     cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
     v2_model = cvis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-    chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
-    chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-    chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-    if verb == true
-        println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+    chi2_v2 = 0.0;
+    chi2_t3amp = 0.0;
+    chi2_t3phi = 0.0;
+    if weights[1]>0
+        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
     end
-    return chi2_v2 + chi2_t3amp + chi2_t3phi
+
+    if weights[2]>0
+        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+    end
+    if weights[3]>0
+            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+    end
+    if verb==true
+        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
+        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
+        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
+    end
+    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
-function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, nparams::Int64; verb = true ) # criterion function for nfft
+function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, nparams::Int64; verb = true, weights=[1.0,1.0,1.0] ) # criterion function for nfft
     params=x[1:nparams]  # extract parameters
     λ0 = params[5];
     λ = data.uv_lam
@@ -996,11 +1003,24 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
     v2_model = cvis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-    chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
-    chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-    chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-    if verb == true
-        println("V2: ", chi2_v2/data.nv2, " T3A: ", chi2_t3amp/data.nt3amp, " T3P: ", chi2_t3phi/data.nt3phi," Flux: ", sum(x))
+
+    chi2_v2 = 0.0;
+    chi2_t3amp = 0.0;
+    chi2_t3phi = 0.0;
+    if weights[1]>0
+        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
+    end
+
+    if weights[2]>0
+        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+    end
+    if weights[3]>0
+            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+    end
+    if verb==true
+        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
+        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
+        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
     end
 
     # Derivative with respect to fs0 (param[1])
@@ -1035,6 +1055,7 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
 
     # Gradient with respect to pixel fluxes
     imratio = fluxenv./(fluxstar+fluxenv+fluxbg)
+
     g_v2 = real(nfft_adjoint(ftplan[3], (4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2].*imratio[data.indx_v2])));
     g_t3amp = real(nfft_adjoint(ftplan[4], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1].*imratio[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) )))
     + real(nfft_adjoint(ftplan[5], (2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_2].*imratio[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) )))
@@ -1045,11 +1066,13 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     g_t3phi = -360.0/pi*imag(nfft_adjoint(ftplan[4], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*imratio[data.indx_t3_1].*conj(cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]).*t3_model)
     + nfft_adjoint(ftplan[5], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*imratio[data.indx_t3_2].*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_3]).*t3_model)
     + nfft_adjoint(ftplan[6], ((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2)./abs2.(t3_model)).*imratio[data.indx_t3_3].*conj(cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2]).*t3_model))
-    g[nparams+1:end] = vec(g_v2 + g_t3amp + g_t3phi)
+
+    g[nparams+1:end] = vec(weights[1]*g_v2 .+ weights[2]*g_t3amp .+ weights[3]*g_t3phi)
     #Normalization done later
     #flux = sum(x[nparams+1:end])
     #g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux ) / flux; # gradient correction to take into account the non-normalized image
-    return chi2_v2 + chi2_t3amp + chi2_t3phi
+
+    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
 function Δchi2(dcvis_model::Union{Array{Complex{Float64},1}, Array{Float64,1}}, cvis_model::Union{Array{Complex{Float64},1},Array{Float64,1}}, v2_model::Array{Float64,1}, t3_model::Array{Complex{Float64},1}, t3amp_model::Array{Float64,1}, t3phi_model::Array{Float64,1}, data::OIdata) # return gradient of chi2 when cvis and dvis_model are known
@@ -1065,7 +1088,7 @@ function Δchi2(dcvis_model::Union{Array{Complex{Float64},1}, Array{Float64,1}},
 end
 
 function crit_sparco_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, nparams::Int64; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
-    chi2_f = chi2_sparco_nfft_fg(x,  g, ftplan, data, nparams)
+    chi2_f = chi2_sparco_nfft_fg(x,  g, ftplan, data, nparams, weights=weights)
     reg_f = regularization(x[nparams+1:end], g, regularizers=regularizers, printcolor = printcolor, verb = verb, goffset=nparams);
     # Gradient correction for the image (parameters are left untouched)
     flux = sum(x[nparams+1:end])
@@ -1073,9 +1096,9 @@ function crit_sparco_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Ar
     return chi2_f + reg_f;
 end
 
-function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[]) #grey environment
+function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0]) #grey environment
     x_sol = []
-    crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, length(params_start), verb = verb)
+    crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, length(params_start), verb = verb, weights=weights)
     sol = OptimPackNextGen.vmlmb(crit, [params_start;x_start], verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
     return (sol[1:length(params_start)], sol[length(params_start)+1:end])
 end

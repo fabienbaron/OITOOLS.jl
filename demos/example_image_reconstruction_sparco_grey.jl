@@ -17,5 +17,10 @@ ft = setup_nfft(data, nx, pixsize);
 params_start=[0.44, 0.01, 0.15, 0.0, 1.6e-6] #V2:12.36 T3A: 4.14 T3P: 1.61
 x_start = gaussian2d(nx,nx,nx/6);
 x_start = vec(x_start)/sum(x_start);
-sol = reconstruct_sparco_gray(x_start, params_start, data, ft, verb=true); #grey environment
-sol = reconstruct_sparco_gray(sol[2], sol[1], data, ft, verb=true); #grey environment
+params, x = reconstruct_sparco_gray(x_start, params_start, data, ft, verb=true); #grey environment
+params, x = reconstruct_sparco_gray(x, params, data, ft, verb=true); #grey environment
+
+imdisp(sol[2], pixscale = pixsize)
+
+
+params_start=[0.1, 0.0, 0, 0.0, 1.6e-6] #V2:12.36 T3A: 4.14 T3P: 1.61
