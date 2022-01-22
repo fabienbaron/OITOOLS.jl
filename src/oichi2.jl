@@ -1089,7 +1089,7 @@ end
 
 function crit_sparco_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0,Float64},1}, data::OIdata, nparams::Int64; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
     chi2_f = chi2_sparco_nfft_fg(x,  g, ftplan, data, nparams, weights=weights)
-    reg_f = regularization(x[nparams+1:end], g, regularizers=regularizers, printcolor = printcolor, verb = verb, goffset=nparams);
+    reg_f = regularization(x[nparams+1:end], g, regularizers=regularizers, printcolor = printcolor, verb = verb, goffset=nparams+1);
     # Gradient correction for the image (parameters are left untouched)
     flux = sum(x[nparams+1:end])
     g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux ) / flux; # gradient correction to take into account the non-normalized image
@@ -1098,7 +1098,7 @@ end
 
 function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0]) #grey environment
     x_sol = []
-    crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, length(params_start), verb = verb, weights=weights)
+    crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, length(params_start), regularizers =regularizers, verb = verb, weights=weights)
     sol = OptimPackNextGen.vmlmb(crit, [params_start;x_start], verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
     return (sol[1:length(params_start)], sol[length(params_start)+1:end])
 end
