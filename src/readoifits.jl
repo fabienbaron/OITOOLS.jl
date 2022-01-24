@@ -71,6 +71,14 @@ mutable struct OIdata
     t4_lam::Array{Float64,1}
     t4_dlam::Array{Float64,1}
     t4_flag::Array{Bool,1}
+    #OIFlux
+    flux::Array{Float64,1}
+    flux_err::Array{Float64,1}
+    flux_mjd::Array{Float64,1}
+    flux_lam::Array{Float64,1}
+    flux_dlam::Array{Float64,1}
+    flux_flag::Array{Bool,1}
+    flux_sta_index::Array{Int64,1}
     #UV coverage
     uv::Array{Float64,2}
     uv_lam::Array{Float64,1}
@@ -397,7 +405,7 @@ function remove_redundant_uv!(data::OIdata; uvtol=2e2)
 end
 
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, verbose=true)
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, use_flux = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, verbose=true)
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
@@ -409,7 +417,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     tables = OIFITS.load(oifitsfile);
 
-    #  fluxtables = OIFITS.select(tables,"OI_FLUX");
+
     wavtables = OIFITS.select(tables,"OI_WAVELENGTH");
     if length(wavtables) ==0
         error("No OI_WAVELENGTH table in $oifitsfile")
@@ -638,6 +646,28 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         missing_oiarray_tables =  used_oiarray_tables[.![used_oiarray_tables[i] in all_oitables_names for i=1:length(used_oiarray_tables)]]
         @warn("Missing at least $(length(used_oiarray_tables)-length(all_oitables_names)) OI-ARRAY tables in this file - won't be able to import stations properly although uv coverage will be fine.")
         @warn("Missing tables are: $(missing_oiarray_tables)");
+    end
+
+    if use_flux
+        fluxtables = OIFITS.select(tables,"OI_FLUX");
+        flux_ntables = length(fluxtables)
+        flux = Array{Array{Float64,2}}(undef,flux_ntables)
+        flux_err = Array{Array{Float64,2}}(undef,flux_ntables)
+        flux_mjd = Array{Array{Float64,2}}(undef,flux_ntables)
+        flux_lam = Array{Array{Float64,2}}(undef,flux_ntables)
+        flux_dlam = Array{Array{Float64,2}}(undef,flux_ntables)
+        flux_flag = Array{Array{Float64,2}}(undef,flux_ntables)
+        flux_sta_index=Array{Array{Int64,2}}(undef,flux_ntables);
+        for itable = 1:flux_ntables
+            flux[itable] = fluxtables[itable].fluxdata
+            flux_err[itable] = fluxtables[itable].fluxerr
+            iwavtable = findfirst(fluxtables[itable].insname.==wavtableref);
+            flux_lam[itable] = repeat(wavtables[iwavtable].eff_wave, outer=[1,size(flux[itable],2)]); # spectral channels
+            flux_dlam[itable] = repeat(wavtables[iwavtable].eff_band, outer=[1,size(flux[itable],2)]); # width of spectral channels
+            flux_flag[itable] = fluxtables[itable].flag
+            flux_sta_index[itable] = repeat(fluxtables[itable].sta_index', size(flux[itable],1)); # width of spectral channels
+            flux_mjd[itable] = repeat(fluxtables[itable].mjd', size(flux[itable],1)); # width of spectral channels
+        end
     end
 
     if use_vis
@@ -888,8 +918,17 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         end
     end
 
-    # combine data from various tables into one
-    # This linearizes the tables
+    # combine data from all tables into a single array for each observable
+    if use_flux
+        flux = tablemerge(flux)
+        flux_err = tablemerge(flux_err)
+        flux_mjd = tablemerge(flux_mjd)
+        flux_lam = tablemerge(flux_lam)
+        flux_dlam = tablemerge(flux_dlam)
+        flux_flag = tablemerge(flux_flag)
+        flux_sta_index= tablemerge(flux_sta_index)
+    end
+
     if use_vis
     visamp_all = tablemerge(visamp_old);
     visamp_err_all =  tablemerge(visamp_err_old);
@@ -1040,7 +1079,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     uv_baseline = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
     #  full_sta_index = fill((vcat(Int64[]',Int64[]')),nwavbin,ntimebin);
     nuv = Array{Int64}(undef,nwavbin,ntimebin);
-
     nvisamp = zeros(Int64,nwavbin,ntimebin);
     nvisphi = zeros(Int64,nwavbin,ntimebin);
     vis_sta_index=fill((vcat(Int64[]',Int64[]')),nwavbin,ntimebin);

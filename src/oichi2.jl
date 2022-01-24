@@ -934,12 +934,12 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0
     # param[3] = diameter of star = 2.776e-01
     # param[4] : fixed, d_ind environment power law
     # param[5] :  lambda_0 (fixed) = 1.65e-06
-    # params=[0.8, 0.1, 0.5, -4.0, 1.65e-6]
+    # params=[0.8, 0.1, 0.5, 0.0, 1.65e-6]
     # Compute visibilty for model + image
     λ0 = params[5];
     λ = data.uv_lam
     α = (λ/λ0).^-4.0;
-    β = (λ/λ0).^params[4];
+    β = (λ/λ0).^(params[4]-4.0);
     fluxstar = params[1]*α;
     fluxbg = params[2]*α;
     fluxenv = (1.0-params[1]-params[2])*β;
@@ -958,7 +958,7 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{2,0
     λ0 = params[5];
     λ = data.uv_lam
     α = (λ/λ0).^-4.0;
-    β = (λ/λ0).^params[4];
+    β = (λ/λ0).^(params[4]-4.0);
     fluxstar = params[1]*α;
     fluxbg = params[2]*α;
     fluxenv = (1.0-params[1]-params[2])*β;
@@ -993,7 +993,7 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     λ0 = params[5];
     λ = data.uv_lam
     α = (λ/λ0).^-4.0;
-    β = (λ/λ0).^params[4];
+    β = (λ/λ0).^(params[4]-4.0);
     fluxstar = params[1]*α;
     fluxbg = params[2]*α;
     fluxenv = (1.0-params[1]-params[2])*β;
