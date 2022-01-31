@@ -86,6 +86,7 @@ mutable struct OIdata
     uv_mjd::Array{Float64,1}
     uv_baseline::Array{Float64,1}
     # Data product sizes
+    nflux::Int64
     nvisamp::Int64
     nvisphi::Int64
     nv2::Int64
@@ -120,7 +121,7 @@ println("OIdata")
 println("Original data file: $(data.filename)")
 println("Mean MJD: $(data.mean_mjd)")
 println("Wavelength range: $(minimum(data.uv_lam)) - $(maximum(data.uv_lam))")
-println("nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | nvisphi: $(data.nvisphi) | nv2: $(data.nv2) | nt3amp: $(data.nt3amp) | nt3phi: $(data.nt3phi)")
+println("nflux: $(data.nflux) | nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | nvisphi: $(data.nvisphi) | nv2: $(data.nv2) | nt3amp: $(data.nt3amp) | nt3phi: $(data.nt3phi)")
 end
 
 function Base.display(data::Array{OIdata})
@@ -447,6 +448,17 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         targetid_filter = unique(vcat([targettables[i].target_id for i=1:length(targettables)]...));
     end
 
+
+    fluxtables = []
+    flux_ntables = 0
+    if use_flux == true
+        fluxtables = OIFITS.select(tables,"OI_FLUX");
+        flux_ntables = length(fluxtables);
+        if flux_ntables == 0
+            use_flux = false;
+        end
+    end
+
     vistables = []
     vis_ntables = 0
     if use_vis == true
@@ -590,7 +602,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         @warn("Unknown stations, creating station names $unknown_station_names with corresponding indexes = $unknown_station_indexes \n");
     end
 
-    # To simplify things, we merge known and unknown stations
+    # To simplify things, we merge known and unknown (missing) stations
     station_names_all = vec(vcat(station_name..., unknown_station_names))
     telescope_names_all = vec(vcat(telescope_name..., unknown_tel_names))
     station_indexes_all = vec(vcat(station_index..., unknown_station_indexes))
@@ -649,7 +661,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     end
 
     if use_flux
-        fluxtables = OIFITS.select(tables,"OI_FLUX");
         flux_ntables = length(fluxtables)
         flux = Array{Array{Float64,2}}(undef,flux_ntables)
         flux_err = Array{Array{Float64,2}}(undef,flux_ntables)
@@ -661,12 +672,20 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         for itable = 1:flux_ntables
             flux[itable] = fluxtables[itable].fluxdata
             flux_err[itable] = fluxtables[itable].fluxerr
-            iwavtable = findfirst(fluxtables[itable].insname.==wavtableref);
-            flux_lam[itable] = repeat(wavtables[iwavtable].eff_wave, outer=[1,size(flux[itable],2)]); # spectral channels
-            flux_dlam[itable] = repeat(wavtables[iwavtable].eff_band, outer=[1,size(flux[itable],2)]); # width of spectral channels
             flux_flag[itable] = fluxtables[itable].flag
-            flux_sta_index[itable] = repeat(fluxtables[itable].sta_index', size(flux[itable],1)); # width of spectral channels
-            flux_mjd[itable] = repeat(fluxtables[itable].mjd', size(flux[itable],1)); # width of spectral channels
+            flux_mjd[itable] = repeat(fluxtables[itable].mjd', size(flux[itable],1));
+            iarray = findall(fluxtables[itable].arrname .== arraytableref)
+            if length(iarray)>0
+                flux_sta_index[itable]=conversion_index[iarray[1], station_index_offset.+repeat(fluxtables[itable].sta_index', size(flux[itable],1))];
+            else
+                flux_sta_index[itable]=1000 .+station_index_offset.+repeat(fluxtables[itable].sta_index', size(flux[itable],1));
+            end
+            iwavtable = findall(fluxtables[itable].insname .== wavtableref);
+            if (length(iwavtable) != 1)
+                error("Wave table confusion or Missing table\n");
+            end
+            flux_lam[itable] = repeat(wavtables[iwavtable[1]].eff_wave, outer=[1,size(flux[itable],2)]); # spectral channels
+            flux_dlam[itable] = repeat(wavtables[iwavtable[1]].eff_band, outer=[1,size(flux[itable],2)]); # width of spectral channels
         end
     end
 
@@ -920,13 +939,13 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     # combine data from all tables into a single array for each observable
     if use_flux
-        flux = tablemerge(flux)
-        flux_err = tablemerge(flux_err)
-        flux_mjd = tablemerge(flux_mjd)
-        flux_lam = tablemerge(flux_lam)
-        flux_dlam = tablemerge(flux_dlam)
-        flux_flag = tablemerge(flux_flag)
-        flux_sta_index= tablemerge(flux_sta_index)
+        flux_all = tablemerge(flux)
+        flux_err_all = tablemerge(flux_err)
+        flux_mjd_all = tablemerge(flux_mjd)
+        flux_lam_all = tablemerge(flux_lam)
+        flux_dlam_all = tablemerge(flux_dlam)
+        flux_flag_all = tablemerge(flux_flag)
+        flux_sta_index_all = tablemerge(flux_sta_index)
     end
 
     if use_vis
@@ -975,7 +994,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     t3_uv_all = cat(hcat(t3_u1_all, t3_v1_all), hcat(t3_u2_all, t3_v2_all),hcat(t3_u3_all, t3_v3_all), dims=3);
     end
 
-    if use_t4 == true
+    if use_t4
         t4amp_all = tablemerge(t4amp_old);
         t4amp_err_all = tablemerge(t4amp_err_old);
         t4phi_all = tablemerge(t4phi_old);
@@ -1022,6 +1041,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         if use_t4
             mjd_all = vcat(mjd_all, t4_mjd_all)
         end
+        if use_flux
+            mjd_all = vcat(mjd_all, flux_mjd_all)
+        end
         temporalbin[1] = [minimum(mjd_all)-0.001,maximum(mjd_all)+0.001]; # start & end mjd
     end
 
@@ -1045,6 +1067,10 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         if use_t4
             lam_all = vcat(lam_all, t4_lam_all)
             dlam_all = vcat(dlam_all, t4_dlam_all)
+        end
+        if use_flux
+            lam_all = vcat(lam_all, flux_lam_all)
+            dlam_all = vcat(dlam_all, flux_dlam_all)
         end
         spectralbin[1] = vcat(spectralbin[1], minimum(lam_all)-minimum(dlam_all[argmin(lam_all)])*0.5, maximum(lam_all)+maximum(dlam_all[argmax(lam_all)])*0.5);
     end
@@ -1144,6 +1170,15 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     indx_t4_4 = fill(Int64[],nwavbin,ntimebin);
     t4_sta_index=fill((vcat(Int64[]',Int64[]',Int64[]',Int64[]')),nwavbin,ntimebin);
 
+    nflux = zeros(Int64,nwavbin,ntimebin);
+    flux = fill((Float64[]),nwavbin,ntimebin);
+    flux_err = fill((Float64[]),nwavbin,ntimebin);
+    flux_mjd = fill((Float64[]),nwavbin,ntimebin);
+    flux_lam = fill((Float64[]),nwavbin,ntimebin);
+    flux_dlam = fill((Float64[]),nwavbin,ntimebin);
+    flux_flag =  fill((Bool[]),nwavbin,ntimebin);
+    flux_sta_index= fill(Int64[],nwavbin,ntimebin);
+
     # New iteration for splitting data
     for itimebin = 1:ntimebin
         # combine data to one bin
@@ -1166,6 +1201,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 if use_t4
                     bin_t4 = (t4_mjd_all.<=temporalbin[itimebin][2]).&(t4_mjd_all.>=temporalbin[itimebin][1]).&(t4_lam_all.<=spectralbin[iwavbin][2]).&(t4_lam_all.>=spectralbin[iwavbin][1]);
                 end
+                if use_flux
+                bin_flux = (flux_mjd_all.<=temporalbin[itimebin][2]).&(flux_mjd_all.>=temporalbin[itimebin][1]).&(flux_lam_all.<=spectralbin[iwavbin][2]).&(flux_lam_all.>=spectralbin[iwavbin][1]);
+                end
             else # select all
                 if use_vis
                     bin_vis = Bool.(ones(length(visphi_all)))
@@ -1178,6 +1216,9 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 end
                 if use_t4
                     bin_t4 = Bool.(ones(length(t4amp_all)))
+                end
+                if use_flux
+                    bin_flux = Bool.(ones(length(flux_all)))
                 end
             end
             if use_vis
@@ -1195,6 +1236,17 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             nvisamp[iwavbin,itimebin] = length(visamp[iwavbin,itimebin]);
             nvisphi[iwavbin,itimebin] = length(visphi[iwavbin,itimebin]);
             indx_vis[iwavbin,itimebin] = collect(1:nvisamp[iwavbin,itimebin]);
+            end
+
+            if use_flux
+                flux[iwavbin,itimebin] = flux_all[bin_flux];
+                flux_err[iwavbin,itimebin] = flux_err_all[bin_flux];
+                flux_mjd[iwavbin,itimebin] = flux_mjd_all[bin_flux];
+                flux_lam[iwavbin,itimebin] = flux_lam_all[bin_flux];
+                flux_dlam[iwavbin,itimebin] = flux_dlam_all[bin_flux];
+                flux_flag[iwavbin,itimebin] = flux_flag_all[bin_flux];
+                flux_sta_index[iwavbin,itimebin] = flux_sta_index_all[bin_flux];
+                nflux[iwavbin,itimebin] = length(flux_all[bin_flux])
             end
 
             if use_v2
@@ -1473,8 +1525,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
             end
 
             OIdataArr[iwavbin,itimebin] = OIdata( visamp[iwavbin,itimebin], visamp_err[iwavbin,itimebin], visphi[iwavbin,itimebin], visphi_err[iwavbin,itimebin], vis_baseline[iwavbin,itimebin], vis_mjd[iwavbin,itimebin], vis_lam[iwavbin,itimebin], vis_dlam[iwavbin,itimebin], vis_flag[iwavbin,itimebin], v2[iwavbin,itimebin], v2_err[iwavbin,itimebin], v2_baseline[iwavbin,itimebin], v2_mjd[iwavbin,itimebin],
-            mean_mjd[iwavbin,itimebin], v2_lam[iwavbin,itimebin], v2_dlam[iwavbin,itimebin], v2_flag[iwavbin,itimebin], t3amp[iwavbin,itimebin], t3amp_err[iwavbin,itimebin], t3phi[iwavbin,itimebin], t3phi_err[iwavbin,itimebin], [], [], t3_baseline[iwavbin,itimebin],t3_maxbaseline[iwavbin,itimebin], t3_mjd[iwavbin,itimebin], t3_lam[iwavbin,itimebin], t3_dlam[iwavbin,itimebin], t3_flag[iwavbin,itimebin], t4amp[iwavbin,itimebin], t4amp_err[iwavbin,itimebin], t4phi[iwavbin,itimebin], t4phi_err[iwavbin,itimebin], t4_baseline[iwavbin,itimebin],t4_maxbaseline[iwavbin,itimebin],t4_mjd[iwavbin,itimebin], t4_lam[iwavbin,itimebin], t4_dlam[iwavbin,itimebin], t4_flag[iwavbin,itimebin],
-            uv[iwavbin,itimebin], uv_lam[iwavbin,itimebin], uv_dlam[iwavbin,itimebin],uv_mjd[iwavbin,itimebin], uv_baseline[iwavbin,itimebin], nvisamp[iwavbin,itimebin], nvisphi[iwavbin,itimebin], nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_vis[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
+            mean_mjd[iwavbin,itimebin], v2_lam[iwavbin,itimebin], v2_dlam[iwavbin,itimebin], v2_flag[iwavbin,itimebin], t3amp[iwavbin,itimebin], t3amp_err[iwavbin,itimebin], t3phi[iwavbin,itimebin], t3phi_err[iwavbin,itimebin], [], [], t3_baseline[iwavbin,itimebin],t3_maxbaseline[iwavbin,itimebin], t3_mjd[iwavbin,itimebin], t3_lam[iwavbin,itimebin], t3_dlam[iwavbin,itimebin], t3_flag[iwavbin,itimebin], t4amp[iwavbin,itimebin], t4amp_err[iwavbin,itimebin], t4phi[iwavbin,itimebin], t4phi_err[iwavbin,itimebin], t4_baseline[iwavbin,itimebin],t4_maxbaseline[iwavbin,itimebin],t4_mjd[iwavbin,itimebin], t4_lam[iwavbin,itimebin], t4_dlam[iwavbin,itimebin], t4_flag[iwavbin,itimebin],flux[iwavbin,itimebin], flux_err[iwavbin,itimebin], flux_mjd[iwavbin,itimebin], flux_lam[iwavbin,itimebin], flux_dlam[iwavbin,itimebin], flux_flag[iwavbin,itimebin], flux_sta_index[iwavbin,itimebin],
+            uv[iwavbin,itimebin], uv_lam[iwavbin,itimebin], uv_dlam[iwavbin,itimebin],uv_mjd[iwavbin,itimebin], uv_baseline[iwavbin,itimebin], nflux[iwavbin,itimebin], nvisamp[iwavbin,itimebin], nvisphi[iwavbin,itimebin], nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_vis[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
             indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],indx_t4_1[iwavbin,itimebin], indx_t4_2[iwavbin,itimebin], indx_t4_3[iwavbin,itimebin],indx_t4_4[iwavbin,itimebin],new_station_name,new_telescope_name,new_station_index,vis_sta_index[iwavbin,itimebin],v2_sta_index[iwavbin,itimebin],t3_sta_index[iwavbin,itimebin], t4_sta_index[iwavbin,itimebin],oifitsfile);
         end
     end

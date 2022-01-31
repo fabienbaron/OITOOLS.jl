@@ -512,6 +512,20 @@ function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
     show(block=false)
 end
 
+function fluxplot(data::Union{OIdata,Array{OIdata,1}}; color="Black")
+    list_stations = sort(unique(vcat([data[n].flux_sta_index for n=1:length(data)]...)))
+    for i=1:length(list_stations)
+        for n=1:length(data)
+            indx = findall(data[n].flux_sta_index .== list_stations[i])
+            wavcol = data[n].flux_lam[indx]*1e6
+            mjd = data[n].flux_mjd[indx]
+            flux = data[n].flux[indx]
+            flux_err = data[n].flux_err[indx]
+            el = errorbar(wavcol,flux,yerr=flux_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+        end
+    end
+end
+
 function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
     if typeof(data)==OIdata
         data = [data]
