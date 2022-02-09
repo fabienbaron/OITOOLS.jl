@@ -131,19 +131,19 @@ println("Number of wavelength bins: $(size(data,1))")
 println("Number of time/epoch bins: $(size(data,2))")
 end
 
-function set_data_filter(data::OIdata; wav_intervals::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], mjd_intervals::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99],
+function set_data_filter(data::OIdata; wav_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], mjd_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], baseline_range::Array{Float64}=[0,1e99],
     filter_bad_data = false, filter_vis = true, filter_v2 = true, filter_t3amp = true, filter_t3phi = true,
     cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, force_full_vis = false, force_full_t3 = false, filter_v2_snr_threshold=0.01, uv_bad=Int64[], filter_visphi=false, filter_visamp=false)
 
-    if !isempty(wav_intervals)
-        if typeof(wav_intervals) == Array{Float64,1}
-            wav_intervals = [wav_intervals]
+    if !isempty(wav_range)
+        if typeof(wav_range) == Array{Float64,1}
+            wav_range = [wav_range]
         end
     end
 
-    if !isempty(mjd_intervals)
-        if typeof(mjd_intervals) == Array{Float64,1}
-            mjd_intervals = [mjd_intervals]
+    if !isempty(mjd_range)
+        if typeof(mjd_range) == Array{Float64,1}
+            mjd_range = [mjd_range]
         end
     end
 
@@ -222,13 +222,18 @@ function set_data_filter(data::OIdata; wav_intervals::Union{Array{Float64,1}, Ar
 
     # Filtering the uv plane (this will filter the observables too)
     # We define the uv indexes we keep as uv_good
+    if baseline_range != [0,1e99]
+        uv_bad = union(uv_bad, findall(data.uv_baseline.<baseline_range[1]), findall(data.uv_baseline.>baseline_range[2]))
+    end
     uv_good = setdiff(collect(1:data.nuv), uv_bad) # select all as good except in the uv_bad list
-    if !isempty(mjd_intervals)
-        uv_good = intersect(uv_good, vcat([findall( mjd_intervals[i][1]  .<= data.uv_mjd .<=  mjd_intervals[i][2]) for i=1:length(mjd_intervals)]...))
+    if !isempty(mjd_range)
+        uv_good = intersect(uv_good, vcat([findall( mjd_range[i][1]  .<= data.uv_mjd .<=  mjd_range[i][2]) for i=1:length(mjd_range)]...))
     end
-    if !isempty(wav_intervals)
-        uv_good = intersect(uv_good, vcat([findall( wav_intervals[i][1]  .<= data.uv_lam .<=  wav_intervals[i][2]) for i=1:length(wav_intervals)]...))
+    if !isempty(wav_range)
+        uv_good = intersect(uv_good, vcat([findall( wav_range[i][1]  .<= data.uv_lam .<=  wav_range[i][2]) for i=1:length(wav_range)]...))
     end
+
+
     uv_bad = setdiff(collect(1:data.nuv), uv_good)
 
     if (data.nvisamp>0 || data.nvisphi >0)
