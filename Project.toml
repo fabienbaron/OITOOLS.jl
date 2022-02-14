@@ -3,7 +3,7 @@ uuid = "58da1ff6-845a-519d-b3ee-ddbcc77dda80"
 keywords = ["astronomy", "interferometry"]
 license = "GPLv3"
 desc = "The all-in-one data analysis package for optical interferometry"
-version = "0.6.0"
+version = "0.7.0"
 
 [deps]
 ArrayTools = "1dc0ca97-c5ce-4e77-ac6d-c576ac9d7f27"
