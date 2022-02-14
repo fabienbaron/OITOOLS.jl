@@ -1,6 +1,6 @@
 # OITOOLS framework
 
-This is the documentation for **OITOOLS**, a [Julia](http://julialang.org/) package for optical interferometry.
+Welcome to the documentation for **OITOOLS**, a [Julia](http://julialang.org/) package for optical interferometry. OITOOLS is developed by Prof. Fabien Baron (Georgia State University) and collaborators.
 The sources are [here](https://github.com/fabienbaron/OITOOLS.jl).
 
 !!! warning
@@ -11,4 +11,5 @@ The sources are [here](https://github.com/fabienbaron/OITOOLS.jl).
 
 ```@index
 Pages=["install.md"]
+Modules = [OITOOLS]
 ```
