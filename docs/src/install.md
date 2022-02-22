@@ -1,29 +1,6 @@
 # OITOOLS Installation
 
-
-## Python Prerequisites
-
-### UltraNest
-
-As of version 0.6, OITOOLS uses UltraNest for model-fitting. You may install it as part of your local python install, or you may use Julia's Conda (see FAQ below), in which case you can type:
-
-```julia    
-using Conda
-Conda.add("ultranest", channel="conda-forge")
-```
-
-### Astroquery (optional)
-
-If you're going to use OITOOLS to simulate observations, you may need to look up targets with SIMBAD. OITOOLS already includes some code to call Astroquery. To use it you need to add astroquery to the python installation used by Julia. If you use Julia's Conda:
-
-```julia    
-using Conda
-Conda.add("astroquery", channel="astropy")
-```
-
-## Installation of Dependencies
-
-Overview of dependency usage:
+## Overview of Dependencies
 
 | Package       | Usage     | Algorithm/Functions |
 | ------------- |:-------------:|:-------------:|
@@ -36,23 +13,21 @@ Overview of dependency usage:
 | NearestNeighbors | simplify uv sampling | KD trees |
 | OIFITS | data import | read OIFITS files|
 
-### How to install dependencies: options 1, in a Julia environment
+## Step 1: installation of Python Packages (UltraNest, Astroquery)
 
-Simply clone OITOOLS using ```git clone```, cd to the project directory and use the package manager (```]``` key) then:
-```
-(v1.6) pkg> activate .
-
-(OITOOLS) pkg> instantiate
-```
-This will install the packages in the same state that is given by the OITOOLS Manifest.toml. Otherwise, it will resolve the latest versions of the dependencies compatible with the project.
-
-### How to install dependencies: options 2, global installation
-
-In case the previous instantiation does not work, or if you want to install all dependencies globally, you can use the package manager (```]``` key) then do:
-
+OITOOLS downloads then uses a Conda installation with the UltraNest ad Astroquery packages. For this you should copy/paste the following line into the REPL:
 ```julia
-add https://github.com/fabienbaron/OIFITS.jl#t4 https://github.com/emmt/ArrayTools.jl.git https://github.com/emmt/LazyAlgebra.jl.git https://github.com/emmt/OptimPackNextGen.jl.git CFITSIO AstroTime DelimitedFiles Documenter DocumenterTools FITSIO LaTeXStrings LinearAlgebra NFFT NLopt UltraNest LsqFit NearestNeighbors PyCall PyPlot Random SparseArrays SpecialFunctions Statistics Parameters https://github.com/fabienbaron/OITOOLS.jl.git
+using Pkg; Pkg.add("Conda"); using Conda; Conda.add("ultranest", channel="conda-forge"); Conda.add("astroquery", channel="astropy");
 ```
+These operations should take a couple of minutes to complete.
+
+### Step 2: installation of Julia Packages
+
+Because some of OITOOLS dependencies are not registered packages, we elect to go through ```Pkg()``` again rather than the activate/instantiate mechanism of Julia. Here again, copy/paste the following line into the REPL:
+```julia
+using Pkg; Pkg.add(["CFITSIO","AstroTime","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters"]); Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4"); Pkg.add(url="https://github.com/emmt/ArrayTools.jl.git");Pkg.add(url="https://github.com/emmt/LazyAlgebra.jl.git"); Pkg.add(url="https://github.com/emmt/OptimPackNextGen.jl.git");Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
+```
+Installation may take between 2-10 minutes depending on OS and computer performance.
 
 # Installation FAQ
 
