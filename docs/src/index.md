@@ -9,7 +9,8 @@ The sources are [here](https://github.com/fabienbaron/OITOOLS.jl).
 
 !!! warning
 
-    OITOOLS is still undergoing development. Documentation is still sparse.
+    OITOOLS is still undergoing development and documentation is sparse.
+    Everyone is welcome to contribute to the docs, tutorials or demos.
 
 ## Index
 
