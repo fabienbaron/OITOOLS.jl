@@ -21,7 +21,7 @@ using Pkg; Pkg.add("Conda"); using Conda; Conda.add("ultranest", channel="conda-
 ```
 These operations should take a couple of minutes to complete.
 
-### Step 2: installation of Julia Packages
+## Step 2: installation of Julia Packages
 
 Because some of OITOOLS dependencies are not registered packages, we elect to go through ```Pkg()``` again rather than the activate/instantiate mechanism of Julia. Here again, copy/paste the following line into the REPL:
 ```julia
@@ -29,7 +29,7 @@ using Pkg; Pkg.add(["CFITSIO","AstroTime","DelimitedFiles","Documenter","Documen
 ```
 Installation may take between 2-10 minutes depending on OS and computer performance.
 
-# Installation FAQ
+## Installation FAQ
 
 ### How do I install/use Python?
 
