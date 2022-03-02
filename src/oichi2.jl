@@ -57,18 +57,17 @@ end
 function setup_nfft_multiepochs(data, nx, pixsize)
     nepochs = size(data,1);
     scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-    fftplan_multi = Array{Any}(undef, nepochs);
+    fftplan_multi = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}}}(undef, nepochs);
     for i=1:nepochs
         fftplan_multi[i]=setup_nfft(data[i], nx, pixsize);
     end
     return fftplan_multi
 end
 
-
 function setup_nfft_polychromatic(data, nx, pixsize)
     nwavs = size(data,1);
     scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-    fftplan_multi = Array{Any}(undef, nwavs);
+    fftplan_multi = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}}}(undef, nwavs);
     for i=1:nwavs
         fftplan_multi[i]=setup_nfft(data[i], nx, pixsize);
     end
@@ -755,7 +754,7 @@ function crit_multitemporal_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft
 end
 
 
-function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Array{Array{NFFT.NFFTPlan{Float64,2,1},1},1}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
+function crit_polychromatic_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Vector{Array{NFFTPlan{Float64, 2, 1}}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
     nwavs = length(ft);
     if printcolor == []
         printcolor=Array{Symbol}(undef,nwavs);
@@ -882,7 +881,7 @@ function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata
         regularizers = fill([],length(data))
     end
 
-    if typeof(ft) == Array{Array{NFFT.NFFTPlan{Float64,2,1},1},1}
+    if typeof(ft) == Vector{Array{NFFT.NFFTPlan{Float64, 2, 1}}}
         crit = (x,g)->crit_polychromatic_nfft_fg(x, g, ft, data, weights = weights, printcolor=printcolor, regularizers=regularizers, use_diffphases = use_diffphases, verb = verb)
         x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=true, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
     else

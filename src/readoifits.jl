@@ -1082,8 +1082,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     if ((polychromatic == true) && (get_specbin_file == true))
         if length(wavtables)>1
-            @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels.");
-            @warn("I will try to load the first one only")
+            @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels. Wavelength selection is currently based the first table only");
             wavarray = hcat(wavtables[1].eff_wave-wavtables[1].eff_band/2, wavtables[1].eff_wave+wavtables[1].eff_band/2);
             spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
         else
