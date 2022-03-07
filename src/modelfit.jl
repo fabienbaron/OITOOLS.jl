@@ -801,13 +801,16 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
 end
 
 function model_to_image(model::OImodel;nx=128, pixsize=0.1, nuv=1024, Bmax=3000, λ = 1.6e-6, display=false)
+if pixsize * (pi / 180.0) / 3600000.0*Bmax/λ > 0.5
+    @warn("Image sampling issue - please check pixsize x Bmax/λ");
+end
 uv = Array{Float64}(undef,2, nuv*nuv);
-x = collect(range(-Bmax, Bmax, length=nuv))/λ
+x = collect(range(-1.0, 1.0, length=nuv))*Bmax/λ
 uv[1,:] = vec(repeat(x,1, nuv))
 uv[2,:] = vec(repeat(x,1, nuv)')
 V = model_to_cvis(model, uv, [λ])
-fftplan  = plan_nfft(pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv, (nx,nx), 4, 2.0);
-img = real.(nfft_adjoint(fftplan, V)); img = img.*(img .>0);
+fftplan  = plan_nfft(pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv, (nx,nx), m=4, σ=2.0);
+img = real.(adjoint(fftplan)*V); img = img.*(img .>0);
 if display == true
     imdisp(img, pixscale=pixsize);
 end
