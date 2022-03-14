@@ -489,8 +489,6 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
     end
 
     loglikelihood=param::AbstractVector{<:Real}->-0.5*model_to_chi2(data, model, param, chi2_weights=chi2_weights);
-
-
     loglikelihood_vectorized = let loglikelihood = loglikelihood
         # UltraNest has variate in rows:
         (X::AbstractMatrix{<:Real}) -> loglikelihood.(eachrow(X))

@@ -298,11 +298,10 @@ end
 
 function compactness(x,g; verb = false)
     nx = Int(sqrt(length(x)))
-    y = repeat(collect(1:nx).-0.5*(nx-1),1,nx)
-    yy = y.*y
+    yy = repeat(collect(1:nx).-0.5*(nx-1),1,nx).^2
     rr = vec(yy+yy')/(nx*nx)
-    f = sum(x.*rr)
-    g[:] .=  rr;
+    f = sum(rr.*(x.^2))
+    g[:] .=  2*rr.*x;
     if verb == true
         print(" compactness:", f);
     end
