@@ -247,7 +247,7 @@ function create_component(;type::String=[], name::String="") # this autofill def
     elseif type == "ring"
         model = OIcomponent(type="ring", name=name,
         vis_function=visibility_GaussianLorentzian_ring_az,
-        vis_params= [OIparam(name="Ring radius", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM/Radius", minval=0.0, maxval=1.0),
+        vis_params= [OIparam(name="Ring radius", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM", minval=0.0, maxval=5.0),
         OIparam(name="Az1", minval=-1.0, maxval=1.0),OIparam(name="Az2", minval=-1.0, maxval=1.0),OIparam(name="Az3", minval=-1.0, maxval=1.0),OIparam(name="Az4", minval=-1.0, maxval=1.0),OIparam(name="Gauss/Lorentz ratio", val=0, minval=0, maxval=1.0)],
         pos_function = pos_fixed,
         pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
@@ -257,7 +257,7 @@ function create_component(;type::String=[], name::String="") # this autofill def
     elseif type == "ring-polychromatic"
         model = OIcomponent(type="ring", name=name,
         vis_function=visibility_GaussianLorentzian_ring_az,
-        vis_params= [OIparam(name="Ring radius", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM/Radius", minval=0.0, maxval=1.0),
+        vis_params= [OIparam(name="Ring radius", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM", minval=0.0, maxval=5.0),
         OIparam(name="Az1", minval=-1.0, maxval=1.0),OIparam(name="Az2", minval=-1.0, maxval=1.0),OIparam(name="Az3", minval=-1.0, maxval=1.0),OIparam(name="Az4", minval=-1.0, maxval=1.0),OIparam(name="Gauss/Lorentz ratio", val=0, minval=0, maxval=1.0)],
         pos_function = pos_fixed,
         pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
@@ -342,6 +342,13 @@ function model_to_cvis(model::OImodel, data::OIdata)
 end
 
 
+function model_to_obs(model::OImodel, data::OIdata)
+cvis_model = model_to_cvis(model, data);
+v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+return v2_model, t3amp_model, t3phi_model
+end
+
 function model_to_cvis(model::OImodel, uv::Array{Float64,2}, λ::Array{Float64,1})
     V=zeros(Complex{Float64},size(uv,2))
     flux = zeros(Float64, size(uv,2)); # normalization
@@ -403,6 +410,39 @@ function model_to_chi2(data::OIdata, model::OImodel, params::AbstractVector{<:Re
 
     chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
 end
+
+function model_to_chi2(data::OIdata, model::OImodel;chi2_weights=[1.0,1.0,1.0]) #with no dispatch_params
+    #Compute vis
+    cvis_model = model_to_cvis(model, data);
+    chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
+    if (data.nv2>0) && (chi2_weights[1]>0.0)
+        v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+        chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
+    else
+        chi2_weights[1]=0.0
+    end
+
+    if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
+        t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        if (data.nt3amp>0) && (chi2_weights[2]>0.0)
+            chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
+        else
+            chi2_weights[2]=0.0
+        end
+        if (data.nt3phi>0) && (chi2_weights[3]>0.0)
+            chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2)/data.nt3phi;
+        else
+            chi2_weights[3] = 0.0;
+        end
+    else
+        chi2_weights[2] = 0.0;
+        chi2_weights[3] = 0.0;
+    end
+
+    chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
+end
+
+
 
 
 function get_model_bounds(model::OImodel)

@@ -1,4 +1,4 @@
-using LinearAlgebra, SpecialFunctions, NFFT
+using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT
 
 function setup_dft(uv::Array{Float64,2}, nx, pixsize)
     scale_rad = pixsize * (pi / 180.0) / 3600000.0
@@ -197,6 +197,54 @@ function reg_centering(x,g; verb = false) # takes a 1D array
     return f
 end
 
+
+
+function setup_radial_reg(params, nx)
+# Create radial operators
+xx = repeat( collect(1:nx) .- (nx-1)/2, 1, nx)
+yy = xx'
+ϕ = params[1]/180*pi; #position angle
+inc = params[2]/180*pi;
+rx = yy*cos(ϕ) + xx*sin(ϕ)
+ry = (-yy*sin(ϕ) + xx*cos(ϕ))*cos(inc)
+rr = vec(sqrt.(rx.^2 + ry.^2));
+# Visual check
+# indx= findall(rr.>i-1 .&& rr.<i+1) ; y=deepcopy(x); y[indx].=0;imdisp(y)
+
+nrad = div(nx,2)-1
+profile_mask = Array{Vector{Int64}}(undef, nrad)
+profile_npix = zeros(Int64, nrad)
+radH = Array{SparseMatrixCSC{Float64, Int64}}(undef, nrad)
+for i=1:nrad
+    profile_mask[i] = findall(rr.>i-1 .&& rr.<i+1);
+    profile_npix[i] = length(profile_mask[i])
+    P = sparse(1:profile_npix[i],profile_mask[i], ones(Float64,profile_npix[i]),profile_npix[i],nx*nx)
+    O = ones(Float64,profile_npix[i])/profile_npix[i]
+    radH[i] = (P .- O'*P)/sqrt(profile_npix[i]-1)
+end
+# Check: var(x[profile_mask[i]]) == norm(radH[i]*x)^2 to numerical precision
+# Create big H so that sum([var(x[profile_mask[i]]) for i=1:nrad]) == norm(H*x)^2
+H = vcat(radH...)
+# and big G
+G = (radH[1]'*radH[1])
+for i=1:nrad
+    G += (radH[i]'*radH[i])
+end
+G *= 2
+return H, G
+end
+
+function radial_variance(x,g; H=[], G=[], verb = false)
+# Takes in matrices to compute the total radial variance and its gradient
+    nx = Int(sqrt(length(x)))
+    f = norm(H*x)^2
+    g[:] .=  G*x;
+    if verb == true
+        print(" radialvar:", f);
+    end
+    return f
+end
+
 function tvsq(x,tvsq_g; verb = false)
     # Total squared variation
     nx = Int(sqrt(length(x)))
@@ -332,9 +380,6 @@ function numgrad_1D(func;x=[], N=400, δ = 1e-6)
     return numerical_g;
 end
 
-
-
-
 function checkgrad_1D(func;x=[], N=400, δ = 1e-6)
     if x==[]
         x = abs.(rand(N))
@@ -343,7 +388,7 @@ function checkgrad_1D(func;x=[], N=400, δ = 1e-6)
     end
     numerical_g = similar(x)
     analytic_g = similar(x)
-    for i=1:N
+    for i=1:100
         orig = x[i]
         x[i] = orig + 2*δ
         f2r = func(x,analytic_g)
@@ -475,8 +520,12 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
             reg_f += regularizers[ireg][2]*l2sq(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "compactness"
             reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb)
+        elseif regularizers[ireg][1] == "radialvar"
+            reg_f += regularizers[ireg][2]*radial_variance(x,temp_g, H=regularizers[ireg][3], G=regularizers[ireg][4], verb = verb)
         elseif regularizers[ireg][1] == "entropy"
             reg_f += regularizers[ireg][2]*entropy(x,temp_g, verb = verb)
+        else
+            error("Unknown regularizer");
         end
         reg_g[goffset:end] += regularizers[ireg][2]*temp_g
     end

@@ -1053,7 +1053,6 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     end
 
     # get spectralbin if get_spectralbin_from_file == true
-
     if ((spectralbin == [[]]) && (get_specbin_file == true) && (polychromatic == false))
         dlam_all = []
         lam_all = []
