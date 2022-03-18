@@ -210,28 +210,30 @@ ry = (-yy*sin(ϕ) + xx*cos(ϕ))*cos(inc)
 rr = vec(sqrt.(rx.^2 + ry.^2));
 # Visual check
 # indx= findall(rr.>i-1 .&& rr.<i+1) ; y=deepcopy(x); y[indx].=0;imdisp(y)
-
 nrad = div(nx,2)-1
 profile_mask = Array{Vector{Int64}}(undef, nrad)
 profile_npix = zeros(Int64, nrad)
 radH = Array{SparseMatrixCSC{Float64, Int64}}(undef, nrad)
+radM = Array{SparseMatrixCSC{Float64, Int64}}(undef, nrad)
 for i=1:nrad
     profile_mask[i] = findall(rr.>i-1 .&& rr.<i+1);
     profile_npix[i] = length(profile_mask[i])
     P = sparse(1:profile_npix[i],profile_mask[i], ones(Float64,profile_npix[i]),profile_npix[i],nx*nx)
     O = ones(Float64,profile_npix[i])/profile_npix[i]
     radH[i] = (P .- O'*P)/sqrt(profile_npix[i]-1)
+    radM[i] = O'*P
 end
 # Check: var(x[profile_mask[i]]) == norm(radH[i]*x)^2 to numerical precision
 # Create big H so that sum([var(x[profile_mask[i]]) for i=1:nrad]) == norm(H*x)^2
 H = vcat(radH...)
+M = vcat(radM...)
 # and big G
 G = (radH[1]'*radH[1])
 for i=1:nrad
     G += (radH[i]'*radH[i])
 end
 G *= 2
-return H, G
+return H, G, M
 end
 
 function radial_variance(x,g; H=[], G=[], verb = false)
@@ -966,11 +968,28 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Flo
     cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
     v2_model = cvis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+    chi2_v2 = 0.0;
+    chi2_t3amp = 0.0;
+    chi2_t3phi = 0.0;
+    if weights[1]>0
+        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
+    end
 
-    return chi2_v2 + chi2_t3amp + chi2_t3phi
+    if weights[2]>0
+        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
+    end
+    if weights[3]>0
+            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+    end
+    if verb==true
+        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
+        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
+        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
+    end
+    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 # TBD: merge with previous function
-function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; verb = true ) # criterion function for nfft
+function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
     # x is of length = N*N+Nparams
     params=x[1:nparams]  # extract parameters
     λ0 = params[5];
