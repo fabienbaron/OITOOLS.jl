@@ -6,20 +6,20 @@
 using PyPlot,PyCall, LaTeXStrings, Statistics
 
 function set_oiplot_defaults()
-PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
-PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[12]
-PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
-PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
-PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.size"]=[6]
-PyDict(pyimport("matplotlib")."rcParams")["xtick.major.width"]=[1]
-PyDict(pyimport("matplotlib")."rcParams")["ytick.major.width"]=[1]
-PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.width"]=[1]
-PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
-PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
-PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
-#PyDict(pyimport("matplotlib")."rcParams")["agg.path.chunksize"]=[10000]
+    PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
+    PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[12]
+    PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
+    PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
+    PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
+    PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.size"]=[6]
+    PyDict(pyimport("matplotlib")."rcParams")["xtick.major.width"]=[1]
+    PyDict(pyimport("matplotlib")."rcParams")["ytick.major.width"]=[1]
+    PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.width"]=[1]
+    PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.width"]=[1]
+    PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
+    PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
+    PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
+    #PyDict(pyimport("matplotlib")."rcParams")["agg.path.chunksize"]=[10000]
 end
 
 global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
@@ -87,27 +87,27 @@ function onclickidentify(event)
         xclick=event.xdata
         yclick=event.ydata
         if !isnothing(xclick) & !isnothing(yclick)
-        ax=gca()
-        ymin,ymax=ax.get_ylim()
-        xmin,xmax=ax.get_xlim()
-        normfactor=abs(xmax-xmin)/abs(ymax-ymin)
-        xdat = v2base./1e6
-        ydat = v2value
-        errdat = v2err
-        indx_id = argmin(sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2))
-        clickbaseval=clickbase[:,indx_id]
-        printstyled("----------------------------\n",color=:black);
-        if length(clickfile)!=1
-            printstyled("Filename: ",clickfile[indx_id],"\n",color=:orange)
-        else
-            printstyled("Filename: ",clickfile[1],"\n",color=:orange)
-        end
-        printstyled("Radial frequency: ",xdat[indx_id]," V2: ",ydat[indx_id]," V2_err: ",errdat[indx_id],"\n",color=:blue);
-        printstyled("λ: ", clicklam[indx_id], " δλ: ", clickdlam[indx_id], "\n",color=:green);
-        printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red);
-        printstyled("MJD: ",clickmjd[indx_id], " UT: ", Dates.format(mjd_to_utdate(clickmjd[indx_id]),"Y-m-d H:M:S"), "\n",color=:red )
-        #elseif clicktype == right_click
-        #    fig.canvas.mpl_disconnect(cid
+            ax=gca()
+            ymin,ymax=ax.get_ylim()
+            xmin,xmax=ax.get_xlim()
+            normfactor=abs(xmax-xmin)/abs(ymax-ymin)
+            xdat = v2base./1e6
+            ydat = v2value
+            errdat = v2err
+            indx_id = argmin(sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2))
+            clickbaseval=clickbase[:,indx_id]
+            printstyled("----------------------------\n",color=:black);
+            if length(clickfile)!=1
+                printstyled("Filename: ",clickfile[indx_id],"\n",color=:orange)
+            else
+                printstyled("Filename: ",clickfile[1],"\n",color=:orange)
+            end
+            printstyled("Radial frequency: ",xdat[indx_id]," V2: ",ydat[indx_id]," V2_err: ",errdat[indx_id],"\n",color=:blue);
+            printstyled("λ: ", clicklam[indx_id], " δλ: ", clickdlam[indx_id], "\n",color=:green);
+            printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red);
+            printstyled("MJD: ",clickmjd[indx_id], " UT: ", Dates.format(mjd_to_utdate(clickmjd[indx_id]),"Y-m-d H:M:S"), "\n",color=:red )
+            #elseif clicktype == right_click
+            #    fig.canvas.mpl_disconnect(cid
         end
     end
 end
@@ -311,16 +311,16 @@ end
 
 function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false, figtitle="")
     if idpoint==true # interactive plot, click to identify point
-         global v2base=data.v2_baseline
-         global v2value=data.v2
-         global v2err=data.v2_err
-         global clickbase=data.v2_sta_index
-         global clickname=data.sta_name
-         global clickmjd=data.v2_mjd
-         global clicklam=data.v2_lam
-         global clickdlam=data.v2_dlam
-         global clickfile=[]
-         push!(clickfile,data.filename)
+        global v2base=data.v2_baseline
+        global v2value=data.v2
+        global v2err=data.v2_err
+        global clickbase=data.v2_sta_index
+        global clickname=data.sta_name
+        global clickmjd=data.v2_mjd
+        global clicklam=data.v2_lam
+        global clickdlam=data.v2_dlam
+        global clickfile=[]
+        push!(clickfile,data.filename)
     end
     if typeof(data)==OIdata
         data = [data]
@@ -584,32 +584,32 @@ function diffphiplot(data::Array{OIdata,1}; color="Black",markopt=false, legend_
     #
     # Note: this is a special kind of plot, which doesn't follow the classic plotting recipe
     #
-
-        baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_vis...)))
-        # Creating one subplot per baseline
-        fig ,ax=  plt.subplots(num="Differential phase phase data",nrows=length(baseline), sharex=true,figsize=(10,5),facecolor="White")
-        suptitle("Differential phase phase data")
-        subplots_adjust(hspace=0.0)
-        mx=matplotlib[:ticker][:MultipleLocator](20)
-        for i=1:length(baseline)
-            title(baseline[i], x=0.9, y=0.75)
-            loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
-            baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
-            wavcol = vcat([data[n].uv_lam[data[n].indx_vis[loc[n]]]*1e9 for n=1:length(data)]...)
-            visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
-            visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
-            plt.axes(ax[i])
-            ax[i][:xaxis][:set_minor_locator](mx)
-            errorbar(wavcol,visphi,yerr=visphi_err,fmt="o",markersize=0.5,ecolor="Gainsboro",elinewidth=.5)
-            if i==length(baseline)
-                xlabel("λ (nm)")
-            end
-            ylabel("Diff phase (°)")
-            grid(true,which="both",color="LightGrey",linestyle=":")
+    baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
+    baseline=sort(unique(vcat(baseline_list_vis...)))
+    # Creating one subplot per baseline
+    fig ,ax=  plt.subplots(num="Differential phase data",nrows=length(baseline), sharex=true,figsize=(10,5),facecolor="White")
+    suptitle("Differential phase data")
+    subplots_adjust(hspace=0.0)
+    mx=matplotlib[:ticker][:MultipleLocator](20)
+    for i=1:length(baseline)
+        title(baseline[i], x=0.9, y=0.75)
+        loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
+        baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
+        wavcol = vcat([data[n].uv_lam[data[n].indx_vis[loc[n]]]*1e9 for n=1:length(data)]...)
+        visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
+        visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
+        plt.axes(ax[i])
+        ax[i][:xaxis][:set_minor_locator](mx)
+        errorbar(wavcol,visphi,yerr=visphi_err,fmt="o",markersize=0.5,ecolor="Gainsboro",elinewidth=.5)
+        if i==length(baseline)
+            xlabel("λ (nm)")
         end
-        ax[length(baseline)][:tick_params](axis="x", which="major", length=10.0)
-        ax[length(baseline)][:tick_params](axis="x", which="minor", length=5.0)
+        ylabel("Δϕ (°)")
+        grid(true,which="both",color="LightGrey",linestyle=":")
+    end
+    ax[length(baseline)][:tick_params](axis="x", which="major", length=10.0)
+    ax[length(baseline)][:tick_params](axis="x", which="minor", length=5.0)
+    tight_layout();
     if filename !=""
         savefig(filename)
     end

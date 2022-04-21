@@ -27,6 +27,7 @@ function tablemerge(tabtomerge)
     return vcat([vec(tabtomerge[i]) for i=1:length(tabtomerge)]...);
 end
 
+
 mutable struct OIdata
     # Complex visibilities
     visamp::Array{Float64,1}
@@ -415,7 +416,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
-    #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true; cutoff_minv2 = -1; cutoff_maxv2 = 2.0; cutoff_mint3amp = -1.0; cutoff_maxt3amp = 1.5;
+    #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true; cutoff_minv2 = -1; cutoff_maxv2 = 2.0; cutoff_mint3amp = -1.0; cutoff_maxt3amp = 1.5; use_flux=false;
     if !isfile(oifitsfile)
         @error("readoifits could not locate the requested data file -- please check path\n")
         return [[]];
@@ -657,6 +658,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     # Quick OI-ARRAY check
     # TODO: update so that it's not redundant with previous checks
+    #       update to use visphi and flux
     all_oitables_names = unique(vcat((arraytables[i].arrname for i=1:length(arraytables))...))
     used_oiarray_tables = unique(vcat([v2tables[itable].arrname for itable = 1:v2_ntables], [t3tables[itable].arrname for itable = 1:t3_ntables]))
     if length(used_oiarray_tables)>length(all_oitables_names)
@@ -966,6 +968,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     vis_baseline_all = tablemerge(vis_baseline_old);
     vis_sta_index_all= hcat([ reshape(vis_sta_index_old[i], 2, div(length(vis_sta_index_old[i]), 2)) for i=1:length(vis_sta_index_old) ]...)
     end
+
     if use_v2
     v2_all = tablemerge(v2_old);
     v2_err_all =  tablemerge(v2_err_old);
@@ -1079,15 +1082,18 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         spectralbin[1] = vcat(spectralbin[1], minimum(lam_all)-minimum(dlam_all[argmin(lam_all)])*0.5, maximum(lam_all)+maximum(dlam_all[argmax(lam_all)])*0.5);
     end
 
+
     if ((polychromatic == true) && (get_specbin_file == true))
         if length(wavtables)>1
             @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels. Wavelength selection is currently based the first table only");
-            wavarray = hcat(wavtables[1].eff_wave-wavtables[1].eff_band/2, wavtables[1].eff_wave+wavtables[1].eff_band/2);
-            spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
-        else
-            wavarray = hcat(wavtables[1].eff_wave-wavtables[1].eff_band/2, wavtables[1].eff_wave+wavtables[1].eff_band/2);
-            spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
         end
+        #            Double check no band overlap
+           overlap = sum((wavtables[1].eff_wave[1:end-1]+wavtables[1].eff_band[1:end-1]/2).>(wavtables[1].eff_wave[2:end]-wavtables[1].eff_band[2:end]/2))
+            if overlap>0
+                @warn("Wavebands are overlapping - polychromatic channels selection will be based on narrower bands");
+            end
+            wavarray = hcat(wavtables[1].eff_wave-wavtables[1].eff_band/20, wavtables[1].eff_wave+wavtables[1].eff_band/20);
+            spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
     end
 
     # number of spectral bins
@@ -1340,7 +1346,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
                 end
 
                 if special_filter_diffvis==true # if we use the diff vis filter, we need to do this after all the data has been read in
-                                                # hence here we won't actually filter anything
+                                                # hence at this location we won't be actually filter anything yet
                     vis_good = findall( vis_flag[iwavbin,itimebin].!=2)
                 end
                 good_uv_vis = indx_vis[iwavbin,itimebin][vis_good];
@@ -1540,19 +1546,20 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     # Post-treatment of data
     #
-    if special_filter_diffvis==true # remove diffphases when some spectral channels have been flagged
+    if special_filter_diffvis==true # remove diffphases when data in some spectral channels have been flagged
     for itimebin = 1:ntimebin
-        indx=findall(vec((prod(hcat([(1 .-OIdataArr[i, itimebin].vis_flag) for i=1:nwavbin]...),dims=2))).==1) # this selects the baselines for which all spectral channels are not flagged
+        indx=findall(vec((prod(hcat([(1 .-OIdataArr[i, itimebin].vis_flag) for i=1:nwavbin]...),dims=2))).==1) # diffphi baselines for which no spectral channels are flagged
         for i=1:nwavbin
-        OIdataArr[i,itimebin].visphi = OIdataArr[i,itimebin].visphi[indx]
-        OIdataArr[i,itimebin].visphi_err = OIdataArr[i,itimebin].visphi_err[indx]
-        OIdataArr[i,itimebin].vis_baseline = OIdataArr[i,itimebin].vis_baseline[indx]
-        OIdataArr[i,itimebin].vis_mjd = OIdataArr[i,itimebin].vis_mjd[indx]
-        OIdataArr[i,itimebin].vis_lam = OIdataArr[i,itimebin].vis_lam[indx]
-        OIdataArr[i,itimebin].vis_dlam = OIdataArr[i,itimebin].vis_dlam[indx]
-        OIdataArr[i,itimebin].vis_sta_index = OIdataArr[i,itimebin].vis_sta_index[:,indx]
-        OIdataArr[i,itimebin].vis_flag= OIdataArr[i,itimebin].vis_flag[indx]
-        OIdataArr[i,itimebin].indx_vis = OIdataArr[i,itimebin].indx_vis[indx]
+            OIdataArr[i,itimebin].nvisphi = length(indx)
+            OIdataArr[i,itimebin].visphi = OIdataArr[i,itimebin].visphi[indx]
+            OIdataArr[i,itimebin].visphi_err = OIdataArr[i,itimebin].visphi_err[indx]
+            OIdataArr[i,itimebin].vis_baseline = OIdataArr[i,itimebin].vis_baseline[indx]
+            OIdataArr[i,itimebin].vis_mjd = OIdataArr[i,itimebin].vis_mjd[indx]
+            OIdataArr[i,itimebin].vis_lam = OIdataArr[i,itimebin].vis_lam[indx]
+            OIdataArr[i,itimebin].vis_dlam = OIdataArr[i,itimebin].vis_dlam[indx]
+            OIdataArr[i,itimebin].vis_sta_index = OIdataArr[i,itimebin].vis_sta_index[:,indx]
+            OIdataArr[i,itimebin].vis_flag= OIdataArr[i,itimebin].vis_flag[indx]
+            OIdataArr[i,itimebin].indx_vis = OIdataArr[i,itimebin].indx_vis[indx]
         end
     end
     end

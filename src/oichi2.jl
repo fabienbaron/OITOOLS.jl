@@ -201,15 +201,14 @@ end
 
 function setup_radial_reg(params, nx)
 # Create radial operators
-xx = repeat( collect(1:nx) .- (nx-1)/2, 1, nx)
-yy = xx'
+xx = repeat( collect(1:nx) .- (nx-1)/2, 1, nx); yy = xx';
 ϕ = params[1]/180*pi; #position angle
 inc = params[2]/180*pi;
-rx = yy*cos(ϕ) + xx*sin(ϕ)
-ry = (-yy*sin(ϕ) + xx*cos(ϕ))*cos(inc)
+rx = yy*cos(ϕ) + xx*sin(ϕ);
+ry = (-yy*sin(ϕ) + xx*cos(ϕ))*cos(inc);
 rr = vec(sqrt.(rx.^2 + ry.^2));
 # Visual check
-# indx= findall(rr.>i-1 .&& rr.<i+1) ; y=deepcopy(x); y[indx].=0;imdisp(y)
+#indx= findall(rr.>i-1 .&& rr.<i+1) ; y=deepcopy(x); y[indx].=0;imdisp(y)
 nrad = div(nx,2)-1
 profile_mask = Array{Vector{Int64}}(undef, nrad)
 profile_npix = zeros(Int64, nrad)
@@ -988,6 +987,7 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Flo
     end
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
+
 # TBD: merge with previous function
 function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
     # x is of length = N*N+Nparams
