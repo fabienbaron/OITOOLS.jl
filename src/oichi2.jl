@@ -197,7 +197,18 @@ function reg_centering(x,g; verb = false) # takes a 1D array
     return f
 end
 
-
+function visual_radial_params(angles, x, i)
+    nx = Int(sqrt(length(x)))
+    xx = repeat( collect(1:nx) .- (nx-1)/2, 1, nx)
+    yy = xx'
+    ϕ = angles[1]/180*pi; #position angle
+    inc = angles[2]/180*pi;
+    rx = yy*cos(ϕ) + xx*sin(ϕ)
+    ry = (-yy*sin(ϕ) + xx*cos(ϕ))*cos(inc)
+    rr = vec(sqrt.(rx.^2 + ry.^2));
+    indx = findall(rr.>i-1 .&& rr.<i+1);
+    y=deepcopy(x); y[indx].=0;imdisp(y)
+end
 
 function setup_radial_reg(params, nx)
 # Create radial operators
@@ -214,7 +225,7 @@ profile_mask = Array{Vector{Int64}}(undef, nrad)
 profile_npix = zeros(Int64, nrad)
 radH = Array{SparseMatrixCSC{Float64, Int64}}(undef, nrad)
 radM = Array{SparseMatrixCSC{Float64, Int64}}(undef, nrad)
-for i=1:nrad
+@Threads.threads for i=1:nrad
     profile_mask[i] = findall(rr.>i-1 .&& rr.<i+1);
     profile_npix[i] = length(profile_mask[i])
     P = sparse(1:profile_npix[i],profile_mask[i], ones(Float64,profile_npix[i]),profile_npix[i],nx*nx)
@@ -614,18 +625,18 @@ function chi2_dft_fg(x::Array{Float64,1}, g::Array{Float64,1}, dft::Array{Comple
     g_v2 = 0.0
     g_t3amp = 0.0
     g_t3phi = 0.0
-    if (weights[1]>0)||(data.nv2==0)
+    if (weights[1]>0)&&(data.nv2>0)
         chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
         g_v2 = real(transpose(dft[data.indx_v2,:])*(4*((v2_model-data.v2)./data.v2_err.^2).*conj(cvis_model[data.indx_v2])));
     end
 
-    if (weights[2]>0)||(data.nt3amp==0)
+    if (weights[2]>0)&&(data.nt3amp>0)
         chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
         dT3 = 2.0*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
         g_t3amp = real(transpose(dft[data.indx_t3_1,:])*(dT3.*conj(cvis_model[data.indx_t3_1])./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3])))+real(transpose(dft[data.indx_t3_2,:])*(dT3.*conj(cvis_model[data.indx_t3_2])./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]) ))+real(transpose(dft[data.indx_t3_3,:])*(dT3.*conj(cvis_model[data.indx_t3_3])./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]) ))
     end
 
-    if (weights[3]>0)||(data.nt3phi==0)
+    if (weights[3]>0)&&(data.nt3phi>0)
         if vonmises == false
             chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
             dT3 = 360.0/pi*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
@@ -663,18 +674,18 @@ function chi2_nfft_fg(x::Array{Float64,1}, g::Array{Float64,1}, ftplan::Array{NF
     g_v2 = 0.0
     g_t3amp = 0.0
     g_t3phi = 0.0
-    if (weights[1]>0)||(data.nv2==0)
+    if (weights[1]>0)&&(data.nv2>0)
         chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
         g_v2 = real(adjoint(ftplan[3])*(4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2]));
     end
 
-    if (weights[2]>0)||(data.nt3amp==0)
+    if (weights[2]>0)&&(data.nt3amp>0)
         chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
         dT3 = 2.0*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
         g_t3amp = real(adjoint(ftplan[4])*(dT3.*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]))) + real(adjoint(ftplan[5])*(dT3.*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]))) + real(adjoint(ftplan[6])*(dT3.*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
     end
 
-    if (weights[3]>0)||(data.nt3phi==0)
+    if (weights[3]>0)&&(data.nt3phi>0)
         if vonmises == false
             chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
             dT3 = -360.0/pi*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2

@@ -53,47 +53,46 @@ end
 
 # Load Data
 #
-oifitsfile = "./data/iota_peg4t.oifits";
-data = vec(readoifits(oifitsfile)); # data can be split by wavelength, time, etc.
+oifitsfile = "./data/AXCir.oifits";
+data = readoifits(oifitsfile); # data can be split by wavelength, time, etc.
 
 #
 # GRID SEARCH
 #
-gridside = 50; # this will be rounded to respect steps
-gridstep = 0.8 #mas/pixel
+gridside = 200; # this will be rounded to respect steps
+gridstep = 0.5 #mas/pixel
 hwidth = gridside*gridstep/2;
 ra = collect(range(-hwidth, hwidth , step = gridstep)); # in mas
 dec = collect(range(-hwidth, hwidth, step = gridstep));  ; # in mas
 
 init_diameter_primary = 1.0; # initial guess for diameter of the secondary
-init_diameter_secondary = 1.0; # initial guess for diameter of the secondary
-init_flux_ratio = .5 ; #initial guess for the flux ratio
+init_diameter_secondary = 0.0; # initial guess for diameter of the secondary
+init_flux_ratio = .01 ; #initial guess for the flux ratio
 
 minchi2 = 1e4; # placeholder value
 chi2_map = ones(length(ra), length(dec));
 best_par = []
 
-#
-# Grid search: single thread version, only optimizes flux ratio and diameters of and primary secondary
-#
-start = time()
-for i=1:length(ra)
-    print("New row: ra = $(ra[i]) mas\n")
+
+# Chi2 map for given flux ratio
+
+model = create_model(create_component(type="ud", name="Primary"));
+minf, minx, cvis_model, result = fit_model_nlopt(data, model, chi2_weights=[1.0,0,0]);
+init_diameter_primary = minx[1]
+bws = mean(data.v2_dlam./data.v2_lam)*2  # *2 seems needed for good results! look into this
+# Estimate rmin, rmax, bws   # for bws we will need to look into OIFITS
+@elapsed Threads.@threads for i=1:length(ra)
+    #print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
-        visfunc=(params,uv)->binary_ud_fixedradec(params, ra[i], dec[j], uv, data.uv_baseline)  # flux ratio is primary/secondary 
-        chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio], lbounds=[0, 0, 0.0001], hbounds=[10, 10, 1.0], calculate_vis = false, verbose=false);
-        if chi2_map[i,j] < minchi2
-            minchi2 = chi2_map[i,j];
-            best_par = opt_params;
-            print("New best chi2: $(chi2_map[i,j]) at ra=$(ra[i]) mas and dec=$(dec[j]) mas, diameter_primary = $(opt_params[1]), diameter_secondary = $(opt_params[2]), flux_ratio = $(opt_params[3])\n");
-        end
-    end
-    # Update chi2_map view # comment out next line to speed up search
-    if i%2==1
-        imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
+    visfunc=(params,uv)->binary_ud_bws(params, uv, data.uv_baseline)  # flux ratio is primary/secondary
+    chi2_map[i,j] = visfunc_to_chi2(data, visfunc,[init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j], bws], chi2_weights=[1.0,1.0,1.0])    
     end
 end
-elapsed = time() - start
+imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
+best = findmin(chi2_map)
+min_chi2 = best[1]
+best_ra = ra[best[2][1]]
+best_dec = dec[best[2][2]]
 
 
 #
@@ -109,7 +108,7 @@ for i=1:length(ra)
     print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
         #chi2_map[i,j]= model_to_chi2(data,visfunc,[init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]]) # if we don't want to fit
-         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
+         chi2_map[i,j], opt_params, ~ =  fit_model_old(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
          if chi2_map[i,j] < minchi2
              minchi2 = chi2_map[i,j];
              best_par = opt_params;
@@ -135,7 +134,7 @@ best_par = []
 visfunc=(params,uv)->binary_ud(params, uv, data.uv_baseline)  # flux ratio is primary/secondary
 Threads.@threads for i=1:length(ra)
     for j=1:length(dec)
-         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
+         chi2_map[i,j], opt_params, ~ =  fit_model_old(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
     end
 end
 elapsed = time() - start
@@ -143,7 +142,7 @@ print(elapsed)
 imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
 minchi2, radec = findmin(chi2_map)
 i=radec[1]; j = radec[2]
-chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
+chi2_map[i,j], opt_params, ~ =  fit_model_old(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
 print("Best chi2: $(chi2_map[i,j]) at Initial: ra=$(ra[i]) mas and dec=$(dec[j]) mas / Final: ra=$(opt_params[4]) mas and dec=$(opt_params[5]) mas, diameter_primary = $(opt_params[1]), diameter_secondary = $(opt_params[2]), flux_ratio = $(opt_params[3])\n");
 
 
@@ -165,7 +164,7 @@ for i=1:length(ra)
     print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
         #chi2_map[i,j]= model_to_chi2(data,visfunc,[init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]]) # if we don't want to fit
-         chi2_map[i,j], opt_params, ~ =  fit_model(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j], init_fracband], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep, 0.001], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep, 0.1], calculate_vis = false, verbose=false);
+         chi2_map[i,j], opt_params, ~ =  fit_model_old(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j], init_fracband], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep, 0.001], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep, 0.1], calculate_vis = false, verbose=false);
          if chi2_map[i,j] < minchi2
              minchi2 = chi2_map[i,j];
              best_par = opt_params;

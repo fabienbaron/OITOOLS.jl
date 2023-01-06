@@ -43,3 +43,12 @@ chi2v2 = model_to_chi2(data, model, [8.3,0.2], chi2_weights=[1.0,0,0])
 # Plot model vs data
 v2_model = cvis_to_v2(cvis_model, data.indx_v2);
 v2plot_model_vs_data(data, v2_model,logplot=true);
+
+# Visualize the model as an image
+img = model_to_image(model)
+imdisp(img)
+
+
+model = create_model(create_component(type="ud", name="Model"));
+model.components[1].vis_params[1].val=20.0
+

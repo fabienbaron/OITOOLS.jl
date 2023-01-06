@@ -1,5 +1,3 @@
-__precompile__(true)
-
 module OITOOLS
 include("readoifits.jl");
 include("vis_functions.jl");
@@ -19,7 +17,6 @@ export OIdata
 export readoifits, readoifits_multiepochs, readfits, writefits
 export oifits_prep, updatefits_aspro,readoifits_multicolors, list_oifits_targets
 export remove_redundant_uv!,filter_data,set_data_filter
-precompile(readoifits, (String,))
 
 #modelfit
 export pos_fixed,spectrum_powerlaw,spectrum_gray,model_to_image

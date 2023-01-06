@@ -7,7 +7,7 @@ using SpecialFunctions
 #param[1] = diameter in mas
 #ρ = radius in uv space
 function visibility_ud(param, uv::Array{Float64,2})
-ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
+ρ = sqrt.(uv[1,:].^2+uv[2,:].^2)
 V = jinc.(param[1]/2.0626480624709636e8*ρ)
 return V
 end

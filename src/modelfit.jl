@@ -838,17 +838,19 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
     return params_mode, params_mean,params_err
 end
 
-function model_to_image(model::OImodel;nx=128, pixsize=0.1, nuv=1024, Bmax=3000, λ = 1.6e-6, display=false)
-if pixsize * (pi / 180.0) / 3600000.0*Bmax/λ > 0.5
-    @warn("Image sampling issue - please check pixsize x Bmax/λ");
-end
-uv = Array{Float64}(undef,2, nuv*nuv);
-x = collect(range(-1.0, 1.0, length=nuv))*Bmax/λ
-uv[1,:] = vec(repeat(x,1, nuv))
-uv[2,:] = vec(repeat(x,1, nuv)')
+function model_to_image(model::OImodel, nx=257, pixsize=0.1, λ = 1.6e-6, display=false)
+# nx needs to be odd for better image quality (zero frequency needds to be sampled)
+x = collect(range(-1.0, 1.0, length=nx))/pixsize*2.0626480624709636e8/2 
+uv = Array{Float64}(undef,2, nx*nx);
+uv[1,:] = vec(repeat(x,1, nx ))
+uv[2,:] = vec(repeat(-x,1, nx)')
 V = model_to_cvis(model, uv, [λ])
-fftplan  = plan_nfft(pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv, (nx,nx), m=4, σ=2.0);
-img = real.(adjoint(fftplan)*V); img = img.*(img .>0);
+VV = reshape(V, (nx, nx, length(λ)))
+img = real(ifftshift(ifft(ifftshift(VV))))
+img .*= img.>0
+if length(λ)==1
+    img = dropdims(img, dims=3)
+end
 if display == true
     imdisp(img, pixscale=pixsize);
 end

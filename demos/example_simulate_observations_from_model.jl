@@ -2,7 +2,7 @@ using OITOOLS
 using AstroTime
 #Simulate an observation using an analytic model of your target
 #In this example, observations start at UT 2018-08-13 at 3:00:00AM and last until 2018-08-13 8:30:00AM, with a period of 15 minutes
-dates = collect(UTCEpoch(2018,8,13,3,0,0.0):15minutes:UTCEpoch(2018,8,13,8,30,0.0))
+dates = collect(from_utc(2018,8,13,3,0,0.0):15minutes:from_utc(2018,8,13,8,30,0.0))
 
 # Model info - here a simple limb-darkened disk
 model = create_model(create_component(type="ldlin", name="Model"));

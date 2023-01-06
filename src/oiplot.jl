@@ -137,7 +137,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", legend_below = false, figtitle = "")
+function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = false, figtitle = "", windowtitle="")
     if typeof(data)==OIdata
         data = [data]
     end
@@ -146,13 +146,16 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     end
     nuv = sum(data[i].nuv for i=1:length(data))
     mean_mjd = mean(data[i].mean_mjd for i=1:length(data))
-    fig = figure(string(figtitle, "Mean MJD: $(round(mean_mjd*100)/100), nuv: $(nuv)"),figsize=(8,8),facecolor="White")
+    if windowtitle==""
+        windowtitle = string("Mean MJD: $(round(mean_mjd*100)/100), nuv: $(nuv)")
+    end
+    fig = figure(windowtitle,figsize=(8,8),facecolor="White")
     set_oiplot_defaults()
     clf();
     ax = gca()
     ax.locator_params(axis ="y", nbins=10)
     ax.locator_params(axis ="x", nbins=10)
-
+    ax.set_aspect(1.0)
     if (color == "baseline" || color =="base") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline_list_t3 = [get_triple_baselines_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
@@ -169,20 +172,20 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
             scatter( u,  v, alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i]) #TBD: handle case where length(baseline)>length(oiplot_colors)
             scatter(-u, -v, alpha=1.0, s=12.0, color=oiplot_colors[i])
         end
+               
         if legend_below == false
-            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=3,loc="best")
+            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=3, loc="upper right")
         else
-            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=8, loc="upper center", bbox_to_anchor=(0.5, -0.10));
             tight_layout();
         end
     elseif (color == "wavelength" || color == "wav")
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
-        scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
-        scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow_r")
-        #divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
-        #cax = divider.append_axes("bottom", size="5%", pad=0.05)
+        scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow")
+        scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow")
+       
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
         wavs=sort(unique(wavcol))
         if 2<length(wavs)<9
@@ -219,7 +222,17 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         scatter(u, v,alpha=1.0, s = 12.0,color="Black")
         scatter(-u, -v,alpha=1.0, s = 12.0, color="Black")
     end
-    title("UV coverage -- MJD: $(mean_mjd), nuv: $(nuv)")
+    if square==true
+        if minuv<-1e98
+            minuv = minimum([ax.get_xlim()[1],ax.get_ylim()[1]] )
+        end
+        if maxuv>1e98
+            maxuv = maximum([ax.get_xlim()[2],ax.get_ylim()[2]])
+        end     
+        ax.set_xlim((minuv,maxuv))
+        ax.set_ylim((minuv,maxuv))
+    end
+    title(figtitle)
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
@@ -309,7 +322,7 @@ function v2plot_model_vs_func(data::OIdata, model::OImodel, params; drawpoints =
     show(block=false)
 end
 
-function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = false,idpoint=false,clean=true,color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false, figtitle="")
+function v2plot(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
     if idpoint==true # interactive plot, click to identify point
         global v2base=data.v2_baseline
         global v2value=data.v2
@@ -325,8 +338,8 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
     if typeof(data)==OIdata
         data = [data]
     end
-    if bywavelength==true
-        bybaseline=false
+    if typeof(data)==Array{OIdata,2}
+        data = vec(data)
     end
     fig = figure(string(figtitle, "V2 data"),figsize=(10,5),facecolor="White");
     if clean == true # do not overplot on existing window by default
@@ -339,27 +352,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
     if remove == true
         fig.canvas.mpl_connect("button_press_event",onclickv2)
     end
-
-    # baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
-    # baseline=sort(unique(vcat(baseline_list_vis...)))
-    # # Creating one subplot for each baseline
-    # rows = div(length(baseline),2)
-    # cols = 2
-    # for i=1:length(baseline)
-    #     fig.add_subplot(rows,cols,i)
-    #     title(baseline[i])
-    #     loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
-    #     baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
-    #     visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
-    #     visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
-    #     errorbar(baseline_vis,visphi,yerr=visphi_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
-    #     xlabel(L"Maximum Baseline (M$\lambda$)")
-    #     ylabel("Diff phase (°)")
-    #     grid(true,which="both",color="LightGrey",linestyle=":")
-    #     tight_layout()
-    # end
-
-    if bybaseline == true # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
+    if (color == "baseline" || color =="base") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_v2...)))
         for i=1:length(baseline)
@@ -370,7 +363,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
             if markopt == false
                 errorbar(baseline_v2,v2,yerr=v2_err,fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
             else
-                errorbar(baseline_v2,v2,yerr=v2_err,fmt="o",marker=oiplot_markers[i], markeredgecolor=color,markersize=3,ecolor="Gainsboro",color=color,elinewidth=1.0,label=baseline[i])
+                errorbar(baseline_v2,v2,yerr=v2_err,fmt="o",marker=oiplot_markers[i], markeredgecolor="Black",markersize=3,ecolor="Gainsboro",color="Black",elinewidth=1.0,label=baseline[i])
             end
         end
         if legend_below == false
@@ -378,7 +371,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
         else
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
-    elseif bywavelength == true
+    elseif (color == "wavelength" || color == "wav")
         wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
         baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
         v2 = vcat([data[n].v2 for n=1:length(data)]...);
@@ -392,7 +385,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
         baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
         v2 = vcat([data[n].v2 for n=1:length(data)]...);
         v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
-        errorbar(baseline_v2,v2,yerr=v2_err,fmt="o", markersize=3,color=color,ecolor="Gainsboro",elinewidth=1.0);
+        errorbar(baseline_v2,v2,yerr=v2_err,fmt="o", markersize=3,color="Black",ecolor="Gainsboro",elinewidth=1.0);
     end
     title("Squared Visibility Amplitude Data")
     xlabel(L"Baseline (M$\lambda$)")
@@ -406,17 +399,17 @@ function v2plot(data::Union{OIdata,Array{OIdata,1}};logplot = false, remove = fa
 end
 
 
-function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
     if typeof(data)==OIdata
         data = [data]
     end
-    if bywavelength==true
-        bybaseline=false
+    if typeof(data)==Array{OIdata,2}
+        data = vec(data)
     end
     fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
     clf();
     ax=gca();
-    if bybaseline == true
+    if (color == "baseline" || color =="base")
         baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_t3...)))
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
@@ -432,7 +425,7 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
         else
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
-    elseif bywavelength == true
+    elseif (color == "wavelength" || color == "wav")
         wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
         baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
         t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
@@ -446,7 +439,7 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
         baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
         t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
         t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
-        errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+        errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
     end
     title("Closure phase data")
     xlabel(L"Maximum Baseline (M$\lambda$)")
@@ -459,17 +452,17 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
     show(block=false)
 end
 
-function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
     if typeof(data)==OIdata
         data = [data]
     end
-    if bywavelength==true
-        bybaseline=false
+    if typeof(data)==Array{OIdata,2}
+        data = vec(data)
     end
     fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
     clf();
     ax=gca();
-    if bybaseline == true
+    if (color == "baseline" || color =="base")
         baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_t3...)))
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
@@ -485,7 +478,7 @@ function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
         else
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
-    elseif bywavelength == true
+    elseif (color == "wavelength" || color == "wav")
         wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
         baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
         t3amp = vcat([data[n].t3amp for n=1:length(data)]...);
@@ -499,7 +492,7 @@ function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywaveleng
         baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
         t3amp = vcat([data[n].t3amp for n=1:length(data)]...);
         t3amp_err = vcat([data[n].t3amp_err for n=1:length(data)]...);
-        errorbar(baseline_t3,t3amp,yerr=t3amp_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+        errorbar(baseline_t3,t3amp,yerr=t3amp_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
     end
     title("Triple amplitude data")
     xlabel(L"Maximum Baseline (M$\lambda$)")
@@ -526,17 +519,17 @@ function fluxplot(data::Union{OIdata,Array{OIdata,1}}; color="Black")
     end
 end
 
-function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelength=false, bybaseline=true,markopt=false, legend_below=false)
+function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
     if typeof(data)==OIdata
         data = [data]
     end
-    if bywavelength==true
-        bybaseline=false
+    if typeof(data)==Array{OIdata,2}
+        data = vec(data)
     end
     fig = figure("Visibility phase data",figsize=(10,5),facecolor="White");
     clf();
     ax=gca();
-    if bybaseline == true
+    if (color == "baseline" || color =="base")
         baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_vis...)))
         for i=1:length(baseline)
@@ -551,7 +544,7 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
         else
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
-    elseif bywavelength == true
+    elseif (color == "wavelength" || color == "wav")
         wavcol = vcat([data[n].uv_lam[data[n].indx_vis]*1e6 for n=1:length(data)]...)
         baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
         visphi = vcat([data[n].visphi for n=1:length(data)]...);
@@ -565,7 +558,7 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color="Black",bywavelen
         baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
         visphi = vcat([data[n].visphi for n=1:length(data)]...);
         visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
-        errorbar(baseline_vis,visphi,yerr=visphi_err,fmt="o", markersize=3,color=color, ecolor="Gainsboro",elinewidth=1.0)
+        errorbar(baseline_vis,visphi,yerr=visphi_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
     end
     title("Visibility phase phase data")
     xlabel(L"Maximum Baseline (M$\lambda$)")
