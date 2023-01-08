@@ -137,7 +137,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = false, figtitle = "", windowtitle="")
+function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = false, figtitle = "", windowtitle="", cmap="rainbow")
     if typeof(data)==OIdata
         data = [data]
     end
@@ -183,9 +183,8 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
-        scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow")
-        scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap="gist_rainbow")
-       
+        scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap=cmap)
+        scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap=cmap)
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
         wavs=sort(unique(wavcol))
         if 2<length(wavs)<9
@@ -204,8 +203,8 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         mjdcol = vcat([data[n].uv_mjd for n=1:length(data)]...)
-        scatter(u, v,alpha=1.0, s = 12.0, c=mjdcol, cmap="gist_rainbow_r")
-        scatter(-u, -v,alpha=1.0, s = 12.0, c=mjdcol, cmap="gist_rainbow_r")
+        scatter(u, v,alpha=1.0, s = 12.0, c=mjdcol, cmap=cmap)
+        scatter(-u, -v,alpha=1.0, s = 12.0, c=mjdcol, cmap=cmap)
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="MJD", pad=0.1, fraction=0.02)
         mjds=unique(mjdcol)
         if length(mjds)<5
