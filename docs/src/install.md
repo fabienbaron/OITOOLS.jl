@@ -13,13 +13,16 @@
 | NearestNeighbors | simplify uv sampling | KD trees |
 | OIFITS | data import | read OIFITS files|
 
+
 ## Step 1: installation of Python Packages (UltraNest, Astroquery)
 
 OITOOLS downloads then uses a Conda installation with the UltraNest ad Astroquery packages. For this you should copy/paste the following line into the REPL:
 ```julia
-using Pkg; Pkg.add("Conda"); using Conda; Conda.add("ultranest", channel="conda-forge"); Conda.add("astroquery", channel="astropy");
+ENV["PYTHON"]=""; ENV["MPLBACKEND"]="qt5agg"; using Pkg; Pkg.add("Conda"); using Conda; Conda.add("ultranest", channel="conda-forge"); Conda.add("astroquery", channel="astropy");
 ```
 These operations should take a couple of minutes to complete.
+Feel free to remove the two ENV settings at the beginning of the line if you have already Python setup on your machine and do not want to use the Julia Conda python.
+
 
 ## Step 2: installation of Julia Packages
 
@@ -29,27 +32,3 @@ using Pkg; Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter",
 ```
 Installation may take between 2-10 minutes depending on OS and computer performance.
 
-## Installation FAQ
-
-### How do I install/use Python?
-
-OITOOLS uses matplotlib through the Julia library [PyPlot](https://github.com/JuliaPy/PyPlot.jl), which will use your system Python. If you do not want to deal with python package management, using Julia's Conda package instead of the system-wide python is recommended. To do so, just type:
-
-```julia
-ENV["PYTHON"]=""  # this will tell Julia there is currently no usable python
-```
-
-before installing the Conda package via:
-```julia
-]add Conda
-```
-
-### Which Matplotlib backend should I use?
-
-You will have to select a Matplotlib backend for rendering plots. Qt5 works well in our experience. To set it up you will need to call
-
-```julia
-ENV["MPLBACKEND"]="qt5agg"
-```
-
-before using Matplotlib (or even better, before installing PyPlot).
