@@ -195,7 +195,7 @@ end
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
 
 #Functions used in main Functions
-function cvis_to_t3_conj(cvis, indx1, indx2, indx3)
+function vis_to_t3_conj(cvis, indx1, indx2, indx3)
     #get t3 from caculated visibilities
     #because of ordering of v_ij j>i we need to use conjugate (we use conj(t3_13), rather than t3_31)
  # t3 = cvis[indx1].*cvis[indx2].*conj(cvis[indx3]);
@@ -334,7 +334,7 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
         nx = size(x,1);
         x = vec(x)/sum(x);
         ft = setup_nfft(uv, v2_indx_w, v2_indx_w, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
-        cvis_model = image_to_cvis_nfft(x, ft);
+        cvis_model = image_to_vis(x, ft);
     elseif model.components !=[]
         # Model
         cvis_model = model_to_cvis(model, uv, λ);
@@ -343,8 +343,8 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
     end
 
     # Compute true values of observables
-    v2_model = cvis_to_v2(cvis_model, v2_indx_w);
-    t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
+    v2_model = vis_to_v2(cvis_model, v2_indx_w);
+    t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
 
     # Compute uncertainties
     v2_model_err = errors.v2_multit*v2_model .+ errors.v2_addit;
@@ -423,7 +423,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
         nx = size(x,1);
         x = vec(x)/sum(x);
         ft = setup_nfft(data, nx, pixsize);
-        cvis_model = image_to_cvis_nfft(x, ft);
+        cvis_model = image_to_vis(x, ft);
     elseif model.components !=[]
         # Model
         cvis_model = model_to_cvis(model, data.uv, data.uv_lam);
@@ -518,7 +518,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
     end
 
     #GET V2 INFO
-    v2_model = cvis_to_v2(cvis_model, data.indx_v2 )# based on uv points
+    v2_model = vis_to_v2(cvis_model, data.indx_v2 )# based on uv points
     v2_model_err = Float64[]
     if mode == "copy_errors"
         v2_model_err = data.v2_err
@@ -563,7 +563,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
     end
 
     #GET T3 NOW
-    t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3);
+    t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3);
     if mode == "copy_errors"
         t3amp_model_err = data.t3amp_err
         t3phi_model_err = data.t3phi_err

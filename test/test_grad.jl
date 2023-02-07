@@ -194,16 +194,16 @@ mean(numerical_g./analytic_g)
 # mean(diffn./diffg)
 #
 # #Chi2 sparse
-# V = image_to_cvis_dft(x, dft); #or   V=dft*x/sum(x)
+# V = image_to_vis_dft(x, dft); #or   V=dft*x/sum(x)
 # indx1=data.indx_t3_1
 # indx2=data.indx_t3_2
 # indx3=data.indx_t3_3
 # σ=data.t3phi_err
 # b=data.t3phi
-# #~, ~, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+# #~, ~, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
 # f=y->norm(mod360(180/pi*angle.((dft*y)/sum(y))[indx1]+180/pi*angle.((dft*y)/sum(y))[indx2]+180/pi*angle.((dft*y)/sum(y))[indx3]-b)./σ)^2
 # diffn = numgrad_1D(f,x=x, δ=1e-5)
-# ~, ~, t3phi_model = cvis_to_t3(V, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+# ~, ~, t3phi_model = vis_to_t3(V, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
 #
 # dt3=360/pi*(mod360(180/pi*angle.(V[indx1])+180/pi*angle.(V[indx2])+180/pi*angle.(V[indx3])-b)./σ.^2)
 # dt3=360/pi*(mod360(t3phi_model-b)./σ.^2)

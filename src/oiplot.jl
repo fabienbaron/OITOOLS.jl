@@ -137,7 +137,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = false, figtitle = "", windowtitle="", cmap="rainbow")
+function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = false, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
     if typeof(data)==OIdata
         data = [data]
     end
@@ -236,6 +236,9 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     ylabel(L"V (M$\lambda$)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
     ax.set_aspect("equal")
+    if flipx == true
+        ax.invert_xaxis()
+    end
     if filename !=""
         savefig(filename)
     end
@@ -243,24 +246,29 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     show(block=false)
 end
 
-function v2plot_model_vs_data(data::OIdata, v2_model::Array{Float64,1}; logplot = false) #plots V2 data vs v2 model
-    fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
+function plot_v2_vs_data(data::OIdata, v2_model::Array{Float64,1}; logplot = false, y_range=[], res_range=[]) #plots V2 data vs v2 model
+    fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White");
     clf();
     subplot(211)
     ax = gca();
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=2,color="Black")
-    plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=3)
+    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=1, color="Black", ecolor="LightGrey")
+    plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=1)
     title("Squared Visibility Amplitudes - Model vs data plot")
-    #xlabel(L"Baseline (M$\lambda$)")
+    if y_range != []
+        ylim(y_range)
+    end
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true);
+    ax.grid(true,which="both",color="LightGrey",linestyle=":");
     subplot(212)
-    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=3)
+    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=1)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
+    if res_range !=[]
+        ylim(res_range)
+    end
     ax = gca();
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
@@ -268,7 +276,7 @@ function v2plot_model_vs_data(data::OIdata, v2_model::Array{Float64,1}; logplot 
 end
 
 # This draws a continuous line based on the analytic function
-function v2plot_model_vs_func(data::OIdata, model::OImodel, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
+function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
     # Compute model points (discrete)
     baseline_v2 = data.v2_baseline;
     v2_data = data.v2;
@@ -375,7 +383,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = fa
         baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
         v2 = vcat([data[n].v2 for n=1:length(data)]...);
         v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
-        sc = scatter(baseline_v2,v2, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
+        sc = scatter(baseline_v2,v2, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
         el = errorbar(baseline_v2,v2,yerr=v2_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
@@ -429,7 +437,7 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline"
         baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
         t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
         t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
-        sc = scatter(baseline_t3, t3phi, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
+        sc = scatter(baseline_t3, t3phi, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
         el = errorbar(baseline_t3, t3phi,yerr=t3phi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
@@ -450,6 +458,55 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline"
     end
     show(block=false)
 end
+
+
+function plot_t3phi_vs_data(data::OIdata, t3phi_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
+    fig = figure("Closure phase plot - Model vs Data",figsize=(8,8),facecolor="White");
+    clf();
+    subplot(211)
+    ax = gca();
+    if logplot==true
+        ax.set_yscale("log")
+    end
+    errorbar(data.t3_baseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="Black", ecolor="LightGrey")
+    plot(data.t3_baseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=1)
+    title("Closure phases - Model vs data plot")
+    if y_range != []
+        ylim(y_range)
+    end
+    ylabel("Closure phases (degrees)")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    subplot(212)
+    plot(data.t3_baseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Black", linestyle="none", marker="o", markersize=1)
+    if res_range !=[]
+        ylim(res_range)
+    end
+    xlabel(L"Baseline (M$\lambda$)")
+    ylabel("Residuals (number of sigma)")
+    ax = gca();
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    tight_layout()
+    show(block=false)
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
     if typeof(data)==OIdata
@@ -482,7 +539,7 @@ function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline"
         baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
         t3amp = vcat([data[n].t3amp for n=1:length(data)]...);
         t3amp_err = vcat([data[n].t3amp_err for n=1:length(data)]...);
-        sc = scatter(baseline_t3, t3amp, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
+        sc = scatter(baseline_t3, t3amp, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
         el = errorbar(baseline_t3, t3amp,yerr=t3amp_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
@@ -548,7 +605,7 @@ function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
         baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
         visphi = vcat([data[n].visphi for n=1:length(data)]...);
         visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
-        sc = scatter(baseline_vis, visphi, c=wavcol, cmap="gist_rainbow_r", alpha=1.0, s=6.0, zorder=100)
+        sc = scatter(baseline_vis, visphi, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
         el = errorbar(baseline_vis, visphi,yerr=visphi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
@@ -691,7 +748,7 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
 end
 
 
-function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [])
     fig = figure(figtitle,figsize=(6,6),facecolor="White")
     clf();
     nx=ny=-1;
@@ -709,14 +766,14 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
     img = []
     if ndims(image) ==1
         ny=nx=Int64(sqrt(length(image)))
-        img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixscale,-0.5*nx*pixscale, -0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
     else
         nx,ny = size(image);
-        img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixscale,-0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
     end
     if pixmode == false
-        xlabel("RA (mas)")
-        ylabel("DEC (mas)")
+        xlabel("x ← E (mas)")
+        ylabel("y → N (mas)")
     end
 
     ax = gca()
@@ -725,6 +782,7 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
         tickinterval = 50.0
     elseif (size(image,1)*pixscale)>100
         tickinterval = 5.0
+        # ax.invert_xaxis();
     end
     mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
     ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
@@ -740,7 +798,10 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
     end
 
     if beamsize > 0
-        c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+        if beamlocation == []
+            beamlocation = [.8, .8]
+        end
+        c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),0.5*beamsize,fc="white",ec="white",linewidth=0)
         ax.add_artist(c)
     end
     tight_layout()
@@ -748,7 +809,7 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
 end
 
 #TODO: work for rectangular
-function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; figtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; wavs = [], figtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
     if typeof(image_vector)==Array{Float64,2}
         nwavs = size(image_vector,2)
     elseif typeof(image_vector)==Array{Float64,3}
@@ -761,7 +822,12 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
     images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
     for i=1:nwavs
         fig.add_subplot(nside,nside,i)
-        title("λ: $i")
+        if wavs==[]
+            title("λ: $i")
+        else
+            title("λ: $(wavs[i])")
+        end
+
         image = images_all[:,i]
         nx=ny=-1;
         pixmode = false;
@@ -770,7 +836,7 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
             pixscale = 1
         end
         ny=nx=Int64.(sqrt(length(image)))
-        img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixscale,-0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
         # if pixmode == false
         #     xlabel("RA (mas)")
         #     ylabel("DEC (mas)")

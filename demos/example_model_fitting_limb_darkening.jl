@@ -41,7 +41,7 @@ cvis_model = model_to_cvis(model, data)
 chi2v2 = model_to_chi2(data, model, [8.3,0.2], chi2_weights=[1.0,0,0])
 
 # Plot model vs data
-v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+v2_model = vis_to_v2(cvis_model, data.indx_v2);
 v2plot_model_vs_data(data, v2_model,logplot=true);
 
 # Visualize the model as an image

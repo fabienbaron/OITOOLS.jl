@@ -6,7 +6,7 @@
 #       - black body spectral law
 #       - spectral lines (Gaussian, Voigt)
 #       - custom r/μ profiles
-using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, Printf,NFFT
+using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, Printf, FFTW,NFFT
 
 @with_kw mutable struct OIparam
     name::String = "" # optional name of the compoment (e.g. "primary", "central source")
@@ -344,8 +344,8 @@ end
 
 function model_to_obs(model::OImodel, data::OIdata)
 cvis_model = model_to_cvis(model, data);
-v2_model = cvis_to_v2(cvis_model, data.indx_v2);
-t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+v2_model = vis_to_v2(cvis_model, data.indx_v2);
+t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
 return v2_model, t3amp_model, t3phi_model
 end
 
@@ -385,14 +385,14 @@ function model_to_chi2(data::OIdata, model::OImodel, params::AbstractVector{<:Re
     cvis_model = model_to_cvis(model, data);
     chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
     if (data.nv2>0) && (chi2_weights[1]>0.0)
-        v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+        v2_model = vis_to_v2(cvis_model, data.indx_v2);
         chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
     else
         chi2_weights[1]=0.0
     end
 
     if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
-        t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
         if (data.nt3amp>0) && (chi2_weights[2]>0.0)
             chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
         else
@@ -416,14 +416,14 @@ function model_to_chi2(data::OIdata, model::OImodel;chi2_weights=[1.0,1.0,1.0]) 
     cvis_model = model_to_cvis(model, data);
     chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
     if (data.nv2>0) && (chi2_weights[1]>0.0)
-        v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+        v2_model = vis_to_v2(cvis_model, data.indx_v2);
         chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
     else
         chi2_weights[1]=0.0
     end
 
     if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
-        t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
         if (data.nt3amp>0) && (chi2_weights[2]>0.0)
             chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
         else
@@ -571,11 +571,11 @@ function lsqmodelobs(params, model::OImodel, data::OIdata; chi2_weights=[1.0,1.0
     # Compute observables
     obs = Float64[]
     if (chi2_weights[1]>0) && (data.nv2>0)
-        append!(obs, cvis_to_v2(cvis_model, data.indx_v2))
+        append!(obs, vis_to_v2(cvis_model, data.indx_v2))
     end
     if ((chi2_weights[2]>0) && (data.nt3amp>0))||(((chi2_weights[3]>0) && (data.t3phi>0)))
 
-        t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
         if ((chi2_weights[2]>0) && (data.nt3amp>0))
             append!(obs, t3amp_model)
         end
@@ -684,14 +684,14 @@ function visfunc_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; 
     cvis_model = visfunc(params, data.uv)
     chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
     if (data.nv2>0) && (chi2_weights[1]>0.0)
-        v2_model = cvis_to_v2(cvis_model, data.indx_v2);
+        v2_model = vis_to_v2(cvis_model, data.indx_v2);
         chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
     else
         chi2_weights[1]=0.0
     end
 
     if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
-        t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
         if (data.nt3amp>0) && (chi2_weights[2]>0.0)
             chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
         else
@@ -722,13 +722,13 @@ end
 #         end
 #         chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
 #         if (data[i].nv2>0) && (chi2_weights[1]>0.0)
-#             v2_model = cvis_to_v2(cvis_model, data[i].indx_v2);
+#             v2_model = vis_to_v2(cvis_model, data[i].indx_v2);
 #             chi2_v2 = sum( ((v2_model - data[i].v2)./data[i].v2_err).^2)/data[i].nv2;
 #         else
 #             chi2_weights[1]=0.0
 #         end
 #         if (data[i].nt3amp>0 || data[i].nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
-#             t3_model, t3amp_model, t3phi_model = cvis_to_t3(cvis_model, data[i].indx_t3_1, data[i].indx_t3_2 ,data[i].indx_t3_3);
+#             t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data[i].indx_t3_1, data[i].indx_t3_2 ,data[i].indx_t3_3);
 #             if (data[i].nt3amp>0) && (chi2_weights[2]>0.0)
 #             chi2_t3amp = sum( ((t3amp_model - data[i].t3amp)./data[i].t3amp_err).^2)/data[i].nt3amp;
 #             else
@@ -838,7 +838,7 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
     return params_mode, params_mean,params_err
 end
 
-function model_to_image(model::OImodel, nx=257, pixsize=0.1, λ = 1.6e-6, display=false)
+function model_to_image(model::OImodel; nx=257, pixsize=0.1, λ = 1.6e-6, display=false, normalize=true)
 # nx needs to be odd for better image quality (zero frequency needds to be sampled)
 x = collect(range(-1.0, 1.0, length=nx))/pixsize*2.0626480624709636e8/2 
 uv = Array{Float64}(undef,2, nx*nx);
@@ -850,6 +850,9 @@ img = real(ifftshift(ifft(ifftshift(VV))))
 img .*= img.>0
 if length(λ)==1
     img = dropdims(img, dims=3)
+end
+if normalize==true
+    img /= sum(img)
 end
 if display == true
     imdisp(img, pixscale=pixsize);

@@ -1085,15 +1085,16 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
 
     if ((polychromatic == true) && (get_specbin_file == true))
         if length(wavtables)>1
-            @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels. Wavelength selection is currently based the first table only");
+            @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels. Wavelength selection is currently based on straight merging of tables");
         end
         #            Double check no band overlap
-           overlap = sum((wavtables[1].eff_wave[1:end-1]+wavtables[1].eff_band[1:end-1]/2).>(wavtables[1].eff_wave[2:end]-wavtables[1].eff_band[2:end]/2))
-            if overlap>0
-                @warn("Wavebands are overlapping - polychromatic channels selection will be based on narrower bands");
-            end
-            wavarray = hcat(wavtables[1].eff_wave-wavtables[1].eff_band/20, wavtables[1].eff_wave+wavtables[1].eff_band/20);
-            spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
+        wavarray = vcat([sort(hcat(wavtables[i].eff_wave-wavtables[i].eff_band/2, wavtables[i].eff_wave+wavtables[i].eff_band/2),dims=1) for i=1:length(wavtables)]...)
+        overlap = sum(wavarray[2:end,2].<wavarray[1:end-1,1])
+        if overlap>0
+             @warn("Wavebands are overlapping - polychromatic imaging channels selection will be based on narrower bands.");
+             wavarray = vcat([hcat(wavtables[i].eff_wave-wavtables[i].eff_band/2.2, wavtables[i].eff_wave+wavtables[i].eff_band/2.2) for i=1:length(wavtables)]...)
+        end
+        spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
     end
 
     # number of spectral bins

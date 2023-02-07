@@ -17,7 +17,7 @@ imdisp(recenter(x,mask=x.>maximum(x)/10),pixscale=pixsize,colormap="gist_earth")
 text(-6,5.8,"Truth",color="white",size="xx-large")
 savefig("dirty-truth.png")
 
-V=image_to_cvis_nfft(x,ft[1])
+V=image_to_vis(x,ft[1])
 img = real.(nfft_adjoint(ft[1], V)); img = img.*(img .>0);
 imdisp(recenter(img,mask=img.>maximum(img)/10),pixscale=pixsize,colormap="gist_earth");
 text(-6,5.8,"Dirty Map - No Noise",color="white",size="x-large")
