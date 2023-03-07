@@ -622,13 +622,12 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     new_telescope_name = Array{String}(undef, nstations)
     new_station_index = zeros(Int64,nstations)
 
-
     for istation=1:length(list_stations)
         name = list_stations[istation]
         loc = findall(station_names_all .== name)
         tel = unique(telescope_names_all[loc])
         if length(tel)>1
-            @warn("Several telescopes can be at the same station -- Not sure I know how to do this right")
+            @warn("OIFITS file indicate that several telescopes can be located the same station -- Plots may be misleading")
         end
         tel=tel[1]
         # Renumber all stations
