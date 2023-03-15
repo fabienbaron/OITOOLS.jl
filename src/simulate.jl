@@ -337,7 +337,7 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
         cvis_model = image_to_vis(x, ft);
     elseif model.components !=[]
         # Model
-        cvis_model = model_to_cvis(model, uv, λ);
+        cvis_model = model_to_vis(model, uv, λ);
     else
         error("Bad image or model definition in call to simulate()");
     end
@@ -426,7 +426,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
         cvis_model = image_to_vis(x, ft);
     elseif model.components !=[]
         # Model
-        cvis_model = model_to_cvis(model, data.uv, data.uv_lam);
+        cvis_model = model_to_vis(model, data.uv, data.uv_lam);
     else
         error("Bad image or model definition in call to simulate()");
     end

@@ -6,7 +6,7 @@
 #       - black body spectral law
 #       - spectral lines (Gaussian, Voigt)
 #       - custom r/μ profiles
-using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, Printf, FFTW,NFFT
+using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, Printf, FFTW, NFFT
 
 @with_kw mutable struct OIparam
     name::String = "" # optional name of the compoment (e.g. "primary", "central source")
@@ -323,23 +323,10 @@ function update_model(model::OImodel)
     end
 end
 
-# function model_to_cvis(model::OImodel, data::OIdata)
-#     V=zeros(Complex{Float64},size(data.uv,2))
-#     flux = zeros(Float64, size(data.uv,2)); # normalization
-#     for i=1:length(model.components)
-#         # Estimate the flux polychromatic behavior
-#         f = model.components[i].spectrum_function(model.components[i].spectrum_params, data)
-#         x,y = model.components[i].pos_function(model.components[i].pos_params)
-#         # Visibility calculation
-#         visparams = [model.components[i].vis_params[j].val for j=1:length(model.components[i].vis_params)]  # slow step... any way to speed this up?
-#         V += f.*model.components[i].vis_function(visparams, data.uv).*cis.(2*pi/206264806.2*(data.uv[1,:]*x - data.uv[2,:]*y))
-#         flux .+= f
-#     end
-#     return V./flux
-# end
 
 
-function model_to_cvis(model::OImodel, data::OIdata)
+
+function model_to_vis(model::OImodel, data::OIdata)
     V=zeros(Complex{Float64},size(data.uv,2))
     flux = zeros(Float64, size(data.uv,2)); # normalization
     for i=1:length(model.components)
@@ -356,13 +343,13 @@ end
 
 
 function model_to_obs(model::OImodel, data::OIdata)
-cvis_model = model_to_cvis(model, data);
+cvis_model = model_to_vis(model, data);
 v2_model = vis_to_v2(cvis_model, data.indx_v2);
 t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
 return v2_model, t3amp_model, t3phi_model
 end
 
-function model_to_cvis(model::OImodel, uv::Array{Float64,2}, λ::Array{Float64,1})
+function model_to_vis(model::OImodel, uv::Array{Float64,2}, λ::Array{Float64,1})
     V=zeros(Complex{Float64},size(uv,2))
     flux = zeros(Float64, size(uv,2)); # normalization
     for i=1:length(model.components)
@@ -391,45 +378,68 @@ function dispatch_params(params::AbstractVector{<:Real}, model::OImodel)
     end
 end
 
-function model_to_chi2(model::OImodel, data::OIdata,  params::AbstractVector{<:Real}; weights=[1.0,1.0,1.0], verb=false)
+function model_to_chi2(data::OIdata, model::OImodel, params::AbstractVector{<:Real}; chi2_weights=[1.0,1.0,1.0])
     # Dispatch params to model
     dispatch_params(params, model);
-    model_to_chi2(model, data, weights=weights, verb=verb);
-end
-
-function model_to_chi2(model::OImodel, data::OIdata; weights=[1.0,1.0,1.0], verb=false) #with no dispatch_params
     #Compute vis
-    cvis_model = model_to_cvis(model, data);
+    cvis_model = model_to_vis(model, data);
     chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
-    if (data.nv2>0) && (weights[1]>0.0)
+    if (data.nv2>0) && (chi2_weights[1]>0.0)
         v2_model = vis_to_v2(cvis_model, data.indx_v2);
         chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
     else
-        weights[1]=0.0
+        chi2_weights[1]=0.0
     end
 
-    if (data.nt3amp>0 || data.nt3phi>0)  && (weights[2]>0 || weights[3]>0)
+    if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
         t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-        if (data.nt3amp>0) && (weights[2]>0.0)
+        if (data.nt3amp>0) && (chi2_weights[2]>0.0)
             chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
         else
-            weights[2]=0.0
+            chi2_weights[2]=0.0
         end
-        if (data.nt3phi>0) && (weights[3]>0.0)
+        if (data.nt3phi>0) && (chi2_weights[3]>0.0)
             chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2)/data.nt3phi;
         else
-            weights[3] = 0.0;
+            chi2_weights[3] = 0.0;
         end
     else
-        weights[2] = 0.0;
-        weights[3] = 0.0;
+        chi2_weights[2] = 0.0;
+        chi2_weights[3] = 0.0;
     end
-    if verb==true
-        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
-        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
-        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
+
+    chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
+end
+
+function model_to_chi2(data::OIdata, model::OImodel;chi2_weights=[1.0,1.0,1.0]) #with no dispatch_params
+    #Compute vis
+    cvis_model = model_to_vis(model, data);
+    chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
+    if (data.nv2>0) && (chi2_weights[1]>0.0)
+        v2_model = vis_to_v2(cvis_model, data.indx_v2);
+        chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
+    else
+        chi2_weights[1]=0.0
     end
-    chi2 = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
+
+    if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
+        t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        if (data.nt3amp>0) && (chi2_weights[2]>0.0)
+            chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
+        else
+            chi2_weights[2]=0.0
+        end
+        if (data.nt3phi>0) && (chi2_weights[3]>0.0)
+            chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2)/data.nt3phi;
+        else
+            chi2_weights[3] = 0.0;
+        end
+    else
+        chi2_weights[2] = 0.0;
+        chi2_weights[3] = 0.0;
+    end
+
+    chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
 end
 
 
@@ -504,8 +514,8 @@ end
 
 
 
-function fit_model_ultranest(model::OImodel, data::OIdata; lbounds = Float64[], hbounds = Float64[],
-    verb = true, calculate_vis = true, cornerplot = true, weights=[1.0,1.0,1.0], min_num_live_points = 400, cluster_num_live_points = 100, use_stepsampler=false, nsteps=400,frac_remain=0.001)
+function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], hbounds = Float64[],
+    verbose = true, calculate_vis = true, cornerplot = true, chi2_weights=[1.0,1.0,1.0], min_num_live_points = 400, cluster_num_live_points = 100, use_stepsampler=false, nsteps=400,frac_remain=0.001)
 
     lbounds, hbounds = get_model_bounds(model);
 
@@ -518,7 +528,7 @@ function fit_model_ultranest(model::OImodel, data::OIdata; lbounds = Float64[], 
         (U::AbstractMatrix{<:Real}) -> reduce(vcat, (u -> trafo(u)').(eachrow(U)))
     end
 
-    loglikelihood=param::AbstractVector{<:Real}->-0.5*model_to_chi2(model, data, param, weights=weights);
+    loglikelihood=param::AbstractVector{<:Real}->-0.5*model_to_chi2(data, model, param, chi2_weights=chi2_weights);
     loglikelihood_vectorized = let loglikelihood = loglikelihood
         # UltraNest has variate in rows:
         (X::AbstractMatrix{<:Real}) -> loglikelihood.(eachrow(X))
@@ -534,9 +544,9 @@ function fit_model_ultranest(model::OImodel, data::OIdata; lbounds = Float64[], 
     result = smplr.run(min_num_live_points = min_num_live_points, cluster_num_live_points = cluster_num_live_points, frac_remain=frac_remain)
 
     minx = result["maximum_likelihood"]["point"]
-    minf = model_to_chi2(model, data, minx, weights=weights);
+    minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
 
-    if verb == true
+    if verbose == true
         printstyled("Log Z: $(result["logz_single"]) Chi2: $minf \t parameters:$minx ",color=:red)
     end
 
@@ -547,77 +557,77 @@ function fit_model_ultranest(model::OImodel, data::OIdata; lbounds = Float64[], 
     cvis_model = [];
     if calculate_vis == true
         dispatch_params(minx, model);
-        cvis_model = model_to_cvis(model, data);
+        cvis_model = model_to_vis(model, data);
     end
     return (minf,minx,cvis_model, result);
 end
 
 
-function lsqmodelobs(params, model::OImodel, data::OIdata; weights=[1.0,1.0,1.0]) # LsqFit observables
+function lsqmodelobs(params, model::OImodel, data::OIdata; chi2_weights=[1.0,1.0,1.0]) # LsqFit observables
     # Dispatch params to model
     dispatch_params(params, model);
     #Compute vis
-    cvis_model = model_to_cvis(model, data);
+    cvis_model = model_to_vis(model, data);
     # Compute observables
     obs = Float64[]
-    if (weights[1]>0) && (data.nv2>0)
+    if (chi2_weights[1]>0) && (data.nv2>0)
         append!(obs, vis_to_v2(cvis_model, data.indx_v2))
     end
-    if ((weights[2]>0) && (data.nt3amp>0))||(((weights[3]>0) && (data.t3phi>0)))
+    if ((chi2_weights[2]>0) && (data.nt3amp>0))||(((chi2_weights[3]>0) && (data.t3phi>0)))
 
         t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-        if ((weights[2]>0) && (data.nt3amp>0))
+        if ((chi2_weights[2]>0) && (data.nt3amp>0))
             append!(obs, t3amp_model)
         end
-        if ((weights[3]>0) && (data.nt3phi>0))
+        if ((chi2_weights[3]>0) && (data.nt3phi>0))
             append!(obs, t3phi_model)
         end
     end
     return obs
 end
 
-function fit_model_levenberg(model::OImodel, data::OIdata; verb = true, calculate_vis = true, weights=[1.0,1.0,1.0])
+function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
 
-    if verb == true
+    if verbose == true
         println("OITOOLS Warning: LSQFIT doesn't support mod360() on residuals");
     end
-    # Setup weights and data for weighted least squares
+    # Setup chi2_weights and data for weighted least squares
     wt = Float64[]
-    if ((weights[1]>0) && (data.nv2>0))
-        append!(wt, weights[1]./data.v2_err.^2)
+    if ((chi2_weights[1]>0) && (data.nv2>0))
+        append!(wt, chi2_weights[1]./data.v2_err.^2)
     end
-    if ((weights[2]>0) && (data.nt3amp>0))
-        append!(wt, weights[2]./data.t3amp_err.^2)
+    if ((chi2_weights[2]>0) && (data.nt3amp>0))
+        append!(wt, chi2_weights[2]./data.t3amp_err.^2)
     end
-    if ((weights[3]>0) && (data.nt3phi>0))
-        append!(wt, weights[3]./data.t3phi_err.^2)
+    if ((chi2_weights[3]>0) && (data.nt3phi>0))
+        append!(wt, chi2_weights[3]./data.t3phi_err.^2)
     end
 
     ydata = Float64[]
-    if (weights[1]>0) && (data.nv2>0)
+    if (chi2_weights[1]>0) && (data.nv2>0)
         append!(ydata, data.v2)
     end
-    if (weights[2]>0) && (data.nt3amp>0)
+    if (chi2_weights[2]>0) && (data.nt3amp>0)
         append!(ydata, data.t3amp)
     end
-    if (weights[3]>0) && (data.nt3phi>0)
+    if (chi2_weights[3]>0) && (data.nt3phi>0)
         append!(ydata, data.t3phi)
     end
 
 
     lbounds, hbounds = get_model_bounds(model);
     pinit = get_model_params(model);
-    m = (x,p)->lsqmodelobs(p, model, data, weights=weights);
-    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verb);
+    m = (x,p)->lsqmodelobs(p, model, data, chi2_weights=chi2_weights);
+    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose);
     minx = fit.param
-    minf = model_to_chi2(model, data, minx, weights=weights);
+    minf = model_to_chi2(data, model, minx, chi2_weights=chi2_weights);
 
     if fit.converged == true
         println("Levenberg-Marquardt fit converged to chi2 = $(minf) for p=$(minx)\n")
     end
     sigma = stderror(fit)
     covar = estimate_covar(fit)
-    if verb==true
+    if verbose==true
         println("Name       \t\tMinimum\t\tMaximum\t\tInit\t\tConverged ± Error");
         pnames = get_model_pnames(model);
         for i=1:length(pinit)
@@ -629,18 +639,18 @@ function fit_model_levenberg(model::OImodel, data::OIdata; verb = true, calculat
     cvis_model = [];
     if calculate_vis == true
         dispatch_params(minx, model);
-        cvis_model = model_to_cvis(model, data);
+        cvis_model = model_to_vis(model, data);
     end
     return (minf, minx, cvis_model, fit)
 end
 
-function fit_model_nlopt(model::OImodel, data::OIdata; fitter=:LN_NELDERMEAD, verb = true, calculate_vis = true, weights=[1.0,1.0,1.0])
-    if verb == true
+function fit_model_nlopt(data::OIdata, model::OImodel; fitter=:LN_NELDERMEAD, verbose = true, calculate_vis = true, chi2_weights=[1.0,1.0,1.0])
+    if verbose == true
         println("NLopt optimization with ", NLopt.algorithm_name(fitter))
     end
     pinit = get_model_params(model);
     nparams=length(pinit)
-    chisq=(param,g)->model_to_chi2(model, data, param, weights=weights);
+    chisq=(param,g)->model_to_chi2(data, model, param, chi2_weights=chi2_weights);
     opt = Opt(fitter, nparams);
     min_objective!(opt, chisq)
     xtol_rel!(opt,1e-5)
@@ -648,7 +658,7 @@ function fit_model_nlopt(model::OImodel, data::OIdata; fitter=:LN_NELDERMEAD, ve
     lower_bounds!(opt, lbounds);
     upper_bounds!(opt, hbounds);
     (minf,minx,ret) = optimize(opt, pinit);
-    if verb == true
+    if verbose == true
         numevals = opt.numevals # the number of function evaluations
         println("NLopt found a minimum of chi2=$minf at $minx after $numevals iterations (returned $ret)")
         println("Name       \t\tMinimum\t\tMaximum\t\tInit\t\tConverged");
@@ -660,7 +670,7 @@ function fit_model_nlopt(model::OImodel, data::OIdata; fitter=:LN_NELDERMEAD, ve
     cvis_model = [];
     if calculate_vis == true
         dispatch_params(minx, model);
-        cvis_model = model_to_cvis(model, data);
+        cvis_model = model_to_vis(model, data);
     end
     return (minf,minx,cvis_model, ret)
 end
@@ -670,37 +680,37 @@ end
 # #
 # # OLD model interface -- by visibility function
 # #
-# function visfunc_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; weights=[1.0,1.0,1.0])
-#     cvis_model = visfunc(params, data.uv)
-#     chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
-#     if (data.nv2>0) && (weights[1]>0.0)
-#         v2_model = vis_to_v2(cvis_model, data.indx_v2);
-#         chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
-#     else
-#         weights[1]=0.0
-#     end
+function visfunc_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; chi2_weights=[1.0,1.0,1.0])
+    cvis_model = visfunc(params, data.uv)
+    chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
+    if (data.nv2>0) && (chi2_weights[1]>0.0)
+        v2_model = vis_to_v2(cvis_model, data.indx_v2);
+        chi2_v2 = sum( ((v2_model - data.v2)./data.v2_err).^2)/data.nv2;
+    else
+        chi2_weights[1]=0.0
+    end
 
-#     if (data.nt3amp>0 || data.nt3phi>0)  && (weights[2]>0 || weights[3]>0)
-#         t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-#         if (data.nt3amp>0) && (weights[2]>0.0)
-#             chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
-#         else
-#             weights[2]=0.0
-#         end
-#         if (data.nt3phi>0) && (weights[3]>0.0)
-#             chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2)/data.nt3phi;
-#         else
-#             weights[3] = 0.0;
-#         end
-#     else
-#         weights[2] = 0.0;
-#         weights[3] = 0.0;
-#     end
+    if (data.nt3amp>0 || data.nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
+        t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+        if (data.nt3amp>0) && (chi2_weights[2]>0.0)
+            chi2_t3amp = sum( ((t3amp_model - data.t3amp)./data.t3amp_err).^2)/data.nt3amp;
+        else
+            chi2_weights[2]=0.0
+        end
+        if (data.nt3phi>0) && (chi2_weights[3]>0.0)
+            chi2_t3phi = sum( (mod360(t3phi_model - data.t3phi)./data.t3phi_err).^2)/data.nt3phi;
+        else
+            chi2_weights[3] = 0.0;
+        end
+    else
+        chi2_weights[2] = 0.0;
+        chi2_weights[3] = 0.0;
+    end
 
-#     chi2 = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
-# end
-# #
-# function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1}; chromatic_vector=[], weights=[1.0,1.0,1.0]) # polychromatic data case
+    chi2 = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
+end
+#
+# function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1}; chromatic_vector=[], chi2_weights=[1.0,1.0,1.0]) # polychromatic data case
 #     nwavs = length(data)
 #     chi2 = zeros(Float64, nwavs)
 #     for i=1:nwavs
@@ -711,29 +721,29 @@ end
 #             cvis_model = visfunc(params, data[i].uv, data[i].uv_baseline, chromatic_vector[i]) # sometimes we need a chromatic constant term
 #         end
 #         chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
-#         if (data[i].nv2>0) && (weights[1]>0.0)
+#         if (data[i].nv2>0) && (chi2_weights[1]>0.0)
 #             v2_model = vis_to_v2(cvis_model, data[i].indx_v2);
 #             chi2_v2 = sum( ((v2_model - data[i].v2)./data[i].v2_err).^2)/data[i].nv2;
 #         else
-#             weights[1]=0.0
+#             chi2_weights[1]=0.0
 #         end
-#         if (data[i].nt3amp>0 || data[i].nt3phi>0)  && (weights[2]>0 || weights[3]>0)
+#         if (data[i].nt3amp>0 || data[i].nt3phi>0)  && (chi2_weights[2]>0 || chi2_weights[3]>0)
 #             t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data[i].indx_t3_1, data[i].indx_t3_2 ,data[i].indx_t3_3);
-#             if (data[i].nt3amp>0) && (weights[2]>0.0)
+#             if (data[i].nt3amp>0) && (chi2_weights[2]>0.0)
 #             chi2_t3amp = sum( ((t3amp_model - data[i].t3amp)./data[i].t3amp_err).^2)/data[i].nt3amp;
 #             else
-#             weights[2]=0.0
+#             chi2_weights[2]=0.0
 #             end
-#             if (data[i].nt3phi>0) && (weights[3]>0.0)
+#             if (data[i].nt3phi>0) && (chi2_weights[3]>0.0)
 #             chi2_t3phi = sum( (mod360(t3phi_model - data[i].t3phi)./data[i].t3phi_err).^2)/data[i].nt3phi;
 #             else
-#             weights[3] = 0.0;
+#             chi2_weights[3] = 0.0;
 #             end
 #         else
-#             weights[2] = 0.0;
-#             weights[3] = 0.0;
+#             chi2_weights[2] = 0.0;
+#             chi2_weights[3] = 0.0;
 #         end
-#         chi2[i] = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
+#         chi2[i] = (chi2_weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(chi2_weights)
 #     end
 #     return sum(chi2)/nwavs;
 # end
@@ -741,11 +751,11 @@ end
 #
 # BOOSTRAPING
 #
-function resample_data(data_input; weights=[1.0,1.0,1.0]) # weights=0 are used to disable resampling
+function resample_data(data_input; chi2_weights=[1.0,1.0,1.0]) # chi2_weights=0 are used to disable resampling
     data_out = deepcopy(data_input);
 
     # V2
-    if weights[1]>0
+    if chi2_weights[1]>0
         indx_resampling = Int.(ceil.(data_input.nv2*rand(data_input.nv2)));
         data_out.v2 = data_input.v2[indx_resampling]
         data_out.v2_err = data_input.v2_err[indx_resampling]
@@ -759,7 +769,7 @@ function resample_data(data_input; weights=[1.0,1.0,1.0]) # weights=0 are used t
         data_out.indx_v2= data_input.indx_v2[indx_resampling]
     end
     # T3
-    if weights[2]>0 || weights[3]>0
+    if chi2_weights[2]>0 || chi2_weights[3]>0
         indx_resampling = Int.(ceil.(data_input.nt3phi*rand(data_input.nt3phi))); # needs updating if nt3amp =/= nt3phi
         data_out.t3amp = data_input.t3amp[indx_resampling]
         data_out.t3amp_err = data_input.t3amp_err[indx_resampling]
@@ -780,17 +790,17 @@ function resample_data(data_input; weights=[1.0,1.0,1.0]) # weights=0 are used t
     return data_out
 end
 
-function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NELDERMEAD, weights=[1.0,1.0,1.0])
+function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NELDERMEAD, chi2_weights=[1.0,1.0,1.0])
     pinit = get_model_params(model);
     nparams=length(pinit)
     println("Finding mode...")
     f_chi2 = 0; params_mode = Float64[]; par_opt=Float64[]; cvis_model=ComplexF64[]
     if fitter==:UltraNest
-        f_chi2, params_mode, cvis_model = fit_model_ultranest(data, model, weights=weights);
+        f_chi2, params_mode, cvis_model = fit_model_ultranest(data, model, chi2_weights=chi2_weights);
     elseif fitter==:Levenberg
-        f_chi2, params_mode, cvis_model = fit_model_levenberg(data, model, weights=weights);
+        f_chi2, params_mode, cvis_model = fit_model_levenberg(data, model, chi2_weights=chi2_weights);
     else
-        f_chi2, params_mode, cvis_model = fit_model_nlopt(data, model, fitter=fitter, weights=weights);
+        f_chi2, params_mode, cvis_model = fit_model_nlopt(data, model, fitter=fitter, chi2_weights=chi2_weights);
     end
 
     params = zeros(Float64, nparams, nbootstraps)
@@ -803,20 +813,21 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
             println("Boostrap $(k) out of $(nbootstraps)");
         end
         if fitter==:UltraNest
-            f_chi2, par_opt, ~ = fit_model_ultranest(resample_data(data), model, verb=false, weights=weights);
+            f_chi2, par_opt, ~ = fit_model_ultranest(resample_data(data), model, verbose=false, chi2_weights=chi2_weights);
         elseif fitter==:Levenberg
-            f_chi2, par_opt, ~ = fit_model_levenberg(resample_data(data), model, verb=false, weights=weights);
+            f_chi2, par_opt, ~ = fit_model_levenberg(resample_data(data), model, verbose=false, chi2_weights=chi2_weights);
         else
-            f_chi2, par_opt, ~ = fit_model_nlopt(resample_data(data), model, fitter=fitter, verb=false, weights=weights);
+            f_chi2, par_opt, ~ = fit_model_nlopt(resample_data(data), model, fitter=fitter, verbose=false, chi2_weights=chi2_weights);
         end
         params[:, k]= par_opt;
     end
 
+    param_names = get_model_pnames(model)
     for i=1:nparams
         fig  = figure("Histogram $(i)",figsize=(5,5));
         clf();
         plt.hist(params[i,:],50);
-        title("Bootstrap for parameter $(i)");
+        title("Bootstrap for $(param_names[i])");
         xlabel("Value of parameter $(i)");
         ylabel("Boostrap samples");
     end
@@ -830,12 +841,12 @@ end
 
 function model_to_image(model::OImodel; nx=257, pixsize=0.1, λ = 1.6e-6, display=false, normalize=true)
 # nx needs to be odd for better image quality (zero frequency needds to be sampled)
-x = collect(range(-1.0, 1.0, length=nx))/pixsize*(3600*180/pi*1000)/2 
+x = collect(range(-1.0, 1.0, length=nx))/pixsize*2.0626480624709636e8/2 
 uv = Array{Float64}(undef,2, nx*nx);
 uv[1,:] = vec(repeat(x,1, nx ))
 uv[2,:] = vec(repeat(-x,1, nx)')
-V = reshape(model_to_cvis(model, uv, [λ]),(nx, nx, length(λ)))
-img = real(ifftshift(ifft(ifftshift(V))))
+V = model_to_vis(model, uv, [λ])
+img = real(FFTW.ifftshift(FFTW.ifft(FFTW.ifftshift(reshape(V, (nx, nx, length(λ)))))))
 img .*= img.>0
 if length(λ)==1
     img = dropdims(img, dims=3)
@@ -848,14 +859,3 @@ if display == true
 end
 return img
 end
-
-x=collect(1:nx).-div(nx+1,2)*pixsize*(3600*180/pi*1000)/2 
-r = sqrt.(x.^2 .+ x'.^2)
-V = jinc.(20.0/2.0626480624709636e8*r)
-img = real(ifftshift(ifft(ifftshift(V))))
-imdisp(img, pixscale=pixsize);
-
-
-VV = pad(V[:,:,1], 128)
-
-

@@ -254,7 +254,7 @@ function plot_v2_vs_data(data::OIdata, v2_model::Array{Float64,1}; logplot = fal
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=1, color="Black", ecolor="LightGrey")
+    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=2, color="Black", ecolor="LightGrey")
     plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=1)
     title("Squared Visibility Amplitudes - Model vs data plot")
     if y_range != []
@@ -263,7 +263,7 @@ function plot_v2_vs_data(data::OIdata, v2_model::Array{Float64,1}; logplot = fal
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
     subplot(212)
-    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=1)
+    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=2)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     if res_range !=[]
@@ -283,7 +283,7 @@ function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = fals
     v2_data_err = data.v2_err;
     update_model(model)
     dispatch_params(params, model);
-    cvis_model = model_to_cvis(model, data)
+    cvis_model = model_to_vis(model, data)
     v2_model = cvis_to_v2(cvis_model, data.indx_v2); # model points
     # Compute model curve (pseudo-continous) by setting up cyclindrical uv plane
     r = sqrt.(data.uv[1,data.indx_v2].^2+data.uv[2,data.indx_v2].^2)
@@ -292,7 +292,7 @@ function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = fals
     θ_range = collect(range(-pi,pi,length=100));
     uv = repeat(hcat(vec(r_range'.*cos.(θ_range)), vec(r_range'.*sin.(θ_range)))',1,100)
     λ = repeat(collect(range(minimum(data.uv_lam),maximum(data.uv_lam),step=100)), size(uv,2));
-    cvis_func = model_to_cvis(model,uv, λ)
+    cvis_func = model_to_vis(model,uv, λ)
     v2_func = abs2.(cvis_func);
     fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White")
     clf();
@@ -469,7 +469,7 @@ function plot_t3phi_vs_data(data::OIdata, t3phi_model::Array{Float64,1}; logplot
         ax.set_yscale("log")
     end
     errorbar(data.t3_baseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="Black", ecolor="LightGrey")
-    plot(data.t3_baseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=1)
+    plot(data.t3_baseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Closure phases - Model vs data plot")
     if y_range != []
         ylim(y_range)
@@ -477,7 +477,7 @@ function plot_t3phi_vs_data(data::OIdata, t3phi_model::Array{Float64,1}; logplot
     ylabel("Closure phases (degrees)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
     subplot(212)
-    plot(data.t3_baseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Black", linestyle="none", marker="o", markersize=1)
+    plot(data.t3_baseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Black", linestyle="none", marker="o", markersize=2)
     if res_range !=[]
         ylim(res_range)
     end
@@ -489,14 +489,34 @@ function plot_t3phi_vs_data(data::OIdata, t3phi_model::Array{Float64,1}; logplot
     show(block=false)
 end
 
-
-
-
-
-
-
-
-
+function plot_t3amp_vs_data(data::OIdata, t3amp_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
+    fig = figure("Triple amplitudes plot - Model vs Data",figsize=(8,8),facecolor="White");
+    clf();
+    subplot(211)
+    ax = gca();
+    if logplot==true
+        ax.set_yscale("log")
+    end
+    errorbar(data.t3_baseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="Black", ecolor="LightGrey")
+    plot(data.t3_baseline/1e6, t3amp_model, color="Red", linestyle="none", marker="o", markersize=2)
+    title("Triple amplitudes - Model vs data plot")
+    if y_range != []
+        ylim(y_range)
+    end
+    ylabel("Triple amplitudes")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    subplot(212)
+    plot(data.t3_baseline/1e6, (t3amp_model - data.t3amp)./data.t3amp_err,color="Black", linestyle="none", marker="o", markersize=2)
+    if res_range !=[]
+        ylim(res_range)
+    end
+    xlabel(L"Baseline (M$\lambda$)")
+    ylabel("Residuals (number of sigma)")
+    ax = gca();
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    tight_layout()
+    show(block=false)
+end
 
 
 

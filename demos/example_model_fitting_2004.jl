@@ -7,8 +7,8 @@ data= readoifits("./data/2004-data1.oifits")[1,1];
 # Setup components for the 2004 Model
 c1 = create_component(type="ud", name="star")
 c1.spectrum_params[1].free = true; # we have two components, we just need to fit the flux of the first
-c1.vis_params[1].free = true; # diameter in mas
-c1.vis_params[1].maxval = 1.0; # maximum diameter in mas (we expect a barely reslved star)
+c1.vis_params[1].free = false; # diameter in mas
+c1.vis_params[1].val = 0.0; # maximum diameter in mas (we expect a barely reslved star)
 c2 = create_component(type="ring", name="ring")
 c2.spectrum_params[1].free = false; # we have two components, we just need to fit the flux of the first
 c2.vis_params[5].free = false
@@ -18,7 +18,7 @@ c2.vis_params[8].free = false
 c2.vis_params[9].free = false
 
 # If one wants to fit the ring a little better, uncomment this
-# More free parameters, so much much slower
+# More free parameters, so much much slower (with Ultranest)
 # c2.vis_params[5].free = true
 # c2.vis_params[6].free = true
 # c2.vis_params[7].free = true

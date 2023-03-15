@@ -118,40 +118,40 @@ model_to_image(model, nx=256, pixsize=0.1)
 #
 #     u = s2 * k * uint;
 #     v = s1 * i * uint;
-#     A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+#     A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 #     matin[CartesianIndex.(i.+1,k.+1)] = A.*(-1).^(i + k)
 #     u = s2*k*uint;
 #     v = s1*(-i.-1)*uint;
-#     A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+#     A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 #     matin[CartesianIndex.(k.+1, N.-i)] = A.*(-1).^((N-1).-i+k)
 #
 #     u = s2*(-k.-1)*uint;
 #     v = s1*i*uint;
-#     A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+#     A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 #     matin[CartesianIndex.(N.-k,i.+1)] = A.*(-1).^(i-k.+(N-1));
 #
 #     u = s2*(-k.-1)*uint;
 #     v = s1*(-i.-1)*uint;
-#     A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+#     A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 #     matin[CartesianIndex.(N.-k,N.-i)] = A.*(-1).^(-i-k);
 #
 # 	for i=0:Int(N/2)
 # 	    for k=0:Int(N/2)
 # 			v = s1 * i * uint;
 # 			u = s2 * k * uint;
-# 			A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+# 			A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 # 			matin[k+1, i+1] =  A[1]  * (-1)^(i + k)
 # 			v = s1*(-i-1)*uint;
 # 			u = s2*k*uint;
-#             A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+#             A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 # 			matin[k+1, N-i-1+1] = A[1] * (-1)^((N-i-1) + k)
 # 			v = s1*i*uint;
 # 			u = s2*(-k-1)*uint;
-#             A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+#             A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 # 			matin[N-k-1+1,i+1] = A[1] * (-1)^(i+N-k-1);
 # 			v = s1*(-i-1)*uint;
 # 			u = s2*(-k-1)*uint;
-#             A = model_to_cvis(model,Array([u v]'),[1.6e-6]);
+#             A = model_to_vis(model,Array([u v]'),[1.6e-6]);
 # 			matin[N-k-1+1,N-i-1+1] = A[1] * (-1)^(-i-k);
 #         end
 #     end
