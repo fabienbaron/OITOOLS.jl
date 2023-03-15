@@ -7,7 +7,7 @@ using PyPlot,PyCall, LaTeXStrings, Statistics
 
 function set_oiplot_defaults()
     PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
-    PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[12]
+    PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[14]
     PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
     PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
     PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
