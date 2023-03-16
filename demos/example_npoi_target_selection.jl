@@ -7,7 +7,7 @@ v2plot(data)
 
 model = create_model(create_component(type="ldpow", name="Model"));
 
-minf, minx, cvis_model, result = fit_model_nlopt(data, model, chi2_weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_nlopt(data, model, weights=[1.0,0,0]);
 
 v2_model = vis_to_v2(cvis_model, data.indx_v2)
 v2plot_modelvsdata(data, v2_model,logplot=true);

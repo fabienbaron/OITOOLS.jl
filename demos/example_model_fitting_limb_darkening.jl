@@ -19,15 +19,15 @@ display(model);
 # We can choose between three main packages for optimization
 # NLopt: several local and global optimizers
 # Default is Nelder Mead
-minf, minx, cvis_model, result = fit_model_nlopt(data, model, chi2_weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_nlopt(data, model, weights=[1.0,0,0]);
 # One could use ISRES as a global optimization strategy
-minf, minx, cvis_model, result = fit_model_nlopt(data, model, fitter=:GN_ISRES, chi2_weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_nlopt(data, model, fitter=:GN_ISRES, weights=[1.0,0,0]);
 
 # LsqFit: Levenberg-Marquardt (fast but inaccurate statistical uncertainties)
-minf, minx, cvis_model, result = fit_model_levenberg(data, model, chi2_weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_levenberg(data, model, weights=[1.0,0,0]);
 
 # UltraNest: Nested Sampling (best for statistical uncertainties)
-minf, minx, cvis_model, result = fit_model_ultranest(data, model, chi2_weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_ultranest(data, model, weights=[1.0,0,0]);
 
 # Note: the result structures are different and depend on the packages
 
@@ -37,18 +37,15 @@ model = create_model(create_component(type="ldlin", name="Model"));
 dispatch_params([8.0,0.1], model);
 cvis_model = model_to_vis(model, data)
 
+
 # How to compute chi2 for given model (note: you don't need to compute cvis first)
-chi2v2 = model_to_chi2(data, model, [8.3,0.2], chi2_weights=[1.0,0,0])
+chi2v2 = model_to_chi2(data, model, weights=[1.0,0,0], verb=true)
+chi2v2 = model_to_chi2(data, model, [8.3,0.2], weights=[1.0,0,0], verb=true)
 
 # Plot model vs data
-v2_model = vis_to_v2(cvis_model, data.indx_v2);
-v2plot_model_vs_data(data, v2_model,logplot=true);
+v2_model, t3amp_model, t3phi_model = model_to_obs(mode,data);
+plot_v2_vs_data(data, v2_model,logplot=true);
 
 # Visualize the model as an image
-img = model_to_image(model)
-imdisp(img)
-
-
-model = create_model(create_component(type="ud", name="Model"));
-model.components[1].vis_params[1].val=20.0
-
+img = model_to_image(model, pixsize=0.1)
+imdisp(img, pixsize=0.1)

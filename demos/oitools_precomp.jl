@@ -9,9 +9,9 @@ oifitsfile = "./data/AlphaCenA.oifits";
 data = (readoifits(oifitsfile))[1,1]; 
 
 model = create_model(create_component(type="ud", name="Model"));
-minf, minx, cvis_model, result = fit_model_nlopt(data, model, chi2_weights=[1.0,0,0]);
-minf, minx, cvis_model, result = fit_model_levenberg(data, model, chi2_weights=[1.0,0,0]);
-minf, minx, cvis_model, result = fit_model_ultranest(data, model, chi2_weights=[1.0,1.0,1.0]);
+minf, minx, cvis_model, result = fit_model_nlopt(data, model, weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_levenberg(data, model, weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_ultranest(data, model, weights=[1.0,1.0,1.0]);
 #Simulate an observation using an analytic model of your target
 #In this example, observations start at UT 2018-08-13 at 3:00:00AM and last until 2018-08-13 8:30:00AM, with a period of 15 minutes
 dates = collect(from_utc(2018,8,13,3,0,0.0):15minutes:from_utc(2018,8,13,8,30,0.0))

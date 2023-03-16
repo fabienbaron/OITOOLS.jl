@@ -77,7 +77,7 @@ best_par = []
 # Chi2 map for given flux ratio
 
 model = create_model(create_component(type="ud", name="Primary"));
-minf, minx, cvis_model, result = fit_model_nlopt(data, model, chi2_weights=[1.0,0,0]);
+minf, minx, cvis_model, result = fit_model_nlopt(data, model, weights=[1.0,0,0]);
 init_diameter_primary = minx[1]
 bws = mean(data.v2_dlam./data.v2_lam)*2  # *2 seems needed for good results! look into this
 # Estimate rmin, rmax, bws   # for bws we will need to look into OIFITS
@@ -85,7 +85,7 @@ bws = mean(data.v2_dlam./data.v2_lam)*2  # *2 seems needed for good results! loo
     #print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
     visfunc=(params,uv)->binary_ud_bws(params, uv, data.uv_baseline)  # flux ratio is primary/secondary
-    chi2_map[i,j] = visfunc_to_chi2(data, visfunc,[init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j], bws], chi2_weights=[1.0,1.0,1.0])    
+    chi2_map[i,j] = visfunc_to_chi2(data, visfunc,[init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j], bws], weights=[1.0,1.0,1.0])    
     end
 end
 imdisp(chi2_map, pixscale = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")

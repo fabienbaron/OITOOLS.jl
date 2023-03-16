@@ -12,7 +12,7 @@ chi2 = zeros(length(diameters), length(ld))
 model = create_model(create_component(type="ldlin", name="Model"));
 for i= 1:length(diameters)
     for j=1:length(ld)
-     chi2[i,j] = model_to_chi2(data, model, [diameters[i], ld[j]], chi2_weights=[1.0,0,0])
+     chi2[i,j] = model_to_chi2(data, model, [diameters[i], ld[j]], weights=[1.0,0,0])
  end
 end
 res = findmin(chi2)
