@@ -412,9 +412,9 @@ function model_to_chi2(data::OIdata, model::OImodel;weights=[1.0,1.0,1.0], verb=
         weights[3] = 0.0;
     end
     if verb==true
-        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
-        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
-        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
+        printstyled("V2: $(chi2_v2) ", color=:red)
+        printstyled("T3A: $(chi2_t3amp) ", color=:blue);
+        printstyled("T3P: $(chi2_t3phi) ", color=:green);
     end
     chi2 = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
 end
