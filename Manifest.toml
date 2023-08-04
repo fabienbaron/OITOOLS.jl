@@ -802,12 +802,10 @@ uuid = "87e2bd06-a317-5318-96d9-3ecbac512eee"
 version = "2.0.2"
 
 [[deps.OptimPackNextGen]]
-deps = ["ArrayTools", "LazyAlgebra", "LinearAlgebra", "OptimPack_jll", "Printf", "Requires", "Unitless"]
-git-tree-sha1 = "83f138387584304c90a7234d46a474f921b271da"
-repo-rev = "master"
-repo-url = "https://github.com/emmt/OptimPackNextGen.jl.git"
+deps = ["ArrayTools", "LazyAlgebra", "LinearAlgebra", "OptimPack_jll", "Printf", "Requires"]
+git-tree-sha1 = "18776df1e19edf3c1928e1b5cdf4c2c2f1b553c2"
 uuid = "080ffe24-4a27-4ab0-ad71-7b624e73ef8d"
-version = "0.3.1"
+version = "0.3.2"
 
 [[deps.OptimPack_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -1146,18 +1144,6 @@ version = "1.0.2"
 
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
-
-[[deps.Unitless]]
-deps = ["Requires"]
-git-tree-sha1 = "136c5e089e95e9a6405166fb52039cd2cda1c775"
-uuid = "c904d999-9673-4878-a3dd-e3ef1851788a"
-version = "2.1.1"
-
-    [deps.Unitless.extensions]
-    UnitlessUnitfulExt = "Unitful"
-
-    [deps.Unitless.weakdeps]
-    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [[deps.VersionParsing]]
 git-tree-sha1 = "58d6e80b4ee071f5efd07fda82cb9fbe17200868"
