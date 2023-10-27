@@ -973,3 +973,14 @@ function get_triple_baselines_names(sta_names, sta_indx)
     end
     return baseline_names
 end
+
+
+function plot_facility(facility)
+    coords=reshape(facility.sta_xyz, 3, facility.ntel[1])
+    scatter(coords[1,:], coords[2,:])
+    axis("equal")
+    for i=1:facility.ntel[1]
+        text(coords[1,i]+1, coords[2,i]+1, facility.sta_names[i])
+    end
+end
+    
