@@ -492,7 +492,7 @@ end
 
 
 function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], hbounds = Float64[],
-    verbose = true, calculate_vis = true, cornerplot = true, weights=[1.0,1.0,1.0], min_num_live_points = 400, cluster_num_live_points = 100, use_stepsampler=false, nsteps=400,frac_remain=0.001)
+    verb = true, calculate_vis = true, cornerplot = true, weights=[1.0,1.0,1.0], log_interval= 100, num_bootstraps=30, min_num_live_points = 400, cluster_num_live_points = 100, use_stepsampler=false, nsteps=400,frac_remain=0.001)
 
     lbounds, hbounds = get_model_bounds(model);
 
@@ -513,18 +513,23 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
 
     param_names = get_model_pnames(model);
 
-    smplr = ultranest.ReactiveNestedSampler(param_names, loglikelihood_vectorized, transform = prior_transform_vectorized, vectorized = true)
+    if verb == false
+        log_interval = 1000000;
+    end
+
+    smplr = ultranest.ReactiveNestedSampler(param_names, loglikelihood_vectorized, transform = prior_transform_vectorized, num_bootstraps=num_bootstraps, vectorized = true)
     if use_stepsampler==true
         smplr.stepsampler = pyimport("ultranest.stepsampler").RegionSliceSampler(nsteps=nsteps, adaptive_nsteps="move-distance")
     end
 
-    result = smplr.run(min_num_live_points = min_num_live_points, cluster_num_live_points = cluster_num_live_points, frac_remain=frac_remain)
+    result = smplr.run(min_num_live_points = min_num_live_points, log_interval = log_interval, cluster_num_live_points = cluster_num_live_points, frac_remain=frac_remain)
 
     minx = result["maximum_likelihood"]["point"]
     minf = model_to_chi2(data, model, minx, weights=weights);
 
-    if verbose == true
-        printstyled("Log Z: $(result["logz_single"]) Chi2: $minf \t parameters:$minx ",color=:red)
+    if verb == true
+        printstyled("Chi2: $minf",color=:red)
+        smplr.print_results()
     end
 
     if cornerplot == true

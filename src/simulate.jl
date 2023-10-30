@@ -155,43 +155,6 @@ function define_errors(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
 end
 
 
-function writefits_aspro(data, fitsfile;res=0.05)
-    """
-    res should be input as mas
-    """
-    f = FITS(fitsfile, "w");
-    header = FITSHeader(["CDELT1","CDELT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],[-(res/1000.0)/(206265.0),(res/1000.0)/(206265.0),0.0,0.0,(size(data)[1]/2),(size(data)[1]/2)],["Radians per Pixel","Radians per Pixel","X-coordinate of reference pixel","Y-coordinate of reference pixel","reference pixel in X","reference pixel in Y"])
-    write(f, data,header=header);
-    close(f);
-end
-
-function updatefits_aspro(fitsfile_in,fitsfile_out,res)
-    """
-    res should be input as mas
-    """
-    f = FITS(fitsfile_in);
-    data = read(f[1])
-    header = read_header(f[1])
-    header["CDELT1"] = -res/1000.0
-    header["CDELT2"] = res/1000.0
-    header["CRVAL1"] = 0.0
-    header["CRVAL2"] = 0.0
-    header["CRPIX1"] = (size(data)[1]/2)
-    header["CRPIX2"] = (size(data)[1]/2)
-    header["CUNIT1"] = "arcsec"
-    header["CUNIT2"] = "arcsec"
-    set_comment!(header,"CDELT1","Arcseconds per Pixel")
-    set_comment!(header,"CDELT2","Arcseconds per Pixel")
-    set_comment!(header,"CRVAL1","X-coordinate of reference pixel")
-    set_comment!(header,"CRVAL2","Y-coordinate of reference pixel")
-    set_comment!(header,"CRPIX1","reference pixel in X")
-    set_comment!(header,"CRPIX2","reference pixel in Y")
-    fout = FITS(fitsfile_out,"w")
-    write(fout,data,header=header);
-    close(f)
-    close(fout)
-end
-
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
 
 #Functions used in main Functions
@@ -408,8 +371,9 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
 end
 
 function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model())
+ 
     outfilename= string("!", out_file)
-    data = (readoifits(in_oifits))[1,1];
+    data = (readoifits(in_oifits,filter_bad_data=false))[1,1];
     oifits = FITS(in_oifits);
     #setup simulation
     nuv = data.nuv
@@ -532,7 +496,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
     v2_model += v2_model_err.*randn(length(v2_model))
 
     #Now to fill the tables_
-    visindxstart=1
+    visindxstart=1 
     for itable=1:length(ivistables); #for each table
         v2_model_table=[]
         v2_model_err_table=[]
@@ -567,14 +531,23 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
     if mode == "copy_errors"
         t3amp_model_err = data.t3amp_err
         t3phi_model_err = data.t3phi_err
+        isbad = findall(isnan.(t3amp_model_err))
+        t3amp_model_err[isbad] .= abs.(t3amp_model[isbad])/10
+        isbad = findall(isnan.(t3phi_model_err))
+        t3phi_model_err[isbad] .= abs.(t3phi_model[isbad])/10 .+ 1.0 
     elseif mode == "copy_snr"
-        t3amp_model_err=abs.(t3amp_model./(data.t3amp./data.t3amp_err))
-        t3phi_model_err=abs.(t3phi_model./(data.t3phi./data.t3phi_err))
+        gooddata = (readoifits(in_oifits,filter_bad_data=true))[1,1];
+        t3amp_model_err = abs.(t3amp_model./(data.t3amp./data.t3amp_err))
+        t3phi_model_err = max.(abs.(t3phi_model./(data.t3phi./data.t3phi_err)), minimum(gooddata.t3phi_err))
+        isbad = findall(isnan.(t3amp_model_err))
+        t3amp_model_err[isbad] .= abs.(t3amp_model[isbad])/10
+        isbad = findall(isnan.(t3phi_model_err))
+        t3phi_model_err[isbad] .= abs.(t3phi_model[isbad])/10 .+ 1.0 
     elseif mode == "noise_model"
         # TODO
         @warn("Unimplemented feature")
     end
-    t3amp_model += t3amp_model_err.*randn(length(t3amp_model))
+    t3amp_model += t3amp_model_err.*randn(length(t3amp_model)) 
     t3phi_model += t3phi_model_err.*randn(length(t3phi_model))
     t3indxstart=1
     for itable=1:length(it3tables); #for each table

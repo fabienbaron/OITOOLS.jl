@@ -11,8 +11,8 @@ in_oifits  = "./data/2004-data1.oifits"
 out_oifits  = "./data/2004-simulated.oifits"
 simulate_from_oifits(in_oifits,out_oifits,image=image_file,pixsize=pixsize)
 # One can then compare simulated data to input
-data1 = readoifits(in_oifits); v2plot(data1);
-data2 = readoifits(out_oifits); v2plot(data2);
+data1 = readoifits(in_oifits); plot_v2(data1);
+data2 = readoifits(out_oifits); plot_v2(data2);
 
 # Example 2 - One can also use a model instead of an image
 model = create_model(create_component(type="ldlin", name="Model"));

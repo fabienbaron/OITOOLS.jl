@@ -15,8 +15,8 @@ end
 function dvisibility_ud(param, uv::Array{Float64,2})
 ρ=sqrt.(uv[1,:].^2+uv[2,:].^2)
 dt_dp = pi*ρ/2.0626480624709636e8
-t = param[1]*dt_dp
-dV_dt = 2.0*(t.*besselj0.(t)-2*besselj1.(t))./t.^2   # ouch singularity!
+t = param[1]*dt_dp .+ eps(Float64) # need eps() to remove singularity in next line
+dV_dt = 2.0*(t.*besselj0.(t)-2*besselj1.(t))./t.^2   
 return dV_dt.*dt_dp
 end
 

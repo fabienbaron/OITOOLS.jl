@@ -126,6 +126,20 @@ function image_to_vis(x::Array{Float64,2}, nfft_plan::Array{NFFT.NFFTPlan{Float6
     cvis_model = nfft_plan[1]*Complex{Float64}.(x/sum(x));
 end
 
+function image_to_v2(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
+   return vis_to_v2(image_to_vis(x, ft), data.indx_v2)
+end
+
+function image_to_t3phi(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
+    ~, ~, t3phi_model = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
+    return t3phi_model
+ end
+ 
+ function image_to_t3amp(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
+    ~, t3amp_model,~ = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
+    return t3amp_model
+ end
+ 
 # function chi2_vis_dft_fg(x, g, dft, data ) # criterion function plus its gradient w/r x
 #   cvis_model = image_to_vis_dft(x, dft);
 #   # compute observables from all cvis
@@ -265,11 +279,7 @@ end
 H = vcat(radH...)
 M = vcat(radM...)
 # and big G
-G = (radH[1]'*radH[1])
-for i=1:nrad
-    G += (radH[i]'*radH[i])
-end
-G *= 2
+G = 2*reduce(+, radH[i]'*radH[i] for i=1:nrad)
 return H, G, M
 end
 
@@ -325,7 +335,7 @@ function tv(x,tv_g; verb = false, ϵ=1e-8)
     return tv_f
 end
 
-function l1l2(x, g; verb = false, ϵ=1e-8, α = 2.0)
+function l1l2(x, g; verb = false, ϵ=1e-8, α = 1e-4)
     # Isotropic L1-L2 / Fair loss function /  Mugnier-Brette expression
     nx = Int(sqrt(length(x)))
     y = reshape(x, nx, nx);
@@ -383,12 +393,14 @@ function entropy(x,g; verb = false, ϵ=1e-12)
     return f
 end
 
-function compactness(x,g; verb = false)
+function compactness(x,g; verb = false, w = 20.0) # w is the size in pixels of the soft-support 
     nx = Int(sqrt(length(x)))
     yy = repeat(collect(1:nx).-0.5*(nx+1),1,nx).^2
     rr = vec(yy+yy')/(nx*nx)
-    f = sum(rr.*(x.^2))
-    g[:] .=  2*rr.*x;
+    soft_support = 1.0 ./ (1.0 .+ 2*rr/w^2)
+    soft_support /= sum(soft_support)
+    f = sum((x.^2)./soft_support)
+    g[:] .=  2*x./soft_support;
     if verb == true
         print(" compactness:", f);
     end
@@ -574,7 +586,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
         elseif regularizers[ireg][1] == "l2sq"
             reg_f += regularizers[ireg][2]*l2sq(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "compactness"
-            reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb)
+            reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb, w = regularizers[ireg][3])
         elseif regularizers[ireg][1] == "radialvar"
             reg_f += regularizers[ireg][2]*radial_variance(x,temp_g, H=regularizers[ireg][3], G=regularizers[ireg][4], verb = verb)
         elseif regularizers[ireg][1] == "entropy"
@@ -958,24 +970,24 @@ function image_to_vis_polychromatic_nfft(x::Array{Float64,1}, ft::Array{Array{NF
 end
 
 using OptimPackNextGen
-function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; weights = [1.0,1.0,1.0], printcolor = :black, verb = false, maxiter = 100, regularizers =[], gtol=(0,1e-8))
+function reconstruct(x_start::Array{Float64,1}, data::OIdata, ft; weights = [1.0,1.0,1.0], printcolor = :black, verb = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     x_sol = []
     if typeof(ft) == Array{NFFT.NFFTPlan{Float64,2,1},1}
         crit = (x,g)->crit_nfft_fg(x, g, ft, data, regularizers=regularizers, verb = verb , weights = weights)
-        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=gtol);
+        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     else
         crit = (x,g)->crit_dft_fg(x, g, ft, data, regularizers=regularizers, verb = verb, weights = weights)
-        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=gtol);
+        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     end
     return x_sol
 end
 
 
-function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; weights = [1.0,1.0,1.0], epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[], gtol=(0,1e-8))
+function reconstruct_multitemporal(x_start::Array{Float64,1}, data::Array{OIdata, 1}, ft; weights = [1.0,1.0,1.0], epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     x_sol = []
     if typeof(ft) == Array{Array{NFFT.NFFTPlan{Float64,2,1},1},1}
         crit = (x,g)->crit_multitemporal_nfft_fg(x, g, ft, data, printcolor=printcolor, weights = weights, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
-        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=gtol);
+        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     else
         error("Sorry, polytemporal DFT methods not implemented yet");
     end
@@ -984,7 +996,7 @@ end
 
 
 
-function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata,1}, ft; weights = [1.0,1.0,1.0], printcolor= [], verb = true, use_diffphases = false, maxiter = 100, regularizers =[])
+function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata,1}, ft; weights = [1.0,1.0,1.0], printcolor= [], verb = true, use_diffphases = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     x_sol = []
     if regularizers == []
         regularizers = fill([],length(data))
@@ -992,7 +1004,7 @@ function reconstruct_polychromatic(x_start::Array{Float64,1}, data::Array{OIdata
 
     if typeof(ft) == Vector{Array{NFFT.NFFTPlan{Float64, 2, 1}}}
         crit = (x,g)->crit_polychromatic_nfft_fg(x, g, ft, data, weights = weights, printcolor=printcolor, regularizers=regularizers, use_diffphases = use_diffphases, verb = verb)
-        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=true, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=true, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     else
         error("Sorry, polychromatic DFT methods not implemented yet");
     end
@@ -1105,7 +1117,7 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     α = (λ/λ0).^-4.0;
     β = (λ/λ0).^(params[4]-4.0);
     fluxstar = params[1]*α;
-    fluxbg = params[2]*α;
+    fluxbg = params[2] #*α;
     fluxenv = (1.0-params[1]-params[2])*β;
     Vstar = visibility_ud([params[3]], data.uv);
     Venv = image_to_vis(x[nparams+1:end], ftplan[1]);
@@ -1158,7 +1170,7 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
 
     # Fill up gradient of parameters
     g[1] = Δchi2(dcvis_model_dfs0, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
-    g[2] = Δchi2(dcvis_model_dfg0, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
+    g[2] = 0;#Δchi2(dcvis_model_dfg0, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
     g[3] = Δchi2(dcvis_model_dD, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
     g[4] = Δchi2(dcvis_model_dindx, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data);
     g[5] = 0.0;
@@ -1206,10 +1218,10 @@ function crit_sparco_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Ar
     return chi2_f + reg_f;
 end
 
-function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0]) #grey environment
+function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0],ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8)) #grey environment
     x_sol = []
     crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, length(params_start), regularizers =regularizers, verb = verb, weights=weights)
-    sol = OptimPackNextGen.vmlmb(crit, [params_start;x_start], verb=verb, lower=0, maxiter=maxiter, blmvm=false, gtol=(0,1e-8));
+    sol = OptimPackNextGen.vmlmb(crit, [params_start;x_start], verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     return (sol[1:length(params_start)], sol[length(params_start)+1:end])
 end
 

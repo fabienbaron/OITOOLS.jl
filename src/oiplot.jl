@@ -1,5 +1,5 @@
 #
-# TO DO: t3phiplotvsdata, t3phiplotvsmodel, everything should be able to take as input a 1D array of OIdata
+# TO DO: plot_t3phivsdata, plot_t3phivsmodel, everything should be able to take as input a 1D array of OIdata
 #
 
 # gather common display tasks
@@ -246,35 +246,6 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     show(block=false)
 end
 
-function plot_v2_vs_data(data::OIdata, v2_model::Array{Float64,1}; logplot = false, y_range=[], res_range=[]) #plots V2 data vs v2 model
-    fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White");
-    clf();
-    subplot(211)
-    ax = gca();
-    if logplot==true
-        ax.set_yscale("log")
-    end
-    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=2, color="Black", ecolor="LightGrey")
-    plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=1)
-    title("Squared Visibility Amplitudes - Model vs data plot")
-    if y_range != []
-        ylim(y_range)
-    end
-    ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":");
-    subplot(212)
-    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err,color="Black", linestyle="none", marker="o", markersize=2)
-    xlabel(L"Baseline (M$\lambda$)")
-    ylabel("Residuals (number of sigma)")
-    if res_range !=[]
-        ylim(res_range)
-    end
-    ax = gca();
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
-    tight_layout()
-    show(block=false)
-end
-
 # This draws a continuous line based on the analytic function
 function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
     # Compute model points (discrete)
@@ -329,7 +300,7 @@ function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = fals
     show(block=false)
 end
 
-function v2plot(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
+function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
     if idpoint==true # interactive plot, click to identify point
         global v2base=data.v2_baseline
         global v2value=data.v2
@@ -406,7 +377,7 @@ function v2plot(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = fa
 end
 
 
-function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
+function plot_t3phi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
     if typeof(data)==OIdata
         data = [data]
     end
@@ -459,16 +430,55 @@ function t3phiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline"
     show(block=false)
 end
 
+function plot_v2_residuals(data::OIdata, x, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
+    plot_v2_residuals(data, image_to_v2(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
+end
 
-function plot_t3phi_vs_data(data::OIdata, t3phi_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
-    fig = figure("Closure phase plot - Model vs Data",figsize=(8,8),facecolor="White");
-    clf();
-    subplot(211)
-    ax = gca();
+function plot_t3phi_residuals(data::OIdata, x, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
+    plot_t3phi_residuals(data, image_to_t3phi(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
+end
+
+function plot_t3amp_residuals(data::OIdata, x, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
+    plot_t3amp_residuals(data, image_to_t3amp(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
+end
+
+
+function plot_v2_residuals(data::OIdata, v2_model::Array{Float64,1}; logplot = false, y_range=[], res_range=[]) #plots V2 data vs v2 model
+    fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White");
+    fig.subplots(nrows=2, ncols=1, sharex=true)
+    ax = subplot(2, 1, 1)
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.t3_baseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="Black", ecolor="LightGrey")
+    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
+    plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=2)
+    title("Squared Visibility Amplitudes - Model vs data plot")
+    if y_range != []
+        ylim(y_range)
+    end
+    ylabel("Squared Visibility Amplitudes")
+    ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    ax = subplot(2, 1, 2)
+    ax.axhline(color="LightGrey")
+    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err, color="Grey", linestyle="none", marker="o", markersize=2)
+    xlabel(L"Baseline (M$\lambda$)")
+    ylabel("Residuals (number of sigma)")
+    if res_range !=[]
+        ylim(res_range)
+    end
+    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    tight_layout()
+    show(block=false)
+end
+
+function plot_t3phi_residuals(data::OIdata, t3phi_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
+    fig = figure("Closure phase plot - Model vs Data",figsize=(8,8),facecolor="White");
+    fig.subplots(nrows=2, ncols=1, sharex=true)
+    ax = subplot(2, 1, 1)
+    if logplot==true
+        ax.set_yscale("log")
+    end
+    errorbar(data.t3_baseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
     plot(data.t3_baseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Closure phases - Model vs data plot")
     if y_range != []
@@ -476,28 +486,27 @@ function plot_t3phi_vs_data(data::OIdata, t3phi_model::Array{Float64,1}; logplot
     end
     ylabel("Closure phases (degrees)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
-    subplot(212)
-    plot(data.t3_baseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Black", linestyle="none", marker="o", markersize=2)
+    ax = subplot(2, 1, 2)
+    ax.axhline(color="LightGrey")
+    plot(data.t3_baseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Grey", linestyle="none", marker="o", markersize=1)
     if res_range !=[]
         ylim(res_range)
     end
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
-    ax = gca();
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
     show(block=false)
 end
 
-function plot_t3amp_vs_data(data::OIdata, t3amp_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
+function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
     fig = figure("Triple amplitudes plot - Model vs Data",figsize=(8,8),facecolor="White");
-    clf();
-    subplot(211)
-    ax = gca();
+    fig.subplots(nrows=2, ncols=1, sharex=true)
+    ax = subplot(2, 1, 1)
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.t3_baseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="Black", ecolor="LightGrey")
+    errorbar(data.t3_baseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
     plot(data.t3_baseline/1e6, t3amp_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Triple amplitudes - Model vs data plot")
     if y_range != []
@@ -505,8 +514,9 @@ function plot_t3amp_vs_data(data::OIdata, t3amp_model::Array{Float64,1}; logplot
     end
     ylabel("Triple amplitudes")
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
-    subplot(212)
-    plot(data.t3_baseline/1e6, (t3amp_model - data.t3amp)./data.t3amp_err,color="Black", linestyle="none", marker="o", markersize=2)
+    ax = subplot(2, 1, 2)
+    ax.axhline(color="LightGrey")
+    plot(data.t3_baseline/1e6, (t3amp_model - data.t3amp)./data.t3amp_err,color="Grey", linestyle="none", marker="o", markersize=2)
     if res_range !=[]
         ylim(res_range)
     end
@@ -519,16 +529,7 @@ function plot_t3amp_vs_data(data::OIdata, t3amp_model::Array{Float64,1}; logplot
 end
 
 
-
-
-
-
-
-
-
-
-
-function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
+function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
     if typeof(data)==OIdata
         data = [data]
     end
@@ -581,7 +582,7 @@ function t3ampplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline"
     show(block=false)
 end
 
-function fluxplot(data::Union{OIdata,Array{OIdata,1}}; color="Black")
+function plot_flux(data::Union{OIdata,Array{OIdata,1}}; color="Black")
     list_stations = sort(unique(vcat([data[n].flux_sta_index for n=1:length(data)]...)))
     for i=1:length(list_stations)
         for n=1:length(data)
@@ -595,7 +596,7 @@ function fluxplot(data::Union{OIdata,Array{OIdata,1}}; color="Black")
     end
 end
 
-function visphiplot(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
+function plot_visphi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
     if typeof(data)==OIdata
         data = [data]
     end
@@ -649,7 +650,7 @@ end
 
 
 
-function diffphiplot(data::Array{OIdata,1}; color="Black",markopt=false, legend_below=false, filename="")
+function plot_diffphi(data::Array{OIdata,1}; color="Black",markopt=false, legend_below=false, filename="")
     #
     # Note: this is a special kind of plot, which doesn't follow the classic plotting recipe
     #
@@ -686,7 +687,7 @@ function diffphiplot(data::Array{OIdata,1}; color="Black",markopt=false, legend_
 end
 
 
-function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="",legend_below=true)
+function plot_v2_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="",legend_below=true)
     global v2base=[]
     global v2value=[]
     global v2err=[]
@@ -768,14 +769,14 @@ function v2plot_multifile(data::Array{OIdata,1}; logplot = false, remove = false
 end
 
 
-function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscale = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [])
+function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixsize = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [])
     fig = figure(figtitle,figsize=(6,6),facecolor="White")
     clf();
     nx=ny=-1;
     pixmode = false;
-    if pixscale == -1
+    if pixsize == -1
         pixmode = true;
-        pixscale = 1
+        pixsize = 1
     end
     scaling_factor = maximum(image);
     if abs.(scaling_factor) <  1e-20
@@ -786,10 +787,10 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
     img = []
     if ndims(image) ==1
         ny=nx=Int64(sqrt(length(image)))
-        img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixscale,-0.5*nx*pixscale, -0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize, -0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
     else
         nx,ny = size(image);
-        img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixscale,-0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
     end
     if pixmode == false
         xlabel("x ← E (mas)")
@@ -798,9 +799,9 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
 
     ax = gca()
     ax.set_aspect("equal")
-    if (size(image,1)*pixscale)>1000
+    if (size(image,1)*pixsize)>1000
         tickinterval = 50.0
-    elseif (size(image,1)*pixscale)>100
+    elseif (size(image,1)*pixsize)>100
         tickinterval = 5.0
         # ax.invert_xaxis();
     end
@@ -821,7 +822,7 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
         if beamlocation == []
             beamlocation = [.8, .8]
         end
-        c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),0.5*beamsize,fc="white",ec="white",linewidth=0)
+        c = matplotlib.patches.Circle((0.5*nx*pixsize*beamlocation[1],-0.5*ny*pixsize*beamlocation[2]),0.5*beamsize,fc="white",ec="white",linewidth=0)
         ax.add_artist(c)
     end
     tight_layout()
@@ -829,7 +830,7 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixscal
 end
 
 #TODO: work for rectangular
-function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; wavs = [], figtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; wavs = [], figtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixsize = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
     if typeof(image_vector)==Array{Float64,2}
         nwavs = size(image_vector,2)
     elseif typeof(image_vector)==Array{Float64,3}
@@ -851,12 +852,12 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
         image = images_all[:,i]
         nx=ny=-1;
         pixmode = false;
-        if pixscale == -1
+        if pixsize == -1
             pixmode = true;
-            pixscale = 1
+            pixsize = 1
         end
         ny=nx=Int64.(sqrt(length(image)))
-        img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixscale,-0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+        img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
         # if pixmode == false
         #     xlabel("RA (mas)")
         #     ylabel("DEC (mas)")
@@ -879,7 +880,7 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
         # end
         #
         # if beamsize > 0
-        #     c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+        #     c = matplotlib.patches.Circle((0.5*nx*pixsize*beamlocation[1],-0.5*ny*pixsize*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
         #     ax.add_artist(c)
         # end
         tight_layout()
@@ -888,7 +889,7 @@ function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float6
 end
 
 # TODO: rework for julia 1.0+
-function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Time-variable images",pixscale = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
+function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Time-variable images",pixsize = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
     fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
     images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
     cols=6
@@ -901,17 +902,17 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
         image = images_all[:,i]
         nx=ny=-1;
         pixmode = false;
-        if pixscale == -1
+        if pixsize == -1
             pixmode = true;
-            pixscale = 1
+            pixsize = 1
         end
         img = []
         if ndims(image) ==1
             ny=nx=Int64(sqrt(length(image)))
-            img = imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+            img = imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixsize,0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
         else
             nx,ny = size(image);
-            img = imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixscale,0.5*nx*pixscale,-0.5*ny*pixscale,0.5*ny*pixscale]); # uses Monnier's orientation
+            img = imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixsize,0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
         end
         if pixmode == false
             xlabel("RA (mas)")
@@ -936,7 +937,7 @@ function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Ti
 
 
         if beamsize > 0
-            c = matplotlib.patches.Circle((0.5*nx*pixscale*beamlocation[1],-0.5*ny*pixscale*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+            c = matplotlib.patches.Circle((0.5*nx*pixsize*beamlocation[1],-0.5*ny*pixsize*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
             ax.add_artist(c)
         end
         tight_layout()

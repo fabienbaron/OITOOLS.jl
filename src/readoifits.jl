@@ -1614,11 +1614,47 @@ function readfits(fitsfile; normalize = false, vectorize=false)
     return x;
 end
 
-function writefits(data, fitsfile)
+function writefits(data, fitsfile;pixsize=-1)
+    """
+    pixsize should be input as mas
+    """
     f = FITS(fitsfile, "w");
-    write(f, data);
+    if pixsize!=-1
+        header = FITSHeader(["CDELT1","CDELT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],[-(pixsize/1000.0)/(206265.0),(pixsize/1000.0)/(206265.0),0.0,0.0,(size(data)[1]/2),(size(data)[1]/2)],["Radians per Pixel","Radians per Pixel","X-coordinate of reference pixel","Y-coordinate of reference pixel","reference pixel in X","reference pixel in Y"])
+        write(f, data,header=header);
+    else
+        write(f, data);
+    end
     close(f);
 end
+
+function updatefits_aspro(fitsfile_in,fitsfile_out,res)
+    """
+    res should be input as mas
+    """
+    f = FITS(fitsfile_in);
+    data = read(f[1])
+    header = read_header(f[1])
+    header["CDELT1"] = -res/1000.0
+    header["CDELT2"] = res/1000.0
+    header["CRVAL1"] = 0.0
+    header["CRVAL2"] = 0.0
+    header["CRPIX1"] = (size(data)[1]/2)
+    header["CRPIX2"] = (size(data)[1]/2)
+    header["CUNIT1"] = "arcsec"
+    header["CUNIT2"] = "arcsec"
+    set_comment!(header,"CDELT1","Arcseconds per Pixel")
+    set_comment!(header,"CDELT2","Arcseconds per Pixel")
+    set_comment!(header,"CRVAL1","X-coordinate of reference pixel")
+    set_comment!(header,"CRVAL2","Y-coordinate of reference pixel")
+    set_comment!(header,"CRPIX1","reference pixel in X")
+    set_comment!(header,"CRPIX2","reference pixel in Y")
+    fout = FITS(fitsfile_out,"w")
+    write(fout,data,header=header);
+    close(f)
+    close(fout)
+end
+
 
 function oifits_prep(data::OIdata; min_v2_err_add = 0.0, min_v2_err_rel = 0.0 , v2_err_mult = 1.0, min_t3amp_err_add = 0.0,  min_t3amp_err_rel = 0.0, t3amp_err_mult = 1.0, min_t3phi_err_add = 0.0, t3phi_err_mult = 1.0, quad = false)
 # e.g. MIRC from Monnier et al. https://arxiv.org/pdf/1211.6055.pdf

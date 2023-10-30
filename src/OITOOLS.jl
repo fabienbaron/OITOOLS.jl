@@ -24,9 +24,9 @@ export OIparam, OIcomponent,OImodel
 export create_component,create_model,update_model, model_to_vis, dispatch_params, model_to_obs, model_to_chi2,visfunc_to_chi2, get_model_bounds,get_model_params,get_model_pnames,fit_model_ultranest, fit_model_levenberg, fit_model_nlopt, resample_data, bootstrap_fit
 
 #oiplot
-export set_oiplot_defaults, uvplot, onclickidentify, v2plot,v2plot_timelapse, diffphiplot, visphiplot, t3phiplot, imdisp, imdisp_temporal, plot_v2_vs_data, plot_t3phi_vs_data, plot_t3amp_vs_data, v2plot_model_vs_func, v2plot, t3phiplot, t3ampplot,v2plot_multifile,imdisp_multiwave,imdisp_polychromatic
+export set_oiplot_defaults, uvplot, onclickidentify, plot_v2,plot_v2_timelapse, plot_diffphi, plot_visphi, plot_t3phi, imdisp, imdisp_temporal, plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals, plot_v2_model_vs_func, plot_v2, plot_t3amp,plot_v2_multifile,imdisp_polychromatic
 #oichi2
-export setup_dft, setup_nfft,setup_nfft_multiepochs, mod360, vis_to_v2,vis_to_t3, image_to_obs, image_to_vis_dft,image_to_vis,chi2_dft_f,chi2_nfft_f,chi2_vis_nfft_f,chi2_vis_dft_fg,chi2_vis_nfft_fg,gaussian2d,cdg,reg_centering,tvsq,tv,regularization,crit_dft_fg,crit_nfft_fg, chi2_dft_fg,chi2_nfft_fg,crit_nfft_fg,crit_multitemporal_nfft_fg,reconstruct,reconstruct_multitemporal, setup_radial_reg
+export setup_dft, setup_nfft,setup_nfft_multiepochs, mod360, vis_to_v2,vis_to_t3, image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs, image_to_vis_dft,image_to_vis,chi2_dft_f,chi2_nfft_f,chi2_vis_nfft_f,chi2_vis_dft_fg,chi2_vis_nfft_fg,gaussian2d,cdg,reg_centering,tvsq,tv,regularization,crit_dft_fg,crit_nfft_fg, chi2_dft_fg,chi2_nfft_fg,crit_nfft_fg,crit_multitemporal_nfft_fg,reconstruct,reconstruct_multitemporal, setup_radial_reg
 #vis_functions
 export bb, visibility_ud, visibility_ldpow, visibility_ldquad, visibility_ldquad_alt, visibility_ldlin, visibility_annulus, visibility_ellipse_quad, visibility_ellipse_uniform,visibility_thin_ring,visibility_Gaussian_ring, visibility_Gaussian_ring_az,visibility_ldsquareroot, visibility_Lorentzian_ring, visibility_GaussianLorentzian_ring_az
 export get_uv,get_uv_indxes,prep_arrays,read_array_file,read_obs_file,read_comb_file,read_wave_file,simulate,simulate_from_oifits,vis_to_t3_conj,get_v2_baselines,v2mapt3,get_t3_baselines,hour_angle_calc
