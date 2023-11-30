@@ -332,7 +332,7 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = f
     if remove == true
         fig.canvas.mpl_connect("button_press_event",onclickv2)
     end
-    if (color == "baseline" || color =="base") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
+    if (color == "baseline" || color =="base"|| color =="bases" || color =="baselines") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_v2...)))
         for i=1:length(baseline)
@@ -496,8 +496,8 @@ function plot_t3phi_residuals(data::OIdata, t3phi_model::Array{Float64,1}; logpl
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.t3_baseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
-    plot(data.t3_baseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=2)
+    errorbar(data.t3_maxbaseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
+    plot(data.t3_maxbaseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Closure phases - Model vs data plot")
     if y_range != []
         ylim(y_range)
@@ -506,11 +506,11 @@ function plot_t3phi_residuals(data::OIdata, t3phi_model::Array{Float64,1}; logpl
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
     ax = subplot(2, 1, 2)
     ax.axhline(color="LightGrey")
-    plot(data.t3_baseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Grey", linestyle="none", marker="o", markersize=1)
+    plot(data.t3_maxbaseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Grey", linestyle="none", marker="o", markersize=1)
     if res_range !=[]
         ylim(res_range)
     end
-    xlabel(L"Baseline (M$\lambda$)")
+    xlabel(L"Max Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
@@ -524,8 +524,8 @@ function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; logpl
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.t3_baseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
-    plot(data.t3_baseline/1e6, t3amp_model, color="Red", linestyle="none", marker="o", markersize=2)
+    errorbar(data.t3_maxbaseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
+    plot(data.t3_maxbaseline/1e6, t3amp_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Triple amplitudes - Model vs data plot")
     if y_range != []
         ylim(y_range)
@@ -534,11 +534,11 @@ function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; logpl
     ax.grid(true,which="both",color="LightGrey",linestyle=":");
     ax = subplot(2, 1, 2)
     ax.axhline(color="LightGrey")
-    plot(data.t3_baseline/1e6, (t3amp_model - data.t3amp)./data.t3amp_err,color="Grey", linestyle="none", marker="o", markersize=2)
+    plot(data.t3_maxbaseline/1e6, (t3amp_model - data.t3amp)./data.t3amp_err,color="Grey", linestyle="none", marker="o", markersize=2)
     if res_range !=[]
         ylim(res_range)
     end
-    xlabel(L"Baseline (M$\lambda$)")
+    xlabel(L"Max Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
@@ -547,7 +547,7 @@ function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; logpl
 end
 
 
-function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
+function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false, t3base="max")
     if typeof(data)==OIdata
         data = [data]
     end
@@ -557,13 +557,19 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
     fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
     clf();
     ax=gca();
+    baseline_t3 = []
+
     if (color == "baseline" || color =="base")
         baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_t3...)))
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
         for i=1:length(baseline)
             loc =  [findall(baseline_list_t3[n] .== baseline[i]) for n=1:length(data)]
-            baseline_t3 = vcat([data[n].t3_baseline[loc[n]] for n=1:length(data)]...)/1e6
+            if t3base=="max"
+                baseline_t3 = vcat([data[n].t3_maxbaseline[loc[n]] for n=1:length(data)]...)/1e6
+            elseif t3base=="geom"
+                baseline_t3 = vcat([data[n].t3_baseline[loc[n]] for n=1:length(data)]...)/1e6
+            end
             t3amp = vcat([data[n].t3amp[loc[n]] for n=1:length(data)]...)
             t3amp_err = vcat([data[n].t3amp_err[loc[n]] for n=1:length(data)]...)
             errorbar(baseline_t3,t3amp,yerr=t3amp_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
@@ -575,7 +581,12 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
         end
     elseif (color == "wavelength" || color == "wav")
         wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
-        baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        
+        if t3base=="max"
+            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
+        elseif t3base=="geom"
+            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        end
         t3amp = vcat([data[n].t3amp for n=1:length(data)]...);
         t3amp_err = vcat([data[n].t3amp_err for n=1:length(data)]...);
         sc = scatter(baseline_t3, t3amp, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
@@ -584,13 +595,21 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
         cbar.set_ticks(cbar_range)
     else
-        baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        if t3base=="max"
+            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
+        elseif t3base=="geom"
+            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        end
         t3amp = vcat([data[n].t3amp for n=1:length(data)]...);
         t3amp_err = vcat([data[n].t3amp_err for n=1:length(data)]...);
         errorbar(baseline_t3,t3amp,yerr=t3amp_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
     end
     title("Triple amplitude data")
-    xlabel(L"Maximum Baseline (M$\lambda$)")
+    if t3base=="max"
+        xlabel(L"Maximum Baseline (M$\lambda$)")
+    elseif t3base=="geom"
+        xlabel(L"Geometric Mean Baseline (M$\lambda$)")
+    end
     ylabel("Triple amplitude")
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
