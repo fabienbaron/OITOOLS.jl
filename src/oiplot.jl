@@ -183,15 +183,18 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
-        scatter(u, v,alpha=1.0, s = 12.0, c=wavcol, cmap=cmap)
-        scatter(-u, -v,alpha=1.0, s = 12.0, c=wavcol, cmap=cmap)
-        cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
         wavs=sort(unique(wavcol))
+        scatter([u;-u], [v;-v], alpha=1.0, s = 12.0, c=[wavcol;wavcol], cmap=cmap)
+        cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
         if 2<length(wavs)<9
             cbar.set_ticks([ceil(wavs[1]*1000)/1000; round.(wavs[2:end-1]*1000)/1000; floor(wavs[end]*1000)/1000])
             cbar.set_ticklabels([ceil(wavs[1]*1000)/1000; round.(wavs[2:end-1]*1000)/1000; floor(wavs[end]*1000)/1000])
-        elseif length(wavs)<=2
+        elseif length(wavs)==2
             cbar_range = round.(collect(range(ceil(minimum(wavcol)*1000)/1000, floor(maximum(wavcol)*1000)/1000,length=2))*1000)/1000
+            cbar.set_ticks(cbar_range)
+            cbar.set_ticklabels(cbar_range)
+        elseif length(wavs)==1
+            cbar_range = wavs
             cbar.set_ticks(cbar_range)
             cbar.set_ticklabels(cbar_range)
         else # >= 9
@@ -203,8 +206,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         mjdcol = vcat([data[n].uv_mjd for n=1:length(data)]...)
-        scatter(u, v,alpha=1.0, s = 12.0, c=mjdcol, cmap=cmap)
-        scatter(-u, -v,alpha=1.0, s = 12.0, c=mjdcol, cmap=cmap)
+        scatter([u;-u], [v;-v], alpha=1.0, s = 12.0, c=[mjdcol;mjdcol], cmap=cmap)
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="MJD", pad=0.1, fraction=0.02)
         mjds=unique(mjdcol)
         if length(mjds)<5
@@ -377,7 +379,7 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = f
 end
 
 
-function plot_t3phi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
+function plot_t3phi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false, t3base="max")
     if typeof(data)==OIdata
         data = [data]
     end
@@ -393,7 +395,11 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
         for i=1:length(baseline)
             loc =  [findall(baseline_list_t3[n] .== baseline[i]) for n=1:length(data)]
-            baseline_t3 = vcat([data[n].t3_baseline[loc[n]] for n=1:length(data)]...)/1e6
+            if t3base=="max"
+                baseline_t3 = vcat([data[n].t3_maxbaseline[loc[n]] for n=1:length(data)]...)/1e6
+            elseif t3base=="geom"
+                baseline_t3 = vcat([data[n].t3_baseline[loc[n]] for n=1:length(data)]...)/1e6
+            end
             t3phi = vcat([data[n].t3phi[loc[n]] for n=1:length(data)]...)
             t3phi_err = vcat([data[n].t3phi_err[loc[n]] for n=1:length(data)]...)
             errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
@@ -405,7 +411,11 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
         end
     elseif (color == "wavelength" || color == "wav")
         wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
-        baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        if t3base=="max"
+            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
+        elseif t3base=="geom"
+            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        end
         t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
         t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
         sc = scatter(baseline_t3, t3phi, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
@@ -414,13 +424,21 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
         cbar.set_ticks(cbar_range)
     else
-        baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        if t3base=="max"
+            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
+        elseif t3base=="geom"
+            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        end
         t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
         t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
         errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
     end
     title("Closure phase data")
-    xlabel(L"Maximum Baseline (M$\lambda$)")
+    if t3base=="max"
+        xlabel(L"Maximum Baseline (M$\lambda$)")
+    elseif t3base=="geom"
+        xlabel(L"Geometric Mean Baseline (M$\lambda$)")
+    end
     ylabel("Closure phase (degrees)")
     ax.grid(true,which="both",color="LightGrey",linestyle=":")
     tight_layout()
