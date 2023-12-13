@@ -1117,12 +1117,12 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     α = (λ/λ0).^-4.0;
     β = (λ/λ0).^(params[4]-4.0);
     fluxstar = params[1]*α;
-    fluxbg = params[2] #*α;
+    fluxbg = params[2];
     fluxenv = (1.0-params[1]-params[2])*β;
     Vstar = visibility_ud([params[3]], data.uv);
     Venv = image_to_vis(x[nparams+1:end], ftplan[1]);
 
-    cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
+    cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv .+fluxbg)
     v2_model = vis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
 
@@ -1147,7 +1147,7 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
 
     # Derivative with respect to fs0 (param[1])
     u =  fluxstar.*Vstar + fluxenv.*Venv;
-    v =  fluxstar + fluxenv + fluxbg;
+    v =  fluxstar + fluxenv .+ fluxbg;
     du = α.*Vstar - β.*Venv # du/dfs0
     dv = α - β# dv/dfs0
     dcvis_model_dfs0 = (du.*v-u.*dv)./(v.*v)
@@ -1193,7 +1193,6 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     #Normalization done later
     #flux = sum(x[nparams+1:end])
     #g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux ) / flux; # gradient correction to take into account the non-normalized image
-
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
@@ -1219,6 +1218,7 @@ function crit_sparco_nfft_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Ar
 end
 
 function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0],ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8)) #grey environment
+    #printcolor = :black; verb = false; maxiter = 100; regularizers =[]; weights=[1.0,1.0,1.0];ftol= (0,1e-8); xtol=(0,1e-8); gtol=(0,1e-8);
     x_sol = []
     crit = (x,g)->crit_sparco_nfft_fg(x, g, ft, data, length(params_start), regularizers =regularizers, verb = verb, weights=weights)
     sol = OptimPackNextGen.vmlmb(crit, [params_start;x_start], verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);

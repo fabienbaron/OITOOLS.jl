@@ -2,8 +2,8 @@
 # Basic use of "SPARCO"-type reconstruction
 #
 using OITOOLS
-oifitsfile = "/home/baron/Downloads/2019_v1295Aql.WL_SMOOTH.A.oifits"
-pixsize = 0.1
+oifitsfile = "./data/BEN/MWC275_T4a.oifits"
+pixsize = 0.075
 data = readoifits(oifitsfile, filter_bad_data=true)[1,1];
 nx = 128
 ft = setup_nfft(data, nx, pixsize);
@@ -28,3 +28,19 @@ params, x = reconstruct_sparco_gray(x_start, params, data, ft, regularizers=regu
 imdisp(x, pixscale = pixsize)
 
 
+f = FITS("fits/$filename.fits", "w")
+_x = reshape(x, (nx, nx))
+hdr_key = ["PIXSCALE","MINCHI2","FITMSG","STRFRAC","BGFRAC","STRDIAM","ENVSLOPE","REFWL",]
+
+hdr_val = Any[pixscale, minchi2, string(ret), params...]
+
+hdr_cmt = ["mas","","see OITOOLS","flux fraction of star at lamdba_0", "flux fraction of background at lambda_0",
+"stellar angular diameter","spectral index of the environment plus 4 (gt 0)","lambda_0 reference wavelength",]
+
+for (i, reg) in enumerate(regularizers)
+    push!(hdr_key, "REG$i")
+    push!(hdr_val, reg[2])
+    push!(hdr_cmt, reg[1])
+end
+write(f, _x; header=FITSHeader(hdr_key, hdr_val, hdr_cmt))
+close(f)
