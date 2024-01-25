@@ -174,9 +174,9 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         end
                
         if legend_below == false
-            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=3, loc="upper right")
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3, loc="upper right")
         else
-            ax.legend(fontsize=6, fancybox=true, shadow=true, ncol=8, loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8, loc="upper center", bbox_to_anchor=(0.5, -0.10));
             tight_layout();
         end
     elseif (color == "wavelength" || color == "wav")

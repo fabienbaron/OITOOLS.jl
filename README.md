@@ -27,7 +27,28 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 ## Installation
 
-To install OITOOLS, check the [documentation here](https://fabienbaron.github.io/OITOOLS.jl/dev/install/).
+If you're new to Julia, you may want to install OITOOLS and its dependencies without learning about activate/instantiate. 
+You will only have to do this one.
+
+```julia
+using Pkg; 
+#Install python packages
+Pkg.add("Conda"); 
+using Conda; 
+Conda.add("ultranest", channel="conda-forge"); 
+Conda.add("astroquery", channel="astropy");
+# Install mainstream Julia packages
+Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters"]); 
+# Install Eric Thiebaut's packages
+Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))
+Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4"); 
+Pkg.add(["ArrayTools", "LazyAlgebra", "OptimPackNextGen"]);
+# Install FB's packages
+Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4");
+Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
+# Then check everything got installed properly
+using OITOOLS
+```
 
 ## Plotting and loading data
 
