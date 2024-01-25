@@ -41,7 +41,6 @@ Conda.add("astroquery", channel="astropy");
 Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters"]); 
 # Install Eric Thiebaut's packages
 Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))
-Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4"); 
 Pkg.add(["ArrayTools", "LazyAlgebra", "OptimPackNextGen"]);
 # Install FB's packages
 Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4");
