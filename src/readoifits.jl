@@ -1567,7 +1567,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     return OIdataArr;
 end
 
-function readoifits_multiepochs(oifitsfiles; filter_bad_data=false,  force_full_t3 = false) # read multiple files, each containing a single epochs
+function readoifits_multiepochs(oifitsfiles; filter_bad_data=true, force_full_t3 = false) # read multiple files, each containing a single epochs
     nepochs = length(oifitsfiles);
     tepochs = Array{Float64}(undef, nepochs);
     data = Array{OIdata}(undef, nepochs);
