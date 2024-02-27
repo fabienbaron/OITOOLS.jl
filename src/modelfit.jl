@@ -821,7 +821,7 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
     return params_mode, params_mean,params_err
 end
 
-using TwoDimensional, LinearInterpolators
+#using TwoDimensional, LinearInterpolators
 
 function model_to_image(model::OImodel; nx=257, pixsize=0.1, oversample = 4,  λ = 1.6e-6, display=false, normalize=true)
 # nx needs to be odd for better image quality (zero frequency needds to be sampled)
@@ -833,12 +833,12 @@ V = model_to_vis(model, uv, [λ])
 VV = reshape(V, (nx_samples, nx_samples, length(λ)))#.*disk(npix=nx, diameter=nx)
 img = real(FFTW.ifftshift(FFTW.ifft(FFTW.fftshift(VV))))
 img .*= img.>0
-imdisp(img[:,:,1])
+#imdisp(img[:,:,1])
 img = dropdims(img, dims=3)
 
-R = 1/oversample*AffineTransform2D{Float64}() 
-I = TwoDimensionalTransformInterpolator((nx_samples, nx_samples), (nx,nx), LinearSpline(), R)
-newimg = I*img
+#R = 1/oversample*AffineTransform2D{Float64}() 
+#I = TwoDimensionalTransformInterpolator((nx_samples, nx_samples), (nx,nx), LinearSpline(), R)
+#newimg = I*img
 
 if length(λ)==1
     img = dropdims(img, dims=3)
