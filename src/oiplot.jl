@@ -806,6 +806,78 @@ function plot_v2_multifile(data::Array{OIdata,1}; logplot = false, remove = fals
 end
 
 
+
+function plot_v2_and_t3phi_wav(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(10,10), logplot = false, clean=true,t3base="max",markopt=false, legend_below=false, figtitle="")
+    set_oiplot_defaults()
+    if typeof(data)==OIdata
+            data = [data]
+        end
+        if typeof(data)==Array{OIdata,2}
+            data = vec(data)
+        end
+        fig = figure(string(figtitle, "V2 & T3phi data"),figsize=figsize,facecolor="White");
+        if clean == true # do not overplot on existing window by default
+            clf();
+        end
+    #
+    # V2
+    #
+        axes = fig.subplots(2,1)
+        subplot(2,1,1)   
+        ax = gca();
+        if logplot==true
+                ax.set_yscale("log")
+            end
+        
+            xlabel(L"Baseline (M$\lambda$)")
+            ylabel("Squared Visibility Amplitudes")
+            grid(true,which="both",color="LightGrey", linestyle=":")
+            tight_layout() 
+            wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
+            baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
+            v2 = vcat([data[n].v2 for n=1:length(data)]...);
+            v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
+            sc = scatter(baseline_v2,v2, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
+            el = errorbar(baseline_v2,v2,yerr=v2_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+            
+    #
+    # T3phi
+    #
+        subplot(2,1,2)   
+            wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
+            if t3base=="max"
+                baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
+            elseif t3base=="geom"
+                baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+            end
+            t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
+            t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
+            sc = scatter(baseline_t3, t3phi, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
+            el = errorbar(baseline_t3, t3phi,yerr=t3phi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+           
+        if t3base=="max"
+            xlabel(L"Maximum Baseline (M$\lambda$)")
+        elseif t3base=="geom"
+            xlabel(L"Geometric Mean Baseline (M$\lambda$)")
+        end
+        ylabel("Closure phase (degrees)")
+       # ax = gca();
+        grid(true,which="both",color="LightGrey",linestyle=":")
+        tight_layout()
+    
+    
+        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
+        minrange = ceil(minimum(wavcol)*100)/100
+        maxrange = floor(maximum(wavcol)*100)/100
+        step = round((maxrange-minrange)*10)/100
+        cbar_range = collect(range(minrange, maxrange, step=step))
+        cbar.set_ticks(cbar_range)
+        show(block=false)
+end
+    
+
+
+
 function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixsize = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [])
     fig = figure(figtitle,figsize=(6,6),facecolor="White")
     clf();
