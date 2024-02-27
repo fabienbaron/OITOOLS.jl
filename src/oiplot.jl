@@ -379,7 +379,7 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = f
 end
 
 
-function plot_t3phi(data::data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; color::String="baseline",markopt=false, legend_below=false, t3base="max")
+function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; color::String="baseline",markopt=false, legend_below=false, t3base="max")
     if typeof(data)==OIdata
         data = [data]
     end
