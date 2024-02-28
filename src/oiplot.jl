@@ -137,7 +137,7 @@ function uvplot(uv::Array{Float64,2};filename="")
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = false, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
+function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
     if typeof(data)==OIdata
         data = [data]
     end
@@ -186,11 +186,8 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         wavs=sort(unique(wavcol))
         scatter([u;-u], [v;-v], alpha=1.0, s = 12.0, c=[wavcol;wavcol], cmap=cmap)
         cbar = colorbar(ax=ax, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.1, fraction=0.02)
-        if 2<length(wavs)<9
-            cbar.set_ticks([ceil(wavs[1]*1000)/1000; round.(wavs[2:end-1]*1000)/1000; floor(wavs[end]*1000)/1000])
-            cbar.set_ticklabels([ceil(wavs[1]*1000)/1000; round.(wavs[2:end-1]*1000)/1000; floor(wavs[end]*1000)/1000])
-        elseif length(wavs)==2
-            cbar_range = round.(collect(range(ceil(minimum(wavcol)*1000)/1000, floor(maximum(wavcol)*1000)/1000,length=2))*1000)/1000
+        if length(wavs)==2
+            cbar_range = round.(collect(range(ceil(minimum(wavcol)*100)/100, floor(maximum(wavcol)*100)/100,length=2))*100)/100
             cbar.set_ticks(cbar_range)
             cbar.set_ticklabels(cbar_range)
         elseif length(wavs)==1
@@ -198,9 +195,12 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
             cbar.set_ticks(cbar_range)
             cbar.set_ticklabels(cbar_range)
         else # >= 9
-            cbar_range = round.(collect(range(ceil(minimum(wavcol)*1000)/1000, floor(maximum(wavcol)*1000)/1000,length=9))*1000)/1000
+            nwavs = min(length(wavs), 10) # max 10 divisions
+            minrange = ceil(minimum(wavcol)*100)/100
+            maxrange = floor(maximum(wavcol)*100)/100
+            step = round((maxrange-minrange)/nwavs*100)/100
+            cbar_range = collect(range(minrange, maxrange, step=step))
             cbar.set_ticks(cbar_range)
-            cbar.set_ticklabels(cbar_range)
         end
     elseif (color == "mjd" || color == "time")
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
@@ -864,8 +864,6 @@ function plot_v2_and_t3phi_wav(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2
        # ax = gca();
         grid(true,which="both",color="LightGrey",linestyle=":")
         tight_layout()
-    
-    
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         minrange = ceil(minimum(wavcol)*100)/100
         maxrange = floor(maximum(wavcol)*100)/100
