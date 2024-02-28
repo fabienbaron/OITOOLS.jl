@@ -22,11 +22,11 @@ function set_oiplot_defaults()
     #PyDict(pyimport("matplotlib")."rcParams")["agg.path.chunksize"]=[10000]
 end
 
-global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
+const global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
 "fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
 "sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen","salmon","slategray","lime","coral","maroon","mistyrose","sandybrown","tan","olivedrab"]
 
-global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
+const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
 
 
 #xclicks=Array{Float64,1}(undef,1)
@@ -130,14 +130,14 @@ function uvplot(uv::Array{Float64,2};filename="")
     title("UV coverage")
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
-    ax.grid(true,which="both",color="LightGrey", linestyle=":");
+    ax.grid(true,which="both",color="Grey", linestyle=":");
     tight_layout();
     if filename !=""
         savefig(filename)
     end
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
+function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", figsize=(10,10), minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
     if typeof(data)==OIdata
         data = [data]
     end
@@ -149,7 +149,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     if windowtitle==""
         windowtitle = string("Mean MJD: $(round(mean_mjd*100)/100), nuv: $(nuv)")
     end
-    fig = figure(windowtitle,figsize=(8,8),facecolor="White")
+    fig = figure(windowtitle,figsize=figsize,facecolor="White")
     set_oiplot_defaults()
     clf();
     ax = gca()
@@ -174,9 +174,9 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
         end
                
         if legend_below == false
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=3, loc="upper right")
+            ax.legend(fontsize=10, fancybox=true, shadow=true, ncol=3, loc="upper right")
         else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8, loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            ax.legend(fontsize=10, fancybox=true, shadow=true, ncol=5, loc="upper center", bbox_to_anchor=(0.5, -0.10));
             tight_layout();
         end
     elseif (color == "wavelength" || color == "wav")
@@ -236,7 +236,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     title(figtitle)
     xlabel(L"U (M$\lambda$)")
     ylabel(L"V (M$\lambda$)")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    ax.grid(true,which="both",color="Grey",linestyle=":");
     ax.set_aspect("equal")
     if flipx == true
         ax.invert_xaxis()
@@ -291,18 +291,20 @@ function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = fals
     title("Squared Visbility Amplitudes - Model vs data plot")
     #xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     subplot(212)
     plot(baseline_v2/1e6, (v2_model - v2_data)./v2_data_err,color="Black", linestyle="none", marker="o", markersize=3)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     show(block=false)
 end
 
-function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
+function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12, 6), logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
+    set_oiplot_defaults()
+
     if idpoint==true # interactive plot, click to identify point
         global v2base=data.v2_baseline
         global v2value=data.v2
@@ -321,7 +323,7 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = f
     if typeof(data)==Array{OIdata,2}
         data = vec(data)
     end
-    fig = figure(string(figtitle, "V2 data"),figsize=(10,5),facecolor="White");
+    fig = figure(string(figtitle, "V2 data"),figsize=figsize,facecolor="White");
     if clean == true # do not overplot on existing window by default
         clf();
     end
@@ -370,7 +372,7 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = f
     title("Squared Visibility Amplitude Data")
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey", linestyle=":")
+    ax.grid(true,which="both",color="Grey", linestyle=":")
     tight_layout()
     if idpoint==true
         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
@@ -379,14 +381,16 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};logplot = f
 end
 
 
-function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; color::String="baseline",markopt=false, legend_below=false, t3base="max")
+function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
+    set_oiplot_defaults()
+
     if typeof(data)==OIdata
         data = [data]
     end
     if typeof(data)==Array{OIdata,2}
         data = vec(data)
     end
-    fig = figure("Closure phase data",figsize=(10,5),facecolor="White");
+    fig = figure("Closure phase data",figsize=figsize,facecolor="White");
     clf();
     ax=gca();
     if (color == "baseline" || color =="base")
@@ -407,7 +411,7 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; color::
         if legend_below == false
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
         else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=5,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
     elseif (color == "wavelength" || color == "wav")
         wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
@@ -440,7 +444,7 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; color::
         xlabel(L"Geometric Mean Baseline (M$\lambda$)")
     end
     ylabel("Closure phase (degrees)")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     if filename !=""
         savefig(filename)
@@ -461,79 +465,85 @@ function plot_t3amp_residuals(data::OIdata, x, ft::Array{NFFT.NFFTPlan{Float64, 
 end
 
 
-function plot_v2_residuals(data::OIdata, v2_model::Array{Float64,1}; logplot = false, y_range=[], res_range=[]) #plots V2 data vs v2 model
-    fig = figure("V2 plot - Model vs Data",figsize=(8,8),facecolor="White");
+function plot_v2_residuals(data::OIdata, v2_model::Array{Float64,1}; figsize=(12,12), logplot = false, y_range=[], res_range=[]) #plots V2 data vs v2 model
+    set_oiplot_defaults()
+
+    fig = figure("V2 plot - Model vs Data",figsize=figsize,facecolor="White");
     fig.subplots(nrows=2, ncols=1, sharex=true)
     ax = subplot(2, 1, 1)
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
+    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=1, color="Grey", ecolor="Grey")
     plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Squared Visibility Amplitudes - Model vs data plot")
     if y_range != []
         ylim(y_range)
     end
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    ax.grid(true,which="both",color="Grey",linestyle=":");
     ax = subplot(2, 1, 2)
-    ax.axhline(color="LightGrey")
+    ax.axhline(color="Grey")
     plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err, color="Grey", linestyle="none", marker="o", markersize=2)
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     if res_range !=[]
         ylim(res_range)
     end
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     show(block=false)
 end
 
-function plot_t3phi_residuals(data::OIdata, t3phi_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
-    fig = figure("Closure phase plot - Model vs Data",figsize=(8,8),facecolor="White");
+function plot_t3phi_residuals(data::OIdata, t3phi_model::Array{Float64,1}; figsize=(12,12), logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
+    set_oiplot_defaults()
+
+    fig = figure("Closure phase plot - Model vs Data",figsize=figsize,facecolor="White");
     fig.subplots(nrows=2, ncols=1, sharex=true)
     ax = subplot(2, 1, 1)
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.t3_maxbaseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
+    errorbar(data.t3_maxbaseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="Grey", ecolor="Grey")
     plot(data.t3_maxbaseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Closure phases - Model vs data plot")
     if y_range != []
         ylim(y_range)
     end
     ylabel("Closure phases (degrees)")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    ax.grid(true,which="both",color="Grey",linestyle=":");
     ax = subplot(2, 1, 2)
-    ax.axhline(color="LightGrey")
+    ax.axhline(color="Grey")
     plot(data.t3_maxbaseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Grey", linestyle="none", marker="o", markersize=1)
     if res_range !=[]
         ylim(res_range)
     end
     xlabel(L"Max Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     show(block=false)
 end
 
-function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
-    fig = figure("Triple amplitudes plot - Model vs Data",figsize=(8,8),facecolor="White");
+function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; figsize=(12,12), logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
+    set_oiplot_defaults()
+
+    fig = figure("Triple amplitudes plot - Model vs Data",figsize=figsize,facecolor="White");
     fig.subplots(nrows=2, ncols=1, sharex=true)
     ax = subplot(2, 1, 1)
     if logplot==true
         ax.set_yscale("log")
     end
-    errorbar(data.t3_maxbaseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="LightGrey", ecolor="LightGrey")
+    errorbar(data.t3_maxbaseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="Grey", ecolor="Grey")
     plot(data.t3_maxbaseline/1e6, t3amp_model, color="Red", linestyle="none", marker="o", markersize=2)
     title("Triple amplitudes - Model vs data plot")
     if y_range != []
         ylim(y_range)
     end
     ylabel("Triple amplitudes")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":");
+    ax.grid(true,which="both",color="Grey",linestyle=":");
     ax = subplot(2, 1, 2)
-    ax.axhline(color="LightGrey")
+    ax.axhline(color="Grey")
     plot(data.t3_maxbaseline/1e6, (t3amp_model - data.t3amp)./data.t3amp_err,color="Grey", linestyle="none", marker="o", markersize=2)
     if res_range !=[]
         ylim(res_range)
@@ -541,20 +551,22 @@ function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; logpl
     xlabel(L"Max Baseline (M$\lambda$)")
     ylabel("Residuals (number of sigma)")
     ax = gca();
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     show(block=false)
 end
 
 
-function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false, t3base="max")
+function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
+    set_oiplot_defaults()
+
     if typeof(data)==OIdata
         data = [data]
     end
     if typeof(data)==Array{OIdata,2}
         data = vec(data)
     end
-    fig = figure("Triple amplitude data",figsize=(10,5),facecolor="White");
+    fig = figure("Triple amplitude data",figsize=(12,6),facecolor="White");
     clf();
     ax=gca();
     baseline_t3 = []
@@ -611,7 +623,7 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline
         xlabel(L"Geometric Mean Baseline (M$\lambda$)")
     end
     ylabel("Triple amplitude")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     if filename !=""
         savefig(filename)
@@ -677,7 +689,7 @@ function plot_visphi(data::Union{OIdata,Array{OIdata,1}}; color::String="baselin
     title("Visibility phase phase data")
     xlabel(L"Maximum Baseline (M$\lambda$)")
     ylabel("Visibility phase (degrees)")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     if filename !=""
         savefig(filename)
@@ -712,7 +724,7 @@ function plot_diffphi(data::Array{OIdata,1}; color="Black",markopt=false, legend
             xlabel("λ (nm)")
         end
         ylabel("Δϕ (°)")
-        grid(true,which="both",color="LightGrey",linestyle=":")
+        grid(true,which="both",color="Grey",linestyle=":")
     end
     ax[length(baseline)][:tick_params](axis="x", which="major", length=10.0)
     ax[length(baseline)][:tick_params](axis="x", which="minor", length=5.0)
@@ -794,7 +806,7 @@ function plot_v2_multifile(data::Array{OIdata,1}; logplot = false, remove = fals
     title("Squared Visibility Amplitude Data")
     xlabel(L"Baseline (M$\lambda$)")
     ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="LightGrey",linestyle=":")
+    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     if idpoint==true
         cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
@@ -831,7 +843,7 @@ function plot_v2_and_t3phi_wav(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2
         
             xlabel(L"Baseline (M$\lambda$)")
             ylabel("Squared Visibility Amplitudes")
-            grid(true,which="both",color="LightGrey", linestyle=":")
+            grid(true,which="both",color="Grey", linestyle=":")
             tight_layout() 
             wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
             baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
@@ -862,7 +874,7 @@ function plot_v2_and_t3phi_wav(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2
         end
         ylabel("Closure phase (degrees)")
        # ax = gca();
-        grid(true,which="both",color="LightGrey",linestyle=":")
+        grid(true,which="both",color="Grey",linestyle=":")
         tight_layout()
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         minrange = ceil(minimum(wavcol)*100)/100
