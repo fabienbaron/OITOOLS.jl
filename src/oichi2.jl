@@ -1181,7 +1181,7 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     g[5] = 0.0;
 
     # Gradient with respect to pixel fluxes
-    imratio = fluxenv./(fluxstar+fluxenv+fluxbg)
+    imratio = @. fluxenv/(fluxstar+fluxenv+fluxbg)
 
     g_v2 = real(adjoint(ftplan[3])*((4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2].*imratio[data.indx_v2])));
     g_t3amp = real(adjoint(ftplan[4])*((2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1].*imratio[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) )))
