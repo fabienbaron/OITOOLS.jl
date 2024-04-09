@@ -1,4 +1,4 @@
-using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT
+using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, Match
 
 function setup_dft(uv::Array{Float64,2}, nx, pixsize)
     scale_rad = pixsize * (pi / 180.0) / 3600000.0
@@ -572,36 +572,24 @@ end
 
 function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true, goffset::Int64=1) # compound regularization
     reg_f = 0.0;
-    for ireg =1:length(regularizers)
+    for ireg in regularizers
         temp_g = Array{Float64}(undef,length(x))
-        if regularizers[ireg][1] == "centering"
-            reg_f += regularizers[ireg][2]*reg_centering(x, temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "tv"
-            reg_f += regularizers[ireg][2]*tv(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "tvsq"
-            reg_f += regularizers[ireg][2]*tvsq(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "EPLL"
-            reg_f += regularizers[ireg][2]*EPLL_fg(x,temp_g, regularizers[ireg][3])
-        elseif regularizers[ireg][1] == "l1l2"
-            reg_f += regularizers[ireg][2]*l1l2(x,temp_g, verb = verb, α = regularizers[ireg][3])
-        elseif regularizers[ireg][1] == "l1l2w"
-            reg_f += regularizers[ireg][2]*l1l2w(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "l1hyp"
-            reg_f += regularizers[ireg][2]*l1hyp(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "l2sq"
-            reg_f += regularizers[ireg][2]*l2sq(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "compactness"
-            reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb, w = length(regularizers[ireg]) > 2 ? regularizers[ireg][3] : nothing)
-        elseif regularizers[ireg][1] == "radialvar"
-            reg_f += regularizers[ireg][2]*radial_variance(x,temp_g, H=regularizers[ireg][3], G=regularizers[ireg][4], verb = verb)
-        elseif regularizers[ireg][1] == "entropy"
-            reg_f += regularizers[ireg][2]*entropy(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "support"
-            reg_f += regularizers[ireg][2]*support(x, prior=regularizers[ireg][3], temp_g, verb = verb)
-        else
-            error("Unknown regularizer");
+        reg_f += @match ireg[1] begin 
+            "centering"   => ireg[2]*reg_centering(x, temp_g; verb)
+            "tv"          => ireg[2]*tv(x,temp_g; verb)
+            "tvsq"        => ireg[2]*tvsq(x,temp_g; verb)
+            "EPLL"        => ireg[2]*EPLL_fg(x,temp_g, ireg[3])
+            "l1l2"        => ireg[2]*l1l2(x,temp_g; verb, α = ireg[3])
+            "l1l2w"       => ireg[2]*l1l2w(x,temp_g; verb)
+            "l1hyp"       => ireg[2]*l1hyp(x,temp_g; verb)
+            "l2sq"        => ireg[2]*l2sq(x,temp_g; verb)
+            "compactness" => ireg[2]*compactness(x,temp_g; verb, w = length(ireg) > 2 ? ireg[3] : nothing)
+            "radialvar"   => ireg[2]*radial_variance(x,temp_g, H=ireg[3], G=ireg[4]; verb)
+            "entropy"     => ireg[2]*entropy(x,temp_g; verb)
+            "support"     => ireg[2]*support(x, prior=ireg[3], temp_g; verb)
+            _             => error("Unknown regularizer")
         end
-        reg_g[goffset:end] += regularizers[ireg][2]*temp_g
+        reg_g[goffset:end] += ireg[2]*temp_g
     end
     if (verb==true)
         print("\n");
