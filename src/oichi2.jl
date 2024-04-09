@@ -397,10 +397,15 @@ function compactness(x,g; verb = false, w = 20.0) # w is the size in pixels of t
     nx = Int(sqrt(length(x)))
     yy = repeat(collect(1:nx).-0.5*(nx+1),1,nx).^2
     rr = vec(yy+yy')/(nx*nx)
-    soft_support = 1.0 ./ (1.0 .+ 2*rr/w^2)
-    soft_support /= sum(soft_support)
-    f = sum((x.^2)./soft_support)
-    g[:] .=  2*x./soft_support;
+    f = if isnothing(w)
+        g[:] .=  2*rr.*x
+        sum(rr.*(x.^2))
+    else
+        soft_support = 1.0 ./ (1.0 .+ 2*rr/w^2)
+        soft_support /= sum(soft_support)
+        g[:] .=  2*x./soft_support;
+        sum((x.^2)./soft_support)
+    end
     if verb == true
         print(" compactness:", f);
     end
@@ -586,7 +591,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
         elseif regularizers[ireg][1] == "l2sq"
             reg_f += regularizers[ireg][2]*l2sq(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "compactness"
-            reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb, w = regularizers[ireg][3])
+            reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb, w = length(regularizers[ireg]) > 2 ? regularizers[ireg][3] : nothing)
         elseif regularizers[ireg][1] == "radialvar"
             reg_f += regularizers[ireg][2]*radial_variance(x,temp_g, H=regularizers[ireg][3], G=regularizers[ireg][4], verb = verb)
         elseif regularizers[ireg][1] == "entropy"
