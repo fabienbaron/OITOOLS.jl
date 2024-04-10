@@ -27,10 +27,9 @@ makedocs(;
     ],
 )
 
-
 if CI
-    deploydocs(
-    repo   = "github.com/fabienbaron/OITOOLS.jl",
-    target = "build"
+    deploydocs(;
+        repo   = "github.com/fabienbaron/OITOOLS.jl",
+        target = "build",
     )
 end

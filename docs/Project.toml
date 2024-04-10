@@ -1,11 +1,3 @@
-name = "OITOOLS-DOCS"
-uuid = "d4157b62-ce65-4dbc-ab7a-db8f385da21b"
-keywords = ["astronomy", "interferometry"]
-license = "GPLv3"
-desc = "Documentation for OITOOLS"
-authors = ["Fabien Baron <fbaron@gsu.edu>"]
-version = "0.7.0"
-
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
