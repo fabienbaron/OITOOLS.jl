@@ -1098,14 +1098,14 @@ function chi2_sparco_nfft_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Flo
 end
 
 using NLopt
-function optimize_sparco_parameters(params_start, x, ft, data; weights = [1.0,1.0,1.0] )
+function optimize_sparco_parameters(params_start, x, ft, data; weights = [1.0,1.0,1.0], lb=[0.0, 0.0, 0.0, -20.0], ub=[1.0, 1.0, 1.0, 20.0])
     # Optimize the 4 parameters, keeping reference wavelength fixed
     nparams= length(params_start)-1
-    f_params = (params,dummy)->chi2_sparco_nfft_f(x, ft, data, [params;params_start[end]], verb = false, weights = [1.0,1.0,1.0] )
+    f_params = (params, _)->chi2_sparco_nfft_f(x, ft, data, [params;params_start[end]]; verb = false, weights)
     optimizer = Opt(:LN_NELDERMEAD, nparams);
     min_objective!(optimizer, f_params);
-    lower_bounds!(optimizer, [0.0, 0.0, 0.0, -20.0]);
-    upper_bounds!(optimizer, [1.0, 1.0, 1.0,  20.0]);
+    lower_bounds!(optimizer, lb);
+    upper_bounds!(optimizer, ub);
     minchi2,params_opt,ret = optimize(optimizer, params_start[1:4]);
     return minchi2, [params_opt;params_start[end]], ret
 end
