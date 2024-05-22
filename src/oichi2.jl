@@ -1117,12 +1117,12 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     α = (λ/λ0).^-4.0;
     β = (λ/λ0).^(params[4]-4.0);
     fluxstar = params[1]*α;
-    fluxbg = params[2];
+    fluxbg = params[2]*α;
     fluxenv = (1.0-params[1]-params[2])*β;
     Vstar = visibility_ud([params[3]], data.uv);
     Venv = image_to_vis(x[nparams+1:end], ftplan[1]);
 
-    cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv .+fluxbg)
+    cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
     v2_model = vis_to_v2(cvis_model, data.indx_v2);
     t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
 
@@ -1147,23 +1147,23 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
 
     # Derivative with respect to fs0 (param[1])
     u =  fluxstar.*Vstar + fluxenv.*Venv;
-    v =  fluxstar + fluxenv .+ fluxbg;
-    du = α.*Vstar - β.*Venv # du/dfs0
-    dv = α - β# dv/dfs0
-    dcvis_model_dfs0 = (du.*v-u.*dv)./(v.*v)
+    v =  fluxstar + fluxenv + fluxbg;
+    du = α.*Vstar - β.*Venv; # du/dfs0
+    dv = α - β;# dv/dfs0
+    dcvis_model_dfs0 = (du.*v-u.*dv)./(v.*v);
 
     # Derivative with respect to fg0 (param[2])
-    du = -β.*Venv # du/dfg
-    dv = α-β
-    dcvis_model_dfg0 = (du.*v-u.*dv)./(v.*v)
+    du = -β.*Venv; # du/dfg
+    dv = α-β;
+    dcvis_model_dfg0 = (du.*v-u.*dv)./(v.*v);
 
     # Derivative with respect to diameter D (param[3])
     dVstar = dvisibility_ud([params[3]], data.uv);
     du = fluxstar.*dVstar
     dv = 0;
-    dcvis_model_dD = (du.*v-u.*dv)./(v.*v)
+    dcvis_model_dD = (du.*v)./(v.*v);
 
-    # Derivative with respect to spectral index
+    # Derivative with respect to spectral index (param[3])
     du = log.(λ/λ0).*fluxenv.*Venv
     dv = log.(λ/λ0).*fluxenv
     dcvis_model_dindx = (du.*v-u.*dv)./(v.*v)
@@ -1176,7 +1176,7 @@ function chi2_sparco_nfft_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::
     g[5] = 0.0;
 
     # Gradient with respect to pixel fluxes
-    imratio = fluxenv./(fluxstar+fluxenv+fluxbg)
+    imratio = fluxenv./(fluxstar+fluxenv+ fluxbg)
 
     g_v2 = real(adjoint(ftplan[3])*((4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2].*imratio[data.indx_v2])));
     g_t3amp = real(adjoint(ftplan[4])*((2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1].*imratio[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) )))
