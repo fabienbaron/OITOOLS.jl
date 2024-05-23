@@ -834,8 +834,6 @@ VV = reshape(V, (nx_samples, nx_samples, length(λ)))#.*disk(npix=nx, diameter=n
 img = real(FFTW.ifftshift(FFTW.ifft(FFTW.fftshift(VV))))
 img .*= img.>0
 #imdisp(img[:,:,1])
-img = dropdims(img, dims=3)
-
 #R = 1/oversample*AffineTransform2D{Float64}() 
 #I = TwoDimensionalTransformInterpolator((nx_samples, nx_samples), (nx,nx), LinearSpline(), R)
 #newimg = I*img
@@ -851,3 +849,25 @@ if display == true
 end
 return img
 end
+
+
+function limbdarkened_disk(R, ld; nx=256, pixsize=0.1) # R and pixscale in mas
+  # R = 3.4; #mas
+  # ld = [1.0, 0.0, 0.0]; # ld=[3,0.26]
+  # imdisp(limbdarkened_disk(R, ld, nx=128, pixsize=0.1), pixsize = pixsize)
+
+    x = [j for i=1:nx, j=1:nx].-(div(nx,2)+1);
+    r = hypot.(x,x')
+    Rpix = R/pixsize
+    # Limb-darkening map
+    disk = Float64.(((r/Rpix).^2).<=1.0)
+    μ = sqrt.(abs.(Rpix^2 .-r.^2)/Rpix^2).*disk
+    if (ld[1] == 1) # 1: quadratic
+     disk .*= 1.0 .- ld[2]*(1.0 .-μ) - ld[3]*(1.0.-μ.^2)
+    elseif (ld[1] == 2) # 2: logarithmic
+     disk .*= 1.0 .- ld[2]*(1.0 .-μ) - ld[3]*μ.*log.(μ)
+    elseif (ld[1] == 3)  # 3; Hestroffer
+     disk .*= μ.^ld[2]
+    end
+end
+

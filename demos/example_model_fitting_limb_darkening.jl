@@ -43,8 +43,8 @@ chi2v2 = model_to_chi2(data, model, weights=[1.0,0,0], verb=true)
 chi2v2 = model_to_chi2(data, model, [8.3,0.2], weights=[1.0,0,0], verb=true)
 
 # Plot model vs data
-v2_model, t3amp_model, t3phi_model = model_to_obs(mode,data);
-plot_v2_vs_data(data, v2_model,logplot=true);
+v2_model, t3amp_model, t3phi_model = model_to_obs(model,data);
+plot_v2_residuals(data, v2_model,logplot=true);
 
 # Visualize the model as an image
 img = model_to_image(model, pixsize=0.1)

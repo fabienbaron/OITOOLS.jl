@@ -19,7 +19,7 @@ export oifits_prep, updatefits_aspro,readoifits_multicolors, list_oifits_targets
 export remove_redundant_uv!,filter_data,set_data_filter
 
 #modelfit
-export pos_fixed,spectrum_powerlaw,spectrum_gray,model_to_image
+export pos_fixed,spectrum_powerlaw,spectrum_gray,model_to_image, limbdarkened_disk
 export OIparam, OIcomponent,OImodel
 export create_component,create_model,update_model, model_to_vis, dispatch_params, model_to_obs, model_to_chi2,visfunc_to_chi2, get_model_bounds,get_model_params,get_model_pnames,fit_model_ultranest, fit_model_levenberg, fit_model_nlopt, resample_data, bootstrap_fit
 

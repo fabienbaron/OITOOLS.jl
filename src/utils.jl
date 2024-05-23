@@ -54,3 +54,37 @@ ra = [parse(Float64, i) for i in split(get(get(res, "RA"),0))]
 dec = [parse(Float64, i) for i in split(get(get(res, "DEC"),0))]
 return ra, dec
 end
+
+function meshgrid(xx::Union{Vector{Float32}, Vector{Float64}}) #example: meshgrid([-N/2:N/2-1;]*δ);
+    x = [j for i=xx, j=xx];
+    return x,x'
+end
+
+function meshgrid(xx::Int64) #example: meshgrid(N);
+    x = [j for i=1:xx, j=1:xx].-(div(xx,2)+1);
+    return x,x'
+end
+
+function meshrad(xx::Union{Vector{Float32}, Vector{Float64}})
+    x = [j for i=xx, j=xx];
+    return hypot.(x,x')
+end
+
+function meshrad(xx::Int64)
+    x = [j for i=1:xx, j=1:xx].-(div(xx,2)+1);
+    return hypot.(x,x')
+end
+
+function meshpol(xx::Union{Vector{Float32}, Vector{Float64}})
+    x = [j for i=1:xx, j=1:xx];
+    return hypot.(x,x'), atan.(x', x)
+end
+
+function meshpol(xx::Int64)
+    x = [j for i=1:xx, j=1:xx].-(div(xx,2)+1);
+    return hypot.(x,x'), atan.(x', x)
+end
+
+function cart2pol(x,y)
+    return hypot.(x,y), atan.(y, x)
+end
