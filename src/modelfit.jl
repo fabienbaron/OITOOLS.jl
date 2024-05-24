@@ -823,12 +823,12 @@ end
 
 #using TwoDimensional, LinearInterpolators
 
-function model_to_image(model::OImodel; nx=257, pixsize=0.1, oversample = 4,  λ = 1.6e-6, display=false, normalize=true)
+function model_to_image(model::OImodel; nx=256, pixsize=0.1, oversample = 1  λ = 1.6e-6, display=false, normalize=true)
 # nx needs to be odd for better image quality (zero frequency needds to be sampled)
 nx_samples = nx*oversample
 pixsize_samples = pixsize/oversample
-x = collect(range(-1.0, 1.0, length=nx_samples))/pixsize_samples*2.0626480624709636e8/2 
-uv=hcat([ [i,j] for i in x for j in x]...)
+x = fftshift(fftfreq(nx_samples))/pixsize_samples*2.0626480624709636e8 
+uv = hcat([ [i,j] for i in x for j in x]...)
 V = model_to_vis(model, uv, [λ])
 VV = reshape(V, (nx_samples, nx_samples, length(λ)))#.*disk(npix=nx, diameter=nx)
 img = real(FFTW.ifftshift(FFTW.ifft(FFTW.fftshift(VV))))
@@ -854,7 +854,7 @@ end
 function limbdarkened_disk(R, ld; nx=256, pixsize=0.1) # R and pixscale in mas
   # R = 3.4; #mas
   # ld = [1.0, 0.0, 0.0]; # ld=[3,0.26]
-  # imdisp(limbdarkened_disk(R, ld, nx=128, pixsize=0.1), pixsize = pixsize)
+  # imdisp(limbdarkened_disk(R, ld, nx=128, pixsize=0.1), pixsize = 0.1)
 
     x = [j for i=1:nx, j=1:nx].-(div(nx,2)+1);
     r = hypot.(x,x')
@@ -869,5 +869,6 @@ function limbdarkened_disk(R, ld; nx=256, pixsize=0.1) # R and pixscale in mas
     elseif (ld[1] == 3)  # 3; Hestroffer
      disk .*= μ.^ld[2]
     end
+    return disk/sum(disk)
 end
 

@@ -49,3 +49,21 @@ plot_v2_residuals(data, v2_model,logplot=true);
 # Visualize the model as an image
 img = model_to_image(model, pixsize=0.1)
 imdisp(img, pixsize=0.1)
+
+
+
+
+model = create_model(create_component(type="ldpow", name="Model"));
+diam = 3.4
+ldd = 0.3
+dispatch_params([diam,ldd], model);
+
+disk_fft = model_to_image(model, pixsize=0.1, nx=64, oversample=1)
+disk_img = limbdarkened_disk(diam/2, [3.0, ldd], nx=64, pixsize=0.1)
+
+
+rfft(fftshift(disk_img))
+
+
+
+
