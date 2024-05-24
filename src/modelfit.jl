@@ -823,7 +823,7 @@ end
 
 #using TwoDimensional, LinearInterpolators
 
-function model_to_image(model::OImodel; nx=256, pixsize=0.1, oversample = 1  λ = 1.6e-6, display=false, normalize=true)
+function model_to_image(model::OImodel; nx=256, pixsize=0.1, oversample = 1,  λ = 1.6e-6, display=false, normalize=true)
 # nx needs to be odd for better image quality (zero frequency needds to be sampled)
 nx_samples = nx*oversample
 pixsize_samples = pixsize/oversample
