@@ -54,6 +54,6 @@ ft = setup_nfft(data, nx, pixsize);
 #initial image is a simple Gaussian
 x_start = gaussian2d(nx,nx,nx/6);
 x_start = vec(x_start)/sum(x_start);
-chi2_nfft_f(x_start, ft, data, verb=true); # Starting chi2
+chi2_f(x_start, ft, data, verb=true); # Starting chi2
 regularizers = [["centering", 1e3], ["l1l2", 7e6, 1e-3]];
 x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true, maxiter=5);

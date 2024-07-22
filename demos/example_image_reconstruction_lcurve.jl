@@ -9,8 +9,6 @@ data = readoifits(oifitsfile)[1,1];
 fftplan = setup_nfft(data, nx, pixsize);
 #initial image is a simple Gaussian
 x_start = gaussian2d(nx,nx,nx/6);
-x_start = vec(x_start)/sum(x_start);
-
 
 # L-CURVE
 # in this example we're looking for the best total variation weight value
@@ -25,7 +23,7 @@ for i=1:length(tv_weights)
       for t=1:3 # uncomment to make sure we converged
           x = reconstruct(x, data, fftplan, regularizers = regularizers, verb = false, maxiter=100);
      end
-   lcurve_chi2[i] = chi2_nfft_fg(x, g, fftplan, data);
+   lcurve_chi2[i] = chi2_fg(x, g, fftplan, data);
    lcurve_reg[i] = regularization(x,g, regularizers=regularizers)/tv_weights[i];
    #imdisp(x,pixscale=pixsize)
 end

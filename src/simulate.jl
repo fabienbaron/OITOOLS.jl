@@ -370,7 +370,7 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
     fits_close_file(f);
 end
 
-function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model())
+function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[],  image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model())
  
     outfilename= string("!", out_file)
     data = (readoifits(in_oifits,filter_bad_data=false))[1,1];
@@ -489,8 +489,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
     elseif mode == "copy_snr"
         v2_model_err = abs.(v2_model./data.v2.*data.v2_err)
     elseif mode == "noise_model"
-        # TODO
-        @warn("Unimplemented feature")
+        v2_model_err = errors.v2_multit*v2_model .+ errors.v2_addit;
     end
 
     v2_model += v2_model_err.*randn(length(v2_model))
@@ -544,8 +543,8 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", image::Un
         isbad = findall(isnan.(t3phi_model_err))
         t3phi_model_err[isbad] .= abs.(t3phi_model[isbad])/10 .+ 1.0 
     elseif mode == "noise_model"
-        # TODO
-        @warn("Unimplemented feature")
+        t3amp_model_err = errors.t3amp_multit*t3amp_model .+ errors.t3amp_addit;   
+        t3phi_model_err = zeros(length(t3phi_model)) .+ errors.t3phi_addit;
     end
     t3amp_model += t3amp_model_err.*randn(length(t3amp_model)) 
     t3phi_model += t3phi_model_err.*randn(length(t3phi_model))

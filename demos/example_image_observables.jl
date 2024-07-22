@@ -38,7 +38,7 @@ v2plot_modelvsdata(data, v2_model);
 # NFFT method
 ft = setup_nfft(data, nx, pixsize);
 # This computes the complete chi2
-f_chi2 = chi2_nfft_f(x_true, ft, data);
+f_chi2 = chi2_f(x_true, ft, data);
 # Compute |V|^2 observables and plot
 @time cvis_model = image_to_vis(x_true, ft);
 v2_model = vis_to_v2(cvis_model, data.indx_v2);

@@ -14,7 +14,7 @@ W = spdiagm(0=>(1.0./V2+2*(3*V2-data.v2)./(data.v2_err.^2))) # 1/sigma^2
 H = dft[data.indx_v2, :];
 o = ones(nx); D_1D = spdiagm(-1=>-o[1:nx-1],0=>o); D = [kron(spdiagm(0=>ones(nx)), D_1D) ; kron(D_1D, spdiagm(0=>ones(nx)))]; DtD = D'*D;
 y = real(H'*(W*H)+λ*DtD+μ*sparse(1.0I, nx2,nx2))\(real(H'*(W*V))); y=y.*(y.>=0);imdisp(reshape(y,nx,nx));
-chi2_dft_f(y, dft, data)
+chi2_f(y, dft, data)
 end
 
 
@@ -87,4 +87,94 @@ end
 
 function cart2pol(x,y)
     return hypot.(x,y), atan.(y, x)
+end
+
+function numgrad_1D(func;x=[], N=400, δ = 1e-6)
+    if x==[]
+        x = abs.(rand(Float64,N))
+    else
+        N = length(x)
+    end
+    numerical_g = zeros(length(x),length(func(x)))
+    for i=1:N
+        orig = x[i]
+        x[i] = orig + 2*δ
+        f2r = func(x)
+        x[i] = orig + δ
+        f1r = func(x)
+        x[i] = orig - δ
+        f1l = func(x)
+        x[i] = orig - 2*δ
+        f2l = func(x)
+        numerical_g[i,:] = (f2l-f2r+8*(f1r-f1l))
+        x[i] = orig
+    end
+    numerical_g ./= (12*δ)
+    return numerical_g;
+end
+
+function checkgrad_1D(func;x=[], N=400, δ = 1e-6)
+    if x==[]
+        x = abs.(rand(N))
+    else
+        N = length(x)
+    end
+    numerical_g = similar(x)
+    analytic_g = similar(x)
+    for i=1:100
+        orig = x[i]
+        x[i] = orig + 2*δ
+        f2r = func(x,analytic_g)
+        x[i] = orig + δ
+        f1r = func(x,analytic_g)
+        x[i] = orig - δ
+        f1l = func(x,analytic_g)
+        x[i] = orig - 2*δ
+        f2l = func(x,analytic_g)
+        numerical_g[i] = (f2l-f2r+8*(f1r-f1l))
+        x[i] = orig
+    end
+    numerical_g ./= (12*δ)
+    fref = func(x,analytic_g)
+    numerator = norm(analytic_g-numerical_g)
+    denominator = norm(analytic_g) + norm(numerical_g)
+    difference = numerator / denominator
+    print(difference, "\n")
+    return (numerical_g, analytic_g);
+end
+
+function checkgrad_2D(func;x=[], N=36, M= 25, δ = 1e-6)
+    if x==[]
+        x = abs.(rand(N,M))
+    else
+        N,M = size(x)
+    end
+    numerical_g = similar(x)
+    analytic_g = vec(similar(x))
+    for i=1:N
+        for j=1:M
+            orig = x[i,j]
+            x[i,j] = orig + δ
+            f1r = func(x,analytic_g)
+            x[i,j] = orig - δ
+            f1l = func(x,analytic_g)
+            x[i,j] = orig + 2*δ
+            f2r = func(x,analytic_g)
+            x[i,j] = orig - 2*δ
+            f2l = func(x,analytic_g)
+            x[i,j] = orig + 3*δ
+            f3r = func(x,analytic_g)
+            x[i,j] = orig - 3*δ
+            f3l = func(x,analytic_g)
+            numerical_g[i,j] = (f3r-f3l+9*(f2l-f2r)+45*(f1r-f1l))
+            x[i,j] = orig
+        end
+    end
+    numerical_g = vec(numerical_g)/(60*δ)
+    fref = func(x,analytic_g)
+    numerator = norm(analytic_g-numerical_g)
+    denominator = norm(analytic_g) + norm(numerical_g)
+    difference = numerator / denominator
+    print(difference, "\n")
+    return (numerical_g, analytic_g);
 end
