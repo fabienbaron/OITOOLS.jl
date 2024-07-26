@@ -1,4 +1,10 @@
-using OITOOLS, PyPlot, PyCall, Dates
+#
+# This demonstrates how to calculate delays in a way that is 
+# analogous with the chara_plan software used at GSU
+#
+
+using OITOOLS
+using PyPlot, PyCall, Dates
 
 # To query simbad  uncomment the next line
 targetname = "AZ Cyg"
@@ -13,6 +19,7 @@ facility = read_facility_file("./data/CHARA.txt");
 lat, lon = facility.lat[1], facility.lon[1]; #CHARA
 
 lst_midnight, ~ = hour_angle_calc(obsdate+Dates.Day(1)+Dates.Hour(7),lon, ra)
+lst_midnight = lst_midnight[1];
 
 # Dark Observability
 ~, UTC_set = sunrise_sunset(obsdate, lat, lon);
@@ -63,8 +70,8 @@ pop_score = reshape(sum(has_delay,dims=2),5,5,5,5,5,5); # assumes non-discontino
 minimum_minutes_on_object = 10; # we'll assume we need at least 10 minute on an object
 indx_good = findall(pop_score.>minimum_minutes_on_object)
 good_pops_loc = sortperm(pop_score[indx_good],rev=true)
-good_pops_loc = good_pops[1:min(5, length(good_pops))] # only keep the 5 best ones
 good_pops = indx_good[good_pops_loc]
+good_pops = good_pops[1:min(5, length(good_pops))] # only keep the 5 best ones
 println("Good POP solutions:");
 for j=1:length(good_pops)
 println("\nSolution ranked #$j")

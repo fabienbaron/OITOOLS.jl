@@ -10,7 +10,12 @@ function hours_to_date(obsdate, hours)
 end
 
 
-function hour_angle_calc(dates::Union{Array{Epoch{InternationalAtomicTime, Float64}, 1}, Epoch{InternationalAtomicTime, Float64}}, longitude::Float64, ra::Float64;ldir="E")
+
+function hour_angle_calc(dates::Union{DateTime, Array{DateTime, 1}}, longitude::Float64, ra::Float64;ldir="E")
+return hour_angle_calc(from_utc.(dates), longitude, ra, ldir=ldir)
+end
+
+function hour_angle_calc(dates, longitude::Float64, ra::Float64;ldir="E")
 
 """
 This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
@@ -118,7 +123,11 @@ N = floor(275 * month / 9) - floor((month + 9) / 12) * (1 + floor((year - 4 * fl
 return N
 end
 
-function sunrise_sunset(obsdate::Epoch{InternationalAtomicTime, Float64}, latitude, longitude;zenith=102.0)
+function sunrise_sunset(obsdate::DateTime, latitude, longitude;zenith=102.0)
+    return sunrise_sunset(from_utc(obsdate), latitude, longitude,zenith=zenith)
+end
+
+function sunrise_sunset(obsdate, latitude, longitude;zenith=102.0)
 #Source:
 #	Almanac for Computers, 1990
 #	published by Nautical Almanac Office
@@ -136,14 +145,14 @@ function sunrise_sunset(obsdate::Epoch{InternationalAtomicTime, Float64}, latitu
 
 #	NOTE: longitude is positive for East and negative for West
 
-year   = year.(obsdate)
-month  = month.(obsdate)
-day    = day.(obsdate)
+Y   = year.(obsdate)
+M  = month.(obsdate)
+D    = day.(obsdate)
 
 dtr=pi/180.
 rtd = 180.0/pi
 #1. first calculate the day of the year
-N = dayofyear(day, month, year)
+N = dayofyear(D, M, Y)
 
 #2. convert the longitude to hour value and calculate an approximate time
 lngHour = longitude / 15

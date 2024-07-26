@@ -6,7 +6,11 @@ oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.2 # size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
 data = readoifits(oifitsfile)[1,1];
+# Fourier transform setup
 ft = setup_nfft(data, nx, pixsize);
+# Once could also use the DFT instead of NFFT, but NFFT is much faster for larger images 
+#dft = setup_dft(data, nx, pixsize);
+
 #initial image is a simple Gaussian
 x_start = gaussian2d(nx,nx,nx/6);
 #x_start = vec(x_start)/sum(x_start)
