@@ -5,28 +5,31 @@ ENV["PYTHON"] = ""
 Pkg.build("PyCall")
 using Documenter, OITOOLS
 
-makedocs(sitename = "OITOOLS",
+makedocs(;
+    modules=[OITOOLS],
+    sitename = "OITOOLS",
     doctest = false,
-    format = Documenter.HTML(
-    prettyurls = CI,
+    format = Documenter.HTML(;
+        prettyurls = CI,
     ),
     authors = "Fabien Baron and contributors",
-    pages = [ "Home" => "index.md",
-    "Installation" => "install.md",
-    "Examples" => Any[
-                "examples/intro.md",
-                "examples/reading.md",
-                "examples/plotting.md",
-                "examples/modeling.md",
-                "examples/simulating.md",
-                "examples/imaging.md"]
-                ]
+    pages = [
+        "Home" => "index.md",
+        "Installation" => "install.md",
+        "Examples" => [
+            "examples/intro.md",
+            "examples/reading.md",
+            "examples/plotting.md",
+            "examples/modeling.md",
+            "examples/simulating.md",
+            "examples/imaging.md",
+        ],
+    ],
 )
 
-
 if CI
-    deploydocs(
-    repo   = "github.com/fabienbaron/OITOOLS.jl",
-    target = "build"
+    deploydocs(;
+        repo   = "github.com/fabienbaron/OITOOLS.jl",
+        target = "build",
     )
 end
