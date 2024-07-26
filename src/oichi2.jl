@@ -389,7 +389,7 @@ function compactness(x,g; verb = false, w = 20.0) # w is the size in pixels of t
     soft_support = 1.0 ./ (1.0 .+ 2*rr/w^2)
     soft_support /= sum(soft_support)
     f = sum((x.^2)./soft_support)
-    g[:] .=  2*x./soft_support;
+    g[:] =  2*x./soft_support;
     if verb == true
         print(" compactness:", f);
     end
@@ -397,14 +397,12 @@ function compactness(x,g; verb = false, w = 20.0) # w is the size in pixels of t
 end
 
 function reg_support(x,g; prior=[], verb = false) # assumes prior is vec()
-    mask = []
+    mask = zeros(Float64,size(x))
     if prior !=[]
         mask = 1.0.-(prior.>0)
-    else
-        mask = zeros(Float64,size(x))
     end
     f = sum(mask.*(x.^2))
-    g[:] .=  2*mask.*x;
+    g[:] =  2*mask.*x;
     if verb == true
         print(" support:", f);
     end
@@ -489,7 +487,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
         elseif regularizers[ireg][1] == "entropy"
             reg_f += regularizers[ireg][2]*entropy(x,temp_g, verb = verb)
         elseif regularizers[ireg][1] == "support"
-            reg_f += regularizers[ireg][2]*reg_support(x, prior=regularizers[ireg][3], temp_g, verb = verb)
+            reg_f += regularizers[ireg][2]*reg_support(x, temp_g, prior=regularizers[ireg][3], verb = verb)
         else
             error("Unknown regularizer");
         end
