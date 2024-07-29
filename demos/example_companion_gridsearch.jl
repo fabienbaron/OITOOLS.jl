@@ -1,4 +1,4 @@
-# EXAMPLE: clasic grid search for an resolved binary
+# EXAMPLE: classic grid search for a resolved binary
 #           Note: - this is the classic version with a loop on ra,dec of the secondary
 #                 - the primary visibilities are loaded from a file 
 #                 - NLopt is used with the Nelder-Mead simplex to fit the flux and diameter of secondary for (ra,dec) points

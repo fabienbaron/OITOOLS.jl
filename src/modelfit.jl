@@ -657,10 +657,38 @@ function fit_model_nlopt(data::OIdata, model::OImodel; fitter=:LN_NELDERMEAD, ve
     return (minf,minx,cvis_model, ret)
 end
 
-#
-#
+
+function fit_visfunc_nlopt(data::OIdata, visfunc, pinit; lbounds =[], hbounds=[], fitter=:LN_NELDERMEAD, verbose = true, calculate_vis = true, weights=[1.0,1.0,1.0])
+    if verbose == true
+        println("NLopt optimization with ", NLopt.algorithm_name(fitter))
+    end
+    nparams=length(pinit) # Initial parameters
+    chisq=(param,g)->visfunc_to_chi2(data, visfunc, param, weights=weights)
+    opt = Opt(fitter, nparams);
+    min_objective!(opt, chisq)
+    xtol_rel!(opt,1e-5)
+    lower_bounds!(opt, lbounds);
+    upper_bounds!(opt, hbounds);
+    (minf,minx,ret) = optimize(opt, pinit);
+    if verbose == true
+        numevals = opt.numevals # the number of function evaluations
+        println("NLopt found a minimum of chi2=$minf at $minx after $numevals iterations (returned $ret)")
+        println("Name       \t\tMinimum\t\tMaximum\t\tInit\t\tConverged");
+        pnames = get_model_pnames(model);
+        for i=1:length(pinit)
+            @printf("%s \t%f\t%f\t%f\t%f\n", pnames[i], lbounds[i], hbounds[i], pinit[i], minx[i]);
+        end
+    end
+    cvis_model = [];
+    if calculate_vis == true
+        dispatch_params(minx, model);
+        cvis_model = model_to_vis(model, data);
+    end
+    return (minf,minx,cvis_model, ret)
+end
+
 # #
-# # OLD model interface -- by visibility function
+# # Interface using directly the visibility functions
 # #
 function visfunc_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; weights=[1.0,1.0,1.0])
     cvis_model = visfunc(params, data.uv)
@@ -691,44 +719,6 @@ function visfunc_to_chi2(data::OIdata, visfunc, params::AbstractVector{<:Real}; 
 
     chi2 = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
 end
-#
-# function model_to_chi2(data::Array{OIdata,1}, visfunc, params::Array{Float64,1}; chromatic_vector=[], weights=[1.0,1.0,1.0]) # polychromatic data case
-#     nwavs = length(data)
-#     chi2 = zeros(Float64, nwavs)
-#     for i=1:nwavs
-#         cvis_model = []
-#         if chromatic_vector ==[]
-#             cvis_model = visfunc(params, data[i].uv, data[i].uv_baseline)
-#         else
-#             cvis_model = visfunc(params, data[i].uv, data[i].uv_baseline, chromatic_vector[i]) # sometimes we need a chromatic constant term
-#         end
-#         chi2_v2 =0.0; chi2_t3amp =0.0; chi2_t3phi=0.0;
-#         if (data[i].nv2>0) && (weights[1]>0.0)
-#             v2_model = vis_to_v2(cvis_model, data[i].indx_v2);
-#             chi2_v2 = sum( ((v2_model - data[i].v2)./data[i].v2_err).^2)/data[i].nv2;
-#         else
-#             weights[1]=0.0
-#         end
-#         if (data[i].nt3amp>0 || data[i].nt3phi>0)  && (weights[2]>0 || weights[3]>0)
-#             t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data[i].indx_t3_1, data[i].indx_t3_2 ,data[i].indx_t3_3);
-#             if (data[i].nt3amp>0) && (weights[2]>0.0)
-#             chi2_t3amp = sum( ((t3amp_model - data[i].t3amp)./data[i].t3amp_err).^2)/data[i].nt3amp;
-#             else
-#             weights[2]=0.0
-#             end
-#             if (data[i].nt3phi>0) && (weights[3]>0.0)
-#             chi2_t3phi = sum( (mod360(t3phi_model - data[i].t3phi)./data[i].t3phi_err).^2)/data[i].nt3phi;
-#             else
-#             weights[3] = 0.0;
-#             end
-#         else
-#             weights[2] = 0.0;
-#             weights[3] = 0.0;
-#         end
-#         chi2[i] = (weights'*[chi2_v2, chi2_t3amp, chi2_t3phi])[1]/sum(weights)
-#     end
-#     return sum(chi2)/nwavs;
-# end
 
 #
 # BOOSTRAPING

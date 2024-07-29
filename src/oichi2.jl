@@ -409,10 +409,10 @@ function reg_support(x,g; prior=[], verb = false) # assumes prior is vec()
     return f
 end
 
-function trans_structnorm(x, g;verb=false, ϵ=1e-9)
+function trans_structnorm(x, g;verb=false, ϵ=1e-12)
     #this x is under the form (npix,nwavs)
     #but return the gradient as a 1D vector to use with Optimpack
-    d = sqrt.(sum(x.^2, dims=3).+ϵ^2)
+    d = sqrt.(dropdims(sum(x.^2, dims=3), dims=3).+ϵ^2)
     f = sum(d.-ϵ);
     g[:] = x./d;
     return f
@@ -676,14 +676,13 @@ function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, ftplan::Array{NFFT.NF
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
-# NFFT version
-function chi2_polychromatic_f(x::Array{Float64,3}, ft::Vector{Array{NFFTPlan{Float64, 2, 1}}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
+function chi2_polychromatic_f(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Float64, 2, 1}}, 1}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
     nwavs = length(ft);
+    npix = size(x,1);
     if printcolor == []
-        printcolor=Array{Symbol}(undef,nwavs);
-        printcolor[:] .= :black
+        printcolor=[ :black for i=1:nwavs]
     end
-    npix = div(length(x),nwavs);
+    
     cvis = fill((Complex{Float64}[]),nwavs);
     if use_diffphases == true
         for i=1:nwavs
@@ -693,9 +692,9 @@ function chi2_polychromatic_f(x::Array{Float64,3}, ft::Vector{Array{NFFTPlan{Flo
     f = zeros(nwavs)
     for i=1:nwavs # weighted sum -- should probably do the computation in parallel
         if use_diffphases == true
-            f[i] = chi2_f(x[1+(i-1)*npix:i*npix], ft[i], data[i], cvis=cvis[i], verb = verb, weights = weights);
+            f[i] = chi2_f(x[:,:,i], ft[i], data[i], cvis=cvis[i], verb = verb, weights = weights);
         else
-            f[i] = chi2_f(x[1+(i-1)*npix:i*npix], ft[i], data[i], verb = verb, weights = weights);
+            f[i] = chi2_f(x[:,:,i], ft[i], data[i], verb = verb, weights = weights);
         end
         fr = f[i]/(data[i].nv2+data[i].nt3amp+data[i].nt3phi)
         if verb == true
@@ -703,7 +702,7 @@ function chi2_polychromatic_f(x::Array{Float64,3}, ft::Vector{Array{NFFTPlan{Flo
         end
     end
     chi2f = sum(f)
-    ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:nwavs]);
+    ndof = Int(sum([weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi for i=1:nwavs]));
     if verb == true
     printstyled("All V2+T3AMP+T3PHI -- Chi2: $chi2f Chi2/dof: $(chi2f/ndof) \n", color=:red);
     end
@@ -749,10 +748,9 @@ function crit_multitemporal_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
     npix = div(length(x),nepochs);
     f = 0.0;
     for i=1:nepochs # weighted sum -- should probably do the computation in parallel
-        tslice = 1+(i-1)*npix:i*npix; # temporal slice
-        subg = Array{Float64}(undef, npix);
+        subg = Array{Float64}(undef, npix, npix);
         printstyled("Epoch $i ",color=printcolor[i]);
-        f += epochs_weights[i]*crit_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb, weights = weights);
+        f += epochs_weights[i]*crit_fg(x[:,:,i], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb, weights = weights);
         g[tslice] = epochs_weights[i]*subg
     end
 
@@ -778,13 +776,17 @@ function crit_multitemporal_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
     return f;
 end
 
-function crit_polychromatic_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Vector{Array{NFFTPlan{Float64, 2, 1}}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
+function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Array{Array{NFFTPlan{Float64, 2, 1}}, 1}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
     nwavs = length(ft);
+    npix = size(x,1);
     if printcolor == []
-        printcolor=Array{Symbol}(undef,nwavs);
-        printcolor[:] .= :black
+        printcolor=[ :black for i=1:nwavs]
     end
-    npix = div(length(x),nwavs);
+    
+    if regularizers == []
+        regularizers = fill([], nwavs)
+    end
+    
     cvis = fill((Complex{Float64}[]),nwavs);
     if use_diffphases == true
         for i=1:nwavs
@@ -794,15 +796,14 @@ function crit_polychromatic_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Vec
 
     f = 0.0;
     for i=1:nwavs # weighted sum -- should probably do the computation in parallel
-        tslice = 1+(i-1)*npix:i*npix; # chromatic slice #TODO: use reshape instead ?
-        subg = Array{Float64}(undef, npix);
+        subg = zeros(Float64, npix, npix);
         if verb == true
             printstyled("Spectral channel $i ",color=printcolor[i]);
         end
-        f += crit_fg(x[tslice], subg, ft[i], data[i], regularizers=regularizers[i], cvis = cvis[i], printcolor = printcolor[i], verb = verb, weights = weights);
-        g[tslice] = subg
+        f += crit_fg(x[:,:,i], subg, ft[i], data[i], regularizers=regularizers[i], cvis = cvis[i], printcolor = printcolor[i], verb = verb, weights = weights);
+        g[:,:,i] = subg
     end
-    ndof = sum([data[i].nv2+data[i].nt3amp+data[i].nt3phi for i=1:nwavs]);
+    ndof = Int(sum([weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi for i=1:nwavs]));
     printstyled("Indpt images -- Crit: $f Crit/dof: $(f/ndof) \n", color=:red);
     # Differential phase
     #  if data.nvisphi > 0
@@ -818,41 +819,39 @@ function crit_polychromatic_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Vec
         # Compute differential phase gradient
         d_diffphi = zeros(npix,nwavs)
         for i=1:nwavs
-            d_diffphi[:,i] = -360.0/pi*vec(imag.(adjoint(ft[i][2])*(((mod360(diffphi_model[:,i]-diffphi[:,i])./diffphi_err[:,i].^2)./abs2.(cvis[i])).*cvis[i])))
+            d_diffphi[:,i] = -360.0/pi*imag.(adjoint(ft[i][2])*(((mod360(diffphi_model[:,i]-diffphi[:,i])./diffphi_err[:,i].^2)./abs2.(cvis[i])).*cvis[i]))
         end
-        g_diffphi = vec(nwavs*d_diffphi .- vec(sum(d_diffphi, dims=2)))/(nwavs-1)
         #d_diffphi = [] # free local memory immediately after use
-        g[:] += g_diffphi
+        g[:] += (nwavs*d_diffphi .- (sum(d_diffphi, dims=2)))/(nwavs-1)
     end
 
     # transspectral regularization
     if length(regularizers)>nwavs
         ntransreg = length(regularizers[nwavs+1]);
-        y = reshape(x,(npix,nwavs))
-        tg = Array{Float64}(undef, npix*nwavs)
+        tg = zeros(npix, npix, nwavs)
         for i=1:ntransreg
             if (regularizers[nwavs+1][i][1] == "transspectral_tv")
-                tf = trans_tv(y,tg)
+                tf = trans_tv(x,tg)
                 f    += regularizers[nwavs+1][i][2]*tf
-                g[:] += regularizers[nwavs+1][i][2]*tg;
+                g[:,:,:] += regularizers[nwavs+1][i][2]*tg;
                 printstyled("Trans-spectral TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
             if (regularizers[nwavs+1][i][1] == "transspectral_tvsq")
-                tf = trans_tvsq(y, tg)
+                tf = trans_tvsq(x, tg)
                 f+= regularizers[nwavs+1][i][2]*tf
-                g[:] += regularizers[nwavs+1][i][2]*tg
+                g[:,:,:] += regularizers[nwavs+1][i][2]*tg
                 printstyled("Trans-spectral squared TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
             if (regularizers[nwavs+1][i][1] == "transspectral_structnorm")
-                tf = trans_structnorm(y,tg)
+                tf = trans_structnorm(x,tg)
                 f    += regularizers[nwavs+1][i][2]*tf
-                g[:] += regularizers[nwavs+1][i][2]*tg;
+                g[:,:,:] += regularizers[nwavs+1][i][2]*tg;
                 printstyled("Trans-spectral Structured Norm: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
             if (regularizers[nwavs+1][i][1] == "transspectral_l1l2")
-                tf = trans_l1l2(y, tg, δ=regularizers[nwavs+1][i][3])
+                tf = trans_l1l2(x, tg, δ=regularizers[nwavs+1][i][3])
                 f+= regularizers[nwavs+1][i][2]*tf
-                g[:] += regularizers[nwavs+1][i][2]*tg
+                g[:,:,:] += regularizers[nwavs+1][i][2]*tg
                 printstyled("Trans-spectral l1l2 norm: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
         end
@@ -862,12 +861,12 @@ function crit_polychromatic_fg(x::Array{Float64,1}, g::Array{Float64,1}, ft::Vec
 end
 
 
-function image_to_vis_polychromatic(x::Array{Float64,1}, ft::Array{Array{NFFT.NFFTPlan{Float64,2,1},1},1})
+function image_to_vis_polychromatic(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Float64, 2, 1}}, 1})
     nwavs = length(ft);
-    npix = div(length(x),nwavs);
+    npix = size(x,1);
     cvis = fill((Complex{Float64}[]),nwavs);
-    for i=1:nwavs
-        cvis[i] = image_to_vis(x[1+(i-1)*npix:i*npix], ft[i]);
+    Threads.@threads for i=1:nwavs
+        cvis[i] = image_to_vis(x[:,:,i], ft[i]);
     end
     return cvis;
 end
@@ -895,7 +894,7 @@ function reconstruct_polychromatic(x_start::Array{Float64,3}, data::Array{OIdata
     if regularizers == []
         regularizers = fill([],length(data))
     end
-    if typeof(ft) == Vector{Array{NFFT.NFFTPlan{Float64, 2, 1}}}
+    if typeof(ft) == Array{Array{NFFTPlan{Float64, 2, 1}}, 1}
         crit = (x,g)->crit_polychromatic_fg(x, g, ft, data, weights = weights, printcolor=printcolor, regularizers=regularizers, use_diffphases = use_diffphases, verb = verb)
         x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=true, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     else
