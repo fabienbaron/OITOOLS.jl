@@ -27,26 +27,23 @@ OITOOLS is a Julia package to read, plot, model-fit and image optical interferom
 
 ## Installation
 
-If you're new to Julia, you may want to install OITOOLS and its dependencies without learning about activate/instantiate. 
-You will only have to do this one.
+Start Julia from command-line. Press the `]` key to switch to package management mode (the prompt will show something like `(@v1.10) pkg>` instead of `julia>`). Enter in the following two lines to install OITOOLS and its dependencies:
 
-```julia
-using Pkg; 
-#Install python packages
-Pkg.add("Conda"); 
-using Conda; 
-Conda.add("ultranest", channel="conda-forge"); 
-Conda.add("astroquery", channel="astropy");
-# Install mainstream Julia packages
-Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters"]); 
-# Install Eric Thiebaut's packages
-Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))
-Pkg.add(["ArrayTools", "LazyAlgebra", "OptimPackNextGen"]);
-# Install FB's packages
-Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4");
-Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
-# Then check everything got installed properly
+```
+registry add https://github.com/emmt/EmmtRegistry
+add https://github.com/fabienbaron/OITOOLS.jl
+```
+
+Press the `Backspace` key to exit package management mode. You can now use the library from the prompt with:
+
+```
 using OITOOLS
+```
+
+If you wish to update the library and/or dependencies at any future time, enter package management mode again with the `]` key and enter in:
+
+```
+update
 ```
 
 ## Plotting and loading data
