@@ -1,4 +1,4 @@
-using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT
+using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, Match
 
 function setup_dft(uv::Array{Float64,2}, nx, pixsize)
     scale_rad = pixsize * (pi / 180.0) / 3600000.0
@@ -386,10 +386,15 @@ function compactness(x,g; verb = false, w = 20.0) # w is the size in pixels of t
     nx = size(x,1)
     yy = repeat(collect(1:nx).-0.5*(nx+1),1,nx).^2
     rr = (yy+yy')/(nx*nx)
-    soft_support = 1.0 ./ (1.0 .+ 2*rr/w^2)
-    soft_support /= sum(soft_support)
-    f = sum((x.^2)./soft_support)
-    g[:] =  2*x./soft_support;
+    f = if isnothing(w)
+        g[:] =  2*rr.*x
+        sum(rr.*(x.^2))
+    else
+        soft_support = 1.0 ./ (1.0 .+ 2*rr/w^2)
+        soft_support /= sum(soft_support)
+        g[:] =  2*x./soft_support;
+        sum((x.^2)./soft_support)
+    end
     if verb == true
         print(" compactness:", f);
     end
@@ -462,40 +467,28 @@ end
 
 function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true, goffset::Int64=1) # compound regularization
     reg_f = 0.0;
-    for ireg =1:length(regularizers)
-        temp_g = zeros(Float64,size(x))
-        if regularizers[ireg][1] == "centering"
-            reg_f += regularizers[ireg][2]*reg_centering(x, temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "tv"
-            reg_f += regularizers[ireg][2]*tv(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "tvsq"
-            reg_f += regularizers[ireg][2]*tvsq(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "EPLL"
-            reg_f += regularizers[ireg][2]*EPLL_fg(x,temp_g, regularizers[ireg][3])
-        elseif regularizers[ireg][1] == "l1l2"
-            reg_f += regularizers[ireg][2]*l1l2(x,temp_g, verb = verb, α = regularizers[ireg][3])
-        elseif regularizers[ireg][1] == "l1l2w"
-            reg_f += regularizers[ireg][2]*l1l2w(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "l1hyp"
-            reg_f += regularizers[ireg][2]*l1hyp(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "l2sq"
-            reg_f += regularizers[ireg][2]*l2sq(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "compactness"
-            reg_f += regularizers[ireg][2]*compactness(x,temp_g, verb = verb, w = regularizers[ireg][3])
-        elseif regularizers[ireg][1] == "radialvar"
-            reg_f += regularizers[ireg][2]*radial_variance(x,temp_g, H=regularizers[ireg][3], G=regularizers[ireg][4], verb = verb)
-        elseif regularizers[ireg][1] == "entropy"
-            reg_f += regularizers[ireg][2]*entropy(x,temp_g, verb = verb)
-        elseif regularizers[ireg][1] == "support"
-            reg_f += regularizers[ireg][2]*reg_support(x, temp_g, prior=regularizers[ireg][3], verb = verb)
-        else
-            error("Unknown regularizer");
-        end
-        if goffset == 1
-            reg_g[:,:] += regularizers[ireg][2]*temp_g
-        else # SPARCO uses a 1D representation
-            reg_g[goffset:end] += regularizers[ireg][2]*vec(temp_g)
-        end
+    for ireg in regularizers
+            temp_g = zeros(Float64,size(x))
+            reg_f += @match ireg[1] begin 
+                "centering"   => ireg[2]*reg_centering(x, temp_g; verb)
+                "tv"          => ireg[2]*tv(x,temp_g; verb)
+                "tvsq"        => ireg[2]*tvsq(x,temp_g; verb)
+                "EPLL"        => ireg[2]*EPLL_fg(x,temp_g, ireg[3])
+                "l1l2"        => ireg[2]*l1l2(x,temp_g; verb, α = ireg[3])
+                "l1l2w"       => ireg[2]*l1l2w(x,temp_g; verb)
+                "l1hyp"       => ireg[2]*l1hyp(x,temp_g; verb)
+                "l2sq"        => ireg[2]*l2sq(x,temp_g; verb)
+                "compactness" => ireg[2]*compactness(x,temp_g; verb, w = length(ireg) > 2 ? ireg[3] : nothing)
+                "radialvar"   => ireg[2]*radial_variance(x,temp_g, H=ireg[3], G=ireg[4]; verb)
+                "entropy"     => ireg[2]*entropy(x,temp_g; verb)
+                "support"     => ireg[2]*support(x, prior=ireg[3], temp_g; verb)
+                _             => error("Unknown regularizer")
+            end
+            if goffset == 1
+                reg_g[:,:] += ireg[2]*temp_g
+            else # SPARCO uses a 1D representation
+                reg_g[goffset:end] += regularizers[ireg][2]*vec(temp_g)
+            end
     end
     if (verb==true)
         print("\n");
@@ -1068,7 +1061,7 @@ function chi2_sparco_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::Array
     g[5] = 0.0;
 
     # Gradient with respect to pixel fluxes
-    imratio = fluxenv./(fluxstar+fluxenv+ fluxbg)
+    imratio = @. fluxenv/(fluxstar+fluxenv+ fluxbg)
 
     g_v2 = real(adjoint(ftplan[3])*((4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2].*imratio[data.indx_v2])));
     g_t3amp = real(adjoint(ftplan[4])*((2.0*((t3amp_model-data.t3amp)./data.t3amp_err.^2).*cvis_model[data.indx_t3_1].*imratio[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]) )))
