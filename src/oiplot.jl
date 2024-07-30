@@ -29,88 +29,88 @@ const global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","l
 const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
 
 
-#xclicks=Array{Float64,1}(undef,1)
-#yclicks=Array{Float64,1}(undef,1)
-left_click=1
-double_click=true
-right_click=3
-middle_click=2
-delete_x=[]
-delete_y=[]
-delete_err=[]
-filename=""
-#allow removing of numpoints
-function onclickv2(event)
-    clicktype=event.button
-    xdat=deepcopy(data.v2_baseline)./1e6
-    ydat=deepcopy(data.v2)
-    errdat=deepcopy(data.v2_err)
-    if clicktype == left_click
-        if event.dblclick == double_click
-            ax=gca()
-            ymin,ymax=ax.get_ylim()
-            xmin,xmax=ax.get_xlim()
-            normfactor=abs(xmax-xmin)/abs(ymax-ymin)
-            xclick=event.xdata
-            yclick=event.ydata
-            diffx=abs.(xdat.-xclick)
-            diffy=abs.(ydat.-yclick)
-            diffr=sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2)
-            indx_remove=indmin(diffr)
-            closestx=xdat[indx_remove]
-            closesty=ydat[indx_remove]
-            closesterr=errdat[indx_remove]
-            println(closestx," ",xclick," ",closesty," ",yclick)
-            errorbar(closestx,closesty,yerr=closesterr,fmt="o", markersize=3,color="Red")
-            push!(delete_x,closestx)
-            push!(delete_y,closesty)
-            push!(delete_err,closesterr)
-            println(delete_x)
-        end
-    elseif clicktype == right_click
-        println("Cancelling!")
-        clf()
-        errorbar(xdat,ydat,yerr=errdat,fmt="o", markersize=3,color="Black")
-    elseif clicktype == middle_click
-        filter!(a->a∉delete_x,xdat)
-        filter!(a->a∉delete_y,ydat)
-        filter!(a->a∉delete_err,errdat)
-        clf()
-        errorbar(xdat,ydat,yerr=errdat,fmt="o", markersize=3,color="Black")
-        # save
-    end
-end
+# #xclicks=Array{Float64,1}(undef,1)
+# #yclicks=Array{Float64,1}(undef,1)
+# left_click=1
+# double_click=true
+# right_click=3
+# middle_click=2
+# delete_x=[]
+# delete_y=[]
+# delete_err=[]
+# filename=""
+# #allow removing of numpoints
+# function onclickv2(event)
+#     clicktype=event.button
+#     xdat=deepcopy(data.v2_baseline)./1e6
+#     ydat=deepcopy(data.v2)
+#     errdat=deepcopy(data.v2_err)
+#     if clicktype == left_click
+#         if event.dblclick == double_click
+#             ax=gca()
+#             ymin,ymax=ax.get_ylim()
+#             xmin,xmax=ax.get_xlim()
+#             normfactor=abs(xmax-xmin)/abs(ymax-ymin)
+#             xclick=event.xdata
+#             yclick=event.ydata
+#             diffx=abs.(xdat.-xclick)
+#             diffy=abs.(ydat.-yclick)
+#             diffr=sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2)
+#             indx_remove=indmin(diffr)
+#             closestx=xdat[indx_remove]
+#             closesty=ydat[indx_remove]
+#             closesterr=errdat[indx_remove]
+#             println(closestx," ",xclick," ",closesty," ",yclick)
+#             errorbar(closestx,closesty,yerr=closesterr,fmt="o", markersize=3,color="Red")
+#             push!(delete_x,closestx)
+#             push!(delete_y,closesty)
+#             push!(delete_err,closesterr)
+#             println(delete_x)
+#         end
+#     elseif clicktype == right_click
+#         println("Cancelling!")
+#         clf()
+#         errorbar(xdat,ydat,yerr=errdat,fmt="o", markersize=3,color="Black")
+#     elseif clicktype == middle_click
+#         filter!(a->a∉delete_x,xdat)
+#         filter!(a->a∉delete_y,ydat)
+#         filter!(a->a∉delete_err,errdat)
+#         clf()
+#         errorbar(xdat,ydat,yerr=errdat,fmt="o", markersize=3,color="Black")
+#         # save
+#     end
+# end
 
-function onclickidentify(event)
-    clicktype=event.button
-    if clicktype == left_click    #left click to id
-        xclick=event.xdata
-        yclick=event.ydata
-        if !isnothing(xclick) & !isnothing(yclick)
-            ax=gca()
-            ymin,ymax=ax.get_ylim()
-            xmin,xmax=ax.get_xlim()
-            normfactor=abs(xmax-xmin)/abs(ymax-ymin)
-            xdat = v2base./1e6
-            ydat = v2value
-            errdat = v2err
-            indx_id = argmin(sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2))
-            clickbaseval=clickbase[:,indx_id]
-            printstyled("----------------------------\n",color=:black);
-            if length(clickfile)!=1
-                printstyled("Filename: ",clickfile[indx_id],"\n",color=:orange)
-            else
-                printstyled("Filename: ",clickfile[1],"\n",color=:orange)
-            end
-            printstyled("Radial frequency: ",xdat[indx_id]," V2: ",ydat[indx_id]," V2_err: ",errdat[indx_id],"\n",color=:blue);
-            printstyled("λ: ", clicklam[indx_id], " δλ: ", clickdlam[indx_id], "\n",color=:green);
-            printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red);
-            printstyled("MJD: ",clickmjd[indx_id], " UT: ", Dates.format(mjd_to_utdate(clickmjd[indx_id]),"Y-m-d H:M:S"), "\n",color=:red )
-            #elseif clicktype == right_click
-            #    fig.canvas.mpl_disconnect(cid
-        end
-    end
-end
+# function onclickidentify(event)
+#     clicktype=event.button
+#     if clicktype == left_click    #left click to id
+#         xclick=event.xdata
+#         yclick=event.ydata
+#         if !isnothing(xclick) & !isnothing(yclick)
+#             ax=gca()
+#             ymin,ymax=ax.get_ylim()
+#             xmin,xmax=ax.get_xlim()
+#             normfactor=abs(xmax-xmin)/abs(ymax-ymin)
+#             xdat = v2base./1e6
+#             ydat = v2value
+#             errdat = v2err
+#             indx_id = argmin(sqrt.((xdat.-xclick).^2+((ydat.-yclick).*normfactor).^2))
+#             clickbaseval=clickbase[:,indx_id]
+#             printstyled("----------------------------\n",color=:black);
+#             if length(clickfile)!=1
+#                 printstyled("Filename: ",clickfile[indx_id],"\n",color=:orange)
+#             else
+#                 printstyled("Filename: ",clickfile[1],"\n",color=:orange)
+#             end
+#             printstyled("Radial frequency: ",xdat[indx_id]," V2: ",ydat[indx_id]," V2_err: ",errdat[indx_id],"\n",color=:blue);
+#             printstyled("λ: ", clicklam[indx_id], " δλ: ", clickdlam[indx_id], "\n",color=:green);
+#             printstyled("Baseline: ",clickname[clickbaseval[1]],"-",clickname[clickbaseval[2]],"\n",color=:red);
+#             printstyled("MJD: ",clickmjd[indx_id], " UT: ", Dates.format(mjd_to_utdate(clickmjd[indx_id]),"Y-m-d H:M:S"), "\n",color=:red )
+#             #elseif clicktype == right_click
+#             #    fig.canvas.mpl_disconnect(cid
+#         end
+#     end
+# end
 
 
 # Overloaded uvplot functions
@@ -331,9 +331,9 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12
     if logplot==true
         ax.set_yscale("log")
     end
-    if remove == true
-        fig.canvas.mpl_connect("button_press_event",onclickv2)
-    end
+    #if remove == true
+    #    fig.canvas.mpl_connect("button_press_event",onclickv2)
+    #end
     if (color == "baseline" || color =="base"|| color =="bases" || color =="baselines") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_v2...)))
@@ -374,9 +374,9 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true,which="both",color="Grey", linestyle=":")
     tight_layout()
-    if idpoint==true
-        cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
-    end
+    #if idpoint==true
+    #    cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
+    #end
     show(block=false)
 end
 
@@ -756,9 +756,9 @@ function plot_v2_multifile(data::Array{OIdata,1}; logplot = false, remove = fals
     if logplot==true
         ax.set_yscale("log")
     end
-    if remove == true # No support for removing points across multimple nights just yet, although this could be VERY useful....
-        fig.canvas.mpl_connect("button_press_event",onclickv2)
-    end
+    #if remove == true # No support for removing points across multimple nights just yet, although this could be VERY useful....
+    #    fig.canvas.mpl_connect("button_press_event",onclickv2)
+    #end
     for i=1:length(data) #plot each night
         nv2=data[i].nv2
         sta_name=data[i].sta_name
@@ -808,9 +808,10 @@ function plot_v2_multifile(data::Array{OIdata,1}; logplot = false, remove = fals
     ylabel("Squared Visibility Amplitudes")
     ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
-    if idpoint==true
-        cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
-    end
+    
+    #if idpoint==true
+    #    cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
+    #end
     if filename !=""
         savefig(filename)
     end
