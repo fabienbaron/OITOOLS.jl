@@ -15,8 +15,7 @@ ft = setup_nfft(data, nx, pixsize);
 # 5: λ0
 params_start=[0.46, 0., 0., 0., 1.6e-6] #V2:12.36 T3A: 4.14 T3P: 1.61
 x_start = gaussian2d(nx,nx,nx/6);
-regularizers = [["tv", 7e8]];
-regularizers = []
+regularizers = [["l1l2", 7e4, 1e-6]];
 params, x = reconstruct_sparco_gray(x_start, params_start, data, ft, regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
 imdisp(x, pixsize = pixsize)
 minchi2, params,ret = optimize_sparco_parameters(params, x, ft, data; weights = [1.0,1.0,1.0] )
@@ -29,8 +28,9 @@ imdisp(x, pixsize = pixsize)
 #
 # Write FITS image, and minimization information in the header
 # 
-using CFITSIO
-f = FITS("fits/$filename.fits", "w")
+using FITSIO
+filename = "sparco_out"
+f = FITS("$filename.fits", "w")
 hdr_key = ["PIXSIZE","MINCHI2","FITMSG","STRFRAC","BGFRAC","STRDIAM","ENVSLOPE","REFWL",]
 hdr_val = Any[pixsize, minchi2, string(ret), params...]
 hdr_cmt = ["mas","","see OITOOLS","flux fraction of star at lamdba_0", "flux fraction of background at lambda_0",

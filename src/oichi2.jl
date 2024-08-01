@@ -465,7 +465,7 @@ function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=2.0)
     return f
 end
 
-function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true, goffset::Int64=1) # compound regularization
+function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
     reg_f = 0.0;
     for ireg in regularizers
             temp_g = zeros(Float64,size(x))
@@ -484,11 +484,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
                 "support"     => ireg[2]*support(x, prior=ireg[3], temp_g; verb)
                 _             => error("Unknown regularizer")
             end
-            if goffset == 1
-                reg_g[:,:] += ireg[2]*temp_g
-            else # SPARCO uses a 1D representation
-                reg_g[goffset:end] += regularizers[ireg][2]*vec(temp_g)
-            end
+            reg_g[:,:] += ireg[2]*temp_g
     end
     if (verb==true)
         print("\n");
@@ -1095,7 +1091,10 @@ end
 
 function crit_sparco_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
     chi2_f = chi2_sparco_fg(x,  g, ftplan, data, nparams, weights=weights)
-    reg_f = regularization(x[nparams+1:end], g, regularizers=regularizers, printcolor = printcolor, verb = verb, goffset=nparams+1);
+    nx = Int(sqrt(length(x)-nparams));
+    reg_g = zeros(Float64, nx, nx)
+    reg_f = regularization(reshape(x[nparams+1:end],nx,nx), reg_g, regularizers=regularizers, printcolor = printcolor, verb = verb);
+    g[nparams+1:end] += vec(reg_g)
     # Gradient correction for the image (parameters are left untouched)
     flux = sum(x[nparams+1:end])
     g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux ) / flux; # gradient correction to take into account the non-normalized image
