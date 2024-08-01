@@ -81,19 +81,23 @@ minf, minx, cvis_model, result = fit_model_nlopt(data, model, weights=[1.0,0,0])
 init_diameter_primary = minx[1]
 bws = mean(data.v2_dlam./data.v2_lam)*2  # *2 seems needed for good results! look into this
 # Estimate rmin, rmax, bws   # for bws we will need to look into OIFITS
+p = Progress(length(ra), desc="Exploring RA/DEC range");
 Threads.@threads for i=1:length(ra)
     #print("New row: ra = $(ra[i]) mas\n")
     for j=1:length(dec)
     visfunc=(params,uv)->binary_ud_bws(params, uv, data.uv_baseline)  # flux ratio is primary/secondary
     chi2_map[i,j] = visfunc_to_chi2(data, visfunc,[init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j], bws], weights=[1.0,1.0,1.0])    
     end
+    next!(p)
 end
+finish!(p)
+
 imdisp(chi2_map, pixsize = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
 best = findmin(chi2_map)
 min_chi2 = best[1]
 best_ra = ra[best[2][1]]
 best_dec = dec[best[2][2]]
-
+scatter(-best_ra, best_dec, alpha=0.5)
 
 #
 # Grid search: flux ratio, diameters of primary and secondary and location of secondary
