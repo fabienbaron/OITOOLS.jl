@@ -122,7 +122,7 @@ finish!(p)
 imdisp(chi2_map, pixsize = gridstep, colormap = "gist_heat_r", figtitle="Binary search: lighter is more probable")
 minchi2, radec = findmin(chi2_map)
 i=radec[1]; j = radec[2]
-chi2_map[i,j], opt_params, ~ =  fit_model_old(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
+chi2_map[i,j], opt_params, _ =  fit_model_old(data, visfunc, [init_diameter_primary, init_diameter_secondary, init_flux_ratio, ra[i], dec[j]], lbounds=[0, 0, 0, ra[i]-2*gridstep, dec[j]-2*gridstep], hbounds=[5.0, 5.0, 20.0, ra[i]+2*gridstep, dec[j]+2*gridstep], calculate_vis = false, verbose=false);
 print("Best chi2: $(chi2_map[i,j]) at Initial: ra=$(ra[i]) mas and dec=$(dec[j]) mas / Final: ra=$(opt_params[4]) mas and dec=$(opt_params[5]) mas, diameter_primary = $(opt_params[1]), diameter_secondary = $(opt_params[2]), flux_ratio = $(opt_params[3])\n");
 
 

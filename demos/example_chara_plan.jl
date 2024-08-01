@@ -18,12 +18,12 @@ obsdate = DateTime(2020, 6, 03);
 facility = read_facility_file("./data/CHARA.txt");
 lat, lon = facility.lat[1], facility.lon[1]; #CHARA
 
-lst_midnight, ~ = hour_angle_calc(obsdate+Dates.Day(1)+Dates.Hour(7),lon, ra)
+lst_midnight, _ = hour_angle_calc(obsdate+Dates.Day(1)+Dates.Hour(7),lon, ra)
 lst_midnight = lst_midnight[1];
 
 # Dark Observability
-~, UTC_set = sunrise_sunset(obsdate, lat, lon);
-UTC_rise, ~ = sunrise_sunset(obsdate+Dates.Day(1), lat, lon);
+_, UTC_set = sunrise_sunset(obsdate, lat, lon);
+UTC_rise, _ = sunrise_sunset(obsdate+Dates.Day(1), lat, lon);
 dark_offset = 0; #in hours, set offset to 1 or 2 for deeper dark
 utc = collect(range(UTC_set+dark_offset, UTC_rise-dark_offset, step=1.0/60));
 lst, ha = hour_angle_calc(hours_to_date(obsdate, utc),lon,ra);
