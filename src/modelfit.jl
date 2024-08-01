@@ -785,11 +785,11 @@ function bootstrap_fit(nbootstraps, data::OIdata, model::OImodel; fitter=:LN_NEL
             println("Boostrap $(k) out of $(nbootstraps)");
         end
         if fitter==:UltraNest
-            f_chi2, par_opt, ~ = fit_model_ultranest(resample_data(data), model, verbose=false, weights=weights);
+            f_chi2, par_opt, _ = fit_model_ultranest(resample_data(data), model, verbose=false, weights=weights);
         elseif fitter==:Levenberg
-            f_chi2, par_opt, ~ = fit_model_levenberg(resample_data(data), model, verbose=false, weights=weights);
+            f_chi2, par_opt, _ = fit_model_levenberg(resample_data(data), model, verbose=false, weights=weights);
         else
-            f_chi2, par_opt, ~ = fit_model_nlopt(resample_data(data), model, fitter=fitter, verbose=false, weights=weights);
+            f_chi2, par_opt, _ = fit_model_nlopt(resample_data(data), model, fitter=fitter, verbose=false, weights=weights);
         end
         params[:, k]= par_opt;
     end

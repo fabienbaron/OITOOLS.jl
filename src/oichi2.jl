@@ -92,7 +92,7 @@ end
 function image_to_obs(x, ft, data)
     cvis_model = image_to_vis(x, ft);
     v2_model = vis_to_v2(cvis_model, data.indx_v2);
-    ~, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
+    _, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
     return v2_model, t3amp_model, t3phi_model
 end
 
@@ -131,12 +131,12 @@ function image_to_v2(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
 end
 
 function image_to_t3phi(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
-    ~, ~, t3phi_model = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
+    _, _, t3phi_model = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
     return t3phi_model
  end
  
  function image_to_t3amp(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
-    ~, t3amp_model,~ = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
+    _, t3amp_model,_ = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
     return t3amp_model
  end
  
