@@ -117,9 +117,9 @@ then launch julia with
 julia --sysimage oitools.so
 ```
 
-## Packages to install for development
+## Package install for development
 
-Just for reference in case you want to further develop OITOOLS:
+Here is a quick scropt to install all the packages needed to develop OITOOLS:
 
 ```julia
 using Pkg; 
@@ -129,7 +129,7 @@ using Conda;
 Conda.add("ultranest", channel="conda-forge"); 
 Conda.add("astroquery", channel="astropy");
 # Install mainstream Julia packages
-Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters"]); 
+Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FFTW", "FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters", "Match", "ProgressMeter"]); 
 # Install Eric Thiebaut's packages
 Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))
 Pkg.add(["ArrayTools", "LazyAlgebra", "OptimPackNextGen"]);

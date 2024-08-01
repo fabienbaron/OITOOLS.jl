@@ -983,10 +983,10 @@ function chi2_sparco_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,
 end
 
 using NLopt
-function optimize_sparco_parameters(params_start, x, ft, data; weights = [1.0,1.0,1.0], lb=[0.0, 0.0, 0.0, -20.0], ub=[1.0, 1.0, 1.0, 20.0])
+function optimize_sparco_parameters(params_start, x::Array{Float64, 2}, ft, data; weights = [1.0,1.0,1.0], lb=[0.0, 0.0, 0.0, -20.0], ub=[1.0, 1.0, 1.0, 20.0])
     # Optimize the 4 parameters, keeping reference wavelength fixed
     nparams= length(params_start)-1
-    f_params = (params, _)->chi2_sparco_nfft_f(x, ft, data, [params;params_start[end]]; verb = false, weights)
+    f_params = (params, _)->chi2_sparco_f(vec(x), ft, data, [params;params_start[end]]; verb = false, weights)
     optimizer = Opt(:LN_NELDERMEAD, nparams);
     min_objective!(optimizer, f_params);
     lower_bounds!(optimizer, lb);
@@ -1102,12 +1102,12 @@ function crit_sparco_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Array{N
     return chi2_f + reg_f;
 end
 
-function reconstruct_sparco_gray(x_start::Array{Float64,1}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0],ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8)) #grey environment
+function reconstruct_sparco_gray(x_start::Array{Float64,2}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0],ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8)) #grey environment
     #printcolor = :black; verb = false; maxiter = 100; regularizers =[]; weights=[1.0,1.0,1.0];ftol= (0,1e-8); xtol=(0,1e-8); gtol=(0,1e-8);
     x_sol = []
     crit = (x,g)->crit_sparco_fg(x, g, ft, data, length(params_start), regularizers =regularizers, verb = verb, weights=weights)
-    sol = OptimPackNextGen.vmlmb(crit, [params_start;x_start], verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
-    return (sol[1:length(params_start)], sol[length(params_start)+1:end])
+    sol = OptimPackNextGen.vmlmb(crit, [params_start;vec(x_start)], verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
+    return (sol[1:length(params_start)], reshape(sol[length(params_start)+1:end], size(x_start)))
 end
 
 # if Pkg.installed("Wavelets") !=nothing

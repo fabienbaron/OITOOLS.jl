@@ -3,8 +3,8 @@
 # analogous with the chara_plan software used at GSU
 #
 
-using OITOOLS
-using PyPlot, PyCall, Dates
+using OITOOLS, Dates
+using PyPlot
 
 # To query simbad  uncomment the next line
 targetname = "AZ Cyg"
