@@ -2,7 +2,7 @@
 # Basic use of "SPARCO"-type reconstruction
 #
 using OITOOLS
-oifitsfile = "./data/BEN/MWC275_T4a.oifits"
+oifitsfile = "./data/MWC275_T4a.oifits"
 pixsize = 0.075
 data = readoifits(oifitsfile, filter_bad_data=true)[1,1];
 nx = 128

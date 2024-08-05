@@ -1,4 +1,4 @@
-using FITSIO, OIFITS, Statistics, SparseArrays
+using FITSIO, OIFITS, Statistics, SparseArrays, Crayons
 
 # TO DO : * use the splat operator to simplify things
 #         * add differential and complex visibilities
@@ -118,18 +118,24 @@ end
 
 
 function Base.display(data::OIdata)
-println("OIdata")
-println("Original data file: $(data.filename)")
 println("Mean MJD: $(data.mean_mjd)")
 println("Wavelength range: $(minimum(data.uv_lam)) - $(maximum(data.uv_lam))")
 println("nflux: $(data.nflux) | nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | nvisphi: $(data.nvisphi) | nv2: $(data.nv2) | nt3amp: $(data.nt3amp) | nt3phi: $(data.nt3phi)")
 end
 
 function Base.display(data::Array{OIdata})
-println("Array{OIdata}")
 println("Original data file: $(data[1].filename)")
 println("Number of wavelength bins: $(size(data,1))")
 println("Number of time/epoch bins: $(size(data,2))")
+printcolors=[196, 166, 208, 220, 148 , 112, 28, 20, 92, 165]
+if  size(data,1) == (1,1)
+    display(data[1,1])
+elseif (size(data,1) < 11) && (size(data,2) == 1)
+    for i=1:size(data,1) 
+    print(Crayon(foreground = printcolors[i], bold = true), "Wavelength: $i/$(size(data,1))\n")
+    display(data[i,1])
+    end
+end
 end
 
 function set_data_filter(data::OIdata; wav_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], mjd_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], baseline_range::Array{Float64}=[0,1e99],
