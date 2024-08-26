@@ -446,9 +446,6 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
     ylabel("Closure phase (degrees)")
     ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
-    if filename !=""
-        savefig(filename)
-    end
     show(block=false)
 end
 
@@ -557,7 +554,7 @@ function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; figsi
 end
 
 
-function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
+function plot_t3amp(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
     set_oiplot_defaults()
 
     if typeof(data)==OIdata
@@ -625,9 +622,6 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1}}; figsize=(12,6), color::
     ylabel("Triple amplitude")
     ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
-    if filename !=""
-        savefig(filename)
-    end
     show(block=false)
 end
 
