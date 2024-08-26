@@ -103,7 +103,7 @@ function vis_to_t4(cvis, indx1, indx2, indx3, indx4)
     return t4, t4amp, t4phi
 end
 
-function image_to_vis_dft(x, dft)
+function image_to_vis(x::Array{Float64,2}, dft::Matrix{ComplexF64})
     cvis_model = dft * vec(x/ sum(x));
 end
 
