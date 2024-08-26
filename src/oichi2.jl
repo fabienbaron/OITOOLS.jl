@@ -495,7 +495,7 @@ end
 # DFT version
 function chi2_f(x::Array{Float64,2}, dft::Array{Complex{Float64},2}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:black, verb=true, vonmises=false)
     flux = sum(x);
-    cvis_model = image_to_vis_dft(x, dft);
+    cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
         #Note: cvis_model includes all the complex visibilities needed to compute V2, T3, etc.
         #      while the cvis variable is used to export visibility observables (e.g. diff vis or diff phi)
@@ -568,7 +568,7 @@ end
 # DFT version
 function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, dft::Array{Complex{Float64},2}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:black, verb=true, vonmises=false)
     flux = sum(x);
-    cvis_model = image_to_vis_dft(x, dft);
+    cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
         #Note: cvis_model includes all the complex visibilities needed to compute V2, T3, etc.
         #      while the cvis variable is used to export visibility observables (e.g. diff vis or diff phi)
