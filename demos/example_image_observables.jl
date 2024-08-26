@@ -18,7 +18,7 @@ data = readoifits(oifitsfile); # data can be split by wavelength, time, etc.
 
 # Display the data
 uvplot(data);
-plot_v2(data,logplot=true);# Alternatively, one can do v2plot(data.v2_baseline,data.v2,data.v2_err,logplot=true);
+plot_v2(data,logplot=true);
 plot_t3phi(data);
 plot_t3amp(data);
 

@@ -156,7 +156,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
     ax.locator_params(axis ="y", nbins=10)
     ax.locator_params(axis ="x", nbins=10)
     ax.set_aspect(1.0)
-    if (color == "baseline" || color =="base") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
+    if (color == "baseline" || color =="base" || color =="bases" || color =="baselines") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
         baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
         baseline_list_t3 = [get_triple_baselines_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(vcat(baseline_list_v2...),vec(hcat(baseline_list_t3...)))))
