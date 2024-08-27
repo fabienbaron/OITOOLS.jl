@@ -114,7 +114,7 @@ const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","
 
 
 # Overloaded uvplot functions
-function uvplot(uv::Array{Float64,2};filename="")
+function uvplot(uv::Array{Float64,2})
     u = uv[1,:]/1e6
     v = uv[2,:]/1e6
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
@@ -132,12 +132,10 @@ function uvplot(uv::Array{Float64,2};filename="")
     ylabel(L"V (M$\lambda$)")
     ax.grid(true,which="both",color="Grey", linestyle=":");
     tight_layout();
-    if filename !=""
-        savefig(filename)
-    end
 end
 
 function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", figsize=(10,10), minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
+    set_oiplot_defaults()
     if typeof(data)==OIdata
         data = [data]
     end
@@ -250,6 +248,7 @@ end
 
 # This draws a continuous line based on the analytic function
 function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = false, yrange=[], drawfunc = true, logplot = false) #plots V2 data vs v2 model
+    set_oiplot_defaults()
     # Compute model points (discrete)
     baseline_v2 = data.v2_baseline;
     v2_data = data.v2;

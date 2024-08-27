@@ -31,8 +31,8 @@ savefig("dirty-map.png")
 # savefig("dirty-inversion-1-amp.png")
 
 # estimate V and 1/sigma_V^2 from V2 and V2_err using equation 3.98a in Data Analysis (Sivia/Skilling)
-V2 = sqrt.(0.5*( data.v2 +  sqrt.(data.v2.^2+2*data.v2_err.^2)))
-img = real.(adjoint(ft[3])*Complex.(V2)); img = img.*(img .>0);
+V = sqrt.(0.5*( data.v2 +  sqrt.(data.v2.^2+2*data.v2_err.^2)))
+img = real.(adjoint(ft[3])*Complex.(V)); img = img.*(img .>0);
 imdisp(recenter(img,mask=img.>maximum(img)/10),pixsize=pixsize,colormap="gist_earth");
 text(6,5.8,"Dirty Map - from |V|^2",color="white",size="large")
 savefig("dirty-inversion-v2.png")
