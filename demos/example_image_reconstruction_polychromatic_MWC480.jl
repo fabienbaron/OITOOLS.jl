@@ -24,27 +24,33 @@ pixsize = 0.2 # mas/pixel
 ft = setup_nfft_polychromatic(data, nx, pixsize);
 nwavs = length(ft)
 
-# Setup regularization
-regularizers = [   [ ["centering", 1e4], ["tv", 1e2] ]]  # Frame 1 is centered
+# # Setup regularization
+#  regularizers = [   [ ["centering", 1e4], ["tv", 1e2] ]]  # Frame 1 is centered
+#  for i=1:nwavs-1
+#      push!(regularizers,[["tv",1e2]]) # Total variation for all
+#  end
+
+regularizers = [[ ["centering", 1e7]]]  # Frame 1 is centered
+
 for i=1:nwavs-1
-    push!(regularizers,[["tv",1e2]]) # Total variation for all
+    push!(regularizers,[]) # Total variation for all
 end
 
-regularizers = [   [ ["centering", 1e4], ["l1l2", 1e5, 0.4] ]]  # Frame 1 is centered
-for i=1:nwavs-1
-    push!(regularizers,[["l1l2",1e5,0.4]]) # Total variation for all
-end
+
+# for i=1:nwavs-1
+#      push!(regularizers,[["l1l2",1e5,0.4]]) # Total variation for all
+#  end
 
 # Uncomment the desired transspectral regularization
-# push!(regularizers,[ ["transspectral_tvsq", 1e5] ] );
-push!(regularizers,[["transspectral_structnorm", 1e2], ["transspectral_tv", 1e2] ] );
+push!(regularizers,[ ["transspectral_structnorm", 1e2], ["transspectral_tvsq", 1e5] ] );
+#push!(regularizers,[["transspectral_structnorm", 1e7], ["transspectral_tv", 1e4] ] );
 
 pointsource = zeros(nx,nx); 
 pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
 x_start = repeat(pointsource, 1,1,nwavs);
 
 x = copy(x_start);
-for i=1:10
+for i=1:3
     x = reconstruct_polychromatic(x, data, ft, regularizers = regularizers, maxiter = 200, verb=false);
 end
 imdisp_polychromatic(x.^.2, pixsize=pixsize)

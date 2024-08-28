@@ -692,6 +692,10 @@ function chi2_polychromatic_f(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Floa
     end
     f = zeros(nwavs)
     for i=1:nwavs # weighted sum -- should probably do the computation in parallel
+        if verb == true
+            printstyled("Spectral channel $i\n",color=printcolor[i]);
+        end
+        
         if use_diffphases == true
             f[i] = chi2_f(x[:,:,i], ft[i], data[i], cvis=cvis[i], verb = verb, weights = weights);
         else
@@ -699,7 +703,7 @@ function chi2_polychromatic_f(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Floa
         end
         fr = f[i]/(data[i].nv2+data[i].nt3amp+data[i].nt3phi)
         if verb == true
-            printstyled("Spectral channel $i chi2= $(f[i]) chi2r = $(fr)\n",color=printcolor[i]);
+            printstyled("\n Chi2r = $(fr) \t Chi2 = $(f[i])\n",color=printcolor[i]);
         end
     end
     chi2f = sum(f)
