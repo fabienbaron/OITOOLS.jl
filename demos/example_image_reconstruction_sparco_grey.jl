@@ -15,7 +15,7 @@ ft = setup_nfft(data, nx, pixsize);
 # 5: λ0
 params_start=[0.46, 0., 0., 0., 1.6e-6] #V2:12.36 T3A: 4.14 T3P: 1.61
 x_start = gaussian2d(nx,nx,nx/6);
-regularizers = [["l1l2", 7e4, 1e-6]];
+regularizers = [["l1l2", 2e8, 1e-6]];
 params, x = reconstruct_sparco_gray(x_start, params_start, data, ft, regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
 imdisp(x, pixsize = pixsize)
 minchi2, params,ret = optimize_sparco_parameters(params, x, ft, data; weights = [1.0,1.0,1.0] )
@@ -24,6 +24,7 @@ imdisp(x, pixsize = pixsize)
 minchi2, params,ret = optimize_sparco_parameters(params, x, ft, data; weights = [1.0,1.0,1.0] )
 params, x = reconstruct_sparco_gray(x, params, data, ft, regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
 imdisp(x, pixsize = pixsize)
+
 
 #
 # Write FITS image, and minimization information in the header

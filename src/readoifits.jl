@@ -138,6 +138,7 @@ elseif (size(data,1) < 11) && (size(data,2) == 1)
 end
 end
 
+
 function set_data_filter(data::OIdata; wav_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], mjd_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], baseline_range::Array{Float64}=[0,1e99],
     filter_bad_data = false, filter_vis = true, filter_v2 = true, filter_t3amp = true, filter_t3phi = true,
     cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, force_full_vis = false, force_full_t3 = false, filter_v2_snr_threshold=0.01, uv_bad=Int64[], filter_visphi=false, filter_visamp=false)

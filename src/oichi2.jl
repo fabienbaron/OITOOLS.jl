@@ -1,5 +1,12 @@
 using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, Match
 
+
+function Base.display(ft::Vector{Array{NFFTPlan{Float64, 2, 1}}})
+    nmulti = length(ft)
+    println("OITOOLS NFFT transform for $nmulti channels");
+    println("Access e.g. ft[1] if wanting to check an individual channel NFFT");
+end
+
 function setup_dft(uv::Array{Float64,2}, nx, pixsize)
     scale_rad = pixsize * (pi / 180.0) / 3600000.0
     nuv = size(uv, 2)
@@ -909,7 +916,7 @@ function reconstruct_polychromatic(x_start::Array{Float64,3}, data::Array{OIdata
 end
 
 
-function chi2_sparco_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, params::Array{Float64,1}; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
+function chi2_sparco_f(x::Array{Float64,2},  params::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
     # Image x is of length = N*N
     # Nparams are passed as an array
 
@@ -957,48 +964,16 @@ function chi2_sparco_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
-# TBD: merge with previous function
-function chi2_sparco_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
-    # x is of length = N*N+Nparams
-    params=x[1:nparams]  # extract parameters
-    λ0 = params[5];
-    λ = data.uv_lam
-    α = (λ/λ0).^-4.0;
-    β = (λ/λ0).^(params[4]-4.0);
-    fluxstar = params[1]*α;
-    fluxbg = params[2]*α;
-    fluxenv = (1.0-params[1]-params[2])*β;
-    Vstar = visibility_ud([params[3]], data.uv);
-    Venv = image_to_vis(x[nparams+1:end], ftplan[1]);
-    cvis_model = (fluxstar.*Vstar + fluxenv.*Venv)./(fluxstar+fluxenv+fluxbg)
-    v2_model = vis_to_v2(cvis_model, data.indx_v2);
-    t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-    chi2_v2 = 0.0;
-    chi2_t3amp = 0.0;
-    chi2_t3phi = 0.0;
-    if weights[1]>0
-        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
-    end
-
-    if weights[2]>0
-        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
-    end
-    if weights[3]>0
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-    end
-    if verb==true
-        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
-        printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
-        printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
-    end
-    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
-end
+# # TBD: merge with previous function
+# function chi2_sparco_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
+#     chi2_sparco_f(x, params, ftplan, data, verb = verb, weights = weights);
+# # end
 
 using NLopt
 function optimize_sparco_parameters(params_start, x::Array{Float64, 2}, ft, data; weights = [1.0,1.0,1.0], lb=[0.0, 0.0, 0.0, -20.0], ub=[1.0, 1.0, 1.0, 20.0])
     # Optimize the 4 parameters, keeping reference wavelength fixed
-    nparams= length(params_start)-1
-    f_params = (params, _)->chi2_sparco_f(vec(x), ft, data, [params;params_start[end]]; verb = false, weights)
+    nparams = length(params_start)-1
+    f_params = (params, _)->chi2_sparco_f(x, [params;params_start[end]], ft, data; verb = false, weights)
     optimizer = Opt(:LN_NELDERMEAD, nparams);
     min_objective!(optimizer, f_params);
     lower_bounds!(optimizer, lb);
@@ -1119,6 +1094,7 @@ end
 
 function reconstruct_sparco_gray(x_start::Array{Float64,2}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0],ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8)) #grey environment
     #printcolor = :black; verb = false; maxiter = 100; regularizers =[]; weights=[1.0,1.0,1.0];ftol= (0,1e-8); xtol=(0,1e-8); gtol=(0,1e-8);
+    # Note: we're trying to optimize both the parameters and the image
     x_sol = []
     crit = (x,g)->crit_sparco_fg(x, g, ft, data, length(params_start), regularizers =regularizers, verb = verb, weights=weights)
     sol = OptimPackNextGen.vmlmb(crit, [params_start;vec(x_start)], verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);

@@ -12,16 +12,19 @@ pixsize = 0.1 # mas/pixel
 ft = setup_nfft(data, nx, pixsize);
 regularizers = [["centering", 1e7]] 
 pointsource = zeros(nx,nx); 
-pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
+pointsource[nx÷2+1, nx÷2+1] = 1.0;
 x = copy(pointsource);
-x = reconstruct(x, data, ft, regularizers = regularizers, maxiter = 500, verb=true);
+for i=1:30
+    x = reconstruct(x, data, ft, regularizers = regularizers, maxiter = 1000, verb=false);
+end
 imdisp(x.^.2, pixsize=pixsize)
 plot_v2_residuals(x, data, ft)
 
+x_mono = copy(x)
 # Step 2: polychromatic reconstruction
 data = vec(readoifits(oifitsfile, filter_bad_data = true, polychromatic = true)) # vec is to get rid of degenerate (temporal) dimension
 nx = 64 #number of pixels (side)
-pixsize = 0.2 # mas/pixel
+pixsize = 0.1 # mas/pixel
 ft = setup_nfft_polychromatic(data, nx, pixsize);
 nwavs = length(ft)
 
@@ -43,16 +46,18 @@ end
 #  end
 
 # Uncomment the desired transspectral regularization
-push!(regularizers,[ ["transspectral_structnorm", 1e2], ["transspectral_tvsq", 1e5] ] );
+push!(regularizers,[ ["transspectral_structnorm", 1e2], ["transspectral_tvsq", 1e3] ] );
 #push!(regularizers,[["transspectral_structnorm", 1e7], ["transspectral_tv", 1e4] ] );
 
 pointsource = zeros(nx,nx); 
-pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
+pointsource[nx÷2+1, nx÷2+1] = 1.0;
 x_start = repeat(pointsource, 1,1,nwavs);
-
 x = copy(x_start);
+
+x = repeat(x_mono,1,1,nwavs)
+
 for i=1:3
-    x = reconstruct_polychromatic(x, data, ft, regularizers = regularizers, maxiter = 200, verb=false);
+    x = reconstruct_polychromatic(x, data, ft, regularizers = regularizers, maxiter = 400, verb=true);
 end
 imdisp_polychromatic(x.^.2, pixsize=pixsize)
 
