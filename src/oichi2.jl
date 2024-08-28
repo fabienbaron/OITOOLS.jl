@@ -14,6 +14,22 @@ function setup_dft(data::OIdata, nx, pixsize)
     return setup_dft(data.uv, nx, pixsize)
 end
 
+# function setup_dft(data::Matrix{OIdata}, nx, pixsize)
+#     if size(data) == (1,1)
+#         return setup_dft(data[1,1].uv, nx, pixsize);
+#     else 
+#         error("Multidimensional DFT not implemented yet");
+#     end
+# end
+
+# function setup_nfft(data::Matrix{OIdata}, nx, pixsize)
+#     if size(data) == (1,1)
+#         return setup_nfft(data[1,1], nx, pixsize);
+#     else 
+#         return setup_nfft_multi(data, nx, pixsize);
+#     end
+# end
+
 function setup_nfft(data::OIdata, nx, pixsize)
     scale_rad = pixsize * (pi / 180.0) / 3600000.0*[-1;1].*data.uv;
     fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0);
@@ -37,22 +53,18 @@ function setup_nfft(uv::Array{Float64,2}, indx_vis, indx_v2, indx_t3_1, indx_t3_
     return [fftplan_uv,fftplan_vis,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
 end
 
-
-function setup_nfft_t4(data, nx, pixsize)
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0*[-1;1].*data.uv
-    fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0);
-    fftplan_vis  = plan_nfft(scale_rad[:, data.indx_vis], (nx,nx), m=4, σ=2.0);
-    fftplan_v2   = plan_nfft(scale_rad[:, data.indx_v2], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_1 = plan_nfft(scale_rad[:, data.indx_t3_1], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_2 = plan_nfft(scale_rad[:, data.indx_t3_2], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_3 = plan_nfft(scale_rad[:, data.indx_t3_3], (nx,nx), m=4, σ=2.0);
-    fftplan_t4_1 = plan_nfft(scale_rad[:, data.indx_t4_1], (nx,nx), m=4, σ=2.0);
-    fftplan_t4_2 = plan_nfft(scale_rad[:, data.indx_t4_2], (nx,nx), m=4, σ=2.0);
-    fftplan_t4_3 = plan_nfft(scale_rad[:, data.indx_t4_3], (nx,nx), m=4, σ=2.0);
-    fftplan_t4_4 = plan_nfft(scale_rad[:, data.indx_t4_4], (nx,nx), m=4, σ=2.0);
-    return [fftplan_uv,fftplan_vis,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3, fftplan_t4_1,fftplan_t4_2,fftplan_t4_3, fftplan_t4_4]
-end
-
+# function setup_nfft_multi(data, nx, pixsize)
+#     nwavs = size(data,1);
+#     nepochs = size(data,2);
+#     scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+#     fftplan_multi = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}},2}(undef, nwavs, nepochs);
+#     for i=1:nepochs
+#         for j=1:nwavs
+#             fftplan_multi[j,i]=setup_nfft(data[j,i], nx, pixsize);
+#         end
+#     end
+#     return fftplan_multi
+# end
 
 function setup_nfft_multiepochs(data, nx, pixsize)
     nepochs = size(data,1);

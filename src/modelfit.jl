@@ -6,8 +6,8 @@
 #       - black body spectral law
 #       - spectral lines (Gaussian, Voigt)
 #       - custom r/μ profiles
-using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, LsqFit, NLopt, Printf, FFTW, NFFT
-
+using Statistics, LinearAlgebra, Parameters, PyCall, UltraNest, NLopt, Printf, FFTW, NFFT
+import LsqFit
 @with_kw mutable struct OIparam
     name::String = "" # optional name of the compoment (e.g. "primary", "central source")
     val::Float64 = 0
@@ -533,8 +533,10 @@ function fit_model_ultranest(data::OIdata, model::OImodel; lbounds = Float64[], 
     end
 
     if cornerplot == true
-        PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[10];
-        pyimport("ultranest.plot").cornerplot(result);
+        PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[8];
+        histogram_color = "black"
+        contour_colors = py"{'colors': ['#0072B2','#56B4E9','#009E73','#F0E442'], 'linestyles': ['-', '-', '-', '-']}"
+        pyimport("ultranest.plot").cornerplot(result, contour_kwargs=contour_colors, color=histogram_color);
     end
     cvis_model = [];
     if calculate_vis == true
@@ -600,15 +602,15 @@ function fit_model_levenberg(data::OIdata, model::OImodel; verbose = true, calcu
     lbounds, hbounds = get_model_bounds(model);
     pinit = get_model_params(model);
     m = (x,p)->lsqmodelobs(p, model, data, weights=weights);
-    fit = curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose);
+    fit = LsqFit.curve_fit(m, [], ydata, wt, pinit, lower=lbounds, upper=hbounds, show_trace=verbose);
     minx = fit.param
     minf = model_to_chi2(data, model, minx, weights=weights);
 
     if fit.converged == true
         println("Levenberg-Marquardt fit converged to chi2 = $(minf) for p=$(minx)\n")
     end
-    sigma = stderror(fit)
-    covar = estimate_covar(fit)
+    sigma = LsqFit.stderror(fit)
+    covar = LsqFit.estimate_covar(fit)
     if verbose==true
         println("Name       \t\tMinimum\t\tMaximum\t\tInit\t\tConverged ± Error");
         pnames = get_model_pnames(model);

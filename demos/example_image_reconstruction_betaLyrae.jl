@@ -1,5 +1,5 @@
 #
-# Very Basic Image reconstruction code
+# Reconstruction of beta Lyrae from snapshot MIRC-6T data
 #
 using OITOOLS
 oifitsfile = "./data/betlyr6t.oifits"

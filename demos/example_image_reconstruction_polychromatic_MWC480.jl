@@ -8,15 +8,14 @@ oifitsfile = "./data/MWC480.oifits"
 # Step 1: reconstruct a "gray" image
 data = readoifits(oifitsfile, filter_bad_data = true, polychromatic = false)[1,1]
 nx = 64 #number of pixels (side)
-pixsize = 0.2 # mas/pixel
+pixsize = 0.1 # mas/pixel
 ft = setup_nfft(data, nx, pixsize);
-regularizers = [ [ ["centering", 1e4], ["tv", 1e5] ]] 
-
+regularizers = [["centering", 1e7]] 
 pointsource = zeros(nx,nx); 
 pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
 x = copy(pointsource);
-x = reconstruct(x, data, ft, regularizers = regularizers, maxiter = 200, verb=false);
-
+x = reconstruct(x, data, ft, regularizers = regularizers, maxiter = 500, verb=true);
+imdisp(x.^.2, pixsize=pixsize)
 
 # Step 2: polychromatic reconstruction
 data = vec(readoifits(oifitsfile, filter_bad_data = true, polychromatic = true)) # vec is to get rid of degenerate (temporal) dimension
