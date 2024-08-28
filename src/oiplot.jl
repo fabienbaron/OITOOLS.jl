@@ -177,7 +177,7 @@ function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::Stri
             ax.legend(fontsize=10, fancybox=true, shadow=true, ncol=5, loc="upper center", bbox_to_anchor=(0.5, -0.10));
             tight_layout();
         end
-    elseif (color == "wavelength" || color == "wav")
+    elseif (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
         u = vcat([data[n].uv[1,:]/1e6 for n=1:length(data)]...)
         v = vcat([data[n].uv[2,:]/1e6 for n=1:length(data)]...)
         wavcol = vcat([data[n].uv_lam*1e6 for n=1:length(data)]...)
@@ -352,7 +352,7 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12
         else
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
-    elseif (color == "wavelength" || color == "wav")
+    elseif (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
         wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
         baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
         v2 = vcat([data[n].v2 for n=1:length(data)]...);
@@ -392,7 +392,7 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
     fig = figure("Closure phase data",figsize=figsize,facecolor="White");
     clf();
     ax=gca();
-    if (color == "baseline" || color =="base")
+    if (color == "baseline" || color =="base"|| color =="bases" || color =="baselines")
         baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_t3...)))
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
@@ -412,7 +412,7 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
         else
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=5,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
-    elseif (color == "wavelength" || color == "wav")
+    elseif  (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
         wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
         if t3base=="max"
             baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
@@ -448,15 +448,15 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
     show(block=false)
 end
 
-function plot_v2_residuals(data::OIdata, x, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
+function plot_v2_residuals(x, data::OIdata, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
     plot_v2_residuals(data, image_to_v2(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
 end
 
-function plot_t3phi_residuals(data::OIdata, x, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
+function plot_t3phi_residuals(x, data::OIdata, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
     plot_t3phi_residuals(data, image_to_t3phi(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
 end
 
-function plot_t3amp_residuals(data::OIdata, x, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
+function plot_t3amp_residuals(x, data::OIdata, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
     plot_t3amp_residuals(data, image_to_t3amp(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
 end
 
@@ -567,7 +567,7 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
     ax=gca();
     baseline_t3 = []
 
-    if (color == "baseline" || color =="base")
+    if (color == "baseline" || color =="base"|| color =="bases" || color =="baselines")
         baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
         baseline=sort(unique(vcat(baseline_list_t3...)))
         #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
@@ -587,7 +587,7 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
         else
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
-    elseif (color == "wavelength" || color == "wav")
+    elseif  (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
         wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
         
         if t3base=="max"

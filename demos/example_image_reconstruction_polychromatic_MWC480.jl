@@ -16,6 +16,7 @@ pointsource[div(nx+1,2), div(nx+1,2)] = 1.0;
 x = copy(pointsource);
 x = reconstruct(x, data, ft, regularizers = regularizers, maxiter = 500, verb=true);
 imdisp(x.^.2, pixsize=pixsize)
+plot_v2_residuals(x, data, ft)
 
 # Step 2: polychromatic reconstruction
 data = vec(readoifits(oifitsfile, filter_bad_data = true, polychromatic = true)) # vec is to get rid of degenerate (temporal) dimension
