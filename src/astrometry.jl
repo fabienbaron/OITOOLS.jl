@@ -11,15 +11,18 @@ end
 
 
 
-function hour_angle_calc(dates::Union{DateTime, Array{DateTime, 1}}, longitude::Float64, ra::Float64;ldir="E")
+function hour_angle_calc(dates::Union{DateTime, Vector{DateTime}}, longitude::Float64, ra::Union{Vector{Float64}, Float64};ldir="E")
 return hour_angle_calc(from_utc.(dates), longitude, ra, ldir=ldir)
 end
 
-function hour_angle_calc(dates, longitude::Float64, ra::Float64;ldir="E")
+function hour_angle_calc(dates, longitude::Float64, ra::Union{Vector{Float64}, Float64};ldir="E")
 
 """
 This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
-of observations. This function assumes UTC.
+of observations. 
+Dates: UTC.
+Longitude: degrees
+RA: degrees
 """
 
 alpha= 1

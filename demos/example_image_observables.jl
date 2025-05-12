@@ -22,11 +22,15 @@ plot_v2(data,logplot=true);
 plot_t3phi(data);
 plot_t3amp(data);
 
+
+
 # Compare data to image
 #
 
-# DFT method
 data = data[1,1]
+
+# DFT method
+
 # Setup Fourier transform via DFT
 dft = setup_dft(data, nx, pixsize);
 # This computes the complete chi2

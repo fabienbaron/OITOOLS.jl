@@ -28,7 +28,7 @@ Feel free to remove the two ENV settings at the beginning of the line if you hav
 
 Because some of OITOOLS dependencies are not registered packages, we elect to go through ```Pkg()``` again rather than the activate/instantiate mechanism of Julia. Here again, copy/paste the following line into the REPL:
 ```julia
-using Pkg; Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","FFTW", "NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters"]); Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4"); Pkg.add(url="https://github.com/emmt/ArrayTools.jl.git");Pkg.add(url="https://github.com/emmt/LazyAlgebra.jl.git"); Pkg.add(url="https://github.com/emmt/OptimPackNextGen.jl.git");Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
+using Pkg; pkg"registry add General"; pkg"registry add https://github.com/emmt/EmmtRegistry"; Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","FFTW", "NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","Crayons", "Match", "SpecialFunctions","Statistics","Parameters", "ArrayTools", "LazyAlgebra", "OptimPackNextGen"]); Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4"); Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 ```
 Installation may take between 2-10 minutes depending on OS and computer performance.
 

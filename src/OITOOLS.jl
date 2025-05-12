@@ -26,7 +26,7 @@ export create_component,create_model,update_model, model_to_vis, dispatch_params
 #oiplot
 export set_oiplot_defaults, uvplot, onclickidentify, plot_v2,plot_v2_timelapse, plot_diffphi, plot_visphi, plot_t3phi, plot_v2_and_t3phi_wav, imdisp, imdisp_temporal, plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals, plot_v2_model_vs_func, plot_v2, plot_t3amp,plot_v2_multifile,imdisp_polychromatic
 #oichi2
-export setup_dft, setup_nfft,setup_nfft_multiepochs, mod360, vis_to_v2,vis_to_t3, image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs, image_to_vis_dft,image_to_vis,chi2_f,chi2_f,chi2_vis_nfft_f,chi2_vis_dft_fg,chi2_vis_nfft_fg,gaussian2d,cdg
+export setup_dft, setup_dft_polychromatic, setup_nfft,setup_nfft_multiepochs, mod360, vis_to_v2,vis_to_t3, image_to_v2, image_to_t3phi, image_to_t3amp, observables, image_to_obs, image_to_vis_dft,image_to_vis,chi2_f,chi2_f,chi2_vis_nfft_f,chi2_vis_dft_fg,chi2_vis_nfft_fg,gaussian2d,cdg
 export regularization, reg_centering,tvsq,tv,l1l2,l1l2w,l1hyp,l2sq,compactness,radial_variance,entropy, reg_support
 export crit_fg,crit_f, crit_polychromatic_fg, chi2_fg,chi2_f,chi2_polychromatic_f,crit_multitemporal_fg,reconstruct,reconstruct_multitemporal, setup_radial_reg
 #vis_functions

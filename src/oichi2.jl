@@ -93,6 +93,27 @@ function setup_nfft_polychromatic(data, nx, pixsize)
     return fftplan_multi
 end
 
+function setup_dft_polychromatic(data, nx, pixsize)
+    nwavs = size(data,1);
+    scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+    fftplan_multi = Array{Array{ComplexF64, 2}}(undef, nwavs);
+    for i=1:nwavs
+        fftplan_multi[i]=setup_dft(data[i], nx, pixsize);
+    end
+    return fftplan_multi
+end
+
+
+# function setup_nfft_polychromatic(uv::Array{Float64,3}, indx_vis, indx_v2, indx_t3_1, indx_t3_2,indx_t3_3, nx, pixsize)
+#     nwavs = size(data,1);
+#     scale_rad = pixsize * (pi / 180.0) / 3600000.0;
+#     fftplan_multi = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}}}(undef, nwavs);
+#     for i=1:nwavs
+#         fftplan_multi[i]=setup_nfft(uv[:,:,i], nx, pixsize);
+#     end
+#     return fftplan_multi
+# end
+
 function mod360(x)
     mod.(mod.(x.+180.0,360.0).+360.0, 360.0) .- 180.0
 end
@@ -106,6 +127,10 @@ function vis_to_t3(cvis, indx1, indx2, indx3)
     t3amp = abs.(t3);
     t3phi = angle.(t3)*180.0/pi;
     return t3, t3amp, t3phi
+end
+
+function observables(x, ft, data)
+return image_to_obs(x, ft, data)
 end
 
 function image_to_obs(x, ft, data)
@@ -500,7 +525,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
                 "compactness" => ireg[2]*compactness(x,temp_g; verb, w = length(ireg) > 2 ? ireg[3] : nothing)
                 "radialvar"   => ireg[2]*radial_variance(x,temp_g, H=ireg[3], G=ireg[4]; verb)
                 "entropy"     => ireg[2]*entropy(x,temp_g; verb)
-                "support"     => ireg[2]*support(x, prior=ireg[3], temp_g; verb)
+                "support"     => ireg[2]*reg_support(x, prior=ireg[3], temp_g; verb)
                 _             => error("Unknown regularizer")
             end
             reg_g[:,:] += ireg[2]*temp_g
@@ -676,7 +701,11 @@ function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, ftplan::Array{NFFT.NF
 
     g[:] = weights[1]*g_v2 .+ weights[2]*g_t3amp .+ weights[3]*g_t3phi
     if verb==true
-        printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
+        if (weights[1]>0)&&(data.nv2>0)
+            printstyled("V2: $(chi2_v2/data.nv2) ", color=:red)
+        else
+            printstyled("V2: (N/A) ", color=:black) # disabled
+        end
         printstyled("T3A: $(chi2_t3amp/data.nt3amp) ", color=:blue);
         printstyled("T3P: $(chi2_t3phi/data.nt3phi) ", color=:green);
         printstyled("Flux: $(flux) ", color=:black);
@@ -684,7 +713,7 @@ function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, ftplan::Array{NFFT.NF
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
-function chi2_polychromatic_f(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Float64, 2, 1}}, 1}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
+function chi2_polychromatic_f(x::Array{Float64,3}, ft::Union{Array{Array{NFFTPlan{Float64, 2, 1}}, 1},Array{Array{ComplexF64, 2}, 1}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
@@ -708,7 +737,7 @@ function chi2_polychromatic_f(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Floa
         else
             f[i] = chi2_f(x[:,:,i], ft[i], data[i], verb = verb, weights = weights);
         end
-        fr = f[i]/(data[i].nv2+data[i].nt3amp+data[i].nt3phi)
+        fr = f[i]/(weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi)
         if verb == true
             printstyled("\n Chi2r = $(fr) \t Chi2 = $(f[i])\n",color=printcolor[i]);
         end
@@ -730,10 +759,10 @@ function chi2_polychromatic_f(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Floa
         print("Differential phase chi2r: $(chi2_diffphi/length(diffphi_model)) \n");
         end
     end
-    return chi2f;
+    return chi2f/ndof;
 end
 
-function crit_fg(x::Array{Float64,2},g::Array{Float64,2}, ft::Union{Array{NFFT.NFFTPlan{Float64,2,1},1},Array{Complex{Float64},2}}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
+function crit_fg(x,g::Array{Float64,2}, ft::Union{Array{NFFT.NFFTPlan{Float64,2,1},1},Array{Complex{Float64},2}}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
     chi2 = chi2_fg(x, g, ft, data, cvis = cvis, verb = verb, weights = weights);
     reg = regularization(x, g, regularizers=regularizers, printcolor = printcolor, verb = verb);
     flux = sum(x)
@@ -788,7 +817,7 @@ function crit_multitemporal_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
     return f;
 end
 
-function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Array{Array{NFFTPlan{Float64, 2, 1}}, 1}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
+function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Union{Array{Array{NFFTPlan{Float64, 2, 1}}, 1},Array{Array{ComplexF64, 2}, 1}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
@@ -816,7 +845,7 @@ function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
         g[:,:,i] = subg
     end
     ndof = Int(sum([weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi for i=1:nwavs]));
-    printstyled("Indpt images -- Crit: $f Crit/dof: $(f/ndof) \n", color=:red);
+    #printstyled("Indpt images -- Crit: $f Crit/dof: $(f/ndof) \n", color=:red);
     # Differential phase
     #  if data.nvisphi > 0
     # Compute vis_ref
@@ -867,13 +896,13 @@ function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
                 printstyled("Trans-spectral l1l2 norm: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
             end
         end
+        printstyled("Post trans -- Crit: $f Crit/dof: $(f/ndof) \n", color=:blue);
     end
-    printstyled("Post trans -- Crit: $f Crit/dof: $(f/ndof) \n", color=:blue);
-    return f;
+    g[:] = g[:]/ndof;
+    return f/ndof;
 end
 
-
-function image_to_vis_polychromatic(x::Array{Float64,3}, ft::Array{Array{NFFTPlan{Float64, 2, 1}}, 1})
+function image_to_vis(x::Array{Float64,3}, ft::Union{Array{Array{NFFTPlan{Float64, 2, 1}}, 1},Array{Array{ComplexF64, 2}, 1}})
     nwavs = length(ft);
     npix = size(x,1);
     cvis = fill((Complex{Float64}[]),nwavs);
@@ -906,12 +935,8 @@ function reconstruct_polychromatic(x_start::Array{Float64,3}, data::Array{OIdata
     if regularizers == []
         regularizers = fill([],length(data))
     end
-    if typeof(ft) == Array{Array{NFFTPlan{Float64, 2, 1}}, 1}
-        crit = (x,g)->crit_polychromatic_fg(x, g, ft, data, weights = weights, printcolor=printcolor, regularizers=regularizers, use_diffphases = use_diffphases, verb = verb)
-        x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=true, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
-    else
-        error("Sorry, polychromatic DFT methods not implemented yet");
-    end
+    crit = (x,g)->crit_polychromatic_fg(x, g, ft, data, weights = weights, printcolor=printcolor, regularizers=regularizers, use_diffphases = use_diffphases, verb = verb)
+    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=true, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     return x_sol
 end
 
@@ -924,9 +949,9 @@ function chi2_sparco_f(x::Array{Float64,2},  params::Array{Float64,1}, ftplan::A
     #        f_star_0 * (lambda/ lambda_0)^-4 * V_star + (1-f_star_0 - f_bg_0 )*(lambda/lambda_0)^d_ind * V_env
     # V_tot = -------------------------------------------------------------------------------------------------
     #        (f_star_0 + f_bg_0) (lambda/ lambda_0)^-4 + (1 - f_star_λ0 - f_bg_0 )*(lambda/lambda_0)^d_ind
-    # param[1] = fs0
-    # param[2] = fbg0
-    # param[3] = diameter of star = 2.776e-01
+    # param[1] = f_star_0
+    # param[2] = f_bg_0
+    # param[3] = diameter of star
     # param[4] : fixed, d_ind environment power law
     # param[5] :  lambda_0 (fixed) = 1.65e-06
     # params=[0.8, 0.1, 0.5, 0.0, 1.65e-6]

@@ -419,11 +419,11 @@ function remove_redundant_uv!(data::OIdata; uvtol=2e2)
 end
 
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, use_flux = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, verbose=true)
+function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, use_flux = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, verb=true)
 
     #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
 
-    #  targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true; cutoff_minv2 = -1; cutoff_maxv2 = 2.0; cutoff_mint3amp = -1.0; cutoff_maxt3amp = 1.5; use_flux=false;
+    #  verb=true; targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true; cutoff_minv2 = -1; cutoff_maxv2 = 2.0; cutoff_mint3amp = -1.0; cutoff_maxt3amp = 1.5; use_flux=false;
     if !isfile(oifitsfile)
         @error("readoifits could not locate the requested data file -- please check path\n")
         return [[]];
@@ -443,7 +443,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     if minimum(vcat([targettables[i].target_id for i=1:length(targettables)]...)) == 0
         for i=1:length(targettables)
             if targettables[i].revn!=1 # only OIFITSv2 enforces indexing
-                if verbose == true
+                if verb == true
                     @warn("OI_TARGET table $i does not follow the OIFITSv2 standard - target indexing should start at 1, not 0.")
                 end
             end
@@ -540,7 +540,7 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
     station_index_offset = 0
     if minimum(vcat(station_index...)) == 0  #determine if compliant with OIFITS format (min index = 1,not 0)
         revn = maximum([arraytables[i].revn for i=1:length(arraytables)])
-        if verbose==true
+        if verb==true
             if revn==2
                 @warn("This file does not follow the OIFITSv2 standard - station indexing should start at 1, not 0.")
             else
@@ -832,8 +832,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         t3_v1coord_old[itable] = t3tables[itable].v1coord[t3_targetid_filter];
         t3_u2coord_old[itable] = t3tables[itable].u2coord[t3_targetid_filter];
         t3_v2coord_old[itable] = t3tables[itable].v2coord[t3_targetid_filter];
-        t3_u3coord_old[itable] = -(t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
-        t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
+        t3_u3coord_old[itable] = (t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
+        t3_v3coord_old[itable] = (t3_v1coord_old[itable] + t3_v2coord_old[itable]);
         t3_mjd_old[itable] = repeat(t3tables[itable].mjd[t3_targetid_filter]', outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
         iarray = findall(t3tables[itable].arrname .== arraytableref)
         if length(iarray)>0

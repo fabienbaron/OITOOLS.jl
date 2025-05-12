@@ -226,10 +226,10 @@ function get_t3_baselines(N,station_xyz,v2_stations)
     return nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3
 end
 
-function get_uv(l, h, λ, δ, baselines)
-    #Use following expression only if there are missing baselines somewhere
+function get_uv(l, h, λ, δ::Float64, baselines)
+    # Use following expression only if there are missing baselines somewhere
     # baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
-    #Expression to use for pure simulation where the full complement of v2 and t3 are created
+    # Expression to use for pure simulation where the full complement of v2 and t3 are created
     nhours = length(h);
     nuv = size(baselines, 2);
     # Now compute the UV coordinates, again according to the APIS++ standards.
@@ -243,6 +243,31 @@ function get_uv(l, h, λ, δ, baselines)
     uv = vcat(vec(u)',vec(v)')
     return nuv,uv,u_M,v_M,w_M
 end
+
+function get_uv(l, h, λ, δ::Matrix{Float64}, baselines) 
+    # Use following expression only if there are missing baselines somewhere
+    # baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
+    # Expression to use for pure simulation where the full complement of v2 and t3 are created
+    nhours = length(h);
+    nuv = size(baselines, 2);
+    # Now compute the UV coordinates, again according to the APIS++ standards.
+    # If δ(=DECLINATION) is a vector, this is because DEC changes with HA, i.e. it's not a star but e.g. a satellite
+    u_M = -sin(l)*sin.(h) .*baselines[1,:]  .+ cos.(h) .* baselines[2,:]+cos(l)*sin.(h).*baselines[3,:];
+    v_M = ( sin(l)*sin.(δ).*cos.(h).+cos(l).*cos.(δ)).* baselines[1,:]  + sin.(δ).*sin.(h) .*baselines[2,:]   +(-cos(l)*cos.(h).*sin.(δ).+sin(l).*cos.(δ)) .* baselines[3,:];
+    w_M = (-sin(l)*cos.(δ).*cos.(h).+cos(l).*sin.(δ)).* baselines[1,:] - cos.(δ).*sin.(h) .*baselines[2,:]   + (cos(l)*cos.(h).*cos.(δ).+sin(l).*sin.(δ)) .* baselines[3,:];
+    # proj baselines to (uv wav)
+    u = reshape((1 ./λ)'.*vec(-u_M), (nuv,nhours,length(λ))); #TODO: we have -u_M for the moment, need to fix nfft first
+    v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
+    w = reshape((1 ./λ)'.*vec(w_M), (nuv,nhours,length(λ)));
+    uv = vcat(vec(u)',vec(v)')
+    return nuv,uv,u_M,v_M,w_M
+end
+
+
+
+
+
+
 
 function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
     v2_indx_M = repeat(v2_indx,1,nhours)+repeat(Int64.(collect(range(0,stop=nuv*(nhours-1),length=nhours)))',nv2)
@@ -258,18 +283,22 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
-function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model())
-    outfilename= string("!", out_file)
+function simulate(facility,target,combiner,wavelength,dates,errors,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model(), dft=false,nonoise=false)
+    outfilename= string("!", out_file)   
     #simulate an observation using input hour angles, info about array and combiner, and input image
     ntel=facility.ntel[1];
-    lst, hour_angles = hour_angle_calc(dates,facility.lon[1],target.raep0[1]);
+    
+    # Override RA and DEC if not fixed (e.g. Sat) -- input RA and DEC should be in (decimal) degrees
+    dec = target.decep0[1]/180*pi 
+    ra = target.raep0[1]/180*pi
+    
+    lst, hour_angles = hour_angle_calc(dates,facility.lon[1], ra*180/pi);
     nhours = length(hour_angles);
     h_rad = hour_angles' .* pi / 12;
-    δ = target.decep0[1]/180*pi;
     l = facility.lat[1]/180*pi;
-    λ = wave.λ;
-    δλ = wave.δλ;
-    nw = length(λ)
+    λ = wavelength.λ;
+    δλ = wavelength.δλ;
+    nwavs = length(λ)
 
     station_xyz=zeros(Float64,ntel,3) #✓
     for i=1:ntel
@@ -281,44 +310,77 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
     nt3,t3_baselines,t3_stations,t3_indx_1,t3_indx_2,t3_indx_3 = get_t3_baselines(ntel,station_xyz,v2_stations);
 
     # Compute uv coverage: nuv is the number of uv points, uv is (u,v) in Mλ, (u_M, v_M, w_M) are in meters
-    nuv, uv, u_M, v_M, w_M = get_uv(l,h_rad,λ,δ,v2_baselines)
+    nuv, uv, u_M, v_M, w_M = get_uv(l,h_rad,λ,dec,v2_baselines)
 
     # Setup indexing for OIFITS:  _M -> in meters, _w -> scaled by λ
-    v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w = get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nw,uv)
+    v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w = get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,nwavs,uv)
 
     # Compute complex visibilities from either a truth image or a model
     cvis_model = ComplexF64[]
     # Determine if image or model
 
     if (((typeof(image) == String) && (image !="")) || ((typeof(image) != String) && (image !="")) )
-        # Truth image
-        # TODO: Polychromatic and dynamic imaging
+        # TODO: Update polychromatic and dynamic imaging and non square images
         x = readfits(image)
-        nx = size(x,1);
-        x = vec(x)/sum(x);
-        ft = setup_nfft(uv, v2_indx_w, v2_indx_w, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
-        cvis_model = image_to_vis(x, ft);
+        nx = size(x,1); 
+        if ndims(x) == 2 # Monochromatic image
+            println("Simulating monochromatic observations...")
+            x = x/sum(x);
+            ft = setup_nfft(uv, v2_indx_w, v2_indx_w, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w, nx, pixsize);
+            cvis_model = image_to_vis(x, ft);
+        elseif ndims(x) == 3 # at the moment, we assume polychromatic
+            println("Simulating polychromatic observations...")
+            x = x ./ sum(x, dims=(1,2))
+            # uv_lambda = reshape(uv, 2*nuv*nhours,nw) 
+            # k=8; range=(k-1)*nuv*nhours+1:k*nuv*nhours; norm(uv_lambda[:,:,k]-uv[:,range]); 
+            # We're basically redoing setup_nfft_polychromatic here
+            #      ft = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}}}(undef, nwavs);
+            cvis = fill((Complex{Float64}[]),nwavs);
+            if dft==true
+                println("Using DFT")
+                #ft = Array{Array{ComplexF64,2}}(undef, nwavs);
+                for i=1:nwavs
+                    ft = setup_dft(uv[:,(i-1)*nuv*nhours+1:i*nuv*nhours], nx, pixsize);
+                    cvis[i] = image_to_vis(x[:,:,i], ft);
+                end
+            else
+                println("Using NFFT")
+                for i=1:nwavs
+                    #ft[i]=setup_nfft(uv[:,(i-1)*nuv*nhours+1:i*nuv*nhours], vec(v2_indx_M), vec(v2_indx_M), vec(t3_indx_1_M), vec(t3_indx_2_M), vec(t3_indx_3_M), nx, pixsize);
+                    ft = setup_nfft(uv[:,(i-1)*nuv*nhours+1:i*nuv*nhours], vec(v2_indx_M), vec(v2_indx_M), vec(t3_indx_1_M), vec(t3_indx_2_M), vec(t3_indx_3_M), nx, pixsize);
+                    cvis[i] = image_to_vis(x[:,:,i], ft);
+                end
+            end
+            cvis_model = vec(hcat(cvis...))
+        end
     elseif model.components !=[]
         # Model
         cvis_model = model_to_vis(model, uv, λ);
     else
-        error("Bad image or model definition in call to simulate()");
-    end
+        warning("No image nor model definition in call to simulate()");
+        warning("Will generate zero visibilities");
+        cvis_model = zeros(ComplexF64, size(uv,2))
+    end        
 
     # Compute true values of observables
     v2_model = vis_to_v2(cvis_model, v2_indx_w);
-    t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
+    t3_model, t3amp_model, t3phi_model = vis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
 
     # Compute uncertainties
     v2_model_err = errors.v2_multit*v2_model .+ errors.v2_addit;
     t3amp_model_err = errors.t3amp_multit*t3amp_model .+ errors.t3amp_addit;
     t3phi_model_err = zeros(length(t3phi_model)) .+ errors.t3phi_addit; # degree  -- there is another way of setting this with Haniff's formula
 
-    # Add errors
-    v2_model    += v2_model_err.*randn(length(v2_model));
-    t3amp_model += t3amp_model_err.*randn(length(t3amp_model));
-    t3phi_model += t3phi_model_err.*randn(length(t3phi_model));
-
+    if nonoise==true
+    v2_model_err[:] .= 1.0
+    t3amp_model_err[:] .= 1.0
+    t3phi_model_err[:] .= 1.0
+    else # Add errors
+        v2_model    += v2_model_err.*randn(length(v2_model));
+        t3amp_model += t3amp_model_err.*randn(length(t3amp_model));
+        t3phi_model += t3phi_model_err.*randn(length(t3phi_model));
+    end
+    # norm((v2_model-vis_to_v2(image_to_vis(x, ft),v2_indx_w))./v2_model_err)^2/length(v2_model)
 
     #setup arrays for OIFITS format
     sta_names=facility.tel_names
@@ -330,7 +392,7 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
     mjd_vis2         = repeat(value.(modified_julian.(dates)), nv2) # TOCHECK (could be transposed)
     int_time_vis2    = ones(Float64,nv2*nhours)      # TODO
     flag_vis2        = fill(false,nv2*nhours,1)
-    #need to get vis2,vis2err,u,v,sta_index from DATA
+    # need to get vis2,vis2err,u,v,sta_index from DATA
     target_id_t3     = ones(nt3*nhours).*target.target_id[1]
     time_t3          = zeros(nt3*nhours) #change
     mjd_t3           = repeat(value.(modified_julian.(dates)), nt3)  #change
@@ -344,12 +406,12 @@ function simulate(facility,target,combiner,wave,dates,errors,out_file; image::Un
     u2coord = u_M[t3_indx_2_M]
     v2coord = v_M[t3_indx_2_M]
 
-    v2_model          = reshape(reshape(v2_model,(nhours,nv2,nw)),(nhours*nv2,nw))';
-    v2_model_err      = reshape(reshape(v2_model_err,(nhours,nv2,nw)),(nhours*nv2,nw))';
-    t3amp_model       = reshape(reshape(t3amp_model,(nhours,nt3,nw)),(nhours*nt3,nw))';
-    t3amp_model_err   = reshape(reshape(t3amp_model_err,(nhours,nt3,nw)),(nhours*nt3,nw))';
-    t3phi_model       = reshape(reshape(t3phi_model,(nhours,nt3,nw)),(nhours*nt3,nw))';
-    t3phi_model_err   = reshape(reshape(t3phi_model_err,(nhours,nt3,nw)),(nhours*nt3,nw))';
+    v2_model          = reshape(reshape(v2_model,(nhours,nv2,nwavs)),(nhours*nv2,nwavs))';
+    v2_model_err      = reshape(reshape(v2_model_err,(nhours,nv2,nwavs)),(nhours*nv2,nwavs))';
+    t3amp_model       = reshape(reshape(t3amp_model,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
+    t3amp_model_err   = reshape(reshape(t3amp_model_err,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
+    t3phi_model       = reshape(reshape(t3phi_model,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
+    t3phi_model_err   = reshape(reshape(t3phi_model_err,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
     v2_model_stations = repeat(v2_stations,1,nhours);
     t3_model_stations = repeat(t3_stations,1,nhours);
 
@@ -504,22 +566,22 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         wavetablenum=iwavetables[findall(swavetables.==svistables[itable])]
         eff_wave= read(oifits[wavetablenum[1]],"EFF_WAVE")
         eff_band = read(oifits[wavetablenum[1]],"EFF_BAND")
-        nw=length(eff_wave);
+        nwavs=length(eff_wave);
         for hour=1:length(uvis)
-            for wave=1:nw
+            for wave=1:nwavs
                 v2_model_table=push!(v2_model_table,v2_model[visindxstart+wave-1]);
                 v2_model_err_table=push!(v2_model_err_table,v2_model_err[visindxstart+wave-1]);
             end
-            visindxstart=visindxstart+nw
+            visindxstart=visindxstart+nwavs
         end
         target_id_vis2=read(oifits[ivistables[itable]],"TARGET_ID");
         time_vis2=read(oifits[ivistables[itable]],"TIME");
         mjd_vis2=read(oifits[ivistables[itable]],"MJD");
         int_time_vis2=read(oifits[ivistables[itable]],"INT_TIME");
         v2_model_stations=read(oifits[ivistables[itable]],"STA_INDEX");
-        nrowvis=Int(length(v2_model_table)/nw)
-        v2_model_reshape=reshape(v2_model_table,(nw,nrowvis));
-        v2_model_err_reshape=reshape(v2_model_err_table,(nw,nrowvis));
+        nrowvis=Int(length(v2_model_table)/nwavs)
+        v2_model_reshape=reshape(v2_model_table,(nwavs,nrowvis));
+        v2_model_err_reshape=reshape(v2_model_err_table,(nwavs,nrowvis));
         flag_vis2=read(oifits[ivistables[itable]],"FLAG")
         vis2_array=[target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model_reshape,v2_model_err_reshape,uvis,vvis,v2_model_stations,flag_vis2'];
         copy_oi_vis2(f,oifits[ivistables[itable]],vis2_array);
@@ -561,26 +623,26 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         wavetablenum=iwavetables[findall(swavetables.==st3tables[itable])]
         eff_wave= read(oifits[wavetablenum[1]],"EFF_WAVE")
         eff_band = read(oifits[wavetablenum[1]],"EFF_BAND")
-        nw=length(eff_wave);
+        nwavs=length(eff_wave);
         for hour=1:length(u1)
-            for wave=1:nw
+            for wave=1:nwavs
                 t3amp_model_table=push!(t3amp_model_table,t3amp_model[t3indxstart+wave-1]);
                 t3amp_model_err_table=push!(t3amp_model_err_table,t3amp_model_err[t3indxstart+wave-1]);
                 t3phi_model_table=push!(t3phi_model_table,t3phi_model[t3indxstart+wave-1]);
                 t3phi_model_err_table=push!(t3phi_model_err_table,t3phi_model_err[t3indxstart+wave-1]);
             end
-            t3indxstart=t3indxstart+nw
+            t3indxstart=t3indxstart+nwavs
         end
         target_id_t3=read(oifits[it3tables[itable]],"TARGET_ID");
         time_t3=read(oifits[it3tables[itable]],"TIME");
         mjd_t3=read(oifits[it3tables[itable]],"MJD");
         int_time_t3=read(oifits[it3tables[itable]],"INT_TIME");
         t3_model_stations=read(oifits[it3tables[itable]],"STA_INDEX");
-        nrowt3=Int(length(t3amp_model_table)/nw)
-        t3amp_model_reshape=reshape(t3amp_model_table,(nw,nrowt3));
-        t3amp_model_err_reshape=reshape(t3amp_model_err_table,(nw,nrowt3));
-        t3phi_model_reshape=reshape(t3phi_model_table,(nw,nrowt3));
-        t3phi_model_err_reshape=reshape(t3phi_model_err_table,(nw,nrowt3));
+        nrowt3=Int(length(t3amp_model_table)/nwavs)
+        t3amp_model_reshape=reshape(t3amp_model_table,(nwavs,nrowt3));
+        t3amp_model_err_reshape=reshape(t3amp_model_err_table,(nwavs,nrowt3));
+        t3phi_model_reshape=reshape(t3phi_model_table,(nwavs,nrowt3));
+        t3phi_model_err_reshape=reshape(t3phi_model_err_table,(nwavs,nrowt3));
         flag_t3=read(oifits[it3tables[itable]],"FLAG")
         t3_array=[target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model_reshape,t3amp_model_err_reshape,t3phi_model_reshape,t3phi_model_err_reshape,u1,v1,u2,v2,t3_model_stations,flag_t3'];
         copy_oi_t3(f,oifits[it3tables[itable]],t3_array);

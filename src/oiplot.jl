@@ -1098,3 +1098,8 @@ function plot_facility(facility)
     end
 end
     
+function imshow2(img1, img2)
+    fig,ax = subplots(nrows=1, ncols=2)
+    ax[1].imshow(img1)
+    ax[2].imshow(img2)
+end
