@@ -264,6 +264,17 @@ function create_component(;type::String=[], name::String="") # this autofill def
         spectrum_function = spectrum_powerlaw,
         spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false), OIparam(name="Spectral index", val=-4.0, minval=-5.0, maxval=2.0, free=false), OIparam(name="λ0", val=1.6e-6, free=false)])
         return model
+    elseif type == "ring-double-sigmoid"
+        model = OIcomponent(type="ring-double-sigmoid", name=name,
+        vis_function=visibility_doublesigmoid_ring_az,
+        vis_params= [OIparam(name="Ring radius", val=1.0, minval=0.0, maxval = 40.0), OIparam(name="Position Angle", minval=0.0, maxval=180.0), OIparam(name="Inclination", minval=0.0, maxval=180.0), OIparam(name="Ring FWHM", minval=0.0, maxval=5.0),
+        OIparam(name="Az1", minval=-1.0, maxval=1.0),OIparam(name="Az2", minval=-1.0, maxval=1.0),OIparam(name="Az3", minval=-1.0, maxval=1.0),OIparam(name="Az4", minval=-1.0, maxval=1.0),OIparam(name="Gauss/Lorentz ratio", val=0, minval=0, maxval=1.0)],
+        pos_function = pos_fixed,
+        pos_params = [OIparam(name="ra", val=0.0, free=false), OIparam(name="dec", val=0.0, free=false)],  # positional parameters
+        spectrum_function = spectrum_gray,
+        spectrum_params = [OIparam(name="flux", val=1.0, minval=0.0, maxval=1.0, free=false)])
+        return model
+    
     else
         @warn("Trying to call undefined component type");
     end
