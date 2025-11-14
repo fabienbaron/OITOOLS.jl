@@ -832,8 +832,8 @@ function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[
         t3_v1coord_old[itable] = t3tables[itable].v1coord[t3_targetid_filter];
         t3_u2coord_old[itable] = t3tables[itable].u2coord[t3_targetid_filter];
         t3_v2coord_old[itable] = t3tables[itable].v2coord[t3_targetid_filter];
-        t3_u3coord_old[itable] = (t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
-        t3_v3coord_old[itable] = (t3_v1coord_old[itable] + t3_v2coord_old[itable]);
+        t3_u3coord_old[itable] = -(t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
+        t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
         t3_mjd_old[itable] = repeat(t3tables[itable].mjd[t3_targetid_filter]', outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
         iarray = findall(t3tables[itable].arrname .== arraytableref)
         if length(iarray)>0
