@@ -1,1724 +1,1395 @@
-using FITSIO, OIFITS, Statistics, SparseArrays, Crayons
+# readoifits.jl — refactored
+#
+# Architecture:
+#   load_oifits(file)            → OIDataSet   (I/O only, try/catch for v1 files)
+#   collect_station_info(...)    → NamedTuple  (station name/index mapping)
+#   read_flux_tables(...)        → NamedTuple  (flat arrays, all obs merged)
+#   read_vis_tables(...)         → NamedTuple
+#   read_v2_tables(...)          → NamedTuple
+#   read_t3_tables(...)          → NamedTuple
+#   BinData{T}                   → mutable struct for per-bin workspace
+#   slice_to_bin(...)            → BinData     (select + assemble UV plane)
+#   filter_bad_observables!(bd)  → BinData     (filter + UV prune, in-place)
+#   remove_redundant_uv!(bd)     → BinData     (UV deduplication, in-place)
+#   make_oidata(bd, ...)         → OIdata{T}   (final packaging)
+#   readoifits(file; ...)        → Array{OIdata{T}}
+#
+# emmt OIFITS.jl v1 API:
+#   ds = read(OIDataSet, file)   or   ds = OIDataSet(file)
+#   ds.instr  → Vector{OI_WAVELENGTH};  ds.array  → Vector{OI_ARRAY}
+#   ds.vis2   → Vector{OI_VIS2};        ds.t3     → Vector{OI_T3}
+#   ds.vis    → Vector{OI_VIS};         ds.flux   → Vector{OI_FLUX}
+#   ds.target → single OI_TARGET (indexable as vector of OITargetEntry)
+#     tgt[i].target_id,  tgt[i].target  (not array-valued columns)
+#
+# OIdata{T}: numeric arrays stored as type T (default Float64).
+# Use T=Float32 for ~50 % memory reduction.
 
-# TO DO : * use the splat operator to simplify things
-#         * add differential and complex visibilities
-#         * why are we negating u coordinates ?
-#         * check outer=[1,8]
-#         * sort indexing of uv points when t3amp and t3phi differ
-#         * define booleans "use_v2, use_t3amp" and apply to all file
-#         * check if t3_uv_mjd and similar are necessary
-
+using OIFITS, FITSIO, Statistics, SparseArrays, Crayons
 using NearestNeighbors
-function rm_redundance_kdtree(uv,uvtol)
-  #@inbounds uv[:,findall(uv[1,:].<0)] *= -1; # change any (-u,v) -> (u,-v)
-  # Note: good idea but we would need to complex conjugate the data point in this case
-  indx_redundance = collect(1:size(uv,2));
-  kdtree = KDTree(uv);
-  for value in indx_redundance
-    redundance = inrange(kdtree,uv[:,value],uvtol);
-    @inbounds indx_redundance[redundance] .= minimum(redundance);
-  end
-  tokeep = unique(indx_redundance) # we only need the tokeep points in the uv plane'
-  indx_red_conv = indexin(indx_redundance, tokeep)
-  return indx_red_conv, tokeep  ;
+
+# ---------------------------------------------------------------------------
+# Low-level helpers
+# ---------------------------------------------------------------------------
+
+function rm_redundance_kdtree(uv, uvtol)
+    indx_redundance = collect(1:size(uv,2))
+    kdtree = KDTree(uv)
+    for value in indx_redundance
+        redundance = inrange(kdtree, uv[:,value], uvtol)
+        @inbounds indx_redundance[redundance] .= minimum(redundance)
+    end
+    tokeep = unique(indx_redundance)
+    indx_red_conv = indexin(indx_redundance, tokeep)
+    return indx_red_conv, tokeep
 end
 
-function tablemerge(tabtomerge)
-    return vcat([vec(tabtomerge[i]) for i=1:length(tabtomerge)]...);
+# Find the OI_WAVELENGTH block whose insname matches db.insname
+function _find_wav(db, wavtables, wavtableref)
+    idx = findfirst(==(db.insname), wavtableref)
+    isnothing(idx) && error("OI_WAVELENGTH table not found for insname=$(db.insname)")
+    return wavtables[idx]
 end
 
+# Convert per-baseline (u, v) coordinates to spatial frequencies u/λ, v/λ.
+# coords: vector of length nbaselines, each element a scalar coordinate in metres
+# lam:    wavelength vector of length nwave (metres)
+# Returns flat vectors of length nbaselines×nwave, with baselines varying slowest.
+function _uv_lambda(ucoords::AbstractVector{T}, vcoords::AbstractVector{T},
+                    lam::AbstractVector{T}) where T
+    u = vcat([ucoords[i] ./ lam for i in eachindex(ucoords)]...)
+    v = vcat([vcoords[i] ./ lam for i in eachindex(vcoords)]...)
+    return u, v
+end
 
-mutable struct OIdata
+# ---------------------------------------------------------------------------
+# OI_CORR helpers
+# ---------------------------------------------------------------------------
+
+# Build a symmetric sparse correlation matrix from an OI_CORR table entry.
+# OI_CORR stores only the upper-triangle off-diagonal (i < j); diagonal is
+# implicitly 1.  We symmetrize here so the returned matrix is fully populated.
+function _build_corr_sparse(ct; T::Type{<:AbstractFloat}=Float64)
+    n    = ct.ndata
+    ni   = length(ct.iindx)
+    iis  = vcat(Int64.(ct.iindx), Int64.(ct.jindx), Int64.(1:n))
+    jjs  = vcat(Int64.(ct.jindx), Int64.(ct.iindx), Int64.(1:n))
+    vals = vcat(T.(ct.corr),      T.(ct.corr),      ones(T, n))
+    return sparse(iis, jjs, vals, n, n)
+end
+
+# Safely access a named property from an OIFITS table object.
+# Returns nothing if the field is missing, uninitialized, or otherwise errors.
+_safe_field(obj, field::Symbol) = try; getproperty(obj, field); catch; nothing; end
+
+# Expand per-observation corrindx to a flat per-(wave,obs) index vector.
+# Data is stored column-major (wave varies fastest): flat k ↔ wave=(k-1)%nwave+1.
+# corrindx_obs[r] = 1-based start in OI_CORR matrix for obs r (0 = no corr).
+# offset: added to all non-zero indices for block-diagonal assembly.
+function _expand_corrindx(corrindx_obs, nwave::Int, offset::Int)
+    nobs   = length(corrindx_obs)
+    result = zeros(Int64, nwave * nobs)
+    for obs in 1:nobs
+        base = Int64(corrindx_obs[obs])
+        base == 0 && continue
+        base += offset
+        for w in 1:nwave
+            result[(obs-1)*nwave + w] = base + (w - 1)
+        end
+    end
+    return result
+end
+
+# For one data table: produce the flat corr-index vector for nwave*nobs points.
+# Updates seen_corrnames/seen_corr_sizes for block-diagonal offset tracking.
+# Returns zeros(Int64, nwave*nobs) if correlation is unavailable for this table.
+function _process_corrindx(corrname_val, corrindx_col, tid_ok, nwave::Int,
+                            correlt::Dict,
+                            seen_corrnames::Vector{String},
+                            seen_corr_sizes::Vector{Int})
+    nobs = length(tid_ok)
+    cn   = isnothing(corrname_val) ? "" : strip(string(corrname_val))
+    (isempty(cn) || !haskey(correlt, cn) || isnothing(corrindx_col)) &&
+        return zeros(Int64, nwave * nobs)
+    cidx_obs = Int64.(corrindx_col[tid_ok])
+    pidx     = findfirst(==(cn), seen_corrnames)
+    if isnothing(pidx)
+        push!(seen_corrnames, cn)
+        push!(seen_corr_sizes, size(correlt[cn], 1))
+        pidx = length(seen_corrnames)
+    end
+    offset = sum(seen_corr_sizes[1:pidx-1]; init=0)
+    return _expand_corrindx(cidx_obs, nwave, offset)
+end
+
+# Build the final block-diagonal corr sparse matrix from the accumulated list.
+function _assemble_corr(seen_corrnames::Vector{String}, correlt::Dict,
+                        T::Type{<:AbstractFloat})
+    isempty(seen_corrnames) && return spzeros(T, 0, 0)
+    parts = [correlt[cn] for cn in seen_corrnames]
+    length(parts) == 1 && return parts[1]
+    return blockdiag(parts...)
+end
+
+# ---------------------------------------------------------------------------
+# OIdata{T}: central data container
+# ---------------------------------------------------------------------------
+mutable struct OIdata{T<:AbstractFloat}
     # Complex visibilities
-    visamp::Array{Float64,1}
-    visamp_err::Array{Float64,1}
-    visphi::Array{Float64,1}
-    visphi_err::Array{Float64,1}
-    vis_baseline::Array{Float64,1}
-    vis_mjd::Array{Float64,1}
-    vis_lam::Array{Float64,1}
-    vis_dlam::Array{Float64,1}
-    vis_flag::Array{Bool,1}
+    visamp::Vector{T};             visamp_err::Vector{T}
+    visphi::Vector{T};             visphi_err::Vector{T}
+    vis_baseline::Vector{T};       vis_mjd::Vector{T}
+    vis_lam::Vector{T};            vis_dlam::Vector{T}
+    vis_flag::Vector{Bool}
     # V2
-    v2::Array{Float64,1}
-    v2_err::Array{Float64,1}
-    v2_baseline::Array{Float64,1}
-    v2_mjd::Array{Float64,1}
-    mean_mjd::Float64
-    v2_lam::Array{Float64,1}
-    v2_dlam::Array{Float64,1}
-    v2_flag::Array{Bool,1}
+    v2::Vector{T};                 v2_err::Vector{T}
+    v2_baseline::Vector{T};        v2_mjd::Vector{T}
+    mean_mjd::Float64              # always Float64 — MJD precision matters
+    v2_lam::Vector{T};             v2_dlam::Vector{T}
+    v2_flag::Vector{Bool}
     # T3
-    t3amp::Array{Float64,1}
-    t3amp_err::Array{Float64,1}
-    t3phi::Array{Float64,1}
-    t3phi_err::Array{Float64,1}
-    t3phi_vonmises_err::Array{Float64,1}
-    t3phi_vonmises_chi2_offset::Array{Float64,1}
-    t3_baseline::Array{Float64,1}
-    t3_maxbaseline::Array{Float64,1}
-    t3_mjd::Array{Float64,1}
-    t3_lam::Array{Float64,1}
-    t3_dlam::Array{Float64,1}
-    t3_flag::Array{Bool,1}
-    #T4
-#    t4amp::Array{Float64,1}
-#    t4amp_err::Array{Float64,1}
-#    t4phi::Array{Float64,1}
-#    t4phi_err::Array{Float64,1}
-#    t4_baseline::Array{Float64,1}
-#    t4_maxbaseline::Array{Float64,1}
-#    t4_mjd::Array{Float64,1}
-#    t4_lam::Array{Float64,1}
-#    t4_dlam::Array{Float64,1}
-#    t4_flag::Array{Bool,1}
-    #OIFlux
-    flux::Array{Float64,1}
-    flux_err::Array{Float64,1}
-    flux_mjd::Array{Float64,1}
-    flux_lam::Array{Float64,1}
-    flux_dlam::Array{Float64,1}
-    flux_flag::Array{Bool,1}
-    flux_sta_index::Array{Int64,1}
-    #UV coverage
-    uv::Array{Float64,2}
-    uv_lam::Array{Float64,1}
-    uv_dlam::Array{Float64,1}
-    uv_mjd::Array{Float64,1}
-    uv_baseline::Array{Float64,1}
-    # Data product sizes
-    nflux::Int64
-    nvisamp::Int64
-    nvisphi::Int64
-    nv2::Int64
-    nt3amp::Int64
-    nt3phi::Int64
-    # nt4amp::Int64
-    # nt4phi::Int64
-    nuv::Int64
-    # Indexing logic
-    indx_vis::Array{Int64,1}
-    indx_v2::Array{Int64,1}
-    indx_t3_1::Array{Int64,1}
-    indx_t3_2::Array{Int64,1}
-    indx_t3_3::Array{Int64,1}
-    # indx_t4_1::Array{Int64,1}
-    # indx_t4_2::Array{Int64,1}
-    # indx_t4_3::Array{Int64,1}
-    # indx_t4_4::Array{Int64,1}
-    sta_name::Array{String,1}
-    tel_name::Array{String,1}
-    sta_index::Array{Int64,1}
-    vis_sta_index::Array{Int64,2}
-    v2_sta_index::Array{Int64,2}
-    t3_sta_index::Array{Int64,2}
-    # t4_sta_index::Array{Int64,2}
+    t3amp::Vector{T};              t3amp_err::Vector{T}
+    t3phi::Vector{T};              t3phi_err::Vector{T}
+    t3phi_vonmises_err::Vector{T}; t3phi_vonmises_chi2_offset::Vector{T}
+    t3_baseline::Vector{T};        t3_maxbaseline::Vector{T}
+    t3_mjd::Vector{T};             t3_lam::Vector{T};    t3_dlam::Vector{T}
+    t3_flag::Vector{Bool}
+    # OIFlux
+    flux::Vector{T};               flux_err::Vector{T}
+    flux_mjd::Vector{T};           flux_lam::Vector{T};  flux_dlam::Vector{T}
+    flux_flag::Vector{Bool};       flux_sta_index::Vector{Int64}
+    # UV coverage (columns = uv points, rows = [u; v])
+    uv::Matrix{T};                 uv_lam::Vector{T};    uv_dlam::Vector{T}
+    uv_mjd::Vector{T};             uv_baseline::Vector{T}
+    # Sizes
+    nflux::Int64;  nvisamp::Int64; nvisphi::Int64
+    nv2::Int64;    nt3amp::Int64;  nt3phi::Int64;  nuv::Int64
+    # UV indices for each observable
+    indx_vis::Vector{Int64};       indx_v2::Vector{Int64}
+    indx_t3_1::Vector{Int64};      indx_t3_2::Vector{Int64}; indx_t3_3::Vector{Int64}
+    # Station / telescope info (shared across all bins)
+    sta_name::Vector{String};      tel_name::Vector{String}
+    sta_index::Vector{Int64}
+    vis_sta_index::Matrix{Int64};  v2_sta_index::Matrix{Int64}
+    t3_sta_index::Matrix{Int64}
+    # Correlation matrices from OI_CORR (empty sparse if absent).
+    # *_corr: the raw OI_CORR sparse matrix (size ndata×ndata, per the standard).
+    # *_corr_idx: per-data-point 1-based index into *_corr (0 = no correlation).
+    v2_corr::SparseMatrixCSC{T,Int64};       v2_corr_idx::Vector{Int64}
+    t3amp_corr::SparseMatrixCSC{T,Int64};    t3amp_corr_idx::Vector{Int64}
+    t3phi_corr::SparseMatrixCSC{T,Int64};    t3phi_corr_idx::Vector{Int64}
+    visamp_corr::SparseMatrixCSC{T,Int64};   visamp_corr_idx::Vector{Int64}
+    visphi_corr::SparseMatrixCSC{T,Int64};   visphi_corr_idx::Vector{Int64}
+    flux_corr::SparseMatrixCSC{T,Int64};     flux_corr_idx::Vector{Int64}
     filename::String
 end
 
-
-function Base.display(data::OIdata)
-println("Mean MJD: $(data.mean_mjd)")
-println("Wavelength range: $(minimum(data.uv_lam)) - $(maximum(data.uv_lam))")
-println("nflux: $(data.nflux) | nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | nvisphi: $(data.nvisphi) | nv2: $(data.nv2) | nt3amp: $(data.nt3amp) | nt3phi: $(data.nt3phi)")
+function Base.display(data::OIdata{T}) where T
+    println("Mean MJD: $(data.mean_mjd)  [eltype: $T]")
+    println("Wavelength range: $(minimum(data.uv_lam)) - $(maximum(data.uv_lam))")
+    println("nflux: $(data.nflux) | nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | " *
+            "nvisphi: $(data.nvisphi) | nv2: $(data.nv2) | nt3amp: $(data.nt3amp) | nt3phi: $(data.nt3phi)")
 end
 
-function Base.display(data::Array{OIdata})
-println("Original data file: $(data[1].filename)")
-println("Number of wavelength bins: $(size(data,1))")
-println("Number of time/epoch bins: $(size(data,2))")
-printcolors=[196, 166, 208, 220, 148 , 112, 28, 20, 92, 165]
-if  size(data,1) == (1,1)
-    display(data[1,1])
-elseif (size(data,1) < 11) && (size(data,2) == 1)
-    for i=1:size(data,1) 
-    print(Crayon(foreground = printcolors[i], bold = true), "Wavelength: $i/$(size(data,1))\n")
-    display(data[i,1])
-    end
-end
-end
-
-
-function set_data_filter(data::OIdata; wav_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], mjd_range::Union{Array{Float64,1}, Array{Array{Float64,1}}} = [-1.0, 1e99], baseline_range::Array{Float64}=[0,1e99],
-    filter_bad_data = false, filter_vis = true, filter_v2 = true, filter_t3amp = true, filter_t3phi = true,
-    cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, force_full_vis = false, force_full_t3 = false, filter_v2_snr_threshold=0.01, uv_bad=Int64[], filter_visphi=false, filter_visamp=false)
-
-    if !isempty(wav_range)
-        if typeof(wav_range) == Array{Float64,1}
-            wav_range = [wav_range]
+function Base.display(data::Array{<:OIdata})
+    println("Original data file: $(data[1].filename)")
+    println("Number of wavelength bins: $(size(data,1))")
+    println("Number of time/epoch bins: $(size(data,2))")
+    printcolors = [196, 166, 208, 220, 148, 112, 28, 20, 92, 165]
+    if size(data) == (1,1)
+        display(data[1,1])
+    elseif (size(data,1) < 11) && (size(data,2) == 1)
+        for i in 1:size(data,1)
+            print(Crayon(foreground=printcolors[i], bold=true), "Wavelength: $i/$(size(data,1))\n")
+            display(data[i,1])
         end
     end
+end
 
-    if !isempty(mjd_range)
-        if typeof(mjd_range) == Array{Float64,1}
-            mjd_range = [mjd_range]
-        end
-    end
+# ---------------------------------------------------------------------------
+# set_data_filter / filter_data — post-load filtering (unchanged logic)
+# ---------------------------------------------------------------------------
 
-    # Select points (to keep) in the uv plane
-    # one can directly deselect/disable uv points by setting the list of bad uv point in uv_bad
-    # One can disable the selection of e.g. V2 observables by setting filter_v2 = false
-    # Can select wavelengths in a range
-    # Can select MJDs in a range
-    use_visphi = (data.nvisphi > 0) && (filter_visphi == true)
-    use_visamp = (data.nvisamp > 0) && (filter_visamp == true)
-    use_vis = use_visphi || use_visamp
-    use_v2 = (data.nv2 > 0) && (filter_v2 == true)
-    use_t3amp = (data.nt3amp > 0) && (filter_t3amp == true)
-    use_t3phi = (data.nt3phi > 0) && (filter_t3phi == true)
-    use_t3 = use_t3phi || use_t3amp
-#    use_t4amp = (data.nt4amp > 0) && (filter_t4amp == true)
-#    use_t4phi = (data.nt4phi > 0) && (filter_t4phi == true)
-#    use_t4 = use_t4phi || use_t4amp
+function set_data_filter(data::OIdata{T};
+        wav_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
+        mjd_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
+        baseline_range::Vector{Float64} = [0.0, 1e99],
+        filter_bad_data = false, filter_vis = true, filter_v2 = true,
+        filter_t3amp = true, filter_t3phi = true,
+        cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
+        special_filter_diffvis = false, force_full_vis = false, force_full_t3 = false,
+        filter_v2_snr_threshold = 0.01, uv_bad = Int64[],
+        filter_visphi = false, filter_visamp = false) where T
 
-    # Bad points are easier to track/concatenate/union than good points are to intersect
-    vis_bad = Int64[]
-    v2_bad = Int64[]
-    t3_bad = Int64[]
-#    t4_bad = Int64[]
+    !isempty(wav_range) && typeof(wav_range) == Vector{Float64} && (wav_range = [wav_range])
+    !isempty(mjd_range) && typeof(mjd_range) == Vector{Float64} && (mjd_range = [mjd_range])
 
-    if filter_bad_data == true
+    use_vis = ((data.nvisphi > 0) && filter_visphi) || ((data.nvisamp > 0) && filter_visamp)
+    use_v2  = (data.nv2 > 0) && filter_v2
+    use_t3  = ((data.nt3amp > 0) && filter_t3amp) || ((data.nt3phi > 0) && filter_t3phi)
+
+    vis_bad = Int64[]; v2_bad = Int64[]; t3_bad = Int64[]
+
+    if filter_bad_data
         if use_vis
-            visamp_good =  (.!isnan.(data.visamp )) .& (.!isnan.(data.visamp_err )) .& (data.visamp_err.>0.0)
-            visphi_good =  (.!isnan.(data.visphi ) ).& (.!isnan.(data.visphi_err )) .& (data.visphi_err.>0.0)
-            vis_good = []
-            if force_full_vis == false
-                vis_good = findall(.!data.vis_flag .& (visamp_good .| visphi_good) )
-            else
-                vis_good = findall(.!data.vis_flag .& (visamp_good .& visphi_good) )
-            end
-
-            if special_filter_diffvis==true # if we use the diff vis filter, we need to do this after all the data has been read in
-                # hence here we won't actually filter anything
-                vis_good = findall( data.vis_flag.!=2)
-            end
-            vis_bad = setdiff(collect(1:length(data.vis_flag)), vis_good)
+            va_ok = (.!isnan.(data.visamp)) .& (.!isnan.(data.visamp_err)) .& (data.visamp_err .> 0)
+            vp_ok = (.!isnan.(data.visphi)) .& (.!isnan.(data.visphi_err)) .& (data.visphi_err .> 0)
+            vis_good = force_full_vis ?
+                findall(.!data.vis_flag .& (va_ok .& vp_ok)) :
+                findall(.!data.vis_flag .& (va_ok .| vp_ok))
+            special_filter_diffvis && (vis_good = findall(data.vis_flag .!= 2))
+            vis_bad = setdiff(1:length(data.vis_flag), vis_good)
         end
         if use_v2
-            # Filter OBVIOUSLY bad V2 data
-            v2_good = findall(  (data.v2_flag.==false) .& (data.v2_err.>0.0).& (data.v2_err.<1.0) .& (data.v2.>cutoff_minv2) .& (data.v2.<cutoff_maxv2) .& .!isnan.(data.v2) .& .!isnan.(data.v2_err) .& (abs.(data.v2./data.v2_err).>filter_v2_snr_threshold))
-            v2_bad  = setdiff(collect(1:length(data.v2_flag)), v2_good)
+            v2_good = findall(
+                (.!data.v2_flag) .& (data.v2_err .> 0) .& (data.v2_err .< 1) .&
+                (data.v2 .> cutoff_minv2) .& (data.v2 .< cutoff_maxv2) .&
+                .!isnan.(data.v2) .& .!isnan.(data.v2_err) .&
+                (abs.(data.v2 ./ data.v2_err) .> filter_v2_snr_threshold))
+            v2_bad = setdiff(1:length(data.v2_flag), v2_good)
         end
-
         if use_t3
-            t3amp_good =  (.!isnan.(data.t3amp )) .& (.!isnan.(data.t3amp_err )) .& (data.t3amp_err.>0.0)
-            t3phi_good =  (.!isnan.(data.t3phi )) .& (.!isnan.(data.t3phi_err )) .& (data.t3phi_err.>0.0)
-
-            #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
-            t3_good = Int64[]
-            if force_full_t3 == false
-                t3_good = findall(.!data.t3_flag .& (t3amp_good .| t3phi_good))
-            else
-                t3_good = findall(.!data.t3_flag .& (t3amp_good .& t3phi_good) .& (data.t3amp.>cutoff_mint3amp) .& (data.t3amp.<cutoff_maxt3amp) )
-            end
-            t3_bad  = setdiff(collect(1:length(data.t3_flag)), t3_good)
+            ta_ok = (.!isnan.(data.t3amp)) .& (.!isnan.(data.t3amp_err)) .& (data.t3amp_err .> 0)
+            tp_ok = (.!isnan.(data.t3phi)) .& (.!isnan.(data.t3phi_err)) .& (data.t3phi_err .> 0)
+            t3_good = force_full_t3 ?
+                findall(.!data.t3_flag .& (ta_ok .& tp_ok) .& (data.t3amp .> cutoff_mint3amp) .& (data.t3amp .< cutoff_maxt3amp)) :
+                findall(.!data.t3_flag .& (ta_ok .| tp_ok))
+            t3_bad = setdiff(1:length(data.t3_flag), t3_good)
         end
-
-        # if use_t4 == true
-        #     t4amp_good =  (.!isnan.(data.t4amp )) .& (.!isnan.(data.t4amp_err )) .& (data.t4amp_err.>0.0)
-        #     t4phi_good =  (.!isnan.(data.t4phi )) .& (.!isnan.(data.t4phi_err )) .& (data.t4phi_err.>0.0)
-        #     # t4_good = []
-        #     force_full_t4 = true;
-        #     if force_full_t4 == false
-        #         t4_good = findall(.!data.t4_flag .& (t4amp_good .| t4phi_good) )
-        #     else
-        #         t4_good = findall(.!data.t4_flag .& (t4amp_good .& t4phi_good) )
-        #     end
-        #     t4_bad  = setdiff(collect(1:length(data.t4_flag)), t4_good)
-        # end
     end
 
-    # Filtering the uv plane (this will filter the observables too)
-    # We define the uv indexes we keep as uv_good
-    if baseline_range != [0,1e99]
-        uv_bad = union(uv_bad, findall(data.uv_baseline.<baseline_range[1]), findall(data.uv_baseline.>baseline_range[2]))
-    end
-    uv_good = setdiff(collect(1:data.nuv), uv_bad) # select all as good except in the uv_bad list
-    if !isempty(mjd_range)
-        uv_good = intersect(uv_good, vcat([findall( mjd_range[i][1]  .<= data.uv_mjd .<=  mjd_range[i][2]) for i=1:length(mjd_range)]...))
-    end
-    if !isempty(wav_range)
-        uv_good = intersect(uv_good, vcat([findall( wav_range[i][1]  .<= data.uv_lam .<=  wav_range[i][2]) for i=1:length(wav_range)]...))
-    end
+    baseline_range != [0.0, 1e99] && (uv_bad = union(uv_bad,
+        findall(data.uv_baseline .< baseline_range[1]),
+        findall(data.uv_baseline .> baseline_range[2])))
+    uv_good = setdiff(1:data.nuv, uv_bad)
+    !isempty(mjd_range) && (uv_good = intersect(uv_good,
+        vcat([findall(mjd_range[i][1] .<= data.uv_mjd .<= mjd_range[i][2]) for i in eachindex(mjd_range)]...)))
+    !isempty(wav_range) && (uv_good = intersect(uv_good,
+        vcat([findall(wav_range[i][1] .<= data.uv_lam .<= wav_range[i][2]) for i in eachindex(wav_range)]...)))
+    uv_bad = setdiff(1:data.nuv, uv_good)
 
-
-    uv_bad = setdiff(collect(1:data.nuv), uv_good)
-
-    if (data.nvisamp>0 || data.nvisphi >0)
-        vis_bad = union(vis_bad, findall([data.indx_vis[i] ∉ uv_good for i=1:length(data.indx_vis)]))
-    end
-    if data.nv2>0
-        v2_bad = union(v2_bad, findall([data.indx_v2[i] ∉ uv_good for i=1:length(data.indx_v2)]))
-    end
-    if (data.nt3amp>0 || data.nt3phi>0)
-        t3_bad = union(t3_bad, findall([((data.indx_t3_1[i] ∉ uv_good) || (data.indx_t3_2[i] ∉ uv_good) ||  (data.indx_t3_3[i] ∉ uv_good)) for i=1:length(data.indx_t3_1)]))
-    end
-    # if (data.nt4amp>0 || data.nt4phi>0)
-    #     t4_bad = union(t4_bad, findall([((data.indx_t4_1[i] ∉ uv_good) || (data.indx_t4_2[i] ∉ uv_good) ||  (data.indx_t4_3[i] ∉ uv_good) || (data.indx_t4_4[i] ∉ uv_good)) for i=1:length(data.indx_t3_1)]))
-    # end
-    return [uv_bad, vis_bad, v2_bad, t3_bad] #[uv_bad, vis_bad, v2_bad, t3_bad, t4_bad]
+    (data.nvisamp > 0 || data.nvisphi > 0) &&
+        (vis_bad = union(vis_bad, findall([data.indx_vis[i] ∉ uv_good for i in eachindex(data.indx_vis)])))
+    data.nv2 > 0 &&
+        (v2_bad = union(v2_bad, findall([data.indx_v2[i] ∉ uv_good for i in eachindex(data.indx_v2)])))
+    (data.nt3amp > 0 || data.nt3phi > 0) &&
+        (t3_bad = union(t3_bad, findall([
+            data.indx_t3_1[i] ∉ uv_good || data.indx_t3_2[i] ∉ uv_good || data.indx_t3_3[i] ∉ uv_good
+            for i in eachindex(data.indx_t3_1)])))
+    return [uv_bad, vis_bad, v2_bad, t3_bad]
 end
 
-
-function filter_data(data_in::OIdata, indexes_to_discard = Int64[])
+function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
     data = deepcopy(data_in)
-    good_uv_vis = Int64[]
-    good_uv_v2 = Int64[]
-    good_uv_t3_1 = Int64[]
-    good_uv_t3_2 = Int64[]
-    good_uv_t3_3 = Int64[]
-    # good_uv_t4_1 = Int64[]
-    # good_uv_t4_2 = Int64[]
-    # good_uv_t4_3 = Int64[]
-    # good_uv_t4_4 = Int64[]
+    good_uv_vis = Int64[]; good_uv_v2 = Int64[]
+    good_uv_t3_1 = Int64[]; good_uv_t3_2 = Int64[]; good_uv_t3_3 = Int64[]
 
-    if (data.nvisamp>0 || data.nvisphi >0)
-        vis_good = setdiff(collect(1:length(data.indx_vis)), indexes_to_discard[2])
-        good_uv_vis        = data.indx_vis[vis_good];
-        data.visamp        = data.visamp[vis_good];
-        data.visamp_err    = data.visamp_err[vis_good];
-        data.visphi        = data.visphi[vis_good];
-        data.visphi_err    = data.visphi_err[vis_good];
-        data.vis_baseline  = data.vis_baseline[vis_good];
-        data.vis_mjd       = data.vis_mjd[vis_good];
-        data.vis_lam       = data.vis_lam[vis_good];
-        data.vis_dlam      = data.vis_dlam[vis_good];
-        data.vis_flag      = data.vis_flag[vis_good];
-        data.vis_sta_index = data.vis_sta_index[:,vis_good];
-        data.nvisamp       = length(data.visamp);
-        data.nvisphi       = length(data.visphi);
+    if data.nvisamp > 0 || data.nvisphi > 0
+        vis_good          = setdiff(1:length(data.indx_vis), indexes_to_discard[2])
+        good_uv_vis       = data.indx_vis[vis_good]
+        data.visamp       = data.visamp[vis_good];    data.visamp_err   = data.visamp_err[vis_good]
+        data.visphi       = data.visphi[vis_good];    data.visphi_err   = data.visphi_err[vis_good]
+        data.vis_baseline = data.vis_baseline[vis_good]
+        data.vis_mjd      = data.vis_mjd[vis_good];   data.vis_lam      = data.vis_lam[vis_good]
+        data.vis_dlam     = data.vis_dlam[vis_good];  data.vis_flag     = data.vis_flag[vis_good]
+        data.vis_sta_index= data.vis_sta_index[:, vis_good]
+        !isempty(data.visamp_corr_idx) && (data.visamp_corr_idx = data.visamp_corr_idx[vis_good])
+        !isempty(data.visphi_corr_idx) && (data.visphi_corr_idx = data.visphi_corr_idx[vis_good])
+        data.nvisamp      = length(data.visamp);      data.nvisphi      = length(data.visphi)
     end
-
-
-    if (data.nv2>0)
-        v2_good = setdiff(collect(1:length(data.indx_v2)), indexes_to_discard[3])
-        good_uv_v2         = data.indx_v2[v2_good]
-        data.v2            = data.v2[v2_good]
-        data.v2_err        = data.v2_err[v2_good]
-        data.v2_baseline   = data.v2_baseline[v2_good]
-        data.v2_mjd        = data.v2_mjd[v2_good]
-        data.v2_lam        = data.v2_lam[v2_good]
-        data.v2_dlam       = data.v2_dlam[v2_good]
-        data.v2_flag       = data.v2_flag[v2_good]
-        data.v2_sta_index  = data.v2_sta_index[:,v2_good]
-        data.nv2           = length(data.v2)
+    if data.nv2 > 0
+        v2_good          = setdiff(1:length(data.indx_v2), indexes_to_discard[3])
+        good_uv_v2       = data.indx_v2[v2_good]
+        data.v2          = data.v2[v2_good];          data.v2_err      = data.v2_err[v2_good]
+        data.v2_baseline = data.v2_baseline[v2_good]; data.v2_mjd      = data.v2_mjd[v2_good]
+        data.v2_lam      = data.v2_lam[v2_good];      data.v2_dlam     = data.v2_dlam[v2_good]
+        data.v2_flag     = data.v2_flag[v2_good];     data.v2_sta_index= data.v2_sta_index[:, v2_good]
+        !isempty(data.v2_corr_idx) && (data.v2_corr_idx = data.v2_corr_idx[v2_good])
+        data.nv2         = length(data.v2)
     end
-
-    if (data.nt3amp>0 || data.nt3phi >0)
-        t3_good = setdiff(collect(1:length(data.indx_t3_1)), indexes_to_discard[4])
-        good_uv_t3_1 = data.indx_t3_1[t3_good]
-        good_uv_t3_2 = data.indx_t3_2[t3_good]
+    if data.nt3amp > 0 || data.nt3phi > 0
+        t3_good             = setdiff(1:length(data.indx_t3_1), indexes_to_discard[4])
+        good_uv_t3_1 = data.indx_t3_1[t3_good]; good_uv_t3_2 = data.indx_t3_2[t3_good]
         good_uv_t3_3 = data.indx_t3_3[t3_good]
-        data.t3amp = data.t3amp[t3_good]
-        data.t3amp_err = data.t3amp_err[t3_good]
-        data.t3phi = data.t3phi[t3_good]
-        data.t3phi_err = data.t3phi_err[t3_good]
-        data.t3_baseline  = data.t3_baseline[t3_good]
-        data.t3_maxbaseline  = data.t3_maxbaseline[t3_good]
-        data.t3_mjd  = data.t3_mjd[t3_good]
-        data.t3_lam  = data.t3_lam[t3_good]
-        data.t3_dlam = data.t3_dlam[t3_good]
-        data.t3_flag = data.t3_flag[t3_good]
-        data.t3_sta_index = data.t3_sta_index[:,t3_good]
-        data.nt3amp = length(data.t3amp)
-        data.nt3phi = length(data.t3phi)
+        data.t3amp          = data.t3amp[t3_good];    data.t3amp_err      = data.t3amp_err[t3_good]
+        data.t3phi          = data.t3phi[t3_good];    data.t3phi_err      = data.t3phi_err[t3_good]
+        data.t3_baseline    = data.t3_baseline[t3_good]; data.t3_maxbaseline = data.t3_maxbaseline[t3_good]
+        data.t3_mjd         = data.t3_mjd[t3_good];  data.t3_lam         = data.t3_lam[t3_good]
+        data.t3_dlam        = data.t3_dlam[t3_good];  data.t3_flag        = data.t3_flag[t3_good]
+        data.t3_sta_index   = data.t3_sta_index[:, t3_good]
+        !isempty(data.t3amp_corr_idx) && (data.t3amp_corr_idx = data.t3amp_corr_idx[t3_good])
+        !isempty(data.t3phi_corr_idx) && (data.t3phi_corr_idx = data.t3phi_corr_idx[t3_good])
+        data.nt3amp         = length(data.t3amp);     data.nt3phi         = length(data.t3phi)
     end
-
-    # if (data.nt4amp>0 || data.nt4phi >0)
-    #     t3_good = setdiff(collect(1:length(data.indx_t4_1)), indexes_to_discard[5])
-    #     good_uv_t4_1 = indx_t4_1[t4_good]
-    #     good_uv_t4_2 = indx_t4_2[t4_good]
-    #     good_uv_t4_3 = indx_t4_3[t4_good]
-    #     good_uv_t4_4 = indx_t4_4[t4_good]
-    #     data.t4amp         = data.t4amp[t4_good]
-    #     data.t4amp_err     = data.t4amp_err[t4_good]
-    #     data.t4phi         = data.t4phi[t4_good]
-    #     data.t4phi_err     = data.t4phi_err[t4_good]
-    #     data.t4_baseline   = data.t4_baseline[t4_good]
-    #     data.t4_maxbaseline= data.t4_maxbaseline[t4_good]
-    #     data.t4_mjd        = data.t4_mjd[t4_good]
-    #     data.t4_lam        = data.t4_lam[t4_good]
-    #     data.t4_dlam       = data.t4_dlam[t4_good]
-    #     data.t4_flag       = data.t4_flag[t4_good]
-    #     data.t4_sta_index  = data.t4_sta_index[:,t4_good]
-    #     data.nt4amp        = length(data.t4amp)
-    #     data.nt4phi        = length(data.t4phi)
-    # end
-
-    # uv points filtering
-    uv_select  = Array{Bool}(undef, data.nuv)
-    uv_select[:]  .= false;
-    uv_select[good_uv_vis] .= true
-    uv_select[good_uv_v2] .= true
-    uv_select[good_uv_t3_1] .= true
-    uv_select[good_uv_t3_2] .= true
-    uv_select[good_uv_t3_3] .= true
-    # uv_select[good_uv_t4_1] .= true
-    # uv_select[good_uv_t4_2] .= true
-    # uv_select[good_uv_t4_3] .= true
-    # uv_select[good_uv_t4_4] .= true
-    uv_select[indexes_to_discard[1]] .= false # disable wanted bad uv
-
-    indx_conv = Array{Int64}(undef, length(uv_select))
-    acc = 0;
-    for i=1:length(uv_select)
-        if uv_select[i]
-            acc+=1;
-        end
-        indx_conv[i]=acc;
-    end
-
-    indx_uv_sel = findall(uv_select.==true)
-    data.uv = data.uv[:,indx_uv_sel]
-    data.uv_lam = data.uv_lam[indx_uv_sel]
-    data.uv_dlam = data.uv_dlam[indx_uv_sel]
-    data.uv_mjd = data.uv_mjd[indx_uv_sel]
-    data.uv_baseline = data.uv_baseline[indx_uv_sel]
-    data.nuv = size(data.uv,2)
-    data.indx_vis  = indx_conv[good_uv_vis]
-    data.indx_v2   = indx_conv[good_uv_v2]
-    data.indx_t3_1 = indx_conv[good_uv_t3_1]
-    data.indx_t3_2 = indx_conv[good_uv_t3_2]
-    data.indx_t3_3 = indx_conv[good_uv_t3_3]
-    # data.indx_t4_1 = indx_conv[good_uv_t4_1]
-    # data.indx_t4_2 = indx_conv[good_uv_t4_2]
-    # data.indx_t4_3 = indx_conv[good_uv_t4_3]
-    # data.indx_t4_4 = indx_conv[good_uv_t4_4]
+    uv_sel = falses(data.nuv)
+    isempty(good_uv_vis)  || (uv_sel[good_uv_vis]  .= true)
+    isempty(good_uv_v2)   || (uv_sel[good_uv_v2]   .= true)
+    isempty(good_uv_t3_1) || (uv_sel[good_uv_t3_1] .= true)
+    isempty(good_uv_t3_2) || (uv_sel[good_uv_t3_2] .= true)
+    isempty(good_uv_t3_3) || (uv_sel[good_uv_t3_3] .= true)
+    uv_sel[indexes_to_discard[1]] .= false
+    iconv = cumsum(uv_sel); sel = findall(uv_sel)
+    data.uv          = data.uv[:, sel];      data.uv_lam      = data.uv_lam[sel]
+    data.uv_dlam     = data.uv_dlam[sel];    data.uv_mjd      = data.uv_mjd[sel]
+    data.uv_baseline = data.uv_baseline[sel]; data.nuv        = size(data.uv, 2)
+    isempty(good_uv_vis)  || (data.indx_vis   = iconv[good_uv_vis])
+    isempty(good_uv_v2)   || (data.indx_v2    = iconv[good_uv_v2])
+    isempty(good_uv_t3_1) || (data.indx_t3_1  = iconv[good_uv_t3_1])
+    isempty(good_uv_t3_2) || (data.indx_t3_2  = iconv[good_uv_t3_2])
+    isempty(good_uv_t3_3) || (data.indx_t3_3  = iconv[good_uv_t3_3])
     return data
 end
 
-
-
-function remove_redundant_uv!(data::OIdata; uvtol=2e2)
-# removes redundant uv points and reassigns observable indexes accordingly
-     indx_red_conv, to_keep = rm_redundance_kdtree(data.uv,uvtol);
-     data.uv           =  data.uv[:,to_keep]
-     data.uv_lam       =  data.uv_lam[to_keep]
-     data.uv_dlam      =  data.uv_dlam[to_keep]
-     data.uv_mjd       =  data.uv_mjd[to_keep]
-     data.uv_baseline  = data.uv_baseline[to_keep];
-     data.nuv          = length(to_keep)
-     if (data.nvisphi>0 || data.nvisamp > 0)
-         data.indx_vis = indx_red_conv[data.indx_vis];
-     end
-     if data.nv2>0
-         data.indx_v2 = indx_red_conv[data.indx_v2];
-     end
-     if (data.nt3amp>0 || data.nt3phi>0)
-         data.indx_t3_1 = indx_red_conv[data.indx_t3_1];
-         data.indx_t3_2 = indx_red_conv[data.indx_t3_2];
-         data.indx_t3_3 = indx_red_conv[data.indx_t3_3];
-     end
-     # if (data.nt4amp>0 || data.nt4phi>0)
-     #     data.indx_t4_1 = indx_red_conv[data.indx_t4_1];
-     #     data.indx_t4_2 = indx_red_conv[data.indx_t4_2];
-     #     data.indx_t4_3 = indx_red_conv[data.indx_t4_3];
-     #     data.indx_t4_4 = indx_red_conv[data.indx_t4_4];
-     # end
-     return data
+# remove_redundant_uv! for OIdata (post-load, operates on the final struct)
+function remove_redundant_uv!(data::OIdata{T}; uvtol = 2e2) where T
+    iconv, tokeep    = rm_redundance_kdtree(data.uv, uvtol)
+    data.uv          = data.uv[:, tokeep];  data.uv_lam  = data.uv_lam[tokeep]
+    data.uv_dlam     = data.uv_dlam[tokeep]; data.uv_mjd = data.uv_mjd[tokeep]
+    data.uv_baseline = data.uv_baseline[tokeep]; data.nuv = length(tokeep)
+    data.nvisphi > 0 || data.nvisamp > 0 && (data.indx_vis = iconv[data.indx_vis])
+    data.nv2 > 0    && (data.indx_v2  = iconv[data.indx_v2])
+    if data.nt3amp > 0 || data.nt3phi > 0
+        data.indx_t3_1 = iconv[data.indx_t3_1]
+        data.indx_t3_2 = iconv[data.indx_t3_2]
+        data.indx_t3_3 = iconv[data.indx_t3_3]
+    end
+    return data
 end
 
+# ===========================================================================
+# LOADING + PARSING HELPERS
+# ===========================================================================
 
-function readoifits(oifitsfile; targetname ="", spectralbin=[[]], temporalbin=[[]], splitting = false,  polychromatic = false, get_specbin_file=true, get_timebin_file=true,redundance_remove=true,uvtol=2e2, filter_bad_data= true, force_full_vis = false,force_full_t3 = false, filter_v2_snr_threshold=0.01, use_vis = true, use_v2 = true, use_t3 = true, use_t4 = true, use_flux = true, cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5, special_filter_diffvis=false, verb=true)
-
-    #TODO: rethink indexing by station -- there should be a station pair for each uv point, then v2/t3/etc. stations are indexed with index_v2, etc.
-
-    #  verb=true; targetname =""; spectralbin=[[]]; temporalbin=[[]]; splitting = false;  polychromatic = false; get_specbin_file=true; get_timebin_file=true;redundance_remove=false;uvtol=1.e3; filter_bad_data= true; force_full_vis = false;force_full_t3 = false; filter_v2_snr_threshold=0.01 ;use_vis = true; use_v2 = true; use_t3 = true; use_t4 = true; cutoff_minv2 = -1; cutoff_maxv2 = 2.0; cutoff_mint3amp = -1.0; cutoff_maxt3amp = 1.5; use_flux=false;
-    if !isfile(oifitsfile)
-        @error("readoifits could not locate the requested data file -- please check path\n")
-        return [[]];
+# ---------------------------------------------------------------------------
+# load_oifits: open an OIFITS file, falling back to hack_revn=1 for v1 files
+# ---------------------------------------------------------------------------
+function load_oifits(filename)
+    try
+        read(OIDataSet, filename)
+    catch
+        read(OIDataSet, filename, hack_revn=1)
     end
+end
 
-    tables = OIFITS.load(oifitsfile);
-
-
-    wavtables = OIFITS.select(tables,"OI_WAVELENGTH");
-    if length(wavtables) ==0
-        error("No OI_WAVELENGTH table in $oifitsfile")
-    end
-    wavtableref = [wavtables[i].insname for i=1:length(wavtables)];
-    # In case there are multiple targets per file (NPOI, some old MIRC), select only the wanted data
-    targetid_filter = [];
-    targettables = OIFITS.select(tables, "OI_TARGET");
-    if minimum(vcat([targettables[i].target_id for i=1:length(targettables)]...)) == 0
-        for i=1:length(targettables)
-            if targettables[i].revn!=1 # only OIFITSv2 enforces indexing
-                if verb == true
-                    @warn("OI_TARGET table $i does not follow the OIFITSv2 standard - target indexing should start at 1, not 0.")
-                end
-            end
-        end
-    end
-
-    if(targetname !="")
-        if length(targettables)>1
-            error("The OIFITS file has several target tables -- please specify which target you want");
-        else
-            targettables = targettables[1];
-        end
-        targetid_filter = targettables.target_id[findall(targettables.target .==targetname)]; # match target ids to target name
-    else # we select everything = all target tables and all targets in these
-        targetid_filter = unique(vcat([targettables[i].target_id for i=1:length(targettables)]...));
-    end
-
-
-    fluxtables = []
-    flux_ntables = 0
-    if use_flux == true
-        fluxtables = OIFITS.select(tables,"OI_FLUX");
-        flux_ntables = length(fluxtables);
-        if flux_ntables == 0
-            use_flux = false;
-        end
-    end
-
-    vistables = []
-    vis_ntables = 0
-    if use_vis == true
-        vistables = OIFITS.select(tables,"OI_VIS");
-        vis_ntables = length(vistables);
-        if vis_ntables == 0
-            use_vis = false;
-        end
-    end
-
-    v2tables = []
-    v2_ntables = 0
-    if use_v2 == true
-        v2tables = OIFITS.select(tables,"OI_VIS2");
-        v2_ntables = length(v2tables);
-        if v2_ntables == 0
-            use_v2 = false;
-        end
-    end
-
-    t3tables = []
-    t3_ntables = 0
-    if use_t3 == true
-        t3tables = OIFITS.select(tables,"OI_T3");
-        t3_ntables = length(t3tables);
-        if t3_ntables == 0
-            use_t3 = false;
-        end
-    end
-
-    # t4tables = []
-    # t4_ntables = 0
-    # if use_t4 == true
-    #     t4tables = OIFITS.select(tables,"OI_T4");
-    #     t4_ntables = length(t4tables);
-    #     if t4_ntables == 0
-    #         use_t4 = false;
-    #     end
-    # end
-
-
-    # OI_ARRAY
-    arraytables=OIFITS.select(tables,"OI_ARRAY")
-    if length(arraytables) ==0
-        error("No OI_ARRAY table in $oifitsfile")
-    end
-    arraytableref = [arraytables[i].arrname for i=1:length(arraytables)];
-    array_ntables=length(arraytables)
-
-    #get info from array tables_  #TBD -> update with knowledge from above
-    vis_sta_index=Array{Array{Int64,2}}(undef, array_ntables);
-    v2_sta_index=Array{Array{Int64,2}}(undef, array_ntables);
-    t3_sta_index=Array{Array{Int64,3}}(undef, array_ntables);
-    t4_sta_index=Array{Array{Int64,4}}(undef, array_ntables);
-
-    station_name=Array{Array{String,1}}(undef, array_ntables)
-    telescope_name=Array{Array{String,1}}(undef, array_ntables);
-    station_index=Array{Array{Int64,1}}(undef, array_ntables);
-
-    for itable = 1:array_ntables
-        station_name[itable] = arraytables[itable].sta_name; # station_names
-        telescope_name[itable] = arraytables[itable].tel_name; # tel_names
-        station_index[itable] = arraytables[itable].sta_index; # station_indexes for matchin names to indexes in v2 and t3
-    end
+# ---------------------------------------------------------------------------
+# collect_station_info: parse OI_ARRAY tables and build station index mapping
+#
+# Returns a NamedTuple:
+#   new_station_name, new_telescope_name, new_station_index  — merged station lists
+#   conversion_index[itable, old_idx] → new_idx             — sparse mapping
+#   station_index_offset                                     — 0 or 1 (OIFITSv1 compat)
+# ---------------------------------------------------------------------------
+function collect_station_info(arraytables, v2tables, t3tables, arraytableref; verb=true)
+    array_ntables  = length(arraytables)
+    station_name   = [arraytables[i].sta_name  for i in 1:array_ntables]
+    telescope_name = [arraytables[i].tel_name  for i in 1:array_ntables]
+    station_index  = [arraytables[i].sta_index for i in 1:array_ntables]
 
     station_index_offset = 0
-    if minimum(vcat(station_index...)) == 0  #determine if compliant with OIFITS format (min index = 1,not 0)
-        revn = maximum([arraytables[i].revn for i=1:length(arraytables)])
-        if verb==true
-            if revn==2
-                @warn("This file does not follow the OIFITSv2 standard - station indexing should start at 1, not 0.")
+    if minimum(vcat(station_index...)) == 0
+        revn_max = maximum(db.revn for db in arraytables)
+        if verb
+            if revn_max == 2
+                @warn("This file does not follow OIFITSv2 standard — station indexing should start at 1, not 0.")
             else
-                @warn("OIFITSv1 detected. To be compliant with OIFITSv2 standard, OITOOLS will internally reindex stations from 1.")
+                @warn("OIFITSv1 detected. OITOOLS will internally reindex stations from 1.")
             end
         end
         station_index_offset = 1
     end
 
-    # START OF INDEXING LOGIC (this should catch a lot of errors due to non-compliance with OIFITS v2)
-    # At CHARA, station names = telescope names (for the moment)
-    # At VLTI, stations and telescopes are different
-    # This code can handle simple situations (pure CHARA or VLTI data) as well as CHARA + VLTI combined data
-    # as long as a give station always keep the same indexes in merged data sets
-
-
-    #
-    # Test if there are unknown station indexes
-    #
-
-    # TODO: currently using only V2 & T3 tables, add for other data products
-    unknown_station_names = String[]
-    unknown_tel_names = String[]
+    # Detect station indices referenced in V2/T3 tables but absent from OI_ARRAY
+    unknown_station_names   = String[]
+    unknown_tel_names       = String[]
     unknown_station_indexes = Int64[]
 
-    for itable = 1:v2_ntables
-        iarray = findall(v2tables[itable].arrname .== arraytableref)
-        if length(iarray)>0 # Will fail if no corresponding OI_ARRAY table
-            iarray = iarray[1]
-            corresp_station_indexes = arraytables[iarray].sta_index
-            for jj in unique(v2tables[itable].sta_index) # Will fail if non-existent indexes in V2 tables
-                if !(jj in corresp_station_indexes)
-                    @warn("V2 table $itable refers to station index $jj, non existent in OI_ARRAY=$(v2tables[itable].arrname); available indexes are $(corresp_station_indexes)")
-                    push!(unknown_station_names, string("UNKN",jj))
-                    push!(unknown_tel_names, string("UNKN",jj))
-                    push!(unknown_station_indexes, jj);
+    for (itable, db) in enumerate(v2tables)
+        iarray = findfirst(==(db.arrname), arraytableref)
+        if !isnothing(iarray)
+            corresp = arraytables[iarray].sta_index
+            for jj in unique(db.sta_index)
+                if jj ∉ corresp
+                    @warn("V2 table $itable refers to station index $jj, not found in OI_ARRAY=$(db.arrname)")
+                    push!(unknown_station_names, "UNKN$jj")
+                    push!(unknown_tel_names,     "UNKN$jj")
+                    push!(unknown_station_indexes, jj)
                 end
             end
         else
-            @warn("V2 table $itable is missing its corresponding OI_ARRAY $(v2tables[itable].arrname)")
+            @warn("V2 table $itable is missing its corresponding OI_ARRAY $(db.arrname)")
         end
     end
 
-    for itable = 1:t3_ntables
-        iarray = findall(t3tables[itable].arrname .== arraytableref)
-        if length(iarray)>0 # Will fail if no corresponding OI_ARRAY table
-            iarray = iarray[1]
-            corresp_station_indexes = arraytables[iarray].sta_index
-            for jj in unique(t3tables[itable].sta_index) # Will fail if non-existent indexes in T3 tables
-                if !(jj in corresp_station_indexes)
-                    @warn("T3 table $itable refers to station index $jj, non existent in OI_ARRAY=$(t3tables[itable].arrname); available indexes are $(corresp_station_indexes)")
-                    push!(unknown_station_names, string("UNKN",jj))
-                    push!(unknown_tel_names, string("UNKN",jj))
-                    push!(unknown_station_indexes, jj);
+    for (itable, db) in enumerate(t3tables)
+        iarray = findfirst(==(db.arrname), arraytableref)
+        if !isnothing(iarray)
+            corresp = arraytables[iarray].sta_index
+            for jj in unique(db.sta_index)
+                if jj ∉ corresp
+                    @warn("T3 table $itable refers to station index $jj, not found in OI_ARRAY=$(db.arrname)")
+                    push!(unknown_station_names, "UNKN$jj")
+                    push!(unknown_tel_names,     "UNKN$jj")
+                    push!(unknown_station_indexes, jj)
                 end
             end
         else
-            @warn("T3 table $itable is missing its corresponding OI_ARRAY $(t3tables[itable].arrname)")
+            @warn("T3 table $itable is missing its corresponding OI_ARRAY $(db.arrname)")
         end
     end
 
-    if unknown_station_names != []
-        # Keep only non-redundant and sort them
-        non_redundant_unknown_stations = indexin(unique(unknown_station_indexes), unknown_station_indexes)
-        unknown_station_indexes = unknown_station_indexes[non_redundant_unknown_stations]
-        unknown_station_names = unknown_station_names[non_redundant_unknown_stations]
-        unknown_tel_names = unknown_tel_names[non_redundant_unknown_stations]
-        sorted_non_redundant_stations = sortperm(unknown_station_indexes)
-        unknown_station_indexes = unknown_station_indexes[sorted_non_redundant_stations]
-        unknown_station_names = unknown_station_names[sorted_non_redundant_stations]
-        unknown_tel_names = unknown_tel_names[sorted_non_redundant_stations]
-        @warn("Unknown stations, creating station names $unknown_station_names with corresponding indexes = $unknown_station_indexes \n");
+    if !isempty(unknown_station_names)
+        nr = indexin(unique(unknown_station_indexes), unknown_station_indexes)
+        unknown_station_indexes = unknown_station_indexes[nr]
+        unknown_station_names   = unknown_station_names[nr]
+        unknown_tel_names       = unknown_tel_names[nr]
+        sp = sortperm(unknown_station_indexes)
+        unknown_station_indexes = unknown_station_indexes[sp]
+        unknown_station_names   = unknown_station_names[sp]
+        unknown_tel_names       = unknown_tel_names[sp]
+        @warn("Unknown stations: $unknown_station_names with indexes = $unknown_station_indexes")
     end
 
-    # To simplify things, we merge known and unknown (missing) stations
-    station_names_all = vec(vcat(station_name..., unknown_station_names))
+    station_names_all   = vec(vcat(station_name...,   unknown_station_names))
     telescope_names_all = vec(vcat(telescope_name..., unknown_tel_names))
-    station_indexes_all = vec(vcat(station_index..., unknown_station_indexes))
+    station_indexes_all = vec(vcat(station_index...,  unknown_station_indexes))
 
-    # Check if index use is consistent
     list_stations = unique(station_names_all)
-    nstations =  length(list_stations)
-    #println("Counting ", nstations, " unique stations");
+    nstations     = length(list_stations)
+    new_station_name   = Vector{String}(undef, nstations)
+    new_telescope_name = Vector{String}(undef, nstations)
+    new_station_index  = zeros(Int64, nstations)
 
-    new_station_name = Array{String}(undef, nstations)
-    new_telescope_name = Array{String}(undef, nstations)
-    new_station_index = zeros(Int64,nstations)
-
-    for istation=1:length(list_stations)
+    for istation in 1:nstations
         name = list_stations[istation]
-        loc = findall(station_names_all .== name)
-        tel = unique(telescope_names_all[loc])
-        if length(tel)>1
-            @warn("OIFITS file indicate that several telescopes can be located the same station -- Plots may be misleading")
-        end
-        tel=tel[1]
-        # Renumber all stations
+        loc  = findall(station_names_all .== name)
+        tel  = unique(telescope_names_all[loc])
+        length(tel) > 1 && @warn("Multiple telescopes at station $name — plots may be misleading")
         new_station_name[istation]   = name
-        new_telescope_name[istation] = tel
-        new_station_index[istation] = istation
+        new_telescope_name[istation] = tel[1]
+        new_station_index[istation]  = istation
     end
-    # we will need to convert the old indexes into the new ones
-    conversion_index = spzeros(Int64, array_ntables, maximum(station_indexes_all)+station_index_offset)
 
-    # Existing indexes in OI_ARRAY
-    for itable = 1:array_ntables
-        for istation = 1:length(station_name[itable])
-            name = station_name[itable][istation];
+    maxidx = maximum(station_indexes_all) + station_index_offset
+    conversion_index = spzeros(Int64, array_ntables, maxidx)
+    for itable in 1:array_ntables
+        for istation in 1:length(station_name[itable])
+            name    = station_name[itable][istation]
             oldindx = station_index[itable][istation]
-            newindx = findall(new_station_name .== name)[1]
-            conversion_index[itable,station_index_offset+oldindx] = newindx;
+            newindx = findfirst(==(name), new_station_name)
+            conversion_index[itable, station_index_offset + oldindx] = newindx
         end
-        # TODO: check logic
-        if unknown_station_names != []
-            nmax = sum(conversion_index[itable,:] .!=0) ; # length(station_name) ?
-            conversion_index[itable, unknown_station_indexes] = nmax+1:size(conversion_index,2);
-        end
-    end
-
-    # END OF STATION INDEXING LOGIC
-
-    # Quick OI-ARRAY check
-    # TODO: update so that it's not redundant with previous checks
-    #       update to use visphi and flux
-    all_oitables_names = unique(vcat((arraytables[i].arrname for i=1:length(arraytables))...))
-    used_oiarray_tables = unique(vcat([v2tables[itable].arrname for itable = 1:v2_ntables], [t3tables[itable].arrname for itable = 1:t3_ntables]))
-    if length(used_oiarray_tables)>length(all_oitables_names)
-        missing_oiarray_tables =  used_oiarray_tables[.![used_oiarray_tables[i] in all_oitables_names for i=1:length(used_oiarray_tables)]]
-        @warn("Missing at least $(length(used_oiarray_tables)-length(all_oitables_names)) OI-ARRAY tables in this file - won't be able to import stations properly although uv coverage will be fine.")
-        @warn("Missing tables are: $(missing_oiarray_tables)");
-    end
-
-    if use_flux
-        flux_ntables = length(fluxtables)
-        flux = Array{Array{Float64,2}}(undef,flux_ntables)
-        flux_err = Array{Array{Float64,2}}(undef,flux_ntables)
-        flux_mjd = Array{Array{Float64,2}}(undef,flux_ntables)
-        flux_lam = Array{Array{Float64,2}}(undef,flux_ntables)
-        flux_dlam = Array{Array{Float64,2}}(undef,flux_ntables)
-        flux_flag = Array{Array{Float64,2}}(undef,flux_ntables)
-        flux_sta_index=Array{Array{Int64,2}}(undef,flux_ntables);
-        for itable = 1:flux_ntables
-            flux[itable] = fluxtables[itable].fluxdata
-            flux_err[itable] = fluxtables[itable].fluxerr
-            flux_flag[itable] = fluxtables[itable].flag
-            flux_mjd[itable] = repeat(fluxtables[itable].mjd', size(flux[itable],1));
-            iarray = findall(fluxtables[itable].arrname .== arraytableref)
-            if length(iarray)>0
-                flux_sta_index[itable]=conversion_index[iarray[1], station_index_offset.+repeat(fluxtables[itable].sta_index', size(flux[itable],1))];
-            else
-                flux_sta_index[itable]=1000 .+station_index_offset.+repeat(fluxtables[itable].sta_index', size(flux[itable],1));
-            end
-            iwavtable = findall(fluxtables[itable].insname .== wavtableref);
-            if (length(iwavtable) != 1)
-                error("Wave table confusion or Missing table\n");
-            end
-            flux_lam[itable] = repeat(wavtables[iwavtable[1]].eff_wave, outer=[1,size(flux[itable],2)]); # spectral channels
-            flux_dlam[itable] = repeat(wavtables[iwavtable[1]].eff_band, outer=[1,size(flux[itable],2)]); # width of spectral channels
+        if !isempty(unknown_station_names)
+            nmax = sum(conversion_index[itable, :] .!= 0)
+            conversion_index[itable, unknown_station_indexes] .= nmax+1:maxidx
         end
     end
 
-    if use_vis
-    visamp_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    visamp_err_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    visphi_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    visphi_err_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    vis_ucoord_old = Array{Array{Float64,1}}(undef,vis_ntables);
-    vis_vcoord_old = Array{Array{Float64,1}}(undef,vis_ntables);
-    vis_mjd_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    vis_lam_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    vis_dlam_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    vis_flag_old = Array{Array{Bool,2}}(undef,vis_ntables);
-    vis_u_old = Array{Array{Float64,1}}(undef,vis_ntables);
-    vis_v_old = Array{Array{Float64,1}}(undef,vis_ntables);
-    vis_uv_old = Array{Array{Float64,2}}(undef,vis_ntables);
-    vis_baseline_old = Array{Array{Float64,1}}(undef,vis_ntables);
-    vis_sta_index_old=Array{Array{Int64,2}}(undef, vis_ntables);
-    for itable = 1:vis_ntables
-        vis_targetid_filter = findall(sum([vistables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-        visamp_old[itable] = vistables[itable].visamp[:,vis_targetid_filter];
-        visamp_err_old[itable] = vistables[itable].visamperr[:,vis_targetid_filter];
-        visphi_old[itable] = vistables[itable].visphi[:,vis_targetid_filter];
-        visphi_err_old[itable] = vistables[itable].visphierr[:,vis_targetid_filter];
-        vis_ucoord_old[itable] = vistables[itable].ucoord[vis_targetid_filter];
-        vis_vcoord_old[itable] = vistables[itable].vcoord[vis_targetid_filter];
-        vis_mjd_old[itable] = repeat(vistables[itable].mjd[vis_targetid_filter]', outer=[size(visamp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-        iarray = findall(vistables[itable].arrname .== arraytableref)
-        if length(iarray)>0
-            vis_sta_index_old[itable]= conversion_index[iarray[1], station_index_offset.+repeat(vistables[itable].sta_index[:,vis_targetid_filter],outer=[size(visamp_old[itable],1),1])];
-        else
-            vis_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(vistables[itable].sta_index[:,vis_targetid_filter],outer=[size(visamp_old[itable],1),1]);
-        end
-        whichwav = findall(vistables[itable].insname.==wavtableref);
-        vis_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave, outer=[1,size(visamp_old[itable],2)]); # spectral channels
-        vis_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band, outer=[1,size(visamp_old[itable],2)]); # width of spectral channels
-        vis_flag_old[itable] = vistables[itable].flag[:,vis_targetid_filter]; # flag for vis table
-        nvis_lam_old = length(vis_lam_old[itable][:,1]);
-        vis_u_old[itable] = Float64[];
-        vis_v_old[itable] = Float64[];
-        for u = 1:length(vis_ucoord_old[itable])
-            vis_u_old[itable] = vcat(vis_u_old[itable],vis_ucoord_old[itable][u]./vis_lam_old[itable][:,1]);
-            vis_v_old[itable] = vcat(vis_v_old[itable],vis_vcoord_old[itable][u]./vis_lam_old[itable][:,1]);
-        end
-        vis_uv_old[itable] = hcat(vec(vis_u_old[itable]),vec(vis_v_old[itable]));
-        vis_baseline_old[itable] = vec(sqrt.(vis_u_old[itable].^2 + vis_v_old[itable].^2));
-    end
-    end
-
-    if use_v2
-    # get V2 data from tables
-    v2_old = Array{Array{Float64,2}}(undef, v2_ntables);
-    v2_err_old = Array{Array{Float64,2}}(undef,v2_ntables);
-    v2_ucoord_old = Array{Array{Float64,1}}(undef,v2_ntables);
-    v2_vcoord_old = Array{Array{Float64,1}}(undef,v2_ntables);
-    v2_mjd_old = Array{Array{Float64,2}}(undef,v2_ntables);
-    v2_lam_old = Array{Array{Float64,2}}(undef,v2_ntables);
-    v2_dlam_old = Array{Array{Float64,2}}(undef,v2_ntables);
-    v2_flag_old = Array{Array{Bool,2}}(undef,v2_ntables);
-    v2_u_old = Array{Array{Float64,1}}(undef,v2_ntables);
-    v2_v_old = Array{Array{Float64,1}}(undef,v2_ntables);
-    v2_uv_old = Array{Array{Float64,2}}(undef,v2_ntables);
-    v2_baseline_old = Array{Array{Float64,1}}(undef,v2_ntables);
-    v2_sta_index_old=Array{Array{Int64,2}}(undef, v2_ntables);
-    for itable = 1:v2_ntables
-        v2_targetid_filter = findall(sum([v2tables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-        v2_old[itable] = v2tables[itable].vis2data[:,v2_targetid_filter]; # Visibility squared
-        v2_err_old[itable] = v2tables[itable].vis2err[:,v2_targetid_filter]; # error in Visibility squared
-        v2_ucoord_old[itable] = v2tables[itable].ucoord[v2_targetid_filter]; # u coordinate in uv plane
-        v2_vcoord_old[itable] = v2tables[itable].vcoord[v2_targetid_filter]; #  v coordinate in uv plane
-        v2_mjd_old[itable] = repeat(v2tables[itable].mjd[v2_targetid_filter]', outer=[size(v2_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-        iarray = findall(v2tables[itable].arrname .== arraytableref)
-        if length(iarray)>0
-            v2_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(v2tables[itable].sta_index[:,v2_targetid_filter],outer=[size(v2_old[itable],1),1])];
-        else # TO DO (or just hope people use correct OIFITS !)
-            v2_sta_index_old[itable]=1000 .+station_index_offset.+repeat(v2tables[itable]sta_index[:,v2_targetid_filter],outer=[size(v2_old[itable],1),1]);
-        end
-        whichwav = findall(v2tables[itable].insname .== wavtableref);
-        if (length(whichwav) != 1)
-            error("Wave table confusion -- Missing table ?\n");
-        end
-        v2_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave,  outer=[1,size(v2_old[itable],2)]); # spectral channels
-        v2_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band, outer=[1,size(v2_old[itable],2)]); # width of spectral channels
-        v2_flag_old[itable] = v2tables[itable].flag[:,v2_targetid_filter]; # flag for v2 table
-        nv2_lam_old = length(v2_lam_old[itable][:,1]);
-        v2_u_old[itable] = Float64[];
-        v2_v_old[itable] = Float64[];
-        for u = 1:length(v2_ucoord_old[itable])
-            v2_u_old[itable] = vcat(v2_u_old[itable],v2_ucoord_old[itable][u]./v2_lam_old[itable][:,1]);
-            v2_v_old[itable] = vcat(v2_v_old[itable],v2_vcoord_old[itable][u]./v2_lam_old[itable][:,1]);
-        end
-        v2_uv_old[itable] = hcat(vec(v2_u_old[itable]),vec(v2_v_old[itable]));
-        v2_baseline_old[itable] = vec(sqrt.(v2_u_old[itable].^2 + v2_v_old[itable].^2));
-    end
-    end
-
-    if use_t3
-    # same with T3, VIS
-    # Get T3 data from tables
-    t3amp_old = Array{Array{Float64,2}}(undef,t3_ntables);
-    t3amp_err_old = Array{Array{Float64,2}}(undef,t3_ntables);
-    t3phi_old = Array{Array{Float64,2}}(undef,t3_ntables);
-    t3phi_err_old = Array{Array{Float64,2}}(undef,t3_ntables);
-    t3_u1coord_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_v1coord_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_u2coord_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_v2coord_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_u3coord_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_v3coord_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_mjd_old = Array{Array{Float64,2}}(undef,t3_ntables);
-    t3_lam_old = Array{Array{Float64,2}}(undef,t3_ntables);
-    t3_dlam_old = Array{Array{Float64,2}}(undef,t3_ntables);
-    t3_flag_old = Array{Array{Bool,2}}(undef,t3_ntables);
-    t3_u1_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_v1_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_u2_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_v2_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_u3_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_v3_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_baseline_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_maxbaseline_old = Array{Array{Float64,1}}(undef,t3_ntables);
-    t3_sta_index_old=Array{Array{Int64,2}}(undef, t3_ntables);
-    for itable = 1:t3_ntables
-        t3_targetid_filter = findall(sum([t3tables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-        t3amp_old[itable] = t3tables[itable].t3amp[:,t3_targetid_filter];
-        t3amp_err_old[itable] = t3tables[itable].t3amperr[:,t3_targetid_filter];
-        t3phi_old[itable] = t3tables[itable].t3phi[:,t3_targetid_filter];
-        t3phi_err_old[itable] = t3tables[itable].t3phierr[:,t3_targetid_filter];
-        t3_u1coord_old[itable] = t3tables[itable].u1coord[t3_targetid_filter];
-        t3_v1coord_old[itable] = t3tables[itable].v1coord[t3_targetid_filter];
-        t3_u2coord_old[itable] = t3tables[itable].u2coord[t3_targetid_filter];
-        t3_v2coord_old[itable] = t3tables[itable].v2coord[t3_targetid_filter];
-        t3_u3coord_old[itable] = -(t3_u1coord_old[itable] + t3_u2coord_old[itable]); # the minus takes care of complex conjugate
-        t3_v3coord_old[itable] = -(t3_v1coord_old[itable] + t3_v2coord_old[itable]);
-        t3_mjd_old[itable] = repeat(t3tables[itable].mjd[t3_targetid_filter]', outer=[size(t3amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-        iarray = findall(t3tables[itable].arrname .== arraytableref)
-        if length(iarray)>0
-            t3_sta_index_old[itable]= conversion_index[iarray[1], station_index_offset.+repeat(t3tables[itable].sta_index[:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1])];
-        else
-            t3_sta_index_old[itable]= 1000 .+station_index_offset.+repeat(t3tables[itable].sta_index[:,t3_targetid_filter],outer=[size(t3amp_old[itable],1),1]);
-        end
-        whichwav = findall(t3tables[itable].insname .==wavtableref);
-        t3_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave, outer=[1,size(t3amp_old[itable],2)]); # spectral channels
-        t3_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band, outer=[1,size(t3amp_old[itable],2)]); # width of spectral channels
-        t3_flag_old[itable] = t3tables[itable].flag[:,t3_targetid_filter]; # flag for t3 table
-        nt3_lam_old = length(t3_lam_old[itable][:,1]);
-
-        t3_u1_old[itable] = Float64[];
-        t3_v1_old[itable] = Float64[];
-        t3_u2_old[itable] = Float64[];
-        t3_v2_old[itable] = Float64[];
-        t3_u3_old[itable] = Float64[];
-        t3_v3_old[itable] = Float64[];
-        for u = 1:length(t3_u1coord_old[itable])
-            t3_u1_old[itable] = vcat(t3_u1_old[itable],t3_u1coord_old[itable][u]./t3_lam_old[itable][:,1]);
-            t3_v1_old[itable] = vcat(t3_v1_old[itable],t3_v1coord_old[itable][u]./t3_lam_old[itable][:,1]);
-            t3_u2_old[itable] = vcat(t3_u2_old[itable],t3_u2coord_old[itable][u]./t3_lam_old[itable][:,1]);
-            t3_v2_old[itable] = vcat(t3_v2_old[itable],t3_v2coord_old[itable][u]./t3_lam_old[itable][:,1]);
-            t3_u3_old[itable] = vcat(t3_u3_old[itable],t3_u3coord_old[itable][u]./t3_lam_old[itable][:,1]);
-            t3_v3_old[itable] = vcat(t3_v3_old[itable],t3_v3coord_old[itable][u]./t3_lam_old[itable][:,1]);
-        end
-
-        t3_baseline_old[itable] = vec((sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2).*sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2).*
-        sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)).^(1.0/3.0));
-        t3_maxbaseline_old[itable] = vec(max.(sqrt.(t3_u1_old[itable].^2 + t3_v1_old[itable].^2), sqrt.(t3_u2_old[itable].^2 + t3_v2_old[itable].^2), sqrt.(t3_u3_old[itable].^2 + t3_v3_old[itable].^2)));
-    end
-    end
-
-    # if use_t4 == true
-    #     # same with T4
-    #     # Get T4 data from tables
-    #     t4amp_old = Array{Array{Float64,2}}(undef,t4_ntables);
-    #     t4amp_err_old = Array{Array{Float64,2}}(undef,t4_ntables);
-    #     t4phi_old = Array{Array{Float64,2}}(undef,t4_ntables);
-    #     t4phi_err_old = Array{Array{Float64,2}}(undef,t4_ntables);
-    #     t4_u1coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v1coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_u2coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v2coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_u3coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v3coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_u4coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v4coord_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_mjd_old = Array{Array{Float64,2}}(undef,t4_ntables);
-    #     t4_lam_old = Array{Array{Float64,2}}(undef,t4_ntables);
-    #     t4_dlam_old = Array{Array{Float64,2}}(undef,t4_ntables);
-    #     t4_flag_old = Array{Array{Bool,2}}(undef,t4_ntables);
-    #     t4_u1_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v1_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_u2_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v2_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_u3_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v3_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_u4_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_v4_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_baseline_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_maxbaseline_old = Array{Array{Float64,1}}(undef,t4_ntables);
-    #     t4_sta_index_old=Array{Array{Int64,2}}(undef, t4_ntables);
-    #     for itable = 1:t4_ntables
-    #         t4_targetid_filter = findall(sum([t4tables[itable].target_id .==targetid_filter[i] for i=1:length(targetid_filter)],dims=1)[1].>0);
-    #         t4amp_old[itable] = t4tables[itable].t4amp[:,t4_targetid_filter];
-    #         t4amp_err_old[itable] = t4tables[itable].t4amperr[:,t4_targetid_filter];
-    #         t4phi_old[itable] = t4tables[itable].t4phi[:,t4_targetid_filter];
-    #         t4phi_err_old[itable] = t4tables[itable].t4phierr[:,t4_targetid_filter];
-    #         t4_u1coord_old[itable] = t4tables[itable].u1coord[t4_targetid_filter];
-    #         t4_v1coord_old[itable] = t4tables[itable].v1coord[t4_targetid_filter];
-    #         t4_u2coord_old[itable] = t4tables[itable].u2coord[t4_targetid_filter];
-    #         t4_v2coord_old[itable] = t4tables[itable].v2coord[t4_targetid_filter];
-    #         t4_u3coord_old[itable] = t4tables[itable].u3coord[t4_targetid_filter];
-    #         t4_v3coord_old[itable] = t4tables[itable].v3coord[t4_targetid_filter];
-    #         t4_u4coord_old[itable] = -(t4_u1coord_old[itable] + t4_u2coord_old[itable] + t4_u3coord_old[itable]); # the minus takes care of complex conjugate
-    #         t4_v4coord_old[itable] = -(t4_v1coord_old[itable] + t4_v2coord_old[itable] + t4_v3coord_old[itable]);
-    #         t4_mjd_old[itable] = repeat(t4tables[itable].mjd[t4_targetid_filter]', outer=[size(t4amp_old[itable],1),1]); # Modified Julian Date (JD - 2400000.5)
-    #         iarray = findall(t4tables[itable].arrname .== arraytableref)
-    #         if length(iarray)>0
-    #             t4_sta_index_old[itable]=conversion_index[iarray[1], station_index_offset.+repeat(t4tables[itable].sta_index[:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1])];
-    #         else
-    #             t4_sta_index_old[itable]=1000 .+station_index_offset.+repeat(t4tables[itable].sta_index[:,t4_targetid_filter],outer=[size(t4amp_old[itable],1),1]);
-    #         end
-    #         whichwav = findall(t4tables[itable].insname .==wavtableref);
-    #         t4_lam_old[itable] = repeat(wavtables[whichwav[1]].eff_wave, outer=[1,size(t4amp_old[itable],2)]); # spectral channels
-    #         t4_dlam_old[itable] = repeat(wavtables[whichwav[1]].eff_band,outer=[1,size(t4amp_old[itable],2)]); # width of spectral channels
-    #         t4_flag_old[itable] = t4tables[itable].flag[:,t4_targetid_filter]; # flag for t4 table
-    #         nt4_lam_old = length(t4_lam_old[itable][:,1]);
-    #
-    #         t4_u1_old[itable] = Float64[];
-    #         t4_v1_old[itable] = Float64[];
-    #         t4_u2_old[itable] = Float64[];
-    #         t4_v2_old[itable] = Float64[];
-    #         t4_u3_old[itable] = Float64[];
-    #         t4_v3_old[itable] = Float64[];
-    #         t4_u4_old[itable] = Float64[];
-    #         t4_v4_old[itable] = Float64[];
-    #         for u = 1:length(t4_u1coord_old[itable])
-    #             t4_u1_old[itable] = vcat(t4_u1_old[itable],t4_u1coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #             t4_v1_old[itable] = vcat(t4_v1_old[itable],t4_v1coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #             t4_u2_old[itable] = vcat(t4_u2_old[itable],t4_u2coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #             t4_v2_old[itable] = vcat(t4_v2_old[itable],t4_v2coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #             t4_u3_old[itable] = vcat(t4_u3_old[itable],t4_u3coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #             t4_v3_old[itable] = vcat(t4_v3_old[itable],t4_v3coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #             t4_u4_old[itable] = vcat(t4_u4_old[itable],t4_u4coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #             t4_v4_old[itable] = vcat(t4_v4_old[itable],t4_v4coord_old[itable][u]./t4_lam_old[itable][:,1]);
-    #         end
-    #
-    #         t4_baseline_old[itable] = vec((sqrt.(t4_u1_old[itable].^2 + t4_v1_old[itable].^2).*sqrt.(t4_u2_old[itable].^2 + t4_v2_old[itable].^2).*
-    #         sqrt.(t4_u3_old[itable].^2 + t4_v3_old[itable].^2).*sqrt.(t4_u4_old[itable].^2 + t4_v4_old[itable].^2)).^(1.0/4.0));
-    #         t4_maxbaseline_old[itable] = vec(max.(sqrt.(t4_u1_old[itable].^2 + t4_v1_old[itable].^2), sqrt.(t4_u2_old[itable].^2 + t4_v2_old[itable].^2), sqrt.(t4_u3_old[itable].^2 + t4_v3_old[itable].^2), sqrt.(t4_u4_old[itable].^2 + t4_v4_old[itable].^2)));
-    #     end
-    # end
-
-    # combine data from all tables into a single array for each observable
-    if use_flux
-        flux_all = tablemerge(flux)
-        flux_err_all = tablemerge(flux_err)
-        flux_mjd_all = tablemerge(flux_mjd)
-        flux_lam_all = tablemerge(flux_lam)
-        flux_dlam_all = tablemerge(flux_dlam)
-        flux_flag_all = tablemerge(flux_flag)
-        flux_sta_index_all = tablemerge(flux_sta_index)
-    end
-
-    if use_vis
-    visamp_all = tablemerge(visamp_old);
-    visamp_err_all =  tablemerge(visamp_err_old);
-    visphi_all = tablemerge(visphi_old);
-    visphi_err_all =  tablemerge(visphi_err_old);
-    vis_mjd_all = tablemerge(vis_mjd_old);
-    vis_lam_all = tablemerge(vis_lam_old);
-    vis_dlam_all = tablemerge(vis_dlam_old);
-    vis_flag_all = tablemerge(vis_flag_old);
-    vis_uv_all = vcat(vis_uv_old...)
-    vis_baseline_all = tablemerge(vis_baseline_old);
-    vis_sta_index_all= hcat([ reshape(vis_sta_index_old[i], 2, div(length(vis_sta_index_old[i]), 2)) for i=1:length(vis_sta_index_old) ]...)
-    end
-
-    if use_v2
-    v2_all = tablemerge(v2_old);
-    v2_err_all =  tablemerge(v2_err_old);
-    v2_mjd_all = tablemerge(v2_mjd_old);
-    v2_lam_all = tablemerge(v2_lam_old);
-    v2_dlam_all = tablemerge(v2_dlam_old);
-    v2_flag_all = tablemerge(v2_flag_old);
-    v2_uv_all = vcat(v2_uv_old...)
-    v2_baseline_all = tablemerge(v2_baseline_old);
-    v2_sta_index_all= hcat([ reshape(v2_sta_index_old[i], 2, div(length(v2_sta_index_old[i]), 2)) for i=1:length(v2_sta_index_old) ]...)
-    end
-
-    if use_t3
-    t3amp_all = tablemerge(t3amp_old);
-    t3amp_err_all = tablemerge(t3amp_err_old);
-    t3phi_all = tablemerge(t3phi_old);
-    t3phi_err_all = tablemerge(t3phi_err_old);
-    t3_mjd_all = tablemerge(t3_mjd_old);
-    t3_lam_all = tablemerge(t3_lam_old);
-    t3_dlam_all = tablemerge(t3_dlam_old);
-    t3_flag_all = tablemerge(t3_flag_old);
-    t3_u1_all = vcat(t3_u1_old...);
-    t3_v1_all = vcat(t3_v1_old...);
-    t3_u2_all = vcat(t3_u2_old...);
-    t3_v2_all = vcat(t3_v2_old...);
-    t3_u3_all = vcat(t3_u3_old...);
-    t3_v3_all = vcat(t3_v3_old...);
-    t3_baseline_all = tablemerge(t3_baseline_old);
-    t3_maxbaseline_all = tablemerge(t3_maxbaseline_old);
-    t3_sta_index_all= hcat([ reshape(t3_sta_index_old[i], 3, div(length(t3_sta_index_old[i]), 3)) for i=1:length(t3_sta_index_old) ]...)
-    t3_uv_all = cat(hcat(t3_u1_all, t3_v1_all), hcat(t3_u2_all, t3_v2_all),hcat(t3_u3_all, t3_v3_all), dims=3);
-    end
-
-    # if use_t4
-    #     t4amp_all = tablemerge(t4amp_old);
-    #     t4amp_err_all = tablemerge(t4amp_err_old);
-    #     t4phi_all = tablemerge(t4phi_old);
-    #     t4phi_err_all = tablemerge(t4phi_err_old);
-    #     t4_mjd_all = tablemerge(t4_mjd_old);
-    #     t4_lam_all = tablemerge(t4_lam_old);
-    #     t4_dlam_all = tablemerge(t4_dlam_old);
-    #     t4_flag_all = tablemerge(t4_flag_old);
-    #     t4_u1_all = vcat(t4_u1_old...);
-    #     t4_v1_all = vcat(t4_v1_old...);
-    #     t4_u2_all = vcat(t4_u2_old...);
-    #     t4_v2_all = vcat(t4_v2_old...);
-    #     t4_u3_all = vcat(t4_u3_old...);
-    #     t4_v3_all = vcat(t4_v3_old...);
-    #     t4_u4_all = vcat(t4_u4_old...);
-    #     t4_v4_all = vcat(t4_v4_old...);
-    #     t4_baseline_all = tablemerge(t4_baseline_old);
-    #     t4_maxbaseline_all = tablemerge(t4_maxbaseline_old);
-    #     t4_sta_index_all= hcat([ reshape(t4_sta_index_old[i], 4, div(length(t4_sta_index_old[i]), 4)) for i=1:length(t4_sta_index_old) ]...)
-    #     t4_uv_all = cat(hcat(t4_u1_all, t4_v1_all), hcat(t4_u2_all, t4_v2_all),hcat(t4_u3_all, t4_v3_all), hcat(t4_u4_all, t4_v4_all), dims=3);
-    # end
-
-    #
-    # Data splitting logic
-    #
-
-    if (polychromatic == true)||(temporalbin != [[]])||(spectralbin != [[]])
-        splitting = true
-    end
-
-    # calculate default timebin if user picks timebin = [[]]
-    if ((temporalbin == [[]]) && (get_timebin_file == true))
-        temporalbin = [[]]
-        mjd_all = [];
-        if use_vis
-            mjd_all = vcat(mjd_all,vis_mjd_all)
-        end
-        if use_v2
-            mjd_all = vcat(mjd_all,v2_mjd_all)
-        end
-        if use_t3
-            mjd_all = vcat(mjd_all, t3_mjd_all)
-        end
-        # if use_t4
-        #     mjd_all = vcat(mjd_all, t4_mjd_all)
-        # end
-        if use_flux
-            mjd_all = vcat(mjd_all, flux_mjd_all)
-        end
-        temporalbin[1] = [minimum(mjd_all)-0.001,maximum(mjd_all)+0.001]; # start & end mjd
-    end
-
-    # get spectralbin if get_spectralbin_from_file == true
-    if ((spectralbin == [[]]) && (get_specbin_file == true) && (polychromatic == false))
-        dlam_all = []
-        lam_all = []
-        if use_vis
-            lam_all = vcat(lam_all, vis_lam_all)
-            dlam_all = vcat(dlam_all, vis_dlam_all)
-        end
-        if use_v2
-            lam_all = vcat(lam_all, v2_lam_all)
-            dlam_all = vcat(dlam_all, v2_dlam_all)
-        end
-        if use_t3
-            lam_all = vcat(lam_all, t3_lam_all)
-            dlam_all = vcat(dlam_all, t3_dlam_all)
-        end
-        # if use_t4
-        #     lam_all = vcat(lam_all, t4_lam_all)
-        #     dlam_all = vcat(dlam_all, t4_dlam_all)
-        # end
-        if use_flux
-            lam_all = vcat(lam_all, flux_lam_all)
-            dlam_all = vcat(dlam_all, flux_dlam_all)
-        end
-        spectralbin[1] = vcat(spectralbin[1], minimum(lam_all)-minimum(dlam_all[argmin(lam_all)])*0.5, maximum(lam_all)+maximum(dlam_all[argmax(lam_all)])*0.5);
-    end
-
-
-    if ((polychromatic == true) && (get_specbin_file == true))
-        if length(wavtables)>1
-            @warn("There are multiple OI_WAVELENGTH tables in this file. Please specify spectralbin to select spectral channels. Wavelength selection is currently based on straight merging of tables");
-        end
-        #            Double check no band overlap
-        wavarray = vcat([sort(hcat(wavtables[i].eff_wave-wavtables[i].eff_band/2, wavtables[i].eff_wave+wavtables[i].eff_band/2),dims=1) for i=1:length(wavtables)]...)
-        overlap = sum(wavarray[2:end,2].<wavarray[1:end-1,1])
-        if overlap>0
-             @warn("Wavebands are overlapping - polychromatic imaging channels selection will be based on narrower bands.");
-             wavarray = vcat([hcat(wavtables[i].eff_wave-wavtables[i].eff_band/2.2, wavtables[i].eff_wave+wavtables[i].eff_band/2.2) for i=1:length(wavtables)]...)
-        end
-        spectralbin = [wavarray[i,:] for i=1:size(wavarray,1)];
-    end
-
-    # number of spectral bins
-    nwavbin = length(spectralbin);
-    # number of temporal bins
-    ntimebin = length(temporalbin);
-
-    OIdataArr = Array{OIdata}(undef, nwavbin,ntimebin);
-
-    # Define new arrays so that they get binned properly
-
-    #TODO: replace some undef with zeros
-    mean_mjd = Array{Float64}(undef, nwavbin,ntimebin);
-    uv = Array{Array{Float64,2}}(undef, nwavbin,ntimebin);
-    uv_lam = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
-    uv_dlam = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
-    uv_mjd = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
-    uv_baseline = Array{Array{Float64,1}}(undef, nwavbin,ntimebin);
-    #  full_sta_index = fill((vcat(Int64[]',Int64[]')),nwavbin,ntimebin);
-    nuv = Array{Int64}(undef,nwavbin,ntimebin);
-    nvisamp = zeros(Int64,nwavbin,ntimebin);
-    nvisphi = zeros(Int64,nwavbin,ntimebin);
-    vis_sta_index=fill((vcat(Int64[]',Int64[]')),nwavbin,ntimebin);
-    visamp = fill((Float64[]),nwavbin,ntimebin);
-    visphi = fill((Float64[]),nwavbin,ntimebin);
-    visamp_err = fill((Float64[]),nwavbin,ntimebin);
-    visphi_err = fill((Float64[]),nwavbin,ntimebin);
-    vis_mjd = fill((Float64[]),nwavbin,ntimebin);
-    vis_lam = fill((Float64[]),nwavbin,ntimebin);
-    vis_dlam = fill((Float64[]),nwavbin,ntimebin);
-    vis_flag = fill((Bool[]),nwavbin,ntimebin);
-    vis_uv = fill((vcat(Float64[]',Float64[]')),nwavbin,ntimebin);
-    vis_baseline = fill((Float64[]),nwavbin,ntimebin);
-    indx_vis = fill(Int64[],nwavbin,ntimebin);
-
-    nv2 = zeros(Int64,nwavbin,ntimebin);
-    v2_sta_index=fill((vcat(Int64[]',Int64[]')),nwavbin,ntimebin);
-    v2 = fill((Float64[]),nwavbin,ntimebin);
-    v2_err = fill((Float64[]),nwavbin,ntimebin);
-    v2_mjd = fill((Float64[]),nwavbin,ntimebin);
-    v2_lam = fill((Float64[]),nwavbin,ntimebin);
-    v2_dlam = fill((Float64[]),nwavbin,ntimebin);
-    v2_flag = fill((Bool[]),nwavbin,ntimebin);
-    v2_uv = fill((vcat(Float64[]',Float64[]')),nwavbin,ntimebin);
-    v2_baseline = fill((Float64[]),nwavbin,ntimebin);
-    indx_v2 = fill(Int64[],nwavbin,ntimebin);
-
-    nt3amp = zeros(Int64,nwavbin,ntimebin);
-    nt3phi = zeros(Int64,nwavbin,ntimebin);
-    t3amp = fill((Float64[]),nwavbin,ntimebin);
-    t3amp_err = fill((Float64[]),nwavbin,ntimebin);
-    t3phi = fill((Float64[]),nwavbin,ntimebin);
-    t3phi_err = fill((Float64[]),nwavbin,ntimebin);
-    t3_mjd = fill((Float64[]),nwavbin,ntimebin);
-    t3_lam = fill((Float64[]),nwavbin,ntimebin);
-    t3_dlam = fill((Float64[]),nwavbin,ntimebin);
-    t3_flag = fill((Bool[]),nwavbin,ntimebin);
-    t3_uv = fill((vcat(Float64[]',Float64[]')),nwavbin,ntimebin);
-    t3_baseline = fill((Float64[]),nwavbin,ntimebin);
-    t3_maxbaseline = fill((Float64[]),nwavbin,ntimebin);
-    indx_t3_1 = fill(Int64[],nwavbin,ntimebin);
-    indx_t3_2 = fill(Int64[],nwavbin,ntimebin);
-    indx_t3_3 = fill(Int64[],nwavbin,ntimebin);
-
-    t3_sta_index=fill((vcat(Int64[]',Int64[]',Int64[]')),nwavbin,ntimebin);
-
-    # nt4amp = zeros(Int64, nwavbin,ntimebin);
-    # nt4phi = zeros(Int64, nwavbin,ntimebin);
-    # t4amp = fill((Float64[]),nwavbin,ntimebin);
-    # t4amp_err = fill((Float64[]),nwavbin,ntimebin);
-    # t4phi = fill((Float64[]),nwavbin,ntimebin);
-    # t4phi_err = fill((Float64[]),nwavbin,ntimebin);
-    # t4_mjd = fill((Float64[]),nwavbin,ntimebin);
-    # t4_lam = fill((Float64[]),nwavbin,ntimebin);
-    # t4_dlam = fill((Float64[]),nwavbin,ntimebin);
-    # t4_flag = fill((Bool[]),nwavbin,ntimebin);
-    # t4_uv = fill((vcat(Float64[]',Float64[]')),nwavbin,ntimebin);
-    # t4_baseline = fill((Float64[]),nwavbin,ntimebin);
-    # t4_maxbaseline = fill((Float64[]),nwavbin,ntimebin);
-    # indx_t4_1 = fill(Int64[],nwavbin,ntimebin);
-    # indx_t4_2 = fill(Int64[],nwavbin,ntimebin);
-    # indx_t4_3 = fill(Int64[],nwavbin,ntimebin);
-    # indx_t4_4 = fill(Int64[],nwavbin,ntimebin);
-    # t4_sta_index=fill((vcat(Int64[]',Int64[]',Int64[]',Int64[]')),nwavbin,ntimebin);
-
-    nflux = zeros(Int64,nwavbin,ntimebin);
-    flux = fill((Float64[]),nwavbin,ntimebin);
-    flux_err = fill((Float64[]),nwavbin,ntimebin);
-    flux_mjd = fill((Float64[]),nwavbin,ntimebin);
-    flux_lam = fill((Float64[]),nwavbin,ntimebin);
-    flux_dlam = fill((Float64[]),nwavbin,ntimebin);
-    flux_flag =  fill((Bool[]),nwavbin,ntimebin);
-    flux_sta_index= fill(Int64[],nwavbin,ntimebin);
-
-    # New iteration for splitting data
-    for itimebin = 1:ntimebin
-        # combine data to one bin
-        for iwavbin = 1:nwavbin
-
-            # OPERATION 1
-            # Binning according to spectral & temporal channel
-            #
-            bin_vis=Bool[];bin_v2=Bool[];bin_t3=Bool[]; bin_t4=Bool[]
-            if splitting == true
-                if use_vis
-                bin_vis = (vis_mjd_all.<=temporalbin[itimebin][2]).&(vis_mjd_all.>=temporalbin[itimebin][1]).&(vis_lam_all.<=spectralbin[iwavbin][2]).&(vis_lam_all.>=spectralbin[iwavbin][1]);
-                end
-                if use_v2
-                bin_v2 = (v2_mjd_all.<=temporalbin[itimebin][2]).&(v2_mjd_all.>=temporalbin[itimebin][1]).&(v2_lam_all.<=spectralbin[iwavbin][2]).&(v2_lam_all.>=spectralbin[iwavbin][1]);
-                end
-                if use_t3
-                    bin_t3 = (t3_mjd_all.<=temporalbin[itimebin][2]).&(t3_mjd_all.>=temporalbin[itimebin][1]).&(t3_lam_all.<=spectralbin[iwavbin][2]).&(t3_lam_all.>=spectralbin[iwavbin][1]);
-                end
-                # if use_t4
-                #     bin_t4 = (t4_mjd_all.<=temporalbin[itimebin][2]).&(t4_mjd_all.>=temporalbin[itimebin][1]).&(t4_lam_all.<=spectralbin[iwavbin][2]).&(t4_lam_all.>=spectralbin[iwavbin][1]);
-                # end
-                if use_flux
-                bin_flux = (flux_mjd_all.<=temporalbin[itimebin][2]).&(flux_mjd_all.>=temporalbin[itimebin][1]).&(flux_lam_all.<=spectralbin[iwavbin][2]).&(flux_lam_all.>=spectralbin[iwavbin][1]);
-                end
-            else # select all
-                if use_vis
-                    bin_vis = Bool.(ones(length(visphi_all)))
-                end
-                if use_v2
-                    bin_v2 = Bool.(ones(length(v2_all)))
-                end
-                if use_t3
-                    bin_t3 = Bool.(ones(length(t3phi_all)))
-                end
-                # if use_t4
-                #     bin_t4 = Bool.(ones(length(t4amp_all)))
-                # end
-                if use_flux
-                    bin_flux = Bool.(ones(length(flux_all)))
-                end
-            end
-            if use_vis
-            visamp[iwavbin,itimebin] = visamp_all[bin_vis];
-            visamp_err[iwavbin,itimebin] = visamp_err_all[bin_vis];
-            visphi[iwavbin,itimebin] = visphi_all[bin_vis];
-            visphi_err[iwavbin,itimebin] = visphi_err_all[bin_vis];
-            vis_mjd[iwavbin,itimebin] = vis_mjd_all[bin_vis];
-            vis_lam[iwavbin,itimebin] = vis_lam_all[bin_vis];
-            vis_dlam[iwavbin,itimebin] = vis_dlam_all[bin_vis];
-            vis_flag[iwavbin,itimebin] = vis_flag_all[bin_vis];
-            vis_uv[iwavbin,itimebin] = hcat(vis_uv_all[bin_vis,1],vis_uv_all[bin_vis,2])';
-            vis_sta_index[iwavbin,itimebin]= vis_sta_index_all[:,bin_vis];
-            vis_baseline[iwavbin,itimebin] = vis_baseline_all[bin_vis];
-            nvisamp[iwavbin,itimebin] = length(visamp[iwavbin,itimebin]);
-            nvisphi[iwavbin,itimebin] = length(visphi[iwavbin,itimebin]);
-            indx_vis[iwavbin,itimebin] = collect(1:nvisamp[iwavbin,itimebin]);
-            end
-
-            if use_flux
-                flux[iwavbin,itimebin] = flux_all[bin_flux];
-                flux_err[iwavbin,itimebin] = flux_err_all[bin_flux];
-                flux_mjd[iwavbin,itimebin] = flux_mjd_all[bin_flux];
-                flux_lam[iwavbin,itimebin] = flux_lam_all[bin_flux];
-                flux_dlam[iwavbin,itimebin] = flux_dlam_all[bin_flux];
-                flux_flag[iwavbin,itimebin] = flux_flag_all[bin_flux];
-                flux_sta_index[iwavbin,itimebin] = flux_sta_index_all[bin_flux];
-                nflux[iwavbin,itimebin] = length(flux_all[bin_flux])
-            end
-
-            if use_v2
-            v2[iwavbin,itimebin] = v2_all[bin_v2];
-            v2_err[iwavbin,itimebin] = v2_err_all[bin_v2];
-            v2_mjd[iwavbin,itimebin] = v2_mjd_all[bin_v2];
-            v2_lam[iwavbin,itimebin] = v2_lam_all[bin_v2];
-            v2_dlam[iwavbin,itimebin] = v2_dlam_all[bin_v2];
-            v2_flag[iwavbin,itimebin] = v2_flag_all[bin_v2];
-            v2_uv[iwavbin,itimebin] = hcat(v2_uv_all[bin_v2,1],v2_uv_all[bin_v2,2])';
-            v2_baseline[iwavbin,itimebin] = v2_baseline_all[bin_v2];
-            v2_sta_index[iwavbin,itimebin]= v2_sta_index_all[:,bin_v2];
-            nv2[iwavbin,itimebin] = length(v2[iwavbin,itimebin]);
-            indx_v2[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin].+(1:nv2[iwavbin,itimebin]));
-            end
-
-            if use_t3
-            t3amp[iwavbin,itimebin] = t3amp_all[bin_t3];
-            t3amp_err[iwavbin,itimebin] = t3amp_err_all[bin_t3];
-            t3phi[iwavbin,itimebin] = t3phi_all[bin_t3];
-            t3phi_err[iwavbin,itimebin] = t3phi_err_all[bin_t3];
-            t3_mjd[iwavbin,itimebin] = t3_mjd_all[bin_t3];
-            t3_lam[iwavbin,itimebin] = t3_lam_all[bin_t3];
-            t3_dlam[iwavbin,itimebin] = t3_dlam_all[bin_t3];
-            t3_flag[iwavbin,itimebin] = t3_flag_all[bin_t3];
-            t3_uv[iwavbin,itimebin] = hcat(vec(t3_uv_all[bin_t3,1,:]),vec(t3_uv_all[bin_t3,2,:]))';
-            t3_baseline[iwavbin,itimebin] = t3_baseline_all[bin_t3];
-            t3_maxbaseline[iwavbin,itimebin] = t3_maxbaseline_all[bin_t3];
-            t3_sta_index[iwavbin,itimebin]= t3_sta_index_all[:,bin_t3];
-            nt3amp[iwavbin,itimebin] = length(t3amp[iwavbin,itimebin]);
-            nt3phi[iwavbin,itimebin] = length(t3phi[iwavbin,itimebin]);
-            indx_t3_1[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin].+(1:nt3amp[iwavbin,itimebin]));
-            indx_t3_2[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin].+(nt3amp[iwavbin,itimebin]+1:2*nt3amp[iwavbin,itimebin]));
-            indx_t3_3[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin].+(2*nt3amp[iwavbin,itimebin]+1:3*nt3amp[iwavbin,itimebin]));
-            end
-
-            # if use_t4 == true
-            #     t4amp[iwavbin,itimebin] = t4amp_all[bin_t4];
-            #     t4amp_err[iwavbin,itimebin] = t4amp_err_all[bin_t4];
-            #     t4phi[iwavbin,itimebin] = t4phi_all[bin_t4];
-            #     t4phi_err[iwavbin,itimebin] = t4phi_err_all[bin_t4];
-            #     t4_mjd[iwavbin,itimebin] = t4_mjd_all[bin_t4];
-            #     t4_lam[iwavbin,itimebin] = t4_lam_all[bin_t4];
-            #     t4_dlam[iwavbin,itimebin] = t4_dlam_all[bin_t4];
-            #     t4_flag[iwavbin,itimebin] = t4_flag_all[bin_t4];
-            #     t4_uv[iwavbin,itimebin] = hcat(vec(t4_uv_all[bin_t4,1,:]),vec(t4_uv_all[bin_t4,2,:]))';
-            #     t4_baseline[iwavbin,itimebin] = t4_baseline_all[bin_t4];
-            #     t4_maxbaseline[iwavbin,itimebin] = t4_maxbaseline_all[bin_t4];
-            #     t4_sta_index[iwavbin,itimebin]=t4_sta_index_all[:,bin_t4];
-            #     nt4amp[iwavbin,itimebin] = length(t4amp[iwavbin,itimebin]);
-            #     nt4phi[iwavbin,itimebin] = length(t4phi[iwavbin,itimebin]);
-            #     indx_t4_1[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin]+nt3amp[iwavbin,itimebin].+(0                          +1:nt4amp[iwavbin,itimebin]));
-            #     indx_t4_2[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin]+nt3amp[iwavbin,itimebin].+(  nt4amp[iwavbin,itimebin]+1:2*nt4amp[iwavbin,itimebin]));
-            #     indx_t4_3[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin]+nt3amp[iwavbin,itimebin].+(2*nt4amp[iwavbin,itimebin]+1:3*nt4amp[iwavbin,itimebin]));
-            #     indx_t4_4[iwavbin,itimebin] = collect(nvisamp[iwavbin,itimebin]+nv2[iwavbin,itimebin]+nt3amp[iwavbin,itimebin].+(3*nt4amp[iwavbin,itimebin]+1:4*nt4amp[iwavbin,itimebin]));
-            # end
-            #
-            # if use_t4 == true
-            #     uv[iwavbin,itimebin] = hcat(vis_uv[iwavbin,itimebin], v2_uv[iwavbin,itimebin],t3_uv[iwavbin,itimebin],t4_uv[iwavbin,itimebin]);
-            #     uv_lam[iwavbin,itimebin]  = vcat(vis_lam[iwavbin,itimebin],v2_lam[iwavbin,itimebin], repeat(t3_lam[iwavbin,itimebin],3), repeat(t4_lam[iwavbin,itimebin],4));
-            #     uv_dlam[iwavbin,itimebin] = vcat(vis_dlam[iwavbin,itimebin],v2_dlam[iwavbin,itimebin],repeat(t3_dlam[iwavbin,itimebin],3),repeat(t4_dlam[iwavbin,itimebin],4));
-            #     uv_mjd[iwavbin,itimebin]  = vcat(vis_mjd[iwavbin,itimebin],v2_mjd[iwavbin,itimebin],repeat(t3_mjd[iwavbin,itimebin],3),repeat(t4_mjd[iwavbin,itimebin],4));
-            # else
-                uv[iwavbin,itimebin] = hcat(vis_uv[iwavbin,itimebin], v2_uv[iwavbin,itimebin],t3_uv[iwavbin,itimebin]);
-                uv_lam[iwavbin,itimebin]  = vcat(vis_lam[iwavbin,itimebin], v2_lam[iwavbin,itimebin], repeat(t3_lam[iwavbin,itimebin],3));
-                uv_dlam[iwavbin,itimebin] = vcat(vis_dlam[iwavbin,itimebin], v2_dlam[iwavbin,itimebin],repeat(t3_dlam[iwavbin,itimebin],3));
-                uv_mjd[iwavbin,itimebin]  = vcat(vis_mjd[iwavbin,itimebin], v2_mjd[iwavbin,itimebin],repeat(t3_mjd[iwavbin,itimebin],3));
-            #end
-            uv_baseline[iwavbin,itimebin]  = vec(sqrt.(sum(uv[iwavbin,itimebin].^2,dims=1)));
-            nuv[iwavbin,itimebin] = size(uv[iwavbin,itimebin],2);
-            mean_mjd[iwavbin,itimebin] = mean(uv_mjd[iwavbin,itimebin]); # TODO obviously will fail if any NaN
-
-            # OPERATION 2
-            # Filtering bad points
-            #
-            if (filter_bad_data==true) # TODO: move out and make its own function
-
-                if use_vis
-
-                visamp_good =  (.!isnan.(visamp[iwavbin,itimebin] )) .& (.!isnan.(visamp_err[iwavbin,itimebin] )) .& (visamp_err[iwavbin,itimebin].>0.0)
-                visphi_good =  (.!isnan.(visphi[iwavbin,itimebin] ) ).& (.!isnan.(visphi_err[iwavbin,itimebin] )) .& (visphi_err[iwavbin,itimebin].>0.0)
-
-                vis_good = []
-                if force_full_vis == false
-                    vis_good = findall(.!vis_flag[iwavbin,itimebin] .& (visamp_good .| visphi_good) )
-                else
-                    vis_good = findall(.!vis_flag[iwavbin,itimebin] .& (visamp_good .& visphi_good) )
-                end
-
-                if special_filter_diffvis==true # if we use the diff vis filter, we need to do this after all the data has been read in
-                                                # hence at this location we won't be actually filter anything yet
-                    vis_good = findall( vis_flag[iwavbin,itimebin].!=2)
-                end
-                good_uv_vis = indx_vis[iwavbin,itimebin][vis_good];
-                visamp[iwavbin,itimebin]        = visamp[iwavbin,itimebin][vis_good];
-                visamp_err[iwavbin,itimebin]    = visamp_err[iwavbin,itimebin][vis_good];
-                visphi[iwavbin,itimebin]        = visphi[iwavbin,itimebin][vis_good];
-                visphi_err[iwavbin,itimebin]    = visphi_err[iwavbin,itimebin][vis_good];
-                nvisamp[iwavbin,itimebin]       = length(visamp[iwavbin,itimebin]);
-                nvisphi[iwavbin,itimebin]       = length(visphi[iwavbin,itimebin]);
-                vis_baseline[iwavbin,itimebin]  = vis_baseline[iwavbin,itimebin][vis_good];
-                vis_mjd[iwavbin,itimebin]       = vis_mjd[iwavbin,itimebin][vis_good];
-                vis_lam[iwavbin,itimebin]       = vis_lam[iwavbin,itimebin][vis_good];
-                vis_dlam[iwavbin,itimebin]      = vis_dlam[iwavbin,itimebin][vis_good];
-                vis_flag[iwavbin,itimebin]      = vis_flag[iwavbin,itimebin][vis_good];
-                vis_sta_index[iwavbin,itimebin] = vis_sta_index[iwavbin,itimebin][:,vis_good];
-                end
-
-                if use_v2
-                # Filter OBVIOUSLY bad V2 data
-                v2_good = findall(  (v2_flag[iwavbin,itimebin].==false) .& (v2_err[iwavbin,itimebin].>0.0)
-                .& (v2_err[iwavbin,itimebin].<1.0) .& (v2[iwavbin,itimebin].>cutoff_minv2)
-                .& (v2[iwavbin,itimebin].<cutoff_maxv2)
-                .& .!isnan.(v2[iwavbin,itimebin]) .& .!isnan.(v2_err[iwavbin,itimebin])
-                .& (abs.(v2[iwavbin,itimebin]./v2_err[iwavbin,itimebin]).>filter_v2_snr_threshold))
-
-                good_uv_v2 = indx_v2[iwavbin,itimebin][v2_good]
-
-                v2[iwavbin,itimebin]            = v2[iwavbin,itimebin][v2_good]
-                v2_err[iwavbin,itimebin]        = v2_err[iwavbin,itimebin][v2_good]
-                v2_baseline[iwavbin,itimebin]   = v2_baseline[iwavbin,itimebin][v2_good]
-                nv2[iwavbin,itimebin]           = length(v2[iwavbin,itimebin])
-                v2_mjd[iwavbin,itimebin]        = v2_mjd[iwavbin,itimebin][v2_good]
-                v2_lam[iwavbin,itimebin]        = v2_lam[iwavbin,itimebin][v2_good]
-                v2_dlam[iwavbin,itimebin]       = v2_dlam[iwavbin,itimebin][v2_good]
-                v2_flag[iwavbin,itimebin]       = v2_flag[iwavbin,itimebin][v2_good]
-                v2_sta_index[iwavbin,itimebin]  = v2_sta_index[iwavbin,itimebin][:,v2_good]
-                end
-
-
-
-                if use_t3
-                t3amp_good =  (.!isnan.(t3amp[iwavbin,itimebin] )) .& (.!isnan.(t3amp_err[iwavbin,itimebin] )) .& (t3amp_err[iwavbin,itimebin].>0.0)
-                t3phi_good =  (.!isnan.(t3phi[iwavbin,itimebin] )) .& (.!isnan.(t3phi_err[iwavbin,itimebin] )) .& (t3phi_err[iwavbin,itimebin].>0.0)
-
-                #if force_full_t3 is set to "true", then we require both t3amp and t3phi to be defined
-                t3_good = []
-                if force_full_t3 == false
-                    t3_good = findall(.!t3_flag[iwavbin,itimebin] .& (t3amp_good .| t3phi_good))
-                else
-                    t3_good = findall(.!t3_flag[iwavbin,itimebin] .& (t3amp_good .& t3phi_good) .& (t3amp[iwavbin,itimebin].>cutoff_mint3amp) .& (t3amp[iwavbin,itimebin].<cutoff_maxt3amp) )
-                end
-                good_uv_t3_1 = indx_t3_1[iwavbin,itimebin][t3_good]
-                good_uv_t3_2 = indx_t3_2[iwavbin,itimebin][t3_good]
-                good_uv_t3_3 = indx_t3_3[iwavbin,itimebin][t3_good]
-                t3amp[iwavbin,itimebin] = t3amp[iwavbin,itimebin][t3_good]
-                t3amp_err[iwavbin,itimebin] = t3amp_err[iwavbin,itimebin][t3_good]
-                t3phi[iwavbin,itimebin] = t3phi[iwavbin,itimebin][t3_good]
-                t3phi_err[iwavbin,itimebin] = t3phi_err[iwavbin,itimebin][t3_good]
-                nt3amp[iwavbin,itimebin] = length(t3amp[iwavbin,itimebin])
-                nt3phi[iwavbin,itimebin] = length(t3phi[iwavbin,itimebin])
-                t3_baseline[iwavbin,itimebin]  = t3_baseline[iwavbin,itimebin][t3_good]
-                t3_maxbaseline[iwavbin,itimebin]  = t3_maxbaseline[iwavbin,itimebin][t3_good]
-                t3_mjd[iwavbin,itimebin]  = t3_mjd[iwavbin,itimebin][t3_good]
-                t3_lam[iwavbin,itimebin]  = t3_lam[iwavbin,itimebin][t3_good]
-                t3_dlam[iwavbin,itimebin] = t3_dlam[iwavbin,itimebin][t3_good]
-                t3_flag[iwavbin,itimebin] = t3_flag[iwavbin,itimebin][t3_good]
-                t3_sta_index[iwavbin,itimebin] = t3_sta_index[iwavbin,itimebin][:,t3_good]
-                end
-
-                # if use_t4 == true
-                # t4amp_good =  (.!isnan.(t4amp[iwavbin,itimebin] )) .& (.!isnan.(t4amp_err[iwavbin,itimebin] )) .& (t4amp_err[iwavbin,itimebin].>0.0)
-                # t4phi_good =  (.!isnan.(t4phi[iwavbin,itimebin] )) .& (.!isnan.(t4phi_err[iwavbin,itimebin] )) .& (t4phi_err[iwavbin,itimebin].>0.0)
-                # # t4_good = []
-                # force_full_t4 = true;
-                # if force_full_t4 == false
-                #     t4_good = findall(.!t4_flag[iwavbin,itimebin] .& (t4amp_good .| t4phi_good) )
-                # else
-                #     t4_good = findall(.!t4_flag[iwavbin,itimebin] .& (t4amp_good .& t4phi_good) )
-                # end
-                # good_uv_t4_1 = indx_t4_1[iwavbin,itimebin][t4_good]
-                # good_uv_t4_2 = indx_t4_2[iwavbin,itimebin][t4_good]
-                # good_uv_t4_3 = indx_t4_3[iwavbin,itimebin][t4_good]
-                # good_uv_t4_4 = indx_t4_4[iwavbin,itimebin][t4_good]
-                #
-                # t4amp[iwavbin,itimebin]         = t4amp[iwavbin,itimebin][t4_good]
-                # t4amp_err[iwavbin,itimebin]     = t4amp_err[iwavbin,itimebin][t4_good]
-                # t4phi[iwavbin,itimebin]         = t4phi[iwavbin,itimebin][t4_good]
-                # t4phi_err[iwavbin,itimebin]     = t4phi_err[iwavbin,itimebin][t4_good]
-                # nt4amp[iwavbin,itimebin]        = length(t4amp[iwavbin,itimebin])
-                # nt4phi[iwavbin,itimebin]        = length(t4phi[iwavbin,itimebin])
-                # t4_baseline[iwavbin,itimebin]   = t4_baseline[iwavbin,itimebin][t4_good]
-                # t4_maxbaseline[iwavbin,itimebin]= t4_maxbaseline[iwavbin,itimebin][t4_good]
-                # t4_mjd[iwavbin,itimebin]        = t4_mjd[iwavbin,itimebin][t4_good]
-                # t4_lam[iwavbin,itimebin]        = t4_lam[iwavbin,itimebin][t4_good]
-                # t4_dlam[iwavbin,itimebin]       = t4_dlam[iwavbin,itimebin][t4_good]
-                # t4_flag[iwavbin,itimebin]       = t4_flag[iwavbin,itimebin][t4_good]
-                # t4_sta_index[iwavbin,itimebin]  = t4_sta_index[iwavbin,itimebin][:,t4_good]
-                # end
-
-                # uv points filtering
-                uv_select  = Array{Bool}(undef, size(uv[iwavbin,itimebin],2))
-                uv_select[:]  .= false;
-                if use_vis
-                uv_select[good_uv_vis] .= true
-                end
-                if use_v2
-                uv_select[good_uv_v2] .= true
-                end
-                if use_t3==true
-                uv_select[good_uv_t3_1] .= true
-                uv_select[good_uv_t3_2] .= true
-                uv_select[good_uv_t3_3] .= true
-                end
-                # if use_t4 == true
-                # uv_select[good_uv_t4_1] .= true
-                # uv_select[good_uv_t4_2] .= true
-                # uv_select[good_uv_t4_3] .= true
-                # uv_select[good_uv_t4_4] .= true
-                # end
-                #indx_conv = [sum(uv_select[1:i]) for i=1:length(uv_select)] # Performance pitfall
-                indx_conv = Array{Int64}(undef, length(uv_select))
-                acc = 0;
-                for i=1:length(uv_select)
-                    if uv_select[i]
-                        acc+=1;
-                    end
-                    indx_conv[i]=acc;
-                end
-
-                indx_uv_sel = findall(uv_select.==true)
-                uv[iwavbin,itimebin] = uv[iwavbin,itimebin][:,indx_uv_sel]
-                uv_lam[iwavbin,itimebin] = uv_lam[iwavbin,itimebin][indx_uv_sel]
-                uv_dlam[iwavbin,itimebin] = uv_dlam[iwavbin,itimebin][indx_uv_sel]
-                uv_mjd[iwavbin,itimebin] = uv_mjd[iwavbin,itimebin][indx_uv_sel]
-                uv_baseline[iwavbin,itimebin] = uv_baseline[iwavbin,itimebin][indx_uv_sel]
-                nuv[iwavbin,itimebin] = size(uv[iwavbin,itimebin],2)
-                if use_vis
-                indx_vis[iwavbin,itimebin]  = indx_conv[good_uv_vis]
-                end
-                if use_v2
-                indx_v2[iwavbin,itimebin]   = indx_conv[good_uv_v2]
-                end
-                if use_t3 == true
-                indx_t3_1[iwavbin,itimebin] = indx_conv[good_uv_t3_1]
-                indx_t3_2[iwavbin,itimebin] = indx_conv[good_uv_t3_2]
-                indx_t3_3[iwavbin,itimebin] = indx_conv[good_uv_t3_3]
-                end
-                # if use_t4 == true
-                # indx_t4_1[iwavbin,itimebin] = indx_conv[good_uv_t4_1]
-                # indx_t4_2[iwavbin,itimebin] = indx_conv[good_uv_t4_2]
-                # indx_t4_3[iwavbin,itimebin] = indx_conv[good_uv_t4_3]
-                # indx_t4_4[iwavbin,itimebin] = indx_conv[good_uv_t4_4]
-                # end
-            end
-
-
-            if (redundance_remove == true) # Remove duplicate uv points accross different data products (V2, T3, etc.)
-                #TODO: find a better heuristic for uvtol, currently uvtol=1000 works for VLTI & CHARA near-infrared
-                indx_red_conv, tokeep = rm_redundance_kdtree(uv[iwavbin,itimebin],uvtol);
-                uv[iwavbin,itimebin] = uv[iwavbin,itimebin][:,tokeep]
-                uv_lam[iwavbin,itimebin]  =  uv_lam[iwavbin,itimebin][tokeep]
-                uv_dlam[iwavbin,itimebin] =  uv_dlam[iwavbin,itimebin][tokeep]
-                uv_mjd[iwavbin,itimebin] =  uv_mjd[iwavbin,itimebin][tokeep]
-                uv_baseline[iwavbin,itimebin]  = uv_baseline[iwavbin,itimebin][tokeep];
-                nuv[iwavbin,itimebin] = size(uv[iwavbin,itimebin],2);
-                if use_vis
-                    indx_vis[iwavbin,itimebin] = indx_red_conv[indx_vis[iwavbin,itimebin]];
-                end
-                if use_v2
-                indx_v2[iwavbin,itimebin] = indx_red_conv[indx_v2[iwavbin,itimebin]];
-                end
-
-                if use_t3
-                    indx_t3_1[iwavbin,itimebin] = indx_red_conv[indx_t3_1[iwavbin,itimebin]];
-                    indx_t3_2[iwavbin,itimebin] = indx_red_conv[indx_t3_2[iwavbin,itimebin]];
-                    indx_t3_3[iwavbin,itimebin] = indx_red_conv[indx_t3_3[iwavbin,itimebin]];
-                end
-
-                # if use_t4
-                #     indx_t4_1[iwavbin,itimebin] = indx_red_conv[indx_t4_1[iwavbin,itimebin]];
-                #     indx_t4_2[iwavbin,itimebin] = indx_red_conv[indx_t4_2[iwavbin,itimebin]];
-                #     indx_t4_3[iwavbin,itimebin] = indx_red_conv[indx_t4_3[iwavbin,itimebin]];
-                #     indx_t4_4[iwavbin,itimebin] = indx_red_conv[indx_t4_4[iwavbin,itimebin]];
-                # end
-            end
-
-#            OIdataArr[iwavbin,itimebin] = OIdata( visamp[iwavbin,itimebin], visamp_err[iwavbin,itimebin], visphi[iwavbin,itimebin], visphi_err[iwavbin,itimebin], vis_baseline[iwavbin,itimebin], vis_mjd[iwavbin,itimebin], vis_lam[iwavbin,itimebin], vis_dlam[iwavbin,itimebin], vis_flag[iwavbin,itimebin], v2[iwavbin,itimebin], v2_err[iwavbin,itimebin], v2_baseline[iwavbin,itimebin], v2_mjd[iwavbin,itimebin],
-#            mean_mjd[iwavbin,itimebin], v2_lam[iwavbin,itimebin], v2_dlam[iwavbin,itimebin], v2_flag[iwavbin,itimebin], t3amp[iwavbin,itimebin], t3amp_err[iwavbin,itimebin], t3phi[iwavbin,itimebin], t3phi_err[iwavbin,itimebin], [], [], t3_baseline[iwavbin,itimebin],t3_maxbaseline[iwavbin,itimebin], t3_mjd[iwavbin,itimebin], t3_lam[iwavbin,itimebin], t3_dlam[iwavbin,itimebin], t3_flag[iwavbin,itimebin], t4amp[iwavbin,itimebin], t4amp_err[iwavbin,itimebin], t4phi[iwavbin,itimebin], t4phi_err[iwavbin,itimebin], t4_baseline[iwavbin,itimebin],t4_maxbaseline[iwavbin,itimebin],t4_mjd[iwavbin,itimebin], t4_lam[iwavbin,itimebin], t4_dlam[iwavbin,itimebin], t4_flag[iwavbin,itimebin],flux[iwavbin,itimebin], flux_err[iwavbin,itimebin], flux_mjd[iwavbin,itimebin], flux_lam[iwavbin,itimebin], flux_dlam[iwavbin,itimebin], flux_flag[iwavbin,itimebin], flux_sta_index[iwavbin,itimebin],
-#            uv[iwavbin,itimebin], uv_lam[iwavbin,itimebin], uv_dlam[iwavbin,itimebin],uv_mjd[iwavbin,itimebin], uv_baseline[iwavbin,itimebin], nflux[iwavbin,itimebin], nvisamp[iwavbin,itimebin], nvisphi[iwavbin,itimebin], nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nt4amp[iwavbin,itimebin], nt4phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_vis[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
-#            indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],indx_t4_1[iwavbin,itimebin], indx_t4_2[iwavbin,itimebin], indx_t4_3[iwavbin,itimebin],indx_t4_4[iwavbin,itimebin],new_station_name,new_telescope_name,new_station_index,vis_sta_index[iwavbin,itimebin],v2_sta_index[iwavbin,itimebin],t3_sta_index[iwavbin,itimebin], t4_sta_index[iwavbin,itimebin],oifitsfile);
-            OIdataArr[iwavbin,itimebin] = OIdata( visamp[iwavbin,itimebin], visamp_err[iwavbin,itimebin], visphi[iwavbin,itimebin], visphi_err[iwavbin,itimebin], vis_baseline[iwavbin,itimebin], vis_mjd[iwavbin,itimebin], vis_lam[iwavbin,itimebin], vis_dlam[iwavbin,itimebin], vis_flag[iwavbin,itimebin], v2[iwavbin,itimebin], v2_err[iwavbin,itimebin], v2_baseline[iwavbin,itimebin], v2_mjd[iwavbin,itimebin],
-            mean_mjd[iwavbin,itimebin], v2_lam[iwavbin,itimebin], v2_dlam[iwavbin,itimebin], v2_flag[iwavbin,itimebin], t3amp[iwavbin,itimebin], t3amp_err[iwavbin,itimebin], t3phi[iwavbin,itimebin], t3phi_err[iwavbin,itimebin], [], [], t3_baseline[iwavbin,itimebin],t3_maxbaseline[iwavbin,itimebin], t3_mjd[iwavbin,itimebin], t3_lam[iwavbin,itimebin], t3_dlam[iwavbin,itimebin], t3_flag[iwavbin,itimebin],flux[iwavbin,itimebin], flux_err[iwavbin,itimebin], flux_mjd[iwavbin,itimebin], flux_lam[iwavbin,itimebin], flux_dlam[iwavbin,itimebin], flux_flag[iwavbin,itimebin], flux_sta_index[iwavbin,itimebin], uv[iwavbin,itimebin], uv_lam[iwavbin,itimebin], uv_dlam[iwavbin,itimebin],uv_mjd[iwavbin,itimebin], uv_baseline[iwavbin,itimebin], nflux[iwavbin,itimebin], nvisamp[iwavbin,itimebin], nvisphi[iwavbin,itimebin], nv2[iwavbin,itimebin], nt3amp[iwavbin,itimebin], nt3phi[iwavbin,itimebin], nuv[iwavbin,itimebin], indx_vis[iwavbin,itimebin], indx_v2[iwavbin,itimebin],
-            indx_t3_1[iwavbin,itimebin], indx_t3_2[iwavbin,itimebin], indx_t3_3[iwavbin,itimebin],new_station_name,new_telescope_name,new_station_index,vis_sta_index[iwavbin,itimebin],v2_sta_index[iwavbin,itimebin],t3_sta_index[iwavbin,itimebin],oifitsfile);
-
-        end
-    end
-
-    # Post-treatment of data
-    #
-    if special_filter_diffvis==true # remove diffphases when data in some spectral channels have been flagged
-    for itimebin = 1:ntimebin
-        indx=findall(vec((prod(hcat([(1 .-OIdataArr[i, itimebin].vis_flag) for i=1:nwavbin]...),dims=2))).==1) # diffphi baselines for which no spectral channels are flagged
-        for i=1:nwavbin
-            OIdataArr[i,itimebin].nvisphi = length(indx)
-            OIdataArr[i,itimebin].visphi = OIdataArr[i,itimebin].visphi[indx]
-            OIdataArr[i,itimebin].visphi_err = OIdataArr[i,itimebin].visphi_err[indx]
-            OIdataArr[i,itimebin].vis_baseline = OIdataArr[i,itimebin].vis_baseline[indx]
-            OIdataArr[i,itimebin].vis_mjd = OIdataArr[i,itimebin].vis_mjd[indx]
-            OIdataArr[i,itimebin].vis_lam = OIdataArr[i,itimebin].vis_lam[indx]
-            OIdataArr[i,itimebin].vis_dlam = OIdataArr[i,itimebin].vis_dlam[indx]
-            OIdataArr[i,itimebin].vis_sta_index = OIdataArr[i,itimebin].vis_sta_index[:,indx]
-            OIdataArr[i,itimebin].vis_flag= OIdataArr[i,itimebin].vis_flag[indx]
-            OIdataArr[i,itimebin].indx_vis = OIdataArr[i,itimebin].indx_vis[indx]
-        end
-    end
-    end
-
-    return OIdataArr;
+    return (; new_station_name, new_telescope_name, new_station_index,
+              conversion_index, station_index_offset)
 end
 
-function readoifits_multiepochs(oifitsfiles; filter_bad_data=true, force_full_t3 = false) # read multiple files, each containing a single epochs
-    nepochs = length(oifitsfiles);
-    tepochs = Array{Float64}(undef, nepochs);
-    data = Array{OIdata}(undef, nepochs);
-    for i=1:nepochs
-        data[i] = readoifits(oifitsfiles[i], filter_bad_data=filter_bad_data, force_full_t3 =force_full_t3 )[1,1];
-        tepochs[i] = data[i].mean_mjd;
-        println(oifitsfiles[i], "\t MJD: ", tepochs[i], "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi);
+# ===========================================================================
+# TABLE READERS — each returns a NamedTuple of flat (all-obs merged) arrays
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# read_flux_tables
+#
+# OIFITS2 §7.1 defines two cases distinguished by the CALSTAT keyword:
+#
+#   CALSTAT = "C"  (Calibrated): source spectrum, no ARRNAME or STA_INDEX.
+#                  flux_sta_index will be zeros (no telescope association).
+#
+#   CALSTAT = "U"  (Uncalibrated): per-telescope flux.  ARRNAME and STA_INDEX
+#                  are mandatory.  We convert station indices the same way as
+#                  vis/v2/t3.  flux_sta_index stores the converted station for
+#                  every (wavelength × observation) point.
+#
+# OI_FLUX also has TARGET_ID, so we apply the same target filter as other tables.
+# ---------------------------------------------------------------------------
+function read_flux_tables(fluxtables, targetid_filter,
+                          wavtables, wavtableref,
+                          arraytableref, conversion_index, station_index_offset;
+                          correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+    flux_all = T[]; flux_err_all = T[]; flux_mjd_all = T[]
+    flux_lam_all = T[]; flux_dlam_all = T[]; flux_flag_all = Bool[]
+    flux_sta_index_all = Int64[]
+    flux_corr_idx_parts = Vector{Int64}[]
+    seen_flux_names = String[]; seen_flux_sizes = Int[]
+
+    for db in fluxtables
+        tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
+        isempty(tid_ok) && continue
+
+        wav   = _find_wav(db, wavtables, wavtableref)
+        nwave = length(wav.eff_wave)
+        nobs  = length(tid_ok)
+
+        fdata = T.(db.fluxdata[:, tid_ok])
+        ferr  = T.(db.fluxerr[:,  tid_ok])
+        fflag = Bool.(db.flag[:, tid_ok])
+        fmjd  = repeat(T.(db.mjd[tid_ok])', nwave)
+        flam  = repeat(T.(wav.eff_wave), 1, nobs)
+        fdlam = repeat(T.(wav.eff_band), 1, nobs)
+
+        # Station index: zero for calibrated spectra, converted index for uncalibrated
+        calstat = uppercase(strip(db.calstat))
+        if calstat == "U"
+            iarray = findfirst(==(db.arrname), arraytableref)
+            if !isnothing(iarray)
+                raw_si = Int.(Matrix(conversion_index[iarray,
+                    station_index_offset .+ db.sta_index[tid_ok]']))
+            else
+                raw_si = 1000 .+ station_index_offset .+ db.sta_index[tid_ok]'
+            end
+            # raw_si is 1×nobs; repeat over wavelengths → nwave×nobs, then flatten
+            fsi = vec(repeat(raw_si, nwave, 1))
+        else  # "C": calibrated source spectrum, no telescope association
+            fsi = zeros(Int64, nwave * nobs)
+        end
+
+        push!(flux_corr_idx_parts, _process_corrindx(
+            _safe_field(db, :corrname), _safe_field(db, :corrindx_fluxdata),
+            tid_ok, nwave, correlt, seen_flux_names, seen_flux_sizes))
+
+        append!(flux_all,          vec(fdata));  append!(flux_err_all,      vec(ferr))
+        append!(flux_mjd_all,      vec(fmjd));   append!(flux_lam_all,      vec(flam))
+        append!(flux_dlam_all,     vec(fdlam));  append!(flux_flag_all,     vec(fflag))
+        append!(flux_sta_index_all, fsi)
+    end
+    flux_corr_idx = isempty(seen_flux_names) ? Int64[] : vcat(flux_corr_idx_parts...)
+    flux_corr     = _assemble_corr(seen_flux_names, correlt, T)
+    return (; flux=flux_all, flux_err=flux_err_all, flux_mjd=flux_mjd_all,
+              flux_lam=flux_lam_all, flux_dlam=flux_dlam_all, flux_flag=flux_flag_all,
+              flux_sta_index=flux_sta_index_all, flux_corr, flux_corr_idx)
+end
+
+# ---------------------------------------------------------------------------
+# read_vis_tables
+# Returns vis_uv as N×2 matrix (column 1 = u/λ, column 2 = v/λ)
+# ---------------------------------------------------------------------------
+function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
+                         arraytableref, conversion_index, station_index_offset;
+                         correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+    visamp_all = T[]; visamp_err_all = T[]
+    visphi_all = T[]; visphi_err_all = T[]
+    vis_mjd_all = T[]; vis_lam_all = T[]; vis_dlam_all = T[]
+    vis_flag_all = Bool[]
+    vis_uv_all   = Matrix{T}(undef, 0, 2)   # N×2
+    vis_baseline_all  = T[]
+    vis_sta_index_all = Matrix{Int64}(undef, 2, 0)  # 2×N
+    visamp_corr_idx_parts = Vector{Int64}[]; visphi_corr_idx_parts = Vector{Int64}[]
+    seen_va_names = String[]; seen_va_sizes = Int[]
+    seen_vp_names = String[]; seen_vp_sizes = Int[]
+
+    for (itable, db) in enumerate(vistables)
+        tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
+        wav    = _find_wav(db, wavtables, wavtableref)
+        nwave  = length(wav.eff_wave)
+        vamp   = T.(db.visamp[:,    tid_ok])
+        verr   = T.(db.visamperr[:, tid_ok])
+        vphi   = T.(db.visphi[:,    tid_ok])
+        vperr  = T.(db.visphierr[:, tid_ok])
+        vmjd   = repeat(T.(db.mjd[tid_ok])', nwave)
+        vflag  = Bool.(db.flag[:, tid_ok])
+        uc     = T.(db.ucoord[tid_ok]);  vc = T.(db.vcoord[tid_ok])
+        vlam   = repeat(T.(wav.eff_wave), 1, length(tid_ok))
+        vdlam  = repeat(T.(wav.eff_band), 1, length(tid_ok))
+        vu, vv = _uv_lambda(uc, vc, T.(wav.eff_wave))
+
+        iarray = findfirst(==(db.arrname), arraytableref)
+        si = if !isnothing(iarray)
+            Matrix(conversion_index[iarray,
+                station_index_offset .+ repeat(db.sta_index[:, tid_ok], outer=[nwave, 1])])
+        else
+            1000 .+ station_index_offset .+
+                repeat(db.sta_index[:, tid_ok], outer=[nwave, 1])
+        end
+
+        cn = _safe_field(db, :corrname)
+        push!(visamp_corr_idx_parts, _process_corrindx(
+            cn, _safe_field(db, :corrindx_visamp), tid_ok, nwave, correlt, seen_va_names, seen_va_sizes))
+        push!(visphi_corr_idx_parts, _process_corrindx(
+            cn, _safe_field(db, :corrindx_visphi), tid_ok, nwave, correlt, seen_vp_names, seen_vp_sizes))
+
+        append!(visamp_all, vec(vamp));   append!(visamp_err_all, vec(verr))
+        append!(visphi_all, vec(vphi));   append!(visphi_err_all, vec(vperr))
+        append!(vis_mjd_all,  vec(vmjd)); append!(vis_lam_all,  vec(vlam))
+        append!(vis_dlam_all, vec(vdlam)); append!(vis_flag_all, vec(vflag))
+        vis_uv_all = vcat(vis_uv_all, hcat(vu, vv))
+        append!(vis_baseline_all, sqrt.(vu.^2 .+ vv.^2))
+        vis_sta_index_all = hcat(vis_sta_index_all, reshape(si, 2, div(length(si), 2)))
+    end
+    visamp_corr_idx = isempty(seen_va_names) ? Int64[] : vcat(visamp_corr_idx_parts...)
+    visphi_corr_idx = isempty(seen_vp_names) ? Int64[] : vcat(visphi_corr_idx_parts...)
+    visamp_corr = _assemble_corr(seen_va_names, correlt, T)
+    visphi_corr = _assemble_corr(seen_vp_names, correlt, T)
+    return (; visamp=visamp_all, visamp_err=visamp_err_all,
+              visphi=visphi_all, visphi_err=visphi_err_all,
+              vis_mjd=vis_mjd_all, vis_lam=vis_lam_all, vis_dlam=vis_dlam_all,
+              vis_flag=vis_flag_all, vis_uv=vis_uv_all,
+              vis_baseline=vis_baseline_all, vis_sta_index=vis_sta_index_all,
+              visamp_corr, visamp_corr_idx, visphi_corr, visphi_corr_idx)
+end
+
+# ---------------------------------------------------------------------------
+# read_v2_tables
+# ---------------------------------------------------------------------------
+function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
+                        arraytableref, conversion_index, station_index_offset;
+                        correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+    v2_all = T[]; v2_err_all = T[]
+    v2_mjd_all = T[]; v2_lam_all = T[]; v2_dlam_all = T[]
+    v2_flag_all = Bool[]
+    v2_uv_all   = Matrix{T}(undef, 0, 2)   # N×2
+    v2_baseline_all  = T[]
+    v2_sta_index_all = Matrix{Int64}(undef, 2, 0)  # 2×N
+    v2_corr_idx_parts = Vector{Int64}[]
+    seen_v2_names = String[]; seen_v2_sizes = Int[]
+
+    for (itable, db) in enumerate(v2tables)
+        tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
+        wav    = _find_wav(db, wavtables, wavtableref)
+        nwave  = length(wav.eff_wave)
+        v2d    = T.(db.vis2data[:, tid_ok])
+        v2e    = T.(db.vis2err[:,  tid_ok])
+        v2mjd  = repeat(T.(db.mjd[tid_ok])', nwave)
+        v2flag = Bool.(db.flag[:, tid_ok])
+        uc     = T.(db.ucoord[tid_ok]);  vc = T.(db.vcoord[tid_ok])
+        vlam   = repeat(T.(wav.eff_wave), 1, length(tid_ok))
+        vdlam  = repeat(T.(wav.eff_band), 1, length(tid_ok))
+        vu, vv = _uv_lambda(uc, vc, T.(wav.eff_wave))
+
+        iarray = findfirst(==(db.arrname), arraytableref)
+        si = if !isnothing(iarray)
+            Matrix(conversion_index[iarray,
+                station_index_offset .+ repeat(db.sta_index[:, tid_ok], outer=[nwave, 1])])
+        else
+            1000 .+ station_index_offset .+
+                repeat(db.sta_index[:, tid_ok], outer=[nwave, 1])
+        end
+
+        push!(v2_corr_idx_parts, _process_corrindx(
+            _safe_field(db, :corrname), _safe_field(db, :corrindx_vis2data),
+            tid_ok, nwave, correlt, seen_v2_names, seen_v2_sizes))
+
+        append!(v2_all, vec(v2d));    append!(v2_err_all, vec(v2e))
+        append!(v2_mjd_all, vec(v2mjd))
+        append!(v2_lam_all, vec(vlam)); append!(v2_dlam_all, vec(vdlam))
+        append!(v2_flag_all, vec(v2flag))
+        v2_uv_all = vcat(v2_uv_all, hcat(vu, vv))
+        append!(v2_baseline_all, sqrt.(vu.^2 .+ vv.^2))
+        v2_sta_index_all = hcat(v2_sta_index_all, reshape(si, 2, div(length(si), 2)))
+    end
+    v2_corr_idx = isempty(seen_v2_names) ? Int64[] : vcat(v2_corr_idx_parts...)
+    v2_corr     = _assemble_corr(seen_v2_names, correlt, T)
+    return (; v2=v2_all, v2_err=v2_err_all, v2_mjd=v2_mjd_all,
+              v2_lam=v2_lam_all, v2_dlam=v2_dlam_all, v2_flag=v2_flag_all,
+              v2_uv=v2_uv_all, v2_baseline=v2_baseline_all, v2_sta_index=v2_sta_index_all,
+              v2_corr, v2_corr_idx)
+end
+
+# ---------------------------------------------------------------------------
+# read_t3_tables
+# UV legs stored as separate vectors (t3_u1/v1, t3_u2/v2, t3_u3/v3) since
+# each T3 has 3 legs; they are NOT combined into a single uv matrix here.
+# ---------------------------------------------------------------------------
+function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
+                        arraytableref, conversion_index, station_index_offset;
+                        correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+    t3amp_all = T[]; t3amp_err_all = T[]
+    t3phi_all = T[]; t3phi_err_all = T[]
+    t3_mjd_all = T[]; t3_lam_all = T[]; t3_dlam_all = T[]
+    t3_flag_all = Bool[]
+    t3_u1_all = T[]; t3_v1_all = T[]
+    t3_u2_all = T[]; t3_v2_all = T[]
+    t3_u3_all = T[]; t3_v3_all = T[]
+    t3_baseline_all    = T[]
+    t3_maxbaseline_all = T[]
+    t3_sta_index_all   = Matrix{Int64}(undef, 3, 0)  # 3×N
+    t3amp_corr_idx_parts = Vector{Int64}[]; t3phi_corr_idx_parts = Vector{Int64}[]
+    seen_ta_names = String[]; seen_ta_sizes = Int[]
+    seen_tp_names = String[]; seen_tp_sizes = Int[]
+
+    for (itable, db) in enumerate(t3tables)
+        tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
+        wav    = _find_wav(db, wavtables, wavtableref)
+        nwave  = length(wav.eff_wave)
+        t3a    = T.(db.t3amp[:,    tid_ok]); t3ae = T.(db.t3amperr[:, tid_ok])
+        t3p    = T.(db.t3phi[:,    tid_ok]); t3pe = T.(db.t3phierr[:,  tid_ok])
+        t3mjd  = repeat(T.(db.mjd[tid_ok])', nwave)
+        t3flag = Bool.(db.flag[:, tid_ok])
+        u1c = T.(db.u1coord[tid_ok]); v1c = T.(db.v1coord[tid_ok])
+        u2c = T.(db.u2coord[tid_ok]); v2c = T.(db.v2coord[tid_ok])
+        u3c = -(u1c .+ u2c);          v3c = -(v1c .+ v2c)
+        tlam  = repeat(T.(wav.eff_wave), 1, length(tid_ok))
+        tdlam = repeat(T.(wav.eff_band), 1, length(tid_ok))
+        u1, v1 = _uv_lambda(u1c, v1c, T.(wav.eff_wave))
+        u2, v2 = _uv_lambda(u2c, v2c, T.(wav.eff_wave))
+        u3, v3 = _uv_lambda(u3c, v3c, T.(wav.eff_wave))
+        b1 = sqrt.(u1.^2 .+ v1.^2); b2 = sqrt.(u2.^2 .+ v2.^2); b3 = sqrt.(u3.^2 .+ v3.^2)
+
+        iarray = findfirst(==(db.arrname), arraytableref)
+        si = if !isnothing(iarray)
+            Matrix(conversion_index[iarray,
+                station_index_offset .+ repeat(db.sta_index[:, tid_ok], outer=[nwave, 1])])
+        else
+            1000 .+ station_index_offset .+
+                repeat(db.sta_index[:, tid_ok], outer=[nwave, 1])
+        end
+
+        cn = _safe_field(db, :corrname)
+        push!(t3amp_corr_idx_parts, _process_corrindx(
+            cn, _safe_field(db, :corrindx_t3amp), tid_ok, nwave, correlt, seen_ta_names, seen_ta_sizes))
+        push!(t3phi_corr_idx_parts, _process_corrindx(
+            cn, _safe_field(db, :corrindx_t3phi), tid_ok, nwave, correlt, seen_tp_names, seen_tp_sizes))
+
+        append!(t3amp_all, vec(t3a));   append!(t3amp_err_all, vec(t3ae))
+        append!(t3phi_all, vec(t3p));   append!(t3phi_err_all, vec(t3pe))
+        append!(t3_mjd_all, vec(t3mjd)); append!(t3_lam_all, vec(tlam))
+        append!(t3_dlam_all, vec(tdlam)); append!(t3_flag_all, vec(t3flag))
+        append!(t3_u1_all, u1); append!(t3_v1_all, v1)
+        append!(t3_u2_all, u2); append!(t3_v2_all, v2)
+        append!(t3_u3_all, u3); append!(t3_v3_all, v3)
+        append!(t3_baseline_all,    (b1 .* b2 .* b3) .^ (one(T)/3))
+        append!(t3_maxbaseline_all, max.(b1, b2, b3))
+        t3_sta_index_all = hcat(t3_sta_index_all, reshape(si, 3, div(length(si), 3)))
+    end
+    t3amp_corr_idx = isempty(seen_ta_names) ? Int64[] : vcat(t3amp_corr_idx_parts...)
+    t3phi_corr_idx = isempty(seen_tp_names) ? Int64[] : vcat(t3phi_corr_idx_parts...)
+    t3amp_corr = _assemble_corr(seen_ta_names, correlt, T)
+    t3phi_corr = _assemble_corr(seen_tp_names, correlt, T)
+    return (; t3amp=t3amp_all, t3amp_err=t3amp_err_all,
+              t3phi=t3phi_all, t3phi_err=t3phi_err_all,
+              t3_mjd=t3_mjd_all, t3_lam=t3_lam_all, t3_dlam=t3_dlam_all,
+              t3_flag=t3_flag_all,
+              t3_u1=t3_u1_all, t3_v1=t3_v1_all,
+              t3_u2=t3_u2_all, t3_v2=t3_v2_all,
+              t3_u3=t3_u3_all, t3_v3=t3_v3_all,
+              t3_baseline=t3_baseline_all, t3_maxbaseline=t3_maxbaseline_all,
+              t3_sta_index=t3_sta_index_all,
+              t3amp_corr, t3amp_corr_idx, t3phi_corr, t3phi_corr_idx)
+end
+
+# ===========================================================================
+# BIN-LEVEL DATA HANDLING
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# BinData{T}: mutable workspace for one (spectral × temporal) bin.
+# Holds all per-bin arrays. Passed into filter_bad_observables! and
+# remove_redundant_uv! which modify it in place, then into make_oidata.
+# ---------------------------------------------------------------------------
+mutable struct BinData{T<:AbstractFloat}
+    # VIS
+    visamp::Vector{T};         visamp_err::Vector{T}
+    visphi::Vector{T};         visphi_err::Vector{T}
+    vis_mjd::Vector{T};        vis_lam::Vector{T};    vis_dlam::Vector{T}
+    vis_flag::Vector{Bool};    vis_baseline::Vector{T}
+    vis_sta_index::Matrix{Int64}
+    indx_vis::Vector{Int64};   nvisamp::Int64;         nvisphi::Int64
+    # V2
+    v2::Vector{T};             v2_err::Vector{T}
+    v2_mjd::Vector{T};         v2_lam::Vector{T};     v2_dlam::Vector{T}
+    v2_flag::Vector{Bool};     v2_baseline::Vector{T}
+    v2_sta_index::Matrix{Int64}
+    indx_v2::Vector{Int64};    nv2::Int64
+    # T3
+    t3amp::Vector{T};          t3amp_err::Vector{T}
+    t3phi::Vector{T};          t3phi_err::Vector{T}
+    t3_mjd::Vector{T};         t3_lam::Vector{T};     t3_dlam::Vector{T}
+    t3_flag::Vector{Bool};     t3_baseline::Vector{T}; t3_maxbaseline::Vector{T}
+    t3_sta_index::Matrix{Int64}
+    indx_t3_1::Vector{Int64};  indx_t3_2::Vector{Int64}; indx_t3_3::Vector{Int64}
+    nt3amp::Int64;             nt3phi::Int64
+    # Flux
+    flux::Vector{T};           flux_err::Vector{T}
+    flux_mjd::Vector{T};       flux_lam::Vector{T};   flux_dlam::Vector{T}
+    flux_flag::Vector{Bool};   flux_sta_index::Vector{Int64};  nflux::Int64
+    # UV plane (2×nuv: row 1 = u/λ, row 2 = v/λ)
+    uv::Matrix{T};             uv_lam::Vector{T};     uv_dlam::Vector{T}
+    uv_mjd::Vector{T};         uv_baseline::Vector{T}
+    nuv::Int64;                mean_mjd::Float64
+    # Correlation matrices (empty sparse if no OI_CORR in file)
+    v2_corr::SparseMatrixCSC{T,Int64};       v2_corr_idx::Vector{Int64}
+    t3amp_corr::SparseMatrixCSC{T,Int64};    t3amp_corr_idx::Vector{Int64}
+    t3phi_corr::SparseMatrixCSC{T,Int64};    t3phi_corr_idx::Vector{Int64}
+    visamp_corr::SparseMatrixCSC{T,Int64};   visamp_corr_idx::Vector{Int64}
+    visphi_corr::SparseMatrixCSC{T,Int64};   visphi_corr_idx::Vector{Int64}
+    flux_corr::SparseMatrixCSC{T,Int64};     flux_corr_idx::Vector{Int64}
+end
+
+# ---------------------------------------------------------------------------
+# slice_to_bin: create a BinData from the flat raw arrays + boolean bin masks.
+# Also assembles the UV plane (vis columns first, then v2, then 3×t3 legs).
+# ---------------------------------------------------------------------------
+function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
+                      bin_vis, bin_v2, bin_t3, bin_flux;
+                      use_vis::Bool, use_v2::Bool, use_t3::Bool, use_flux::Bool,
+                      T::Type{<:AbstractFloat}=Float64)
+
+    # -- VIS --
+    if use_vis
+        visamp     = raw_vis.visamp[bin_vis];     visamp_err = raw_vis.visamp_err[bin_vis]
+        visphi     = raw_vis.visphi[bin_vis];     visphi_err = raw_vis.visphi_err[bin_vis]
+        vis_mjd    = raw_vis.vis_mjd[bin_vis];    vis_lam    = raw_vis.vis_lam[bin_vis]
+        vis_dlam   = raw_vis.vis_dlam[bin_vis];   vis_flag   = raw_vis.vis_flag[bin_vis]
+        vis_baseline = raw_vis.vis_baseline[bin_vis]
+        vis_uv     = hcat(raw_vis.vis_uv[bin_vis, 1], raw_vis.vis_uv[bin_vis, 2])'  # 2×nvis
+        vis_sta_index = raw_vis.vis_sta_index[:, bin_vis]
+        nvisamp    = length(visamp);  nvisphi = length(visphi)
+        indx_vis   = collect(1:nvisamp)
+        visamp_corr_idx = isempty(raw_vis.visamp_corr_idx) ? Int64[] : raw_vis.visamp_corr_idx[bin_vis]
+        visphi_corr_idx = isempty(raw_vis.visphi_corr_idx) ? Int64[] : raw_vis.visphi_corr_idx[bin_vis]
+    else
+        visamp = T[]; visamp_err = T[]; visphi = T[]; visphi_err = T[]
+        vis_mjd = T[]; vis_lam = T[]; vis_dlam = T[]
+        vis_flag = Bool[]; vis_baseline = T[]; vis_uv = Matrix{T}(undef, 2, 0)
+        vis_sta_index = Matrix{Int64}(undef, 2, 0)
+        nvisamp = 0; nvisphi = 0; indx_vis = Int64[]
+        visamp_corr_idx = Int64[]; visphi_corr_idx = Int64[]
+    end
+    visamp_corr = raw_vis.visamp_corr;  visphi_corr = raw_vis.visphi_corr
+
+    # -- V2 --
+    if use_v2
+        v2      = raw_v2.v2[bin_v2];       v2_err   = raw_v2.v2_err[bin_v2]
+        v2_mjd  = raw_v2.v2_mjd[bin_v2];   v2_lam   = raw_v2.v2_lam[bin_v2]
+        v2_dlam = raw_v2.v2_dlam[bin_v2];  v2_flag  = raw_v2.v2_flag[bin_v2]
+        v2_baseline = raw_v2.v2_baseline[bin_v2]
+        v2_uv   = hcat(raw_v2.v2_uv[bin_v2, 1], raw_v2.v2_uv[bin_v2, 2])'  # 2×nv2
+        v2_sta_index = raw_v2.v2_sta_index[:, bin_v2]
+        nv2     = length(v2)
+        indx_v2 = collect(nvisamp .+ (1:nv2))
+        v2_corr_idx = isempty(raw_v2.v2_corr_idx) ? Int64[] : raw_v2.v2_corr_idx[bin_v2]
+    else
+        v2 = T[]; v2_err = T[]; v2_mjd = T[]; v2_lam = T[]; v2_dlam = T[]
+        v2_flag = Bool[]; v2_baseline = T[]; v2_uv = Matrix{T}(undef, 2, 0)
+        v2_sta_index = Matrix{Int64}(undef, 2, 0)
+        nv2 = 0; indx_v2 = Int64[]
+        v2_corr_idx = Int64[]
+    end
+    v2_corr = raw_v2.v2_corr
+
+    # -- T3 --
+    if use_t3
+        t3amp    = raw_t3.t3amp[bin_t3];    t3amp_err  = raw_t3.t3amp_err[bin_t3]
+        t3phi    = raw_t3.t3phi[bin_t3];    t3phi_err  = raw_t3.t3phi_err[bin_t3]
+        t3_mjd   = raw_t3.t3_mjd[bin_t3];   t3_lam   = raw_t3.t3_lam[bin_t3]
+        t3_dlam  = raw_t3.t3_dlam[bin_t3];  t3_flag  = raw_t3.t3_flag[bin_t3]
+        t3_baseline    = raw_t3.t3_baseline[bin_t3]
+        t3_maxbaseline = raw_t3.t3_maxbaseline[bin_t3]
+        t3_sta_index   = raw_t3.t3_sta_index[:, bin_t3]
+        nt3amp = length(t3amp);  nt3phi = length(t3phi);  nt3 = nt3amp
+        off    = nvisamp + nv2
+        indx_t3_1 = collect(off .+ (1:nt3))
+        indx_t3_2 = collect(off .+ (nt3+1:2nt3))
+        indx_t3_3 = collect(off .+ (2nt3+1:3nt3))
+        t3amp_corr_idx = isempty(raw_t3.t3amp_corr_idx) ? Int64[] : raw_t3.t3amp_corr_idx[bin_t3]
+        t3phi_corr_idx = isempty(raw_t3.t3phi_corr_idx) ? Int64[] : raw_t3.t3phi_corr_idx[bin_t3]
+    else
+        t3amp = T[]; t3amp_err = T[]; t3phi = T[]; t3phi_err = T[]
+        t3_mjd = T[]; t3_lam = T[]; t3_dlam = T[]; t3_flag = Bool[]
+        t3_baseline = T[]; t3_maxbaseline = T[]; t3_sta_index = Matrix{Int64}(undef, 3, 0)
+        nt3amp = 0; nt3phi = 0; indx_t3_1 = Int64[]; indx_t3_2 = Int64[]; indx_t3_3 = Int64[]
+        t3amp_corr_idx = Int64[]; t3phi_corr_idx = Int64[]
+    end
+    t3amp_corr = raw_t3.t3amp_corr;  t3phi_corr = raw_t3.t3phi_corr
+
+    # -- Flux --
+    if use_flux
+        flux      = raw_flux.flux[bin_flux];      flux_err  = raw_flux.flux_err[bin_flux]
+        flux_mjd  = raw_flux.flux_mjd[bin_flux];  flux_lam  = raw_flux.flux_lam[bin_flux]
+        flux_dlam = raw_flux.flux_dlam[bin_flux]; flux_flag = raw_flux.flux_flag[bin_flux]
+        flux_sta_index = raw_flux.flux_sta_index[bin_flux]
+        nflux     = length(flux)
+        flux_corr_idx = isempty(raw_flux.flux_corr_idx) ? Int64[] : raw_flux.flux_corr_idx[bin_flux]
+    else
+        flux = T[]; flux_err = T[]; flux_mjd = T[]; flux_lam = T[]
+        flux_dlam = T[]; flux_flag = Bool[]; flux_sta_index = Int64[]; nflux = 0
+        flux_corr_idx = Int64[]
+    end
+    flux_corr = raw_flux.flux_corr
+
+    # -- Assemble UV plane (2×nuv) --
+    t3_uv = use_t3 ? hcat(
+        hcat(raw_t3.t3_u1[bin_t3], raw_t3.t3_v1[bin_t3])',
+        hcat(raw_t3.t3_u2[bin_t3], raw_t3.t3_v2[bin_t3])',
+        hcat(raw_t3.t3_u3[bin_t3], raw_t3.t3_v3[bin_t3])') : Matrix{T}(undef, 2, 0)
+
+    uv = hcat(vis_uv, v2_uv, t3_uv)
+    uv_lam  = vcat(use_vis ? vis_lam  : T[], use_v2 ? v2_lam  : T[], use_t3 ? repeat(t3_lam,  3) : T[])
+    uv_dlam = vcat(use_vis ? vis_dlam : T[], use_v2 ? v2_dlam : T[], use_t3 ? repeat(t3_dlam, 3) : T[])
+    uv_mjd  = vcat(use_vis ? vis_mjd  : T[], use_v2 ? v2_mjd  : T[], use_t3 ? repeat(t3_mjd,  3) : T[])
+    uv_baseline = vec(sqrt.(sum(uv.^2, dims=1)))
+    nuv      = size(uv, 2)
+    mean_mjd = isempty(uv_mjd) ? 0.0 : Float64(mean(uv_mjd))
+
+    return BinData{T}(
+        visamp, visamp_err, visphi, visphi_err,
+        vis_mjd, vis_lam, vis_dlam, vis_flag, vis_baseline, vis_sta_index,
+        indx_vis, nvisamp, nvisphi,
+        v2, v2_err, v2_mjd, v2_lam, v2_dlam, v2_flag, v2_baseline, v2_sta_index,
+        indx_v2, nv2,
+        t3amp, t3amp_err, t3phi, t3phi_err,
+        t3_mjd, t3_lam, t3_dlam, t3_flag, t3_baseline, t3_maxbaseline, t3_sta_index,
+        indx_t3_1, indx_t3_2, indx_t3_3, nt3amp, nt3phi,
+        flux, flux_err, flux_mjd, flux_lam, flux_dlam, flux_flag, flux_sta_index, nflux,
+        uv, uv_lam, uv_dlam, uv_mjd, uv_baseline, nuv, mean_mjd,
+        v2_corr,     v2_corr_idx,
+        t3amp_corr,  t3amp_corr_idx,
+        t3phi_corr,  t3phi_corr_idx,
+        visamp_corr, visamp_corr_idx,
+        visphi_corr, visphi_corr_idx,
+        flux_corr,   flux_corr_idx,
+    )
+end
+
+# ---------------------------------------------------------------------------
+# filter_bad_observables!: remove flagged/NaN/out-of-range data in-place,
+# then prune the UV plane to only the points still referenced.
+# ---------------------------------------------------------------------------
+function filter_bad_observables!(bd::BinData{T};
+        use_vis::Bool, use_v2::Bool, use_t3::Bool,
+        force_full_vis::Bool, force_full_t3::Bool, special_filter_diffvis::Bool,
+        cutoff_minv2::Real, cutoff_maxv2::Real,
+        cutoff_mint3amp::Real, cutoff_maxt3amp::Real,
+        filter_v2_snr_threshold::Real) where T
+
+    good_uv_vis  = Int64[]; good_uv_v2   = Int64[]
+    good_uv_t3_1 = Int64[]; good_uv_t3_2 = Int64[]; good_uv_t3_3 = Int64[]
+
+    if use_vis
+        va_ok = (.!isnan.(bd.visamp)) .& (.!isnan.(bd.visamp_err)) .& (bd.visamp_err .> 0)
+        vp_ok = (.!isnan.(bd.visphi)) .& (.!isnan.(bd.visphi_err)) .& (bd.visphi_err .> 0)
+        vis_good = force_full_vis ?
+            findall(.!bd.vis_flag .& (va_ok .& vp_ok)) :
+            findall(.!bd.vis_flag .& (va_ok .| vp_ok))
+        special_filter_diffvis && (vis_good = findall(.!bd.vis_flag .& va_ok .& vp_ok))
+        good_uv_vis          = bd.indx_vis[vis_good]
+        bd.visamp            = bd.visamp[vis_good];    bd.visamp_err    = bd.visamp_err[vis_good]
+        bd.visphi            = bd.visphi[vis_good];    bd.visphi_err    = bd.visphi_err[vis_good]
+        bd.nvisamp           = length(bd.visamp);       bd.nvisphi       = length(bd.visphi)
+        bd.vis_baseline      = bd.vis_baseline[vis_good]
+        bd.vis_mjd           = bd.vis_mjd[vis_good];   bd.vis_lam       = bd.vis_lam[vis_good]
+        bd.vis_dlam          = bd.vis_dlam[vis_good];  bd.vis_flag      = bd.vis_flag[vis_good]
+        bd.vis_sta_index     = bd.vis_sta_index[:, vis_good]
+        !isempty(bd.visamp_corr_idx) && (bd.visamp_corr_idx = bd.visamp_corr_idx[vis_good])
+        !isempty(bd.visphi_corr_idx) && (bd.visphi_corr_idx = bd.visphi_corr_idx[vis_good])
+    end
+
+    if use_v2
+        v2_good = findall(
+            (.!bd.v2_flag) .& (bd.v2_err .> 0) .& (bd.v2_err .< 1) .&
+            (bd.v2 .> cutoff_minv2) .& (bd.v2 .< cutoff_maxv2) .&
+            .!isnan.(bd.v2) .& .!isnan.(bd.v2_err) .&
+            (abs.(bd.v2 ./ bd.v2_err) .> filter_v2_snr_threshold))
+        good_uv_v2           = bd.indx_v2[v2_good]
+        bd.v2                = bd.v2[v2_good];         bd.v2_err        = bd.v2_err[v2_good]
+        bd.v2_baseline       = bd.v2_baseline[v2_good]; bd.nv2          = length(bd.v2)
+        bd.v2_mjd            = bd.v2_mjd[v2_good];    bd.v2_lam        = bd.v2_lam[v2_good]
+        bd.v2_dlam           = bd.v2_dlam[v2_good];   bd.v2_flag       = bd.v2_flag[v2_good]
+        bd.v2_sta_index      = bd.v2_sta_index[:, v2_good]
+        !isempty(bd.v2_corr_idx) && (bd.v2_corr_idx = bd.v2_corr_idx[v2_good])
+    end
+
+    if use_t3
+        ta_ok = (.!isnan.(bd.t3amp)) .& (.!isnan.(bd.t3amp_err)) .& (bd.t3amp_err .> 0)
+        tp_ok = (.!isnan.(bd.t3phi)) .& (.!isnan.(bd.t3phi_err)) .& (bd.t3phi_err .> 0)
+        t3_good = force_full_t3 ?
+            findall(.!bd.t3_flag .& ta_ok .& tp_ok .& (bd.t3amp .> cutoff_mint3amp) .& (bd.t3amp .< cutoff_maxt3amp)) :
+            findall(.!bd.t3_flag .& (ta_ok .| tp_ok))
+        good_uv_t3_1         = bd.indx_t3_1[t3_good]
+        good_uv_t3_2         = bd.indx_t3_2[t3_good]
+        good_uv_t3_3         = bd.indx_t3_3[t3_good]
+        bd.t3amp             = bd.t3amp[t3_good];      bd.t3amp_err     = bd.t3amp_err[t3_good]
+        bd.t3phi             = bd.t3phi[t3_good];      bd.t3phi_err     = bd.t3phi_err[t3_good]
+        bd.nt3amp            = length(bd.t3amp);        bd.nt3phi        = length(bd.t3phi)
+        bd.t3_baseline       = bd.t3_baseline[t3_good]; bd.t3_maxbaseline = bd.t3_maxbaseline[t3_good]
+        bd.t3_mjd            = bd.t3_mjd[t3_good];    bd.t3_lam        = bd.t3_lam[t3_good]
+        bd.t3_dlam           = bd.t3_dlam[t3_good];   bd.t3_flag       = bd.t3_flag[t3_good]
+        bd.t3_sta_index      = bd.t3_sta_index[:, t3_good]
+        !isempty(bd.t3amp_corr_idx) && (bd.t3amp_corr_idx = bd.t3amp_corr_idx[t3_good])
+        !isempty(bd.t3phi_corr_idx) && (bd.t3phi_corr_idx = bd.t3phi_corr_idx[t3_good])
+    end
+
+    # Prune UV plane: keep only points still referenced by surviving observables
+    uv_sel = falses(bd.nuv)
+    isempty(good_uv_vis)  || (uv_sel[good_uv_vis]  .= true)
+    isempty(good_uv_v2)   || (uv_sel[good_uv_v2]   .= true)
+    isempty(good_uv_t3_1) || (uv_sel[good_uv_t3_1] .= true)
+    isempty(good_uv_t3_2) || (uv_sel[good_uv_t3_2] .= true)
+    isempty(good_uv_t3_3) || (uv_sel[good_uv_t3_3] .= true)
+
+    iconv = cumsum(uv_sel); sel = findall(uv_sel)
+    bd.uv          = bd.uv[:, sel];      bd.uv_lam      = bd.uv_lam[sel]
+    bd.uv_dlam     = bd.uv_dlam[sel];    bd.uv_mjd      = bd.uv_mjd[sel]
+    bd.uv_baseline = bd.uv_baseline[sel]; bd.nuv        = size(bd.uv, 2)
+
+    isempty(good_uv_vis)  || (bd.indx_vis   = iconv[good_uv_vis])
+    isempty(good_uv_v2)   || (bd.indx_v2    = iconv[good_uv_v2])
+    isempty(good_uv_t3_1) || (bd.indx_t3_1  = iconv[good_uv_t3_1])
+    isempty(good_uv_t3_2) || (bd.indx_t3_2  = iconv[good_uv_t3_2])
+    isempty(good_uv_t3_3) || (bd.indx_t3_3  = iconv[good_uv_t3_3])
+    bd.mean_mjd = isempty(bd.uv_mjd) ? 0.0 : Float64(mean(bd.uv_mjd))
+    return bd
+end
+
+# ---------------------------------------------------------------------------
+# remove_redundant_uv!(bd::BinData) — UV deduplication, BinData overload
+# ---------------------------------------------------------------------------
+function remove_redundant_uv!(bd::BinData{T}; uvtol::Float64=2e2) where T
+    isempty(bd.uv) && return bd
+    iconv, tokeep    = rm_redundance_kdtree(bd.uv, uvtol)
+    bd.uv            = bd.uv[:, tokeep];  bd.uv_lam  = bd.uv_lam[tokeep]
+    bd.uv_dlam       = bd.uv_dlam[tokeep]; bd.uv_mjd = bd.uv_mjd[tokeep]
+    bd.uv_baseline   = bd.uv_baseline[tokeep]; bd.nuv = length(tokeep)
+    !isempty(bd.indx_vis)   && (bd.indx_vis   = iconv[bd.indx_vis])
+    !isempty(bd.indx_v2)    && (bd.indx_v2    = iconv[bd.indx_v2])
+    !isempty(bd.indx_t3_1)  && (bd.indx_t3_1  = iconv[bd.indx_t3_1])
+    !isempty(bd.indx_t3_2)  && (bd.indx_t3_2  = iconv[bd.indx_t3_2])
+    !isempty(bd.indx_t3_3)  && (bd.indx_t3_3  = iconv[bd.indx_t3_3])
+    return bd
+end
+
+# ---------------------------------------------------------------------------
+# make_oidata: package a BinData + shared station info into OIdata{T}
+# ---------------------------------------------------------------------------
+function make_oidata(bd::BinData{T}, station_info, filename::String) where T
+    return OIdata{T}(
+        bd.visamp, bd.visamp_err, bd.visphi, bd.visphi_err,
+        bd.vis_baseline, bd.vis_mjd, bd.vis_lam, bd.vis_dlam, bd.vis_flag,
+        bd.v2, bd.v2_err, bd.v2_baseline, bd.v2_mjd, bd.mean_mjd,
+        bd.v2_lam, bd.v2_dlam, bd.v2_flag,
+        bd.t3amp, bd.t3amp_err, bd.t3phi, bd.t3phi_err,
+        T[], T[],            # vonmises fields (computed separately)
+        bd.t3_baseline, bd.t3_maxbaseline,
+        bd.t3_mjd, bd.t3_lam, bd.t3_dlam, bd.t3_flag,
+        bd.flux, bd.flux_err, bd.flux_mjd, bd.flux_lam, bd.flux_dlam, bd.flux_flag,
+        bd.flux_sta_index,
+        bd.uv, bd.uv_lam, bd.uv_dlam, bd.uv_mjd, bd.uv_baseline,
+        bd.nflux, bd.nvisamp, bd.nvisphi, bd.nv2, bd.nt3amp, bd.nt3phi, bd.nuv,
+        bd.indx_vis, bd.indx_v2, bd.indx_t3_1, bd.indx_t3_2, bd.indx_t3_3,
+        station_info.new_station_name, station_info.new_telescope_name, station_info.new_station_index,
+        bd.vis_sta_index, bd.v2_sta_index, bd.t3_sta_index,
+        bd.v2_corr,     bd.v2_corr_idx,
+        bd.t3amp_corr,  bd.t3amp_corr_idx,
+        bd.t3phi_corr,  bd.t3phi_corr_idx,
+        bd.visamp_corr, bd.visamp_corr_idx,
+        bd.visphi_corr, bd.visphi_corr_idx,
+        bd.flux_corr,   bd.flux_corr_idx,
+        filename
+    )
+end
+
+# ===========================================================================
+# readoifits — main entry point
+# ===========================================================================
+function readoifits(oifitsfile;
+        targetname        = "",
+        spectralbin       = [[]],
+        temporalbin       = [[]],
+        splitting         = false,
+        polychromatic     = false,
+        get_specbin_file  = true,
+        get_timebin_file  = true,
+        redundance_remove = true,
+        uvtol             = 2e2,
+        filter_bad_data   = true,
+        force_full_vis    = false,
+        force_full_t3     = false,
+        filter_v2_snr_threshold = 0.01,
+        use_vis   = true, use_v2  = true, use_t3   = true,
+        use_t4    = true, use_flux = true,
+        cutoff_minv2    = -1,   cutoff_maxv2    = 2.0,
+        cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
+        special_filter_diffvis = false,
+        verb = true,
+        T::Type{<:AbstractFloat} = Float64)
+
+    if !isfile(oifitsfile)
+        @error("readoifits could not locate the requested data file — please check path")
+        return [[]]
+    end
+
+    ds = load_oifits(oifitsfile)
+
+    # ---- Build OI_CORR lookup: corrname → symmetric SparseMatrixCSC ----------
+    correlt = Dict{String, SparseMatrixCSC{T,Int64}}()
+    try
+        for ct in ds.correl
+            correlt[ct.corrname] = _build_corr_sparse(ct; T)
+        end
+    catch
+    end
+
+    # ---- Validate and extract tables ----------------------------------------
+    wavtables    = ds.instr;  isempty(wavtables)   && error("No OI_WAVELENGTH table in $oifitsfile")
+    arraytables  = ds.array;  isempty(arraytables)  && error("No OI_ARRAY table in $oifitsfile")
+    wavtableref  = [db.insname for db in wavtables]
+    arraytableref = [db.arrname for db in arraytables]
+
+    # ---- Target filtering ---------------------------------------------------
+    tgt = ds.target
+    all_target_ids   = [tgt[i].target_id for i in 1:length(tgt)]
+    all_target_names = [tgt[i].target    for i in 1:length(tgt)]
+    if !isempty(all_target_ids) && minimum(all_target_ids) == 0 && verb
+        @warn("OI_TARGET does not follow OIFITSv2 standard — target indexing should start at 1, not 0.")
+    end
+    if targetname != ""
+        targetid_filter = all_target_ids[findall(all_target_names .== targetname)]
+        isempty(targetid_filter) && error("Target '$targetname' not found in $oifitsfile")
+    else
+        targetid_filter = unique(all_target_ids)
+    end
+
+    # ---- Observable table availability --------------------------------------
+    fluxtables = ds.flux;  use_flux = use_flux && !isempty(fluxtables)
+    vistables  = ds.vis;   use_vis  = use_vis  && !isempty(vistables)
+    v2tables   = ds.vis2;  use_v2   = use_v2   && !isempty(v2tables)
+    t3tables   = ds.t3;    use_t3   = use_t3   && !isempty(t3tables)
+
+    # ---- Station indexing ---------------------------------------------------
+    station_info = collect_station_info(arraytables, v2tables, t3tables, arraytableref; verb)
+    ci = station_info.conversion_index
+    so = station_info.station_index_offset
+
+    # ---- Read and flatten all observable tables -----------------------------
+    _ec = spzeros(T, 0, 0)   # empty corr matrix sentinel
+    raw_flux = use_flux ? read_flux_tables(fluxtables, targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+               (; flux=T[], flux_err=T[], flux_mjd=T[], flux_lam=T[], flux_dlam=T[], flux_flag=Bool[], flux_sta_index=Int64[],
+                  flux_corr=_ec, flux_corr_idx=Int64[])
+    raw_vis  = use_vis  ? read_vis_tables(vistables,  targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+               (; visamp=T[], visamp_err=T[], visphi=T[], visphi_err=T[], vis_mjd=T[], vis_lam=T[], vis_dlam=T[], vis_flag=Bool[],
+                  vis_uv=Matrix{T}(undef,0,2), vis_baseline=T[], vis_sta_index=Matrix{Int64}(undef,2,0),
+                  visamp_corr=_ec, visamp_corr_idx=Int64[], visphi_corr=_ec, visphi_corr_idx=Int64[])
+    raw_v2   = use_v2   ? read_v2_tables(v2tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+               (; v2=T[], v2_err=T[], v2_mjd=T[], v2_lam=T[], v2_dlam=T[], v2_flag=Bool[],
+                  v2_uv=Matrix{T}(undef,0,2), v2_baseline=T[], v2_sta_index=Matrix{Int64}(undef,2,0),
+                  v2_corr=_ec, v2_corr_idx=Int64[])
+    raw_t3   = use_t3   ? read_t3_tables(t3tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+               (; t3amp=T[], t3amp_err=T[], t3phi=T[], t3phi_err=T[], t3_mjd=T[], t3_lam=T[], t3_dlam=T[], t3_flag=Bool[],
+                  t3_u1=T[], t3_v1=T[], t3_u2=T[], t3_v2=T[], t3_u3=T[], t3_v3=T[], t3_baseline=T[], t3_maxbaseline=T[],
+                  t3_sta_index=Matrix{Int64}(undef,3,0),
+                  t3amp_corr=_ec, t3amp_corr_idx=Int64[], t3phi_corr=_ec, t3phi_corr_idx=Int64[])
+
+    # ---- Determine spectral / temporal bins ---------------------------------
+    splitting = splitting || polychromatic || temporalbin != [[]] || spectralbin != [[]]
+
+    if temporalbin == [[]] && get_timebin_file
+        mjd_all = vcat(
+            use_vis  ? raw_vis.vis_mjd   : T[],
+            use_v2   ? raw_v2.v2_mjd     : T[],
+            use_t3   ? raw_t3.t3_mjd     : T[],
+            use_flux ? raw_flux.flux_mjd : T[])
+        temporalbin = [[minimum(mjd_all) - 0.001, maximum(mjd_all) + 0.001]]
+    end
+
+    if spectralbin == [[]] && get_specbin_file && !polychromatic
+        lam_all  = vcat(use_vis ? raw_vis.vis_lam : T[], use_v2 ? raw_v2.v2_lam : T[], use_t3 ? raw_t3.t3_lam : T[], use_flux ? raw_flux.flux_lam : T[])
+        dlam_all = vcat(use_vis ? raw_vis.vis_dlam : T[], use_v2 ? raw_v2.v2_dlam : T[], use_t3 ? raw_t3.t3_dlam : T[], use_flux ? raw_flux.flux_dlam : T[])
+        spectralbin = [[minimum(lam_all) - 0.5*minimum(dlam_all[argmin(lam_all)]),
+                        maximum(lam_all) + 0.5*maximum(dlam_all[argmax(lam_all)])]]
+    end
+
+    if polychromatic && get_specbin_file
+        length(wavtables) > 1 &&
+            @warn("Multiple OI_WAVELENGTH tables — please specify spectralbin to select channels.")
+        wavarray = vcat([sort(hcat(db.eff_wave .- db.eff_band/2,
+                                   db.eff_wave .+ db.eff_band/2), dims=1) for db in wavtables]...)
+        if sum(wavarray[2:end, 2] .< wavarray[1:end-1, 1]) > 0
+            @warn("Overlapping wavebands — using narrower bands for polychromatic channel selection.")
+            wavarray = vcat([hcat(db.eff_wave .- db.eff_band/2.2,
+                                   db.eff_wave .+ db.eff_band/2.2) for db in wavtables]...)
+        end
+        spectralbin = [wavarray[i, :] for i in 1:size(wavarray, 1)]
+    end
+
+    nwavbin  = length(spectralbin)
+    ntimebin = length(temporalbin)
+    OIdataArr = Array{OIdata{T}}(undef, nwavbin, ntimebin)
+
+    # ---- Main binning / filtering loop --------------------------------------
+    for itimebin in 1:ntimebin, iwavbin in 1:nwavbin
+        if splitting
+            tlo, thi = temporalbin[itimebin][1], temporalbin[itimebin][2]
+            wlo, whi = spectralbin[iwavbin][1],  spectralbin[iwavbin][2]
+            bin_vis  = use_vis  ? (raw_vis.vis_mjd   .>= tlo .&& raw_vis.vis_mjd   .<= thi .&& raw_vis.vis_lam   .>= wlo .&& raw_vis.vis_lam   .<= whi) : Bool[]
+            bin_v2   = use_v2   ? (raw_v2.v2_mjd     .>= tlo .&& raw_v2.v2_mjd     .<= thi .&& raw_v2.v2_lam     .>= wlo .&& raw_v2.v2_lam     .<= whi) : Bool[]
+            bin_t3   = use_t3   ? (raw_t3.t3_mjd     .>= tlo .&& raw_t3.t3_mjd     .<= thi .&& raw_t3.t3_lam     .>= wlo .&& raw_t3.t3_lam     .<= whi) : Bool[]
+            bin_flux = use_flux ? (raw_flux.flux_mjd .>= tlo .&& raw_flux.flux_mjd .<= thi .&& raw_flux.flux_lam .>= wlo .&& raw_flux.flux_lam .<= whi) : Bool[]
+        else
+            bin_vis  = use_vis  ? trues(length(raw_vis.visphi))   : Bool[]
+            bin_v2   = use_v2   ? trues(length(raw_v2.v2))        : Bool[]
+            bin_t3   = use_t3   ? trues(length(raw_t3.t3phi))     : Bool[]
+            bin_flux = use_flux ? trues(length(raw_flux.flux))    : Bool[]
+        end
+
+        bd = slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
+                          bin_vis, bin_v2, bin_t3, bin_flux;
+                          use_vis, use_v2, use_t3, use_flux, T)
+
+        filter_bad_data && filter_bad_observables!(bd;
+            use_vis, use_v2, use_t3, force_full_vis, force_full_t3,
+            special_filter_diffvis, cutoff_minv2, cutoff_maxv2,
+            cutoff_mint3amp, cutoff_maxt3amp, filter_v2_snr_threshold)
+
+        redundance_remove && remove_redundant_uv!(bd; uvtol)
+
+        OIdataArr[iwavbin, itimebin] = make_oidata(bd, station_info, oifitsfile)
+    end
+
+    # ---- Post-treatment: cross-bin differential visibility filter -----------
+    if special_filter_diffvis
+        for itimebin in 1:ntimebin
+            indx = findall(vec(prod(hcat([
+                (1 .- OIdataArr[i,itimebin].vis_flag) for i in 1:nwavbin]...), dims=2)) .== 1)
+            for i in 1:nwavbin
+                d = OIdataArr[i,itimebin]
+                d.nvisphi       = length(indx)
+                d.visphi        = d.visphi[indx];        d.visphi_err    = d.visphi_err[indx]
+                d.vis_baseline  = d.vis_baseline[indx];  d.vis_mjd       = d.vis_mjd[indx]
+                d.vis_lam       = d.vis_lam[indx];       d.vis_dlam      = d.vis_dlam[indx]
+                d.vis_sta_index = d.vis_sta_index[:, indx]
+                d.vis_flag      = d.vis_flag[indx];      d.indx_vis      = d.indx_vis[indx]
+                !isempty(d.visphi_corr_idx) && (d.visphi_corr_idx = d.visphi_corr_idx[indx])
+            end
+        end
+    end
+
+    return OIdataArr
+end
+
+# ===========================================================================
+# Convenience wrappers
+# ===========================================================================
+
+function readoifits_multiepochs(oifitsfiles; filter_bad_data=true, force_full_t3=false,
+                                T::Type{<:AbstractFloat}=Float64)
+    nepochs = length(oifitsfiles)
+    tepochs = Vector{Float64}(undef, nepochs)
+    data    = Vector{OIdata{T}}(undef, nepochs)
+    for i in 1:nepochs
+        data[i]    = readoifits(oifitsfiles[i]; filter_bad_data, force_full_t3, T)[1,1]
+        tepochs[i] = data[i].mean_mjd
+        println(oifitsfiles[i], "\t MJD: ", tepochs[i],
+                "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp,
+                "\t nT3phi = ", data[i].nt3phi)
     end
     return nepochs, tepochs, data
 end
 
-function readoifits_multicolors(oifitsfiles; filter_bad_data=false,  force_full_t3 = false) # read multiple files, each containing a single wavelength
-    nwavs = length(oifitsfiles);
-    data = Array{OIdata}(undef, nwavs);
-    for i=1:nwavs
-        data[i] = readoifits(oifitsfiles[i], filter_bad_data=filter_bad_data, force_full_t3 =force_full_t3 )[1,1];
-        println(oifitsfiles[i], "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi);
+function readoifits_multicolors(oifitsfiles; filter_bad_data=false, force_full_t3=false,
+                                T::Type{<:AbstractFloat}=Float64)
+    nwavs = length(oifitsfiles)
+    data  = Vector{OIdata{T}}(undef, nwavs)
+    for i in 1:nwavs
+        data[i] = readoifits(oifitsfiles[i]; filter_bad_data, force_full_t3, T)[1,1]
+        println(oifitsfiles[i], "\t nV2 = ", data[i].nv2,
+                "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi)
     end
     return data
 end
 
-# period in days
-function time_split(mjd,period;mjd_start=mjd[1])
-    timebins = (maximum(mjd) - mjd_start)/(period);
-    itimebin = Int(ceil(timebins));
-    temporalbin = [[],[]];
-    temporalbin[1] = [mjd_start,mjd_start+period];
-    temporalbin[2] = [mjd_start+period,mjd_start+2*period];
-    for i = 3:itimebin
-        temporalbin[2] = vcat(temporalbin[2],mjd_start+(i-1)*period);
-        temporalbin[2] = vcat(temporalbin[2],mjd_start+(i)*period);
-    end
-    return temporalbin
+# ===========================================================================
+# FITS file utilities
+# ===========================================================================
+
+function readfits(fitsfile; normalize=false, vectorize=false)
+    x = read((FITS(fitsfile))[1])
+    normalize  && (x ./= sum(x))
+    vectorize  && (x = vec(x))
+    return x
 end
 
-function readfits(fitsfile; normalize = false, vectorize=false)
-    x = (read((FITS(fitsfile))[1]))
-    if normalize == true
-        x ./= sum(x)
-    end
-    if vectorize == true
-        x = vec(x)
-    end
-    return x;
-end
-
-function writefits(data, fitsfile;pixsize=-1)
-    """
-    pixsize should be input as mas
-    """
-    f = FITS(fitsfile, "w");
-    if pixsize!=-1
-        header = FITSHeader(["CDELT1","CDELT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],[-(pixsize/1000.0)/(206265.0),(pixsize/1000.0)/(206265.0),0.0,0.0,(size(data)[1]/2),(size(data)[1]/2)],["Radians per Pixel","Radians per Pixel","X-coordinate of reference pixel","Y-coordinate of reference pixel","reference pixel in X","reference pixel in Y"])
-        write(f, data,header=header);
+function writefits(data, fitsfile; pixsize=-1)
+    f = FITS(fitsfile, "w")
+    if pixsize != -1
+        header = FITSHeader(
+            ["CDELT1","CDELT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],
+            [-(pixsize/1000.0)/206265.0, (pixsize/1000.0)/206265.0, 0.0, 0.0,
+             size(data,1)/2, size(data,1)/2],
+            ["Radians per Pixel","Radians per Pixel",
+             "X-coordinate of reference pixel","Y-coordinate of reference pixel",
+             "reference pixel in X","reference pixel in Y"])
+        write(f, data, header=header)
     else
-        write(f, data);
+        write(f, data)
     end
-    close(f);
-end
-
-function updatefits_aspro(fitsfile_in,fitsfile_out,res)
-    """
-    res should be input as mas
-    """
-    f = FITS(fitsfile_in);
-    data = read(f[1])
-    header = read_header(f[1])
-    header["CDELT1"] = -res/1000.0
-    header["CDELT2"] = res/1000.0
-    header["CRVAL1"] = 0.0
-    header["CRVAL2"] = 0.0
-    header["CRPIX1"] = (size(data)[1]/2)
-    header["CRPIX2"] = (size(data)[1]/2)
-    header["CUNIT1"] = "arcsec"
-    header["CUNIT2"] = "arcsec"
-    set_comment!(header,"CDELT1","Arcseconds per Pixel")
-    set_comment!(header,"CDELT2","Arcseconds per Pixel")
-    set_comment!(header,"CRVAL1","X-coordinate of reference pixel")
-    set_comment!(header,"CRVAL2","Y-coordinate of reference pixel")
-    set_comment!(header,"CRPIX1","reference pixel in X")
-    set_comment!(header,"CRPIX2","reference pixel in Y")
-    fout = FITS(fitsfile_out,"w")
-    write(fout,data,header=header);
     close(f)
-    close(fout)
 end
 
-
-function oifits_prep(data::OIdata; min_v2_err_add = 0.0, min_v2_err_rel = 0.0 , v2_err_mult = 1.0, min_t3amp_err_add = 0.0,  min_t3amp_err_rel = 0.0, t3amp_err_mult = 1.0, min_t3phi_err_add = 0.0, t3phi_err_mult = 1.0, quad = false)
-# e.g. MIRC from Monnier et al. https://arxiv.org/pdf/1211.6055.pdf
-# min_v2_err_add = 2e-4, min_v2_err_rel = 0.066, min_t3amp_err_add = 1e-5, min_t3amp_err_rel = 0.1, min_t3phi_err_add = 1.0
-
-# Prep V2
-if quad == false
-    temperr  = v2_err_mult*data.v2_err
-    newerr   = abs.(data.v2*min_v2_err_rel) .+ min_v2_err_add
-    newerrin = findall(newerr.>temperr)
-    temperr[newerrin] = newerr[newerrin]
-else
-   temperr=sqrt.( (data.v2*min_v2_err_rel).^2.  + (v2_err_mult*data.v2_err).^2 .+ min_v2_err_add^2 )
+function updatefits_aspro(fitsfile_in, fitsfile_out, res)
+    f      = FITS(fitsfile_in)
+    data   = read(f[1]);  header = read_header(f[1])
+    header["CDELT1"] = -res/1000.0;  header["CDELT2"] =  res/1000.0
+    header["CRVAL1"] = 0.0;          header["CRVAL2"] = 0.0
+    header["CRPIX1"] = size(data,1)/2; header["CRPIX2"] = size(data,1)/2
+    header["CUNIT1"] = "arcsec";     header["CUNIT2"] = "arcsec"
+    set_comment!(header, "CDELT1", "Arcseconds per Pixel")
+    set_comment!(header, "CDELT2", "Arcseconds per Pixel")
+    set_comment!(header, "CRVAL1", "X-coordinate of reference pixel")
+    set_comment!(header, "CRVAL2", "Y-coordinate of reference pixel")
+    set_comment!(header, "CRPIX1", "reference pixel in X")
+    set_comment!(header, "CRPIX2", "reference pixel in Y")
+    fout = FITS(fitsfile_out, "w"); write(fout, data, header=header)
+    close(f); close(fout)
 end
 
-data.v2_err = temperr
+# ===========================================================================
+# Error inflation / oifits_prep
+# ===========================================================================
 
-# Prep t3amp
-if quad == false
-    temperr  = t3amp_err_mult*data.t3amp_err
-    newerr   = abs.(data.t3amp*min_t3amp_err_rel) .+ min_t3amp_err_add
-    newerrin = findall(newerr.>temperr)
-    temperr[newerrin] = newerr[newerrin]
-else
-   temperr=sqrt.( (data.t3amp*min_t3amp_err_rel).^2.  + (t3amp_err_mult*data.t3amp_err).^2 .+ min_t3amp_err_add^2 )
-end
+function oifits_prep(data::OIdata{T};
+        min_v2_err_add=0, min_v2_err_rel=0, v2_err_mult=1,
+        min_t3amp_err_add=0, min_t3amp_err_rel=0, t3amp_err_mult=1,
+        min_t3phi_err_add=0, t3phi_err_mult=1, quad=false) where T
 
-data.t3amp_err = temperr
-
-# Prep t3phi -- need to be in degrees
-if quad == true
-    temperr = t3phi_err_mult*data.t3phi_err
-    newerr  = min_t3phi_err_add*ones(length(data.t3phi_err))
-    newerrin = findall(newerr.>temperr)
-    temperr[newerrin] = newerr[newerrin]
-else
-    temperr = sqrt.( (t3phi_err_mult*data.t3phi_err).^2 .+ min_t3phi_err_add^2)
-end
-data.t3phi_err = temperr
-
-return data
-end
-
-function oifits_prep(data::Array{OIdata,1};kwargs...) # TODO: prep diff visibilities here
-    for i=1:length(data)
-        oifits_prep(data[i], kwargs...)
+    if quad
+        data.v2_err = sqrt.((data.v2 .* min_v2_err_rel).^2 .+
+                            (v2_err_mult .* data.v2_err).^2 .+ T(min_v2_err_add)^2)
+    else
+        temperr = v2_err_mult .* data.v2_err
+        newerr  = abs.(data.v2 .* min_v2_err_rel) .+ min_v2_err_add
+        temperr[newerr .> temperr] .= newerr[newerr .> temperr]
+        data.v2_err = temperr
     end
-return data
+
+    if quad
+        data.t3amp_err = sqrt.((data.t3amp .* min_t3amp_err_rel).^2 .+
+                               (t3amp_err_mult .* data.t3amp_err).^2 .+ T(min_t3amp_err_add)^2)
+    else
+        temperr = t3amp_err_mult .* data.t3amp_err
+        newerr  = abs.(data.t3amp .* min_t3amp_err_rel) .+ min_t3amp_err_add
+        temperr[newerr .> temperr] .= newerr[newerr .> temperr]
+        data.t3amp_err = temperr
+    end
+
+    if quad
+        data.t3phi_err = sqrt.((t3phi_err_mult .* data.t3phi_err).^2 .+ T(min_t3phi_err_add)^2)
+    else
+        temperr = t3phi_err_mult .* data.t3phi_err
+        newerr  = T(min_t3phi_err_add) .* ones(T, length(data.t3phi_err))
+        temperr[newerr .> temperr] .= newerr[newerr .> temperr]
+        data.t3phi_err = temperr
+    end
+    return data
 end
+
+function oifits_prep(data::AbstractVector{<:OIdata}; kwargs...)
+    oifits_prep.(data; kwargs...)
+    return data
+end
+
+# ===========================================================================
+# Utilities
+# ===========================================================================
 
 function list_oifits_targets(oifitsfile)
     if !isfile(oifitsfile)
-        @error("Could not locate the requested data file -- please check path\n")
-        return [[]];
+        @error("Could not locate the requested data file — please check path")
+        return [[]]
     end
-    tables = OIFITS.load(oifitsfile);
-    targettables = OIFITS.select(tables, "OI_TARGET");
-    list_target = unique(vcat([targettables[i].target for i=1:length(targettables)]...));
-    return list_target
+    ds = load_oifits(oifitsfile)
+    return unique([ds.target[i].target for i in 1:length(ds.target)])
 end

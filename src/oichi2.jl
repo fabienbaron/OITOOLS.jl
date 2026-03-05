@@ -1,23 +1,26 @@
 using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, Match
 
 
-function Base.display(ft::Vector{Array{NFFTPlan{Float64, 2, 1}}})
+function Base.display(ft::Vector{<:AbstractArray{<:NFFTPlan}})
     nmulti = length(ft)
     println("OITOOLS NFFT transform for $nmulti channels");
     println("Access e.g. ft[1] if wanting to check an individual channel NFFT");
 end
 
-function setup_dft(uv::Array{Float64,2}, nx, pixsize)
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0
+# setup_dft: generic in the floating-point type T of the uv coordinates.
+# Returns a Matrix{Complex{T}} DFT kernel.
+function setup_dft(uv::Matrix{T}, nx, pixsize) where T<:AbstractFloat
+    scale_rad = T(pixsize * (pi / 180.0) / 3600000.0)
     nuv = size(uv, 2)
-    span = collect((2 * (1:nx) .- (nx + 1)) * scale_rad * pi)
+    span = T.((2 * (1:nx) .- (nx + 1)) .* (scale_rad * pi))
     xvals = reshape(span, 1, nx, 1)
     yvals = reshape(span, 1, 1, nx)
-    dft = reshape(cis.((uv[1, :] .* xvals) .- (uv[2, :] .* yvals)), nuv, nx^2)
+    dft = Complex{T}.(reshape(cis.((uv[1, :] .* xvals) .- (uv[2, :] .* yvals)), nuv, nx^2))
     return dft
 end
 
-function setup_dft(data::OIdata, nx, pixsize)
+# Convenience: dispatch on OIdata{T} so the eltype flows through automatically.
+function setup_dft(data::OIdata{T}, nx, pixsize) where T
     return setup_dft(data.uv, nx, pixsize)
 end
 
@@ -37,27 +40,29 @@ end
 #     end
 # end
 
-function setup_nfft(data::OIdata, nx, pixsize)
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0*[-1;1].*data.uv;
-    fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0);
-    fftplan_vis  = plan_nfft(scale_rad[:, data.indx_vis], (nx,nx), m=4, σ=2.0);
-    fftplan_v2   = plan_nfft(scale_rad[:, data.indx_v2], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_1 = plan_nfft(scale_rad[:, data.indx_t3_1], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_2 = plan_nfft(scale_rad[:, data.indx_t3_2], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_3 = plan_nfft(scale_rad[:, data.indx_t3_3], (nx,nx), m=4, σ=2.0);
-    return [fftplan_uv,fftplan_vis, fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
+# setup_nfft: dispatches on OIdata{T}; plan_nfft infers T from Matrix{T} uv coords,
+# returning NFFTPlan{T,2,1}. Works for both Float32 and Float64.
+function setup_nfft(data::OIdata{T}, nx, pixsize) where T
+    scale_rad = T(pixsize * (pi / 180.0) / 3600000.0) * [-one(T); one(T)] .* data.uv
+    fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0)
+    fftplan_vis  = plan_nfft(scale_rad[:, data.indx_vis], (nx,nx), m=4, σ=2.0)
+    fftplan_v2   = plan_nfft(scale_rad[:, data.indx_v2],  (nx,nx), m=4, σ=2.0)
+    fftplan_t3_1 = plan_nfft(scale_rad[:, data.indx_t3_1],(nx,nx), m=4, σ=2.0)
+    fftplan_t3_2 = plan_nfft(scale_rad[:, data.indx_t3_2],(nx,nx), m=4, σ=2.0)
+    fftplan_t3_3 = plan_nfft(scale_rad[:, data.indx_t3_3],(nx,nx), m=4, σ=2.0)
+    return [fftplan_uv, fftplan_vis, fftplan_v2, fftplan_t3_1, fftplan_t3_2, fftplan_t3_3]
 end
 
-
-function setup_nfft(uv::Array{Float64,2}, indx_vis, indx_v2, indx_t3_1, indx_t3_2,indx_t3_3, nx, pixsize)
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0*[-1;1].*uv;
-    fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0);
-    fftplan_vis  = plan_nfft(scale_rad[:, indx_vis], (nx,nx), m=4, σ=2.0);
-    fftplan_v2   = plan_nfft(scale_rad[:, indx_v2], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_1 = plan_nfft(scale_rad[:, indx_t3_1], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_2 = plan_nfft(scale_rad[:, indx_t3_2], (nx,nx), m=4, σ=2.0);
-    fftplan_t3_3 = plan_nfft(scale_rad[:, indx_t3_3], (nx,nx), m=4, σ=2.0);
-    return [fftplan_uv,fftplan_vis,fftplan_v2,fftplan_t3_1,fftplan_t3_2,fftplan_t3_3]
+# Raw-uv overload: caller must pass Matrix{T} explicitly typed.
+function setup_nfft(uv::Matrix{T}, indx_vis, indx_v2, indx_t3_1, indx_t3_2, indx_t3_3, nx, pixsize) where T<:AbstractFloat
+    scale_rad = T(pixsize * (pi / 180.0) / 3600000.0) * [-one(T); one(T)] .* uv
+    fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0)
+    fftplan_vis  = plan_nfft(scale_rad[:, indx_vis], (nx,nx), m=4, σ=2.0)
+    fftplan_v2   = plan_nfft(scale_rad[:, indx_v2],  (nx,nx), m=4, σ=2.0)
+    fftplan_t3_1 = plan_nfft(scale_rad[:, indx_t3_1],(nx,nx), m=4, σ=2.0)
+    fftplan_t3_2 = plan_nfft(scale_rad[:, indx_t3_2],(nx,nx), m=4, σ=2.0)
+    fftplan_t3_3 = plan_nfft(scale_rad[:, indx_t3_3],(nx,nx), m=4, σ=2.0)
+    return [fftplan_uv, fftplan_vis, fftplan_v2, fftplan_t3_1, fftplan_t3_2, fftplan_t3_3]
 end
 
 # function setup_nfft_multi(data, nx, pixsize)
@@ -73,32 +78,29 @@ end
 #     return fftplan_multi
 # end
 
-function setup_nfft_multiepochs(data, nx, pixsize)
-    nepochs = size(data,1);
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-    fftplan_multi = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}}}(undef, nepochs);
-    for i=1:nepochs
-        fftplan_multi[i]=setup_nfft(data[i], nx, pixsize);
+function setup_nfft_multiepochs(data::AbstractVector{<:OIdata}, nx, pixsize)
+    nepochs = length(data)
+    fftplan_multi = Vector{Vector{NFFTPlan}}(undef, nepochs)
+    for i in 1:nepochs
+        fftplan_multi[i] = setup_nfft(data[i], nx, pixsize)
     end
     return fftplan_multi
 end
 
-function setup_nfft_polychromatic(data, nx, pixsize)
-    nwavs = size(data,1);
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-    fftplan_multi = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}}}(undef, nwavs);
-    for i=1:nwavs
-        fftplan_multi[i]=setup_nfft(data[i], nx, pixsize);
+function setup_nfft_polychromatic(data::AbstractVecOrMat{<:OIdata}, nx, pixsize)
+    nwavs = size(data, 1)
+    fftplan_multi = Vector{Vector{NFFTPlan}}(undef, nwavs)
+    for i in 1:nwavs
+        fftplan_multi[i] = setup_nfft(data[i], nx, pixsize)
     end
     return fftplan_multi
 end
 
-function setup_dft_polychromatic(data, nx, pixsize)
-    nwavs = size(data,1);
-    scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-    fftplan_multi = Array{Array{ComplexF64, 2}}(undef, nwavs);
-    for i=1:nwavs
-        fftplan_multi[i]=setup_dft(data[i], nx, pixsize);
+function setup_dft_polychromatic(data::AbstractVecOrMat{<:OIdata{T}}, nx, pixsize) where T
+    nwavs = size(data, 1)
+    fftplan_multi = Vector{Matrix{Complex{T}}}(undef, nwavs)
+    for i in 1:nwavs
+        fftplan_multi[i] = setup_dft(data[i], nx, pixsize)
     end
     return fftplan_multi
 end
@@ -147,39 +149,40 @@ function vis_to_t4(cvis, indx1, indx2, indx3, indx4)
     return t4, t4amp, t4phi
 end
 
-function image_to_vis(x::Array{Float64,2}, dft::Matrix{ComplexF64})
-    cvis_model = dft * vec(x/ sum(x));
+# image_to_vis: generic overloads.
+# T is inferred from the image array eltype; Complex{T} is used consistently.
+function image_to_vis(x::AbstractMatrix{T}, dft::Matrix{Complex{T}}) where T<:AbstractFloat
+    cvis_model = dft * vec(x / sum(x))
 end
 
-function image_to_vis(x::Array{Float64,1}, nfft_plan::NFFT.NFFTPlan)
+function image_to_vis(x::AbstractVector{T}, nfft_plan::NFFT.NFFTPlan{T}) where T<:AbstractFloat
     nx = Int64(sqrt(length(x)))
-    cvis_model = nfft_plan*Complex{Float64}.(reshape(x/sum(x),(nx,nx)));
+    cvis_model = nfft_plan * Complex{T}.(reshape(x / sum(x), (nx, nx)))
 end
 
-function image_to_vis(x::Array{Float64,2}, nfft_plan::NFFT.NFFTPlan)
-    cvis_model = nfft_plan*Complex{Float64}.(x/sum(x));
+function image_to_vis(x::AbstractMatrix{T}, nfft_plan::NFFT.NFFTPlan{T}) where T<:AbstractFloat
+    cvis_model = nfft_plan * Complex{T}.(x / sum(x))
 end
 
-# Overload
-function image_to_vis(x::Array{Float64,1}, nfft_plan::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
+function image_to_vis(x::AbstractVector{T}, nfft_plan::AbstractVector{<:NFFT.NFFTPlan{T}}) where T<:AbstractFloat
     nx = Int64(sqrt(length(x)))
-    cvis_model = nfft_plan[1]*Complex{Float64}.(reshape(x/sum(x),(nx,nx)));
+    cvis_model = nfft_plan[1] * Complex{T}.(reshape(x / sum(x), (nx, nx)))
 end
 
-function image_to_vis(x::Array{Float64,2}, nfft_plan::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
-    cvis_model = nfft_plan[1]*Complex{Float64}.(x/sum(x));
+function image_to_vis(x::AbstractMatrix{T}, nfft_plan::AbstractVector{<:NFFT.NFFTPlan{T}}) where T<:AbstractFloat
+    cvis_model = nfft_plan[1] * Complex{T}.(x / sum(x))
 end
 
-function image_to_v2(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
+function image_to_v2(x, data, ft::AbstractVector{<:NFFT.NFFTPlan})
    return vis_to_v2(image_to_vis(x, ft), data.indx_v2)
 end
 
-function image_to_t3phi(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
+function image_to_t3phi(x, data, ft::AbstractVector{<:NFFT.NFFTPlan})
     _, _, t3phi_model = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
     return t3phi_model
  end
  
- function image_to_t3amp(x, data, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1})
+function image_to_t3amp(x, data, ft::AbstractVector{<:NFFT.NFFTPlan})
     _, t3amp_model,_ = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3)
     return t3amp_model
  end
@@ -446,7 +449,7 @@ function compactness(x,g; verb = false, w = 20.0) # w is the size in pixels of t
 end
 
 function reg_support(x,g; prior=[], verb = false) # assumes prior is vec()
-    mask = zeros(Float64,size(x))
+    mask = zeros(eltype(x), size(x))
     if prior !=[]
         mask = 1.0.-(prior.>0)
     end
@@ -512,7 +515,7 @@ end
 function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
     reg_f = 0.0;
     for ireg in regularizers
-            temp_g = zeros(Float64,size(x))
+            temp_g = zeros(eltype(x), size(x))
             reg_f += @match ireg[1] begin 
                 "centering"   => ireg[2]*reg_centering(x, temp_g; verb)
                 "tv"          => ireg[2]*tv(x,temp_g; verb)
@@ -537,7 +540,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
 end
 
 # DFT version
-function chi2_f(x::Array{Float64,2}, dft::Array{Complex{Float64},2}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:black, verb=true, vonmises=false)
+function chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:black, verb=true, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -573,7 +576,7 @@ function chi2_f(x::Array{Float64,2}, dft::Array{Complex{Float64},2}, data::OIdat
 end
 
 # NFFT version
-function chi2_f(x::Array{Float64,2}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false, vonmises=false)
+function chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan[1]);
     if length(cvis)>0
@@ -610,7 +613,7 @@ function chi2_f(x::Array{Float64,2}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}
 end
 
 # DFT version
-function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, dft::Array{Complex{Float64},2}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:black, verb=true, vonmises=false)
+function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:black, verb=true, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -660,7 +663,7 @@ function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, dft::Array{Complex{Fl
 end
 
 #NFFT version
-function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false, vonmises=false)
+function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan[1]);
     if length(cvis)>0
@@ -713,17 +716,17 @@ function chi2_fg(x::Array{Float64,2}, g::Array{Float64,2}, ftplan::Array{NFFT.NF
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
-function chi2_polychromatic_f(x::Array{Float64,3}, ft::Union{Array{Array{NFFTPlan{Float64, 2, 1}}, 1},Array{Array{ComplexF64, 2}, 1}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
+function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::Union{AbstractVector{<:AbstractVector{<:NFFTPlan}},AbstractVector{<:AbstractMatrix{<:Complex}}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
         printcolor=[ :black for i=1:nwavs]
     end
     
-    cvis = fill((Complex{Float64}[]),nwavs);
+    cvis = fill((ComplexF64[]), nwavs);
     if use_diffphases == true
         for i=1:nwavs
-            cvis[i] = Array{Complex{Float64},1}(undef, length(data[i].indx_vis))
+            cvis[i] = Vector{ComplexF64}(undef, length(data[i].indx_vis))
         end
     end
     f = zeros(nwavs)
@@ -762,7 +765,7 @@ function chi2_polychromatic_f(x::Array{Float64,3}, ft::Union{Array{Array{NFFTPla
     return chi2f/ndof;
 end
 
-function crit_fg(x,g::Array{Float64,2}, ft::Union{Array{NFFT.NFFTPlan{Float64,2,1},1},Array{Complex{Float64},2}}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
+function crit_fg(x,g::AbstractMatrix{<:AbstractFloat}, ft, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
     chi2 = chi2_fg(x, g, ft, data, cvis = cvis, verb = verb, weights = weights);
     reg = regularization(x, g, regularizers=regularizers, printcolor = printcolor, verb = verb);
     flux = sum(x)
@@ -770,17 +773,17 @@ function crit_fg(x,g::Array{Float64,2}, ft::Union{Array{NFFT.NFFTPlan{Float64,2,
     return chi2 + reg;
 end
 
-function crit_f(x::Array{Float64,2}, fftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
+function crit_f(x::AbstractMatrix{<:AbstractFloat}, fftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
     chi2 = chi2_f(x, fftplan, data, cvis = cvis, verb = verb, weights = weights );
-    g = zeros(Float64, size(x));
+    g = zeros(eltype(x), size(x));
     reg = regularization(x, g,  regularizers=regularizers, printcolor = printcolor, verb = verb);
     return chi2 + reg;
 end
 
-function crit_multitemporal_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Array{Array{NFFT.NFFTPlan{Float64,2,1},1},1}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], epochs_weights=[],regularizers=[], verb = false)
+function crit_multitemporal_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractVector{<:NFFT.NFFTPlan}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], epochs_weights=[],regularizers=[], verb = false)
     nepochs = length(ft);
     if epochs_weights == []
-        epochs_weights=ones(Float64, nepochs);
+        epochs_weights=ones(eltype(x_start), nepochs);
     end
     if printcolor == []
         printcolor=Array{Symbol}(undef,nepochs);
@@ -789,7 +792,7 @@ function crit_multitemporal_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
     npix = div(length(x),nepochs);
     f = 0.0;
     for i=1:nepochs # weighted sum -- should probably do the computation in parallel
-        subg = Array{Float64}(undef, npix, npix);
+        subg = Array{eltype(x)}(undef, npix, npix);
         printstyled("Epoch $i ",color=printcolor[i]);
         f += epochs_weights[i]*crit_fg(x[:,:,i], subg, ft[i], data[i], regularizers=regularizers[i], printcolor = printcolor[i], verb = verb, weights = weights);
         g[tslice] = epochs_weights[i]*subg
@@ -800,7 +803,7 @@ function crit_multitemporal_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
         if (regularizers[nepochs+1][1][1] == "temporal_tvsq")  & (nepochs>1)
             y = reshape(x,(npix,nepochs))
             temporalf = sum( (y[:,2:end]-y[:,1:end-1]).^2 )
-            tv_g = Array{Float64}(undef, npix,nepochs)
+            tv_g = Array{eltype(x)}(undef, npix, nepochs)
             if nepochs>2
                 tv_g[:,1] = 2*(y[:,1] - y[:,2])
                 tv_g[:,2:end-1] = 4*y[:,2:end-1]-2*(y[:,1:end-2]+y[:,3:end])
@@ -817,7 +820,7 @@ function crit_multitemporal_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Arr
     return f;
 end
 
-function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Union{Array{Array{NFFTPlan{Float64, 2, 1}}, 1},Array{Array{ComplexF64, 2}, 1}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
+function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractArray{<:AbstractFloat,3}, ft::Union{AbstractVector{<:AbstractVector{<:NFFTPlan}},AbstractVector{<:AbstractMatrix{<:Complex}}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
@@ -828,16 +831,16 @@ function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Uni
         regularizers = fill([], nwavs)
     end
     
-    cvis = fill((Complex{Float64}[]),nwavs);
+    cvis = fill((ComplexF64[]), nwavs);
     if use_diffphases == true
         for i=1:nwavs
-            cvis[i] = Array{Complex{Float64},1}(undef, length(data[i].indx_vis))
+            cvis[i] = Vector{ComplexF64}(undef, length(data[i].indx_vis))
         end
     end
 
     f = 0.0;
     for i=1:nwavs # weighted sum -- should probably do the computation in parallel
-        subg = zeros(Float64, npix, npix);
+        subg = zeros(eltype(x), npix, npix);
         if verb == true
             printstyled("Spectral channel $i ",color=printcolor[i]);
         end
@@ -902,10 +905,10 @@ function crit_polychromatic_fg(x::Array{Float64,3}, g::Array{Float64,3}, ft::Uni
     return f/ndof;
 end
 
-function image_to_vis(x::Array{Float64,3}, ft::Union{Array{Array{NFFTPlan{Float64, 2, 1}}, 1},Array{Array{ComplexF64, 2}, 1}})
+function image_to_vis(x::AbstractArray{<:AbstractFloat,3}, ft::Union{AbstractVector{<:AbstractVector{<:NFFTPlan}},AbstractVector{<:AbstractMatrix{<:Complex}}})
     nwavs = length(ft);
     npix = size(x,1);
-    cvis = fill((Complex{Float64}[]),nwavs);
+    cvis = fill((ComplexF64[]), nwavs);
     Threads.@threads for i=1:nwavs
         cvis[i] = image_to_vis(x[:,:,i], ft[i]);
     end
@@ -913,15 +916,15 @@ function image_to_vis(x::Array{Float64,3}, ft::Union{Array{Array{NFFTPlan{Float6
 end
 
 using OptimPackNextGen
-function reconstruct(x_start::Array{Float64,2}, data::OIdata, ft; weights = [1.0,1.0,1.0], printcolor = :black, verb = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
+function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft; weights = [1.0,1.0,1.0], printcolor = :black, verb = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     crit = (x,g)->crit_fg(x, g, ft, data, regularizers=regularizers, verb = verb , weights = weights)
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     return x_sol
 end
 
-function reconstruct_multitemporal(x_start::Array{Float64,3}, data::Array{OIdata, 1}, ft; weights = [1.0,1.0,1.0], epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
+function reconstruct_multitemporal(x_start::AbstractArray{<:AbstractFloat,3}, data::AbstractVector{<:OIdata}, ft; weights = [1.0,1.0,1.0], epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     x_sol = []
-    if typeof(ft) == Array{Array{NFFT.NFFTPlan{Float64,2,1},1},1}
+    if eltype(eltype(ft)) <: NFFTPlan
         crit = (x,g)->crit_multitemporal_fg(x, g, ft, data, printcolor=printcolor, weights = weights, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
         x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     else
@@ -930,7 +933,7 @@ function reconstruct_multitemporal(x_start::Array{Float64,3}, data::Array{OIdata
     return x_sol
 end
 
-function reconstruct_polychromatic(x_start::Array{Float64,3}, data::Array{OIdata,1}, ft; weights = [1.0,1.0,1.0], printcolor= [], verb = true, use_diffphases = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
+function reconstruct_polychromatic(x_start::AbstractArray{<:AbstractFloat,3}, data::AbstractVector{<:OIdata}, ft; weights = [1.0,1.0,1.0], printcolor= [], verb = true, use_diffphases = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     x_sol = []
     if regularizers == []
         regularizers = fill([],length(data))
@@ -941,7 +944,7 @@ function reconstruct_polychromatic(x_start::Array{Float64,3}, data::Array{OIdata
 end
 
 
-function chi2_sparco_f(x::Array{Float64,2},  params::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
+function chi2_sparco_f(x::AbstractMatrix{<:AbstractFloat},  params::AbstractVector{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
     # Image x is of length = N*N
     # Nparams are passed as an array
 
@@ -990,12 +993,12 @@ function chi2_sparco_f(x::Array{Float64,2},  params::Array{Float64,1}, ftplan::A
 end
 
 # # TBD: merge with previous function
-# function chi2_sparco_f(x::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
+# function chi2_sparco_f(x::AbstractVector{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nparams::Int64; verb = true, weights = [1.0,1.0,1.0] ) # criterion function for nfft
 #     chi2_sparco_f(x, params, ftplan, data, verb = verb, weights = weights);
 # # end
 
 using NLopt
-function optimize_sparco_parameters(params_start, x::Array{Float64, 2}, ft, data; weights = [1.0,1.0,1.0], lb=[0.0, 0.0, 0.0, -20.0], ub=[1.0, 1.0, 1.0, 20.0])
+function optimize_sparco_parameters(params_start, x::AbstractMatrix{<:AbstractFloat}, ft, data; weights = [1.0,1.0,1.0], lb=[0.0, 0.0, 0.0, -20.0], ub=[1.0, 1.0, 1.0, 20.0])
     # Optimize the 4 parameters, keeping reference wavelength fixed
     nparams = length(params_start)-1
     f_params = (params, _)->chi2_sparco_f(x, [params;params_start[end]], ft, data; verb = false, weights)
@@ -1007,7 +1010,7 @@ function optimize_sparco_parameters(params_start, x::Array{Float64, 2}, ft, data
     return minchi2, [params_opt;params_start[end]], ret
 end
 
-function chi2_sparco_fg(x::Array{Float64,1},  g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; verb = true, weights=[1.0,1.0,1.0] ) # criterion function for nfft
+function chi2_sparco_fg(x::AbstractVector{<:AbstractFloat},  g::AbstractVector{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nparams::Int64; verb = true, weights=[1.0,1.0,1.0] ) # criterion function for nfft
     params=x[1:nparams]  # extract parameters
     λ0 = params[5];
     λ = data.uv_lam
@@ -1105,10 +1108,10 @@ function Δchi2(dcvis_model::Union{Array{Complex{Float64},1}, Array{Float64,1}},
     return dv2+dt3amp+dt3phi
 end
 
-function crit_sparco_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Array{NFFT.NFFTPlan{Float64,2,1},1}, data::OIdata, nparams::Int64; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
+function crit_sparco_fg(x::AbstractVector{<:AbstractFloat},g::AbstractVector{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nparams::Int64; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
     chi2_f = chi2_sparco_fg(x,  g, ftplan, data, nparams, weights=weights)
     nx = Int(sqrt(length(x)-nparams));
-    reg_g = zeros(Float64, nx, nx)
+    reg_g = zeros(eltype(x), nx, nx)
     reg_f = regularization(reshape(x[nparams+1:end],nx,nx), reg_g, regularizers=regularizers, printcolor = printcolor, verb = verb);
     g[nparams+1:end] += vec(reg_g)
     # Gradient correction for the image (parameters are left untouched)
@@ -1117,7 +1120,7 @@ function crit_sparco_fg(x::Array{Float64,1},g::Array{Float64,1}, ftplan::Array{N
     return chi2_f + reg_f;
 end
 
-function reconstruct_sparco_gray(x_start::Array{Float64,2}, params_start::Array{Float64,1}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0],ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8)) #grey environment
+function reconstruct_sparco_gray(x_start::Array{Float64,2}, params_start::AbstractVector{<:AbstractFloat}, data::OIdata, ft; printcolor = :black, verb = false, maxiter = 100, regularizers =[], weights=[1.0,1.0,1.0],ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8)) #grey environment
     #printcolor = :black; verb = false; maxiter = 100; regularizers =[]; weights=[1.0,1.0,1.0];ftol= (0,1e-8); xtol=(0,1e-8); gtol=(0,1e-8);
     # Note: we're trying to optimize both the parameters and the image
     x_sol = []

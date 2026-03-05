@@ -1,7 +1,4 @@
-using OITOOLS
-#
-# EXAMPLE 1: read image and data, and compare the observables
-#
+ include("../src/OITOOLS.jl");using Main.OITOOLS
 # read the data file
 oifitsfile = "./data/rho_Cas_example.oifits"
 data = readoifits(oifitsfile)

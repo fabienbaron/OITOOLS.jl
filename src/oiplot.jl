@@ -134,12 +134,12 @@ function uvplot(uv::Array{Float64,2})
     tight_layout();
 end
 
-function uvplot(data::Union{OIdata,Array{OIdata,1}, Array{OIdata,2}};color::String="baseline",filename="", figsize=(10,10), minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
+function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="baseline",filename="", figsize=(10,10), minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
     set_oiplot_defaults()
-    if typeof(data)==OIdata
+    if data isa OIdata
         data = [data]
     end
-    if typeof(data)==Array{OIdata,2}
+    if ndims(data) == 2
         data = vec(data)
     end
     nuv = sum(data[i].nuv for i=1:length(data))
@@ -301,7 +301,7 @@ function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = fals
     show(block=false)
 end
 
-function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12, 6), logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
+function plot_v2(data::Union{OIdata, AbstractArray{<:OIdata}};figsize=(12, 6), logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
     set_oiplot_defaults()
 
     if idpoint==true # interactive plot, click to identify point
@@ -316,10 +316,10 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12
         global clickfile=[]
         push!(clickfile,data.filename)
     end
-    if typeof(data)==OIdata
+    if data isa OIdata
         data = [data]
     end
-    if typeof(data)==Array{OIdata,2}
+    if ndims(data) == 2
         data = vec(data)
     end
     fig = figure(string(figtitle, "V2 data"),figsize=figsize,facecolor="White");
@@ -353,7 +353,7 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
     elseif (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
-        wavcol = vcat([data[n].uv_lam[data[n].indx_v2]*1e6 for n=1:length(data)]...)
+        wavcol = vcat([data[n].v2_lam*1e6 for n=1:length(data)]...)
         baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
         v2 = vcat([data[n].v2 for n=1:length(data)]...);
         v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
@@ -362,6 +362,21 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
         cbar.set_ticks(cbar_range)
+    elseif (color == "mjd" || color == "time" || color == "timestamp" || color == "timestamps")
+        mjdcol = vcat([data[n].v2_mjd for n=1:length(data)]...)
+        baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
+        v2 = vcat([data[n].v2 for n=1:length(data)]...);
+        v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
+        sc = scatter(baseline_v2, v2, c=mjdcol, cmap="plasma", alpha=1.0, s=6.0, zorder=100)
+        el = errorbar(baseline_v2, v2, yerr=v2_err, fmt="none", marker="none", ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="MJD", pad=0.18, fraction=0.05)
+        mjds = sort(unique(mjdcol))
+        if length(mjds) < 5
+            cbar.set_ticks(round.(mjds*100)/100)
+        else
+            cbar_range = round.(collect(range(minimum(mjdcol), maximum(mjdcol), length=5))*100)/100
+            cbar.set_ticks(cbar_range)
+        end
     else
         baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
         v2 = vcat([data[n].v2 for n=1:length(data)]...);
@@ -380,13 +395,13 @@ function plot_v2(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(12
 end
 
 
-function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
+function plot_t3phi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
     set_oiplot_defaults()
 
-    if typeof(data)==OIdata
+    if data isa OIdata
         data = [data]
     end
-    if typeof(data)==Array{OIdata,2}
+    if ndims(data) == 2
         data = vec(data)
     end
     fig = figure("Closure phase data",figsize=figsize,facecolor="White");
@@ -413,7 +428,7 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
             ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=5,loc="upper center", bbox_to_anchor=(0.5, -0.15))
         end
     elseif  (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
-        wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
+        wavcol = vcat([data[n].t3_lam*1e6 for n=1:length(data)]...)
         if t3base=="max"
             baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
         elseif t3base=="geom"
@@ -426,6 +441,25 @@ function plot_t3phi(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
         cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
         cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
         cbar.set_ticks(cbar_range)
+    elseif (color == "mjd" || color == "time" || color == "timestamp" || color == "timestamps")
+        mjdcol = vcat([data[n].t3_mjd for n=1:length(data)]...)
+        if t3base=="max"
+            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
+        elseif t3base=="geom"
+            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
+        end
+        t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
+        t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
+        sc = scatter(baseline_t3, t3phi, c=mjdcol, cmap="plasma", alpha=1.0, s=6.0, zorder=100)
+        el = errorbar(baseline_t3, t3phi, yerr=t3phi_err, fmt="none", marker="none", ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="MJD", pad=0.18, fraction=0.05)
+        mjds = sort(unique(mjdcol))
+        if length(mjds) < 5
+            cbar.set_ticks(round.(mjds*100)/100)
+        else
+            cbar_range = round.(collect(range(minimum(mjdcol), maximum(mjdcol), length=5))*100)/100
+            cbar.set_ticks(cbar_range)
+        end
     else
         if t3base=="max"
             baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
@@ -553,13 +587,13 @@ function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; figsi
 end
 
 
-function plot_t3amp(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
+function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
     set_oiplot_defaults()
 
-    if typeof(data)==OIdata
+    if data isa OIdata
         data = [data]
     end
-    if typeof(data)==Array{OIdata,2}
+    if ndims(data) == 2
         data = vec(data)
     end
     fig = figure("Triple amplitude data",figsize=(12,6),facecolor="White");
@@ -624,7 +658,9 @@ function plot_t3amp(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}}; figsize
     show(block=false)
 end
 
-function plot_flux(data::Union{OIdata,Array{OIdata,1}}; color="Black")
+function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; color="Black")
+    data isa OIdata && (data = [data])
+    ndims(data) == 2 && (data = vec(data))
     list_stations = sort(unique(vcat([data[n].flux_sta_index for n=1:length(data)]...)))
     for i=1:length(list_stations)
         for n=1:length(data)
@@ -638,11 +674,11 @@ function plot_flux(data::Union{OIdata,Array{OIdata,1}}; color="Black")
     end
 end
 
-function plot_visphi(data::Union{OIdata,Array{OIdata,1}}; color::String="baseline",markopt=false, legend_below=false)
-    if typeof(data)==OIdata
+function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; color::String="baseline",markopt=false, legend_below=false)
+    if data isa OIdata
         data = [data]
     end
-    if typeof(data)==Array{OIdata,2}
+    if ndims(data) == 2
         data = vec(data)
     end
     fig = figure("Visibility phase data",figsize=(10,5),facecolor="White");
@@ -692,7 +728,7 @@ end
 
 
 
-function plot_diffphi(data::Array{OIdata,1}; color="Black",markopt=false, legend_below=false, filename="")
+function plot_diffphi(data::AbstractVector{<:OIdata}; color="Black",markopt=false, legend_below=false, filename="")
     #
     # Note: this is a special kind of plot, which doesn't follow the classic plotting recipe
     #
@@ -729,7 +765,7 @@ function plot_diffphi(data::Array{OIdata,1}; color="Black",markopt=false, legend
 end
 
 
-function plot_v2_multifile(data::Array{OIdata,1}; logplot = false, remove = false,idpoint=false,clean=false,filename="",legend_below=true)
+function plot_v2_multifile(data::AbstractVector{<:OIdata}; logplot = false, remove = false,idpoint=false,clean=false,filename="",legend_below=true)
     global v2base=[]
     global v2value=[]
     global v2err=[]
@@ -813,12 +849,12 @@ end
 
 
 
-function plot_v2_and_t3phi_wav(data::Union{OIdata,Array{OIdata,1},Array{OIdata,2}};figsize=(10,10), logplot = false, clean=true,t3base="max",markopt=false, legend_below=false, figtitle="")
+function plot_v2_and_t3phi_wav(data::Union{OIdata, AbstractArray{<:OIdata}};figsize=(10,10), logplot = false, clean=true,t3base="max",markopt=false, legend_below=false, figtitle="")
     set_oiplot_defaults()
-    if typeof(data)==OIdata
+    if data isa OIdata
             data = [data]
         end
-        if typeof(data)==Array{OIdata,2}
+        if ndims(data) == 2
             data = vec(data)
         end
         fig = figure(string(figtitle, "V2 & T3phi data"),figsize=figsize,facecolor="White");

@@ -3,7 +3,7 @@
 #
 using OITOOLS
 oifitsfile = "./data/2004-data1.oifits"
-pixsize = 0.2 # size of a pixel in milliarcseconds
+pixsize = 0.1 # size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
 data = readoifits(oifitsfile)[1,1];
 # Fourier transform setup
