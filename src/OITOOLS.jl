@@ -41,10 +41,11 @@ export create_component, create_model, update_model, model_to_vis, dispatch_para
        fit_visfunc_nlopt, resample_data, bootstrap_fit
 
 # oiplot
-export set_oiplot_defaults, uvplot, onclickidentify, plot_v2, plot_v2_timelapse,
+export set_oiplot_defaults, uvplot, onclickidentify, plot_v2,
        plot_diffphi, plot_visphi, plot_t3phi, plot_v2_and_t3phi_wav, imdisp,
        imdisp_temporal, plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
-       plot_v2_model_vs_func, plot_t3amp, plot_v2_multifile, imdisp_polychromatic
+       plot_v2_model_vs_func, plot_t3amp, plot_v2_multifile, imdisp_polychromatic,
+       plot_flux
 
 # oichi2
 export setup_dft, setup_dft_polychromatic, setup_nfft, setup_nfft_multiepochs,

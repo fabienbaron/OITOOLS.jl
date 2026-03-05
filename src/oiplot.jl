@@ -658,20 +658,73 @@ function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6)
     show(block=false)
 end
 
-function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; color="Black")
+function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6),
+                   color::String="station", markopt=false, legend_below=false)
+    set_oiplot_defaults()
     data isa OIdata && (data = [data])
     ndims(data) == 2 && (data = vec(data))
-    list_stations = sort(unique(vcat([data[n].flux_sta_index for n=1:length(data)]...)))
-    for i=1:length(list_stations)
-        for n=1:length(data)
-            indx = findall(data[n].flux_sta_index .== list_stations[i])
-            wavcol = data[n].flux_lam[indx]*1e6
-            mjd = data[n].flux_mjd[indx]
-            flux = data[n].flux[indx]
-            flux_err = data[n].flux_err[indx]
-            el = errorbar(wavcol,flux,yerr=flux_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+    fig = figure("Flux data", figsize=figsize, facecolor="White")
+    clf()
+    ax = gca()
+
+    # Map flux_sta_index → human-readable label ("Calibrated" for index 0)
+    _flux_label(d, si) = si == 0 ? "Calibrated" : d.sta_name[si]
+    station_labels = [[_flux_label(data[n], data[n].flux_sta_index[k])
+                       for k in eachindex(data[n].flux_sta_index)]
+                      for n in eachindex(data)]
+    stations = sort(unique(vcat(station_labels...)))
+
+    if color == "station" || color == "baseline" || color == "base" || color == "stations"
+        for i in eachindex(stations)
+            locs = [findall(station_labels[n] .== stations[i]) for n in eachindex(data)]
+            wav  = vcat([data[n].flux_lam[locs[n]]*1e6 for n in eachindex(data)]...)
+            flux = vcat([data[n].flux[locs[n]]          for n in eachindex(data)]...)
+            ferr = vcat([data[n].flux_err[locs[n]]      for n in eachindex(data)]...)
+            if markopt
+                errorbar(wav, flux, yerr=ferr, fmt="o", marker=oiplot_markers[i],
+                    markeredgecolor="Black", markersize=3, color="Black",
+                    ecolor="Gainsboro", elinewidth=1.0, label=stations[i])
+            else
+                errorbar(wav, flux, yerr=ferr, fmt="o", markersize=3,
+                    markeredgecolor=oiplot_colors[i], color=oiplot_colors[i],
+                    ecolor="Gainsboro", elinewidth=1.0, label=stations[i])
+            end
         end
+        if legend_below
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,
+                      loc="upper center", bbox_to_anchor=(0.5, -0.15))
+        else
+            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4, loc="best")
+        end
+    elseif color == "mjd" || color == "time" || color == "timestamp" || color == "timestamps"
+        wav  = vcat([data[n].flux_lam*1e6  for n in eachindex(data)]...)
+        flux = vcat([data[n].flux           for n in eachindex(data)]...)
+        ferr = vcat([data[n].flux_err       for n in eachindex(data)]...)
+        mjd  = vcat([data[n].flux_mjd       for n in eachindex(data)]...)
+        sc = scatter(wav, flux, c=mjd, cmap="plasma", alpha=1.0, s=6.0, zorder=100)
+        errorbar(wav, flux, yerr=ferr, fmt="none", marker="none",
+                 ecolor="Gainsboro", elinewidth=1.0, zorder=0)
+        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="MJD", pad=0.18, fraction=0.05)
+        mjds = sort(unique(mjd))
+        if length(mjds) < 5
+            cbar.set_ticks(round.(mjds*100)/100)
+        else
+            cbar_range = round.(collect(range(minimum(mjd), maximum(mjd), length=5))*100)/100
+            cbar.set_ticks(cbar_range)
+        end
+    else
+        wav  = vcat([data[n].flux_lam*1e6  for n in eachindex(data)]...)
+        flux = vcat([data[n].flux           for n in eachindex(data)]...)
+        ferr = vcat([data[n].flux_err       for n in eachindex(data)]...)
+        errorbar(wav, flux, yerr=ferr, fmt="o", markersize=3,
+                 color=color, ecolor="Gainsboro", elinewidth=1.0)
     end
+    title("Flux data")
+    xlabel("Wavelength (μm)")
+    ylabel("Flux")
+    ax.grid(true, which="both", color="Grey", linestyle=":")
+    tight_layout()
+    show(block=false)
 end
 
 function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; color::String="baseline",markopt=false, legend_below=false)
