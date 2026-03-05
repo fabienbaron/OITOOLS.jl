@@ -1195,14 +1195,20 @@ function readoifits(oifitsfile;
     if polychromatic && get_specbin_file
         length(wavtables) > 1 &&
             @warn("Multiple OI_WAVELENGTH tables — please specify spectralbin to select channels.")
-        wavarray = vcat([sort(hcat(db.eff_wave .- db.eff_band/2,
-                                   db.eff_wave .+ db.eff_band/2), dims=1) for db in wavtables]...)
-        if sum(wavarray[2:end, 2] .< wavarray[1:end-1, 1]) > 0
-            @warn("Overlapping wavebands — using narrower bands for polychromatic channel selection.")
-            wavarray = vcat([hcat(db.eff_wave .- db.eff_band/2.2,
-                                   db.eff_wave .+ db.eff_band/2.2) for db in wavtables]...)
+        # Use midpoints between adjacent channel centers as bin boundaries.
+        # This guarantees each stored lam value (= eff_wave[k]) falls in exactly one bin,
+        # regardless of eff_band (which can be larger than the channel spacing).
+        eff_wave_all = sort(vcat([T.(db.eff_wave) for db in wavtables]...))
+        nch = length(eff_wave_all)
+        if nch == 1
+            hw = T(wavtables[1].eff_band[1]) / 2
+            spectralbin = [[eff_wave_all[1] - hw, eff_wave_all[1] + hw]]
+        else
+            bounds = vcat(eff_wave_all[1] - (eff_wave_all[2] - eff_wave_all[1]) / 2,
+                          (eff_wave_all[1:end-1] .+ eff_wave_all[2:end]) ./ 2,
+                          eff_wave_all[end] + (eff_wave_all[end] - eff_wave_all[end-1]) / 2)
+            spectralbin = [[bounds[k], bounds[k+1]] for k in 1:nch]
         end
-        spectralbin = [wavarray[i, :] for i in 1:size(wavarray, 1)]
     end
 
     nwavbin  = length(spectralbin)
