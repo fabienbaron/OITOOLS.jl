@@ -26,6 +26,6 @@ Source code: [github.com/fabienbaron/OITOOLS.jl](https://github.com/fabienbaron/
 ## API index
 
 ```@index
-Pages = ["examples/reading.md", "examples/plotting.md"]
+Pages = ["examples/reading.md", "examples/plotting.md", "examples/imaging.md"]
 Modules = [OITOOLS]
 ```

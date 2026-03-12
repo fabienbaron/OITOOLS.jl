@@ -25,6 +25,8 @@ include("astrometry.jl")
 include("vonmises.jl")
 include("simulate.jl")
 include("oifitslib.jl")
+include("maximent.jl")
+include("oimem.jl")
 
 # readoifits
 export OIdata
@@ -88,5 +90,11 @@ export gaussianwrapped_to_vonmises_fast, logbesselI0
 
 # oifitslib (wraps oifitslib C tools)
 export oifits_check, oifits_merge, oifits_filter
+
+# maximent / oimem — MaxEnt image reconstruction
+export MaximENTParams, MaximENTState, maxent_step!, reconstruct!
+export ImagingContext, imaging_context, make_operators, set_dataspace!,
+       maxent_setup, maxent_reconstruct!, reconstruct_bsmem,
+       auto_pixsize, gaussian_prior, set_mask!, log_message
 
 end
