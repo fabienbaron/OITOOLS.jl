@@ -134,6 +134,47 @@ end
 # ---------------------------------------------------------------------------
 # OIdata{T}: central data container
 # ---------------------------------------------------------------------------
+"""
+    OIdata{T<:AbstractFloat}
+
+Central data container produced by `readoifits`. All observable arrays are flat
+vectors of length `nobs`; UV coordinates are stored in a `2×nuv` matrix.
+
+# Observable arrays
+- `v2`, `v2_err` — squared visibilities and errors
+- `v2_baseline`, `v2_lam`, `v2_dlam`, `v2_mjd`, `v2_flag` — baseline (m), λ (m), Δλ (m), MJD, flag
+- `t3phi`, `t3phi_err`, `t3amp`, `t3amp_err` — closure phases (deg) and triple amplitudes
+- `t3_baseline` — geometric-mean baseline (m); `t3_maxbaseline` — longest side (m)
+- `t3_lam`, `t3_dlam`, `t3_mjd`, `t3_flag`
+- `visamp`, `visamp_err`, `visphi`, `visphi_err` — complex visibility amplitude and phase (deg)
+- `vis_baseline`, `vis_lam`, `vis_dlam`, `vis_mjd`, `vis_flag`
+- `flux`, `flux_err`, `flux_lam`, `flux_dlam`, `flux_mjd`, `flux_flag`
+- `flux_sta_index` — station index for each flux point; `0` means calibrated (OI_FLUX CALSTAT=C)
+
+# UV plane
+- `uv` — `2×nuv` matrix of (u, v) spatial frequencies in cycles/m (i.e. baseline/λ)
+- `uv_lam`, `uv_dlam`, `uv_mjd`, `uv_baseline`
+- `indx_v2`, `indx_vis` — index of each V²/vis point into the UV array
+- `indx_t3_1`, `indx_t3_2`, `indx_t3_3` — UV indices for the three legs of each triangle
+
+# Station / telescope metadata
+- `sta_name`, `tel_name`, `sta_index` — station names, telescope names, station indices
+- `v2_sta_index` — `2×nv2` matrix; `t3_sta_index` — `3×nt3` matrix; `vis_sta_index` — `2×nvis`
+
+# Sizes
+- `nv2`, `nt3amp`, `nt3phi`, `nvisamp`, `nvisphi`, `nflux`, `nuv`
+
+# Correlation matrices (from OI_CORR; empty sparse matrices when absent)
+- `v2_corr`, `v2_corr_idx` — V² correlation matrix and per-point 1-based index
+- `t3amp_corr`, `t3amp_corr_idx`, `t3phi_corr`, `t3phi_corr_idx`
+- `visamp_corr`, `visamp_corr_idx`, `visphi_corr`, `visphi_corr_idx`
+- `flux_corr`, `flux_corr_idx`
+- `*_corr_idx[i] == 0` means point `i` has no associated correlation row.
+
+# Other
+- `mean_mjd::Float64` — mean MJD of the bin (always `Float64` regardless of `T`)
+- `filename` — path to the originating OIFITS file
+"""
 mutable struct OIdata{T<:AbstractFloat}
     # Complex visibilities
     visamp::Vector{T};             visamp_err::Vector{T}
@@ -210,6 +251,30 @@ end
 # set_data_filter / filter_data — post-load filtering (unchanged logic)
 # ---------------------------------------------------------------------------
 
+"""
+    set_data_filter(data; kwargs...) -> [uv_bad, vis_bad, v2_bad, t3_bad]
+
+Compute lists of indices to discard from a loaded `OIdata` bin without modifying it.
+Pass the result to `filter_data` to obtain a filtered copy.
+
+# Keyword arguments
+- `wav_range` — wavelength window(s) in metres, e.g. `[1.6e-6, 1.8e-6]` or a vector of
+  windows `[[1.6e-6,1.8e-6],[2.0e-6,2.4e-6]]`. Default: keep all.
+- `mjd_range` — MJD window(s), same format. Default: keep all.
+- `baseline_range` — `[min, max]` baseline in cycles/m. Default: keep all.
+- `filter_bad_data` — apply quality cuts (flags, NaN, SNR, amplitude range). Default: `false`.
+- `filter_vis`, `filter_v2`, `filter_t3amp`, `filter_t3phi` — enable cuts per observable type.
+- `cutoff_minv2`, `cutoff_maxv2` — V² range cut. Default: `(-1, 2.0)`.
+- `cutoff_mint3amp`, `cutoff_maxt3amp` — T3 amplitude range cut. Default: `(-1.0, 1.5)`.
+- `filter_v2_snr_threshold` — minimum |V²/σ| to keep. Default: `0.01`.
+- `force_full_vis` — require both amplitude and phase to be valid (default: either).
+- `force_full_t3` — require both T3amp and T3phi to be valid (default: either).
+- `special_filter_diffvis` — enable differential visibility filtering mode.
+- `uv_bad` — pre-supplied list of UV indices to remove.
+- `filter_visphi`, `filter_visamp` — enable visibility phase/amplitude filtering.
+
+Returns `[uv_bad, vis_bad, v2_bad, t3_bad]` — four `Vector{Int64}` of indices to discard.
+"""
 function set_data_filter(data::OIdata{T};
         wav_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
         mjd_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
@@ -279,6 +344,20 @@ function set_data_filter(data::OIdata{T};
     return [uv_bad, vis_bad, v2_bad, t3_bad]
 end
 
+"""
+    filter_data(data, indexes_to_discard) -> OIdata
+
+Return a deep copy of `data` with the specified points removed. `indexes_to_discard`
+must be the four-element vector `[uv_bad, vis_bad, v2_bad, t3_bad]` returned by
+`set_data_filter`. UV points that become unreferenced after removing observables are
+pruned automatically and all index arrays are remapped.
+
+# Example
+```julia
+idx = set_data_filter(data[1,1]; filter_bad_data=true, baseline_range=[5e6, 300e6])
+clean = filter_data(data[1,1], idx)
+```
+"""
 function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
     data = deepcopy(data_in)
     good_uv_vis = Int64[]; good_uv_v2 = Int64[]
@@ -1085,6 +1164,62 @@ end
 # ===========================================================================
 # readoifits — main entry point
 # ===========================================================================
+"""
+    readoifits(oifitsfile; kwargs...) -> Array{OIdata{T}, 2}
+
+Read an OIFITS file and return a 2-D array of `OIdata{T}` indexed as
+`[nwavbin, ntimebin]`. The simplest call returns a `1×1` array containing all
+data in a single bin.
+
+# Keyword arguments
+
+## Target selection
+- `targetname` — select a single target by name. Default: all targets combined.
+
+## Spectral / temporal binning
+- `spectralbin` — vector of `[λ_min, λ_max]` windows in metres. Default: single bin
+  spanning all wavelengths.
+- `temporalbin` — vector of `[mjd_min, mjd_max]` windows. Default: single bin
+  spanning all epochs.
+- `polychromatic` — if `true`, derive one spectral bin per instrument channel using
+  midpoints between adjacent channel centres as boundaries. Overrides `spectralbin`.
+- `splitting` — force multi-bin mode even when bin vectors equal `[[]]`.
+- `get_specbin_file` — auto-derive spectral bins from the file. Default: `true`.
+- `get_timebin_file` — auto-derive temporal bins from the file. Default: `true`.
+
+## Observable selection
+- `use_vis`, `use_v2`, `use_t3`, `use_flux` — load each observable type. Default: all `true`.
+- `use_t4` — reserved (T4 support). Default: `true`.
+
+## Quality filtering
+- `filter_bad_data` — apply quality cuts on load. Default: `true`.
+- `force_full_vis` — require both visamp and visphi to be valid. Default: `false`.
+- `force_full_t3` — require both t3amp and t3phi. Default: `false`.
+- `cutoff_minv2`, `cutoff_maxv2` — V² range cut. Default: `(-1, 2.0)`.
+- `cutoff_mint3amp`, `cutoff_maxt3amp` — T3amp range cut. Default: `(-1.0, 1.5)`.
+- `filter_v2_snr_threshold` — minimum |V²/σ|. Default: `0.01`.
+- `special_filter_diffvis` — differential visibility mode: keep only vis points common
+  across all spectral bins.
+
+## UV deduplication
+- `redundance_remove` — merge UV points closer than `uvtol`. Default: `true`.
+- `uvtol` — merge radius in metres. Default: `200.0`.
+
+## Numeric precision
+- `T` — element type for all numeric arrays. Use `Float32` for ~50% memory reduction.
+  Default: `Float64`.
+
+## Output
+- `verb` — print warnings about non-standard files. Default: `true`.
+
+# Example
+```julia
+data = readoifits("mystar.oifits")                         # all data, single bin
+data = readoifits("mystar.oifits"; polychromatic=true)     # one bin per channel
+data = readoifits("mystar.oifits"; T=Float32)              # half memory
+data = readoifits("multi.oifits"; targetname="Betelgeuse") # one target
+```
+"""
 function readoifits(oifitsfile;
         targetname        = "",
         spectralbin       = [[]],
@@ -1270,27 +1405,39 @@ end
 # Convenience wrappers
 # ===========================================================================
 
+"""
+    readoifits_multiepochs(oifitsfiles; kwargs...) -> (nepochs, tepochs, data)
+
+Read a list of OIFITS files, one per epoch, and return:
+- `nepochs` — number of files
+- `tepochs::Vector{Float64}` — mean MJD of each epoch
+- `data::Vector{OIdata{T}}` — one `OIdata` per epoch (single spectral bin each)
+
+Prints a summary line per file. Passes `filter_bad_data` and `force_full_t3` through
+to `readoifits`.
+"""
 function readoifits_multiepochs(oifitsfiles; filter_bad_data=true, force_full_t3=false,
                                 T::Type{<:AbstractFloat}=Float64)
-    nepochs = length(oifitsfiles)
-    tepochs = Vector{Float64}(undef, nepochs)
-    data    = Vector{OIdata{T}}(undef, nepochs)
-    for i in 1:nepochs
-        data[i]    = readoifits(oifitsfiles[i]; filter_bad_data, force_full_t3, T)[1,1]
-        tepochs[i] = data[i].mean_mjd
+    data    = [readoifits(f; filter_bad_data, force_full_t3, T)[1,1] for f in oifitsfiles]
+    tepochs = [d.mean_mjd for d in data]
+    for i in eachindex(oifitsfiles)
         println(oifitsfiles[i], "\t MJD: ", tepochs[i],
                 "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp,
                 "\t nT3phi = ", data[i].nt3phi)
     end
-    return nepochs, tepochs, data
+    return length(oifitsfiles), tepochs, data
 end
 
+"""
+    readoifits_multicolors(oifitsfiles; kwargs...) -> Vector{OIdata{T}}
+
+Read a list of OIFITS files, one per waveband, and return a `Vector{OIdata{T}}`
+(one element per file, single spectral bin each). Prints a summary line per file.
+"""
 function readoifits_multicolors(oifitsfiles; filter_bad_data=false, force_full_t3=false,
                                 T::Type{<:AbstractFloat}=Float64)
-    nwavs = length(oifitsfiles)
-    data  = Vector{OIdata{T}}(undef, nwavs)
-    for i in 1:nwavs
-        data[i] = readoifits(oifitsfiles[i]; filter_bad_data, force_full_t3, T)[1,1]
+    data = [readoifits(f; filter_bad_data, force_full_t3, T)[1,1] for f in oifitsfiles]
+    for i in eachindex(oifitsfiles)
         println(oifitsfiles[i], "\t nV2 = ", data[i].nv2,
                 "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi)
     end

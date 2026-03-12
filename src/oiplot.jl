@@ -134,6 +134,28 @@ function uvplot(uv::Array{Float64,2})
     tight_layout();
 end
 
+"""
+    uvplot(data; kwargs...)
+
+Plot the UV coverage for one or more `OIdata` bins. Conjugate baselines (-u, -v) are
+always shown. Accepts a single `OIdata`, a vector, or the 2-D array returned by
+`readoifits` (flattened automatically).
+
+# Keyword arguments
+- `color` — colouring scheme:
+  - `"baseline"` (default) — one colour per baseline pair, labelled legend
+  - `"wav"` / `"wavelength"` — coloured by λ (μm) with a horizontal colorbar
+  - `"mjd"` / `"time"` — coloured by MJD with a horizontal colorbar
+  - any other string — all points black
+- `figsize` — figure size tuple. Default: `(10, 10)`.
+- `minuv`, `maxuv` — axis limits in Mλ when `square=true`.
+- `square` — force equal axis limits. Default: `true`.
+- `legend_below` — place the baseline legend below the plot. Default: `true`.
+- `figtitle` — plot title string.
+- `cmap` — matplotlib colormap for `wav` / `mjd` modes. Default: `"Spectral_r"`.
+- `flipx` — invert the x-axis (East to the right). Default: `false`.
+- `filename` — save to file if non-empty.
+"""
 function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="baseline",filename="", figsize=(10,10), minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
     set_oiplot_defaults()
     if data isa OIdata
@@ -301,6 +323,20 @@ function plot_v2_vs_func(data::OIdata, model::OImodel, params; drawpoints = fals
     show(block=false)
 end
 
+"""
+    plot_v2(data; kwargs...)
+
+Plot squared visibilities V² vs baseline length (Mλ). Accepts a single `OIdata`,
+vector, or 2-D array.
+
+# Keyword arguments
+- `color` — `"baseline"` (default), `"wav"`, `"mjd"`, or an explicit colour string.
+- `logplot` — logarithmic y-axis. Default: `false`.
+- `figsize` — figure size. Default: `(12, 6)`.
+- `markopt` — use distinct marker shapes per baseline. Default: `false`.
+- `legend_below` — place legend below the plot. Default: `false`.
+- `figtitle` — plot title string.
+"""
 function plot_v2(data::Union{OIdata, AbstractArray{<:OIdata}};figsize=(12, 6), logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
     set_oiplot_defaults()
 
@@ -395,6 +431,21 @@ function plot_v2(data::Union{OIdata, AbstractArray{<:OIdata}};figsize=(12, 6), l
 end
 
 
+"""
+    plot_t3phi(data; kwargs...)
+
+Plot closure phases T3φ (degrees) vs a representative baseline length (Mλ).
+Accepts a single `OIdata`, vector, or 2-D array.
+
+# Keyword arguments
+- `t3base` — x-axis baseline:
+  - `"max"` (default) — longest side of the triangle
+  - `"geom"` — geometric-mean baseline (`t3_baseline`)
+- `color` — `"baseline"` (default), `"wav"`, `"mjd"`, or explicit colour string.
+- `figsize` — figure size. Default: `(12, 6)`.
+- `markopt` — use distinct marker shapes. Default: `false`.
+- `legend_below` — place legend below the plot. Default: `false`.
+"""
 function plot_t3phi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
     set_oiplot_defaults()
 
@@ -587,6 +638,19 @@ function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; figsi
 end
 
 
+"""
+    plot_t3amp(data; kwargs...)
+
+Plot triple amplitudes T3amp vs a representative baseline length (Mλ).
+Accepts a single `OIdata`, vector, or 2-D array.
+
+# Keyword arguments
+- `t3base` — x-axis baseline: `"max"` (default, longest side) or `"geom"` (geometric mean).
+- `color` — `"baseline"` (default), `"wav"`, or explicit colour string.
+- `figsize` — figure size. Default: `(12, 6)`.
+- `markopt` — use distinct marker shapes. Default: `false`.
+- `legend_below` — place legend below the plot. Default: `false`.
+"""
 function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
     set_oiplot_defaults()
 
@@ -658,6 +722,21 @@ function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6)
     show(block=false)
 end
 
+"""
+    plot_flux(data; kwargs...)
+
+Plot flux spectra vs wavelength (μm). Accepts a single `OIdata`, vector, or 2-D array.
+
+# Keyword arguments
+- `color` — colouring scheme:
+  - `"station"` (default) — one colour per station; OI_FLUX entries with `CALSTAT=C`
+    (i.e. `flux_sta_index == 0`) are labelled `"Calibrated"`.
+  - `"mjd"` / `"time"` — scatter coloured by MJD with a horizontal colorbar.
+  - any other string — treated as a matplotlib colour applied uniformly.
+- `figsize` — figure size. Default: `(12, 6)`.
+- `markopt` — use black markers with distinct shapes. Default: `false`.
+- `legend_below` — place legend below the plot. Default: `false`.
+"""
 function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6),
                    color::String="station", markopt=false, legend_below=false)
     set_oiplot_defaults()
@@ -727,6 +806,17 @@ function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6),
     show(block=false)
 end
 
+"""
+    plot_visphi(data; kwargs...)
+
+Plot visibility phases (degrees) vs baseline length (Mλ). Accepts a single `OIdata`,
+vector, or 2-D array.
+
+# Keyword arguments
+- `color` — `"baseline"` (default) or explicit colour string.
+- `markopt` — use distinct marker shapes. Default: `false`.
+- `legend_below` — place legend below the plot. Default: `false`.
+"""
 function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; color::String="baseline",markopt=false, legend_below=false)
     if data isa OIdata
         data = [data]
@@ -971,6 +1061,22 @@ end
 
 
 
+"""
+    imdisp(image; kwargs...)
+
+Display a 2-D reconstructed image. The image is normalised to its maximum and
+oriented with East left / North up (Monnier convention). Accepts a flat vector
+(square image assumed) or a 2-D matrix.
+
+# Keyword arguments
+- `pixsize` — pixel scale in mas. When `-1` (default) the axes show pixel indices.
+- `colormap` — matplotlib colormap. Default: `"gist_heat"`.
+- `figtitle` — figure window title. Default: `"OITOOLS image"`.
+- `tickinterval` — minor-tick spacing in mas. Default: `0.5`; auto-scaled for large images.
+- `use_colorbar` — show a right-side colorbar. Default: `false`.
+- `beamsize` — if `> 0`, draw a filled white circle of this diameter (mas) to indicate the PSF.
+- `beamlocation` — `[fx, fy]` fractional position of the beam circle. Default: `[0.8, 0.8]`.
+"""
 function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixsize = -1.0, tickinterval = 0.5, use_colorbar = false, beamsize = -1, beamlocation = [])
     fig = figure(figtitle,figsize=(6,6),facecolor="White")
     clf();
@@ -1032,6 +1138,20 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixsize
 end
 
 #TODO: work for rectangular
+"""
+    imdisp_polychromatic(image_vector; kwargs...)
+
+Display a set of polychromatic images in a grid of subplots, one panel per channel.
+`image_vector` may be a flat 1-D vector, a `(npix, nwavs)` matrix, or a
+`(nx, ny, nwavs)` cube. Each channel image is normalised independently.
+
+# Keyword arguments
+- `wavs` — vector of wavelength labels for subplot titles. Default: channel index.
+- `nwavs` — number of channels (inferred from array dims when possible).
+- `pixsize` — pixel scale in mas. Default: `-1` (pixel indices).
+- `colormap` — matplotlib colormap. Default: `"gist_heat"`.
+- `figtitle` — figure window title.
+"""
 function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; wavs = [], figtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixsize = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
     if typeof(image_vector)==Array{Float64,2}
         nwavs = size(image_vector,2)
