@@ -19,8 +19,12 @@ from inside that directory. Data files live in `demos/data/`.
 
 | File | Description |
 |------|-------------|
-| `2004-data1.oifits` | CHARA/MIRC dataset — used in most reconstruction examples |
+| `2004-data1.oifits` | SPIE Beauty Contest 2004 synthetic dataset — used in most reconstruction examples |
 | `2004true.fits` | Ground-truth image for the above |
+| `betlyr6t.oifits` | CHARA/MIRC data — β Lyrae |
 | `AlphaCenA.oifits` | VLTI/PIONIER data — used in model fitting examples |
 | `MWC480.oifits` | Polychromatic dataset for multi-channel reconstruction |
 | `rho_Cas_example.oifits` | Example file for plotting demos |
+| `BC2026/OBJECT1_LM.oifits` | Beauty Contest 2026 — object 1, LM band |
+| `BC2026/OBJECT1_N.oifits` | Beauty Contest 2026 — object 1, N band |
+| `BC2026/OBJECT2_K.oifits` | Beauty Contest 2026 — object 2, K band |
