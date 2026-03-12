@@ -101,3 +101,16 @@ imdisp_temporal(image_cube, nepochs; pixsize=0.5)
 ```julia
 plot_facility(facility)
 ```
+
+## API reference
+
+```@docs
+uvplot
+plot_v2
+plot_t3phi
+plot_t3amp
+plot_flux
+plot_visphi
+imdisp
+imdisp_polychromatic
+```

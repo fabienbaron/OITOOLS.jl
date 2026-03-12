@@ -160,3 +160,14 @@ For reference, `readoifits` calls the following internal functions in order:
 5. `filter_bad_observables!` — quality cuts, in-place
 6. `remove_redundant_uv!` — KDTree-based UV deduplication, in-place
 7. `make_oidata` — packages everything into the final `OIdata{T}` struct
+
+## API reference
+
+```@docs
+OIdata
+readoifits
+readoifits_multiepochs
+readoifits_multicolors
+set_data_filter
+filter_data
+```

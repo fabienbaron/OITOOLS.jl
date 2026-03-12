@@ -1,34 +1,87 @@
-# OITOOLS Installation
+# Installation
 
-## Overview of Dependencies
+## Dependencies
 
-| Package       | Usage     | Algorithm/Functions |
-| ------------- |:-------------:|:-------------:|
-| NFFT      | Compute Fourier transform | Non Equispaced Fourier Transform |
-| OptimPackNextGen | Image reconstruction | VMLMB (Éric Thiébaut)
-| LsqFit      | Model fitting | Levenberg-Marquardt
-| UltraNest | Model fitting and model comparison  |  Nested sampling    |
-| NLopt     | Model fitting | Several local (Nelder-Mead) and global (Genetic) optimizers |
-| SpecialFunctions | Complex visibility calculations | Bessel Functions
-| NearestNeighbors | simplify uv sampling | KD trees |
-| OIFITS | data import | read OIFITS files|
+| Package | Purpose |
+|---------|---------|
+| [OIFITS.jl](https://github.com/emmt/OIFITS.jl) | Read OIFITS v1/v2 files |
+| NFFT | Non-uniform fast Fourier transform for imaging |
+| OptimPackNextGen | VMLMB gradient optimizer for image reconstruction (Éric Thiébaut) |
+| NearestNeighbors | KD-tree UV deduplication |
+| SparseArrays | OI_CORR correlation matrix storage |
+| NLopt | Local and global optimizers (Nelder–Mead, ISRES, …) |
+| LsqFit | Levenberg–Marquardt least-squares fitting |
+| UltraNest | Bayesian model selection via nested sampling |
+| SpecialFunctions | Bessel functions for visibility calculations |
+| PyCall / PyPlot | Matplotlib-based plotting |
+| Crayons | Coloured terminal output |
 
+## Step 1: Python packages
 
-## Step 1: installation of Python Packages (UltraNest, Astroquery)
+OITOOLS uses a Julia-managed Conda environment for UltraNest and Astroquery.
+Paste the following into the Julia REPL:
 
-OITOOLS downloads then uses a Conda installation with the UltraNest ad Astroquery packages. For this you should copy/paste the following line into the REPL:
 ```julia
-ENV["PYTHON"]=""; ENV["MPLBACKEND"]="qt5agg"; using Pkg; Pkg.add("Conda"); using Conda; Conda.add("ultranest", channel="conda-forge"); Conda.add("astroquery", channel="astropy");
+ENV["PYTHON"] = ""
+ENV["MPLBACKEND"] = "qt5agg"
+using Pkg
+Pkg.add("Conda")
+using Conda
+Conda.add("ultranest",  channel="conda-forge")
+Conda.add("astroquery", channel="astropy")
 ```
-These operations should take a couple of minutes to complete.
-Feel free to remove the two ENV settings at the beginning of the line if you have already Python setup on your machine and do not want to use the Julia Conda python.
 
+!!! tip
 
-## Step 2: installation of Julia Packages
+    If you already have a Python installation you want to use, omit the two
+    `ENV[...]` lines so Julia reuses your existing Python.
 
-Because some of OITOOLS dependencies are not registered packages, we elect to go through ```Pkg()``` again rather than the activate/instantiate mechanism of Julia. Here again, copy/paste the following line into the REPL:
+## Step 2: Julia packages
+
+Add the EmmtRegistry (required for OptimPackNextGen, OIFITS, and related packages),
+then install all dependencies:
+
 ```julia
-using Pkg; pkg"registry add General"; pkg"registry add https://github.com/emmt/EmmtRegistry"; Pkg.add(["CFITSIO","AstroTime","Dates","DelimitedFiles","Documenter","DocumenterTools","FITSIO","Glob","LaTeXStrings","LinearAlgebra","FFTW", "NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","OIFITS","PyCall","PyPlot","Random","SparseArrays","Crayons", "Match", "SpecialFunctions","Statistics","Parameters", "ArrayTools", "LazyAlgebra", "OptimPackNextGen"]); Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
+using Pkg
+pkg"registry add General"
+pkg"registry add https://github.com/emmt/EmmtRegistry"
+Pkg.add([
+    "AstroTime", "CFITSIO", "Crayons", "Dates", "DelimitedFiles",
+    "FFTW", "FITSIO", "Glob", "LaTeXStrings", "LinearAlgebra",
+    "LsqFit", "Match", "NFFT", "NLopt", "NearestNeighbors",
+    "Parameters", "PyCall", "PyPlot", "Random", "SparseArrays",
+    "SpecialFunctions", "Statistics", "UltraNest",
+    "ArrayTools", "LazyAlgebra", "OptimPackNextGen", "OIFITS",
+])
+Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 ```
-Installation may take between 2-10 minutes depending on OS and computer performance.
 
+Installation typically takes 2–10 minutes depending on your system.
+
+Verify the installation:
+
+```julia
+using OITOOLS
+```
+
+## Speeding up load times with PackageCompiler
+
+Julia compiles code on first use, which can make the initial load of OITOOLS slow.
+Using [PackageCompiler](https://github.com/JuliaLang/PackageCompiler.jl) you can
+bake a precompiled system image:
+
+```julia
+using PackageCompiler
+create_sysimage([:OITOOLS];
+    sysimage_path          = "oitools.so",
+    precompile_execution_file = "demos/oitools_precomp.jl")
+```
+
+Then launch Julia with:
+
+```
+julia --sysimage oitools.so
+```
+
+The precompilation script `demos/oitools_precomp.jl` covers the most commonly used
+functions. Add any functions you use frequently to reduce their first-call latency.

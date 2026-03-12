@@ -1,20 +1,31 @@
-# OITOOLS framework
+# OITOOLS
 
 [![GitHub](https://img.shields.io/badge/Code-GitHub-black.svg)](https://github.com/fabienbaron/OITOOLS.jl)
 [![Status](http://www.repostatus.org/badges/latest/active.svg)](http://www.repostatus.org/#active)
 [![Build](https://github.com/fabienbaron/OITOOLS.jl/workflows/CI/badge.svg)](https://github.com/fabienbaron/OITOOLS.jl/actions)
 
-Welcome to the documentation for **OITOOLS**, a [Julia](http://julialang.org/) package for optical interferometry. OITOOLS is developed by Prof. Fabien Baron (Georgia State University) and collaborators.
-The sources are [here](https://github.com/fabienbaron/OITOOLS.jl).
+**OITOOLS** is a [Julia](http://julialang.org/) package for optical interferometry,
+developed by Prof. Fabien Baron (Georgia State University) and collaborators.
+It covers the full data analysis workflow:
 
-!!! warning
+- **Reading** OIFITS v1/v2 files with automatic quality filtering, spectral and
+  temporal binning, and OI_CORR support
+- **Plotting** UV coverage, V², closure phases, triple amplitudes, and flux spectra
+- **Model fitting** with NLopt, Levenberg–Marquardt, and UltraNest (Bayesian evidence)
+- **Image reconstruction** via gradient descent (VMLMB) with NFFT, including
+  polychromatic, time-variable, and SPARCO modes
+- **Simulating** synthetic OIFITS datasets from images or analytic models
 
-    OITOOLS is still undergoing development and documentation is sparse.
-    Everyone is welcome to contribute to the docs, tutorials or demos.
+Source code: [github.com/fabienbaron/OITOOLS.jl](https://github.com/fabienbaron/OITOOLS.jl)
 
-## Index
+!!! note
+
+    OITOOLS is under active development. Contributions to the code, documentation,
+    and demos are welcome.
+
+## API index
 
 ```@index
-Pages=["install.md"]
+Pages = ["examples/reading.md", "examples/plotting.md"]
 Modules = [OITOOLS]
 ```
