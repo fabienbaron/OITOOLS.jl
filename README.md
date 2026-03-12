@@ -26,10 +26,9 @@ If you're new to Julia, you may want to install OITOOLS and its dependencies wit
 You will only have to do this one.
 
 ```julia
-using Pkg; 
+using Pkg;
 pkg"registry add General"  # if not yet any registries
 pkg"registry add https://github.com/emmt/EmmtRegistry"
-Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4");
 Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 # Then check everything got installed properly
 using OITOOLS
@@ -127,9 +126,8 @@ Conda.add("astroquery", channel="astropy");
 Pkg.add(["CFITSIO","AstroTime","Crayons", "Dates","DelimitedFiles","Documenter","DocumenterTools","FFTW", "FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters", "Match", "ProgressMeter"]); 
 # Install Eric Thiebaut's packages
 Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))
-Pkg.add(["ArrayTools", "LazyAlgebra", "OptimPackNextGen"]);
+Pkg.add(["ArrayTools", "LazyAlgebra", "OptimPackNextGen", "OIFITS"]);
 # Install FB's packages
-Pkg.add(url="https://github.com/fabienbaron/OIFITS.jl", rev="t4");
 Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 # Then check everything got installed properly
 using OITOOLS
