@@ -76,7 +76,7 @@ export setup_nfft_polychromatic, reconstruct_polychromatic,
 export optimize_sparco_parameters
 export facility_info, obsv_info, combiner_info, wave_info, error_struct,
        read_facility_file, define_errors
-export disk, setup_nfft_t4, vis_to_t4
+export disk
 export chi2_sparco_f, chi2_sparco_f_alt, chi2_sparco_fg, reconstruct_sparco_gray
 
 # simulate

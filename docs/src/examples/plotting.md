@@ -102,15 +102,4 @@ imdisp_temporal(image_cube, nepochs; pixsize=0.5)
 plot_facility(facility)
 ```
 
-## API reference
-
-```@docs
-uvplot
-plot_v2
-plot_t3phi
-plot_t3amp
-plot_flux
-plot_visphi
-imdisp
-imdisp_polychromatic
-```
+See the [API Reference](@ref) for full docstrings.

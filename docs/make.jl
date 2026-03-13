@@ -24,6 +24,7 @@ makedocs(;
             "examples/simulating.md",
             "examples/imaging.md",
         ],
+        "API Reference" => "api.md",
     ],
 )
 

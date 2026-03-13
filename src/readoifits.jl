@@ -222,6 +222,9 @@ mutable struct OIdata{T<:AbstractFloat}
     visamp_corr::SparseMatrixCSC{T,Int64};   visamp_corr_idx::Vector{Int64}
     visphi_corr::SparseMatrixCSC{T,Int64};   visphi_corr_idx::Vector{Int64}
     flux_corr::SparseMatrixCSC{T,Int64};     flux_corr_idx::Vector{Int64}
+    # OI_VIS metadata (OIFITSv2 §6)
+    amptyp::String                           # "absolute", "differential", "correlated flux", or ""
+    phityp::String                           # "absolute", "differential", or ""
     filename::String
 end
 
@@ -451,6 +454,31 @@ function load_oifits(filename)
 end
 
 # ---------------------------------------------------------------------------
+# _read_vis_header_keywords: read AMPTYP / PHITYP from OI_VIS FITS headers.
+# OIFITS.jl may not populate these fields (e.g. when OI_REVN = 1), so we
+# fall back to reading the raw FITS headers with FITSIO.
+# Returns (amptyp, phityp) strings — first non-empty value found wins.
+# ---------------------------------------------------------------------------
+function _read_vis_header_keywords(filename::String)
+    amptyp = ""; phityp = ""
+    try
+        f = FITS(filename)
+        for i in 1:length(f)
+            hdr = read_header(f[i])
+            get(hdr, "EXTNAME", "") == "OI_VIS" || continue
+            at = get(hdr, "AMPTYP", "")
+            pt = get(hdr, "PHITYP", "")
+            isempty(amptyp) && !isempty(at) && (amptyp = lowercase(strip(at)))
+            isempty(phityp) && !isempty(pt) && (phityp = lowercase(strip(pt)))
+            !isempty(amptyp) && !isempty(phityp) && break
+        end
+        close(f)
+    catch
+    end
+    return amptyp, phityp
+end
+
+# ---------------------------------------------------------------------------
 # collect_station_info: parse OI_ARRAY tables and build station index mapping
 #
 # Returns a NamedTuple:
@@ -660,8 +688,15 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
     visamp_corr_idx_parts = Vector{Int64}[]; visphi_corr_idx_parts = Vector{Int64}[]
     seen_va_names = String[]; seen_va_sizes = Int[]
     seen_vp_names = String[]; seen_vp_sizes = Int[]
+    amptyp_all = ""; phityp_all = ""
 
     for (itable, db) in enumerate(vistables)
+        # Read AMPTYP / PHITYP (OIFITSv2 §6).  OIFITS.jl may leave these
+        # undefined for REVN=1 tables, so fall back to empty string.
+        _at = isdefined(db, :amptyp) ? string(db.amptyp) : ""
+        _pt = isdefined(db, :phityp) ? string(db.phityp) : ""
+        if !isempty(_at) && isempty(amptyp_all); amptyp_all = _at; end
+        if !isempty(_pt) && isempty(phityp_all); phityp_all = _pt; end
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
         wav    = _find_wav(db, wavtables, wavtableref)
         nwave  = length(wav.eff_wave)
@@ -708,7 +743,8 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
               vis_mjd=vis_mjd_all, vis_lam=vis_lam_all, vis_dlam=vis_dlam_all,
               vis_flag=vis_flag_all, vis_uv=vis_uv_all,
               vis_baseline=vis_baseline_all, vis_sta_index=vis_sta_index_all,
-              visamp_corr, visamp_corr_idx, visphi_corr, visphi_corr_idx)
+              visamp_corr, visamp_corr_idx, visphi_corr, visphi_corr_idx,
+              amptyp=amptyp_all, phityp=phityp_all)
 end
 
 # ---------------------------------------------------------------------------
@@ -896,6 +932,8 @@ mutable struct BinData{T<:AbstractFloat}
     visamp_corr::SparseMatrixCSC{T,Int64};   visamp_corr_idx::Vector{Int64}
     visphi_corr::SparseMatrixCSC{T,Int64};   visphi_corr_idx::Vector{Int64}
     flux_corr::SparseMatrixCSC{T,Int64};     flux_corr_idx::Vector{Int64}
+    # OI_VIS metadata
+    amptyp::String;                          phityp::String
 end
 
 # ---------------------------------------------------------------------------
@@ -1021,6 +1059,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         visamp_corr, visamp_corr_idx,
         visphi_corr, visphi_corr_idx,
         flux_corr,   flux_corr_idx,
+        raw_vis.amptyp, raw_vis.phityp,
     )
 end
 
@@ -1041,10 +1080,14 @@ function filter_bad_observables!(bd::BinData{T};
     if use_vis
         va_ok = (.!isnan.(bd.visamp)) .& (.!isnan.(bd.visamp_err)) .& (bd.visamp_err .> 0)
         vp_ok = (.!isnan.(bd.visphi)) .& (.!isnan.(bd.visphi_err)) .& (bd.visphi_err .> 0)
-        vis_good = force_full_vis ?
-            findall(.!bd.vis_flag .& (va_ok .& vp_ok)) :
-            findall(.!bd.vis_flag .& (va_ok .| vp_ok))
-        special_filter_diffvis && (vis_good = findall(.!bd.vis_flag .& va_ok .& vp_ok))
+        if special_filter_diffvis
+            # Keep all VIS points; the cross-bin post-treatment will prune later
+            vis_good = collect(1:length(bd.vis_flag))
+        elseif force_full_vis
+            vis_good = findall(.!bd.vis_flag .& (va_ok .& vp_ok))
+        else
+            vis_good = findall(.!bd.vis_flag .& (va_ok .| vp_ok))
+        end
         good_uv_vis          = bd.indx_vis[vis_good]
         bd.visamp            = bd.visamp[vis_good];    bd.visamp_err    = bd.visamp_err[vis_good]
         bd.visphi            = bd.visphi[vis_good];    bd.visphi_err    = bd.visphi_err[vis_good]
@@ -1157,6 +1200,7 @@ function make_oidata(bd::BinData{T}, station_info, filename::String) where T
         bd.visamp_corr, bd.visamp_corr_idx,
         bd.visphi_corr, bd.visphi_corr_idx,
         bd.flux_corr,   bd.flux_corr_idx,
+        bd.amptyp, bd.phityp,
         filename
     )
 end
@@ -1189,8 +1233,6 @@ data in a single bin.
 
 ## Observable selection
 - `use_vis`, `use_v2`, `use_t3`, `use_flux` — load each observable type. Default: all `true`.
-- `use_t4` — reserved (T4 support). Default: `true`.
-
 ## Quality filtering
 - `filter_bad_data` — apply quality cuts on load. Default: `true`.
 - `force_full_vis` — require both visamp and visphi to be valid. Default: `false`.
@@ -1203,7 +1245,7 @@ data in a single bin.
 
 ## UV deduplication
 - `redundance_remove` — merge UV points closer than `uvtol`. Default: `true`.
-- `uvtol` — merge radius in metres. Default: `200.0`.
+- `uvtol` — merge radius in cycles/rad (i.e. B/λ). Default: `200.0`.
 
 ## Numeric precision
 - `T` — element type for all numeric arrays. Use `Float32` for ~50% memory reduction.
@@ -1235,7 +1277,7 @@ function readoifits(oifitsfile;
         force_full_t3     = false,
         filter_v2_snr_threshold = 0.01,
         use_vis   = true, use_v2  = true, use_t3   = true,
-        use_t4    = true, use_flux = true,
+        use_flux = true,
         cutoff_minv2    = -1,   cutoff_maxv2    = 2.0,
         cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
         special_filter_diffvis = false,
@@ -1297,7 +1339,8 @@ function readoifits(oifitsfile;
     raw_vis  = use_vis  ? read_vis_tables(vistables,  targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
                (; visamp=T[], visamp_err=T[], visphi=T[], visphi_err=T[], vis_mjd=T[], vis_lam=T[], vis_dlam=T[], vis_flag=Bool[],
                   vis_uv=Matrix{T}(undef,0,2), vis_baseline=T[], vis_sta_index=Matrix{Int64}(undef,2,0),
-                  visamp_corr=_ec, visamp_corr_idx=Int64[], visphi_corr=_ec, visphi_corr_idx=Int64[])
+                  visamp_corr=_ec, visamp_corr_idx=Int64[], visphi_corr=_ec, visphi_corr_idx=Int64[],
+                  amptyp="", phityp="")
     raw_v2   = use_v2   ? read_v2_tables(v2tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
                (; v2=T[], v2_err=T[], v2_mjd=T[], v2_lam=T[], v2_dlam=T[], v2_flag=Bool[],
                   v2_uv=Matrix{T}(undef,0,2), v2_baseline=T[], v2_sta_index=Matrix{Int64}(undef,2,0),
@@ -1307,6 +1350,15 @@ function readoifits(oifitsfile;
                   t3_u1=T[], t3_v1=T[], t3_u2=T[], t3_v2=T[], t3_u3=T[], t3_v3=T[], t3_baseline=T[], t3_maxbaseline=T[],
                   t3_sta_index=Matrix{Int64}(undef,3,0),
                   t3amp_corr=_ec, t3amp_corr_idx=Int64[], t3phi_corr=_ec, t3phi_corr_idx=Int64[])
+
+    # ---- AMPTYP / PHITYP fallback via FITSIO headers -------------------------
+    if use_vis && isempty(raw_vis.amptyp) && isempty(raw_vis.phityp)
+        _at, _pt = _read_vis_header_keywords(oifitsfile)
+        raw_vis = merge(raw_vis, (; amptyp=_at, phityp=_pt))
+    end
+    if use_vis && verb && (!isempty(raw_vis.amptyp) || !isempty(raw_vis.phityp))
+        printstyled("OI_VIS: AMPTYP=$(raw_vis.amptyp) PHITYP=$(raw_vis.phityp)\n", color=:cyan)
+    end
 
     # ---- Determine spectral / temporal bins ---------------------------------
     splitting = splitting || polychromatic || temporalbin != [[]] || spectralbin != [[]]
@@ -1381,18 +1433,30 @@ function readoifits(oifitsfile;
     end
 
     # ---- Post-treatment: cross-bin differential visibility filter -----------
+    # Keep only VIS points that are valid (unflagged, finite err>0) across ALL spectral bins.
     if special_filter_diffvis
         for itimebin in 1:ntimebin
-            indx = findall(vec(prod(hcat([
-                (1 .- OIdataArr[i,itimebin].vis_flag) for i in 1:nwavbin]...), dims=2)) .== 1)
+            # Build per-channel validity masks (all same length since per-bin filter kept everything)
+            good_masks = [
+                let d = OIdataArr[i,itimebin]
+                    va_ok = (.!isnan.(d.visamp)) .& (.!isnan.(d.visamp_err)) .& (d.visamp_err .> 0)
+                    vp_ok = (.!isnan.(d.visphi)) .& (.!isnan.(d.visphi_err)) .& (d.visphi_err .> 0)
+                    .!d.vis_flag .& va_ok .& vp_ok
+                end
+                for i in 1:nwavbin]
+            # Point must be good in ALL channels
+            common_good = reduce(.&, good_masks)
+            indx = findall(common_good)
             for i in 1:nwavbin
                 d = OIdataArr[i,itimebin]
-                d.nvisphi       = length(indx)
+                d.nvisamp       = length(indx);          d.nvisphi       = length(indx)
+                d.visamp        = d.visamp[indx];        d.visamp_err    = d.visamp_err[indx]
                 d.visphi        = d.visphi[indx];        d.visphi_err    = d.visphi_err[indx]
                 d.vis_baseline  = d.vis_baseline[indx];  d.vis_mjd       = d.vis_mjd[indx]
                 d.vis_lam       = d.vis_lam[indx];       d.vis_dlam      = d.vis_dlam[indx]
                 d.vis_sta_index = d.vis_sta_index[:, indx]
                 d.vis_flag      = d.vis_flag[indx];      d.indx_vis      = d.indx_vis[indx]
+                !isempty(d.visamp_corr_idx) && (d.visamp_corr_idx = d.visamp_corr_idx[indx])
                 !isempty(d.visphi_corr_idx) && (d.visphi_corr_idx = d.visphi_corr_idx[indx])
             end
         end

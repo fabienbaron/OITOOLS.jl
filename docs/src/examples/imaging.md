@@ -147,12 +147,4 @@ image = maxent_reconstruct!(ctx, s, p; maxiter=200, verbose=true)
 
 See `example_image_reconstruction_oimem.jl` for a complete worked example.
 
-## API reference
-
-```@docs
-reconstruct_bsmem
-maxent_setup
-maxent_reconstruct!
-auto_pixsize
-gaussian_prior
-```
+See the [API Reference](@ref) for full docstrings.

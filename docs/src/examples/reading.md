@@ -106,7 +106,7 @@ data = readoifits("mystar.oifits"; use_flux=false, use_vis=false)
 
 ## UV deduplication
 
-Redundant UV points (within `uvtol` metres by default 200 m) are merged:
+Redundant UV points (within `uvtol` cycles/rad, i.e. B/λ; default 200) are merged:
 
 ```julia
 data = readoifits("mystar.oifits"; redundance_remove=true, uvtol=100.0)
@@ -161,13 +161,4 @@ For reference, `readoifits` calls the following internal functions in order:
 6. `remove_redundant_uv!` — KDTree-based UV deduplication, in-place
 7. `make_oidata` — packages everything into the final `OIdata{T}` struct
 
-## API reference
-
-```@docs
-OIdata
-readoifits
-readoifits_multiepochs
-readoifits_multicolors
-set_data_filter
-filter_data
-```
+See the [API Reference](@ref) for full docstrings.
