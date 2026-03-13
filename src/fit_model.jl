@@ -1,0 +1,700 @@
+# fit_model.jl
+#
+# Flat-dict parametric model fitting via NLopt.
+# Replacement for the legacy modelfit.jl stack (OImodel, OIcomponent, etc.).
+#
+# Load order (within OITOOLS module):
+#   include("resolvers.jl")          # SharedUtils, RGF
+#   include("hankel.jl")             # Hankel + chainrules
+#   include("model_chainrules.jl")   # vis_ud, vis_ldlin, ...
+#   include("readoifits.jl")         # OIdata struct
+#   include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
+#   include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
+#   include("fit_model.jl")          # this file
+#
+# Interface
+# ---------
+#   fit_model(param_dict, fit_params, data; lb, ub, weights, priors, method, ...)
+#       → FitResult
+
+using NLopt, ForwardDiff, Printf, PyCall, FFTW
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# display_model — inspect model setup before fitting
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    display_model(param_dict, fit_params; lb, ub)
+
+Print a human-readable summary of the model setup, grouped by component.
+Shows each parameter's value (or expression), whether it is free or fixed,
+and its bounds.  Warns about common mistakes (value out of bounds, missing
+bounds, flux fractions that don't sum to 1).
+
+Call this *before* `fit_model` / `fit_model_ultranest` to verify your setup.
+"""
+function display_model(param_dict  ::Dict{String},
+                       fit_params  ::Vector{String};
+                       lb = Dict{String,Float64}(),
+                       ub = Dict{String,Float64}())
+
+    fit_set = Set(fit_params)
+
+    # ── Discover components ─────────────────────────────────────────────────
+    comp_params = Dict{String, Vector{String}}()   # comp_name → [keys...]
+    for k in sort(collect(keys(param_dict)))
+        idx = findfirst(',', k)
+        if isnothing(idx)
+            cn = "__global__"
+        else
+            cn = k[1:idx-1]
+        end
+        push!(get!(comp_params, cn, String[]), k)
+    end
+
+    # ── Identify component kinds ────────────────────────────────────────────
+    n_warnings = 0
+
+    for cn in sort(collect(keys(comp_params)))
+        params = comp_params[cn]
+
+        # Detect kind
+        kind = "unknown"
+        for gk in ["profile", "diamin", "fwhmin", "crin",
+                   "ud", "fwhm", "ldlin", "ldquad", "ldpow", "resolved"]
+            if "$cn,$gk" in params
+                kind = gk == "profile" ? "hankel" :
+                       gk == "fwhm"    ? "gaussian" :
+                       gk == "diamin"  ? "ring" :
+                       gk == "fwhmin"  ? "gaussian_ring" :
+                       gk == "crin"    ? "crescent" : gk
+                break
+            end
+        end
+        if kind == "unknown" && "$cn,f" in params
+            kind = "point"
+        end
+
+        # Header
+        printstyled("\nComponent: $cn  [$kind]\n", bold=true)
+        println("─" ^ 78)
+        @printf("  %-24s  %-8s  %-30s  %s\n", "Parameter", "Status", "Value", "Bounds")
+        println("  " * "─"^74)
+
+        for k in params
+            suffix = occursin(',', k) ? k[findfirst(',', k)+1:end] : k
+            val    = param_dict[k]
+            free   = k in fit_set
+
+            # Format value column
+            if val isa Number
+                val_str = @sprintf("%.6g", val)
+            elseif val isa String
+                val_str = length(val) > 28 ? val[1:25] * "..." : val
+            else
+                val_str = string(val)
+                if length(val_str) > 28
+                    val_str = val_str[1:25] * "..."
+                end
+            end
+
+            # Format status and bounds
+            if free
+                lo = get(lb, k, nothing)
+                hi = get(ub, k, nothing)
+                lo_str = isnothing(lo) ? "-∞" : @sprintf("%.4g", lo)
+                hi_str = isnothing(hi) ? "+∞" : @sprintf("%.4g", hi)
+                bounds_str = "[$lo_str, $hi_str]"
+                status_str = "FREE"
+
+                # Sanity checks
+                if val isa Number
+                    if !isnothing(lo) && val < lo
+                        bounds_str *= "  ⚠ value < lb!"
+                        n_warnings += 1
+                    end
+                    if !isnothing(hi) && val > hi
+                        bounds_str *= "  ⚠ value > ub!"
+                        n_warnings += 1
+                    end
+                    if !isnothing(lo) && !isnothing(hi) && lo >= hi
+                        bounds_str *= "  ⚠ lb ≥ ub!"
+                        n_warnings += 1
+                    end
+                end
+
+                printstyled(@sprintf("  %-24s  %-8s  %-30s  %s\n",
+                    suffix, status_str, val_str, bounds_str), color=:red)
+            else
+                printstyled(@sprintf("  %-24s  %-8s  %-30s\n",
+                    suffix, "fixed", val_str), color=:default)
+            end
+        end
+    end
+
+    # ── Summary ─────────────────────────────────────────────────────────────
+    println("\n" * "─"^78)
+    n_free = length(fit_params)
+    n_total = length(param_dict)
+    println("Total: $n_total parameters, $n_free free")
+    println("Free:  $(join(fit_params, ", "))")
+
+    # Check flux sum at reference values
+    flux_keys = [k for k in keys(param_dict) if endswith(k, ",f")]
+    numeric_fluxes = [(k, param_dict[k]) for k in flux_keys if param_dict[k] isa Number]
+    expr_fluxes    = [(k, param_dict[k]) for k in flux_keys if param_dict[k] isa String]
+    if !isempty(numeric_fluxes) && isempty(expr_fluxes)
+        fsum = sum(v for (_, v) in numeric_fluxes)
+        if abs(fsum - 1.0) > 0.01
+            @printf("⚠ Numeric flux fractions sum to %.4f (expected ≈ 1.0)\n", fsum)
+            n_warnings += 1
+        end
+    elseif !isempty(expr_fluxes)
+        println("  Note: some flux fractions are expressions — sum check skipped")
+    end
+
+    if n_warnings > 0
+        printstyled("  $n_warnings warning(s) found — review before fitting\n", color=:yellow)
+    else
+        printstyled("  Setup looks good ✓\n", color=:green)
+    end
+    println()
+    return nothing
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FitResult
+# ─────────────────────────────────────────────────────────────────────────────
+
+struct FitResult
+    x_opt      ::Vector{Float64}   # best-fit parameter values
+    fit_params ::Vector{String}    # parameter names, same order as x_opt
+    chi2       ::Float64           # raw weighted chi2 at x_opt
+    chi2r      ::Float64           # chi2 / ndof
+    ndof       ::Int               # number of data points (weighted)
+    n_evals    ::Int               # number of chi2 function evaluations
+    ret        ::Symbol            # NLopt return code
+    model      ::FlatModel         # the compiled model
+end
+
+function Base.show(io::IO, r::FitResult)
+    @printf(io, "FitResult: χ²r = %.4f  (chi2=%.2f, ndof=%d, evals=%d, ret=%s)\n",
+            r.chi2r, r.chi2, r.ndof, r.n_evals, r.ret)
+    for (i, p) in enumerate(r.fit_params)
+        @printf(io, "  %-20s = %10.4f\n", p, r.x_opt[i])
+    end
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _dollarify: inject $ before "comp,param" references in an expression string
+# ─────────────────────────────────────────────────────────────────────────────
+
+function _dollarify(expr::String)
+    replace(expr, r"\b([A-Za-z_][A-Za-z0-9_]*,[A-Za-z_][A-Za-z0-9_]*)\b" => s"$\1")
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prior helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+function prior_penalty_and_grad!(g, x, priors, model, prior_idx)
+    isempty(priors) && return 0.0
+    pen = 0.0
+    for (i, (_, target, sigma)) in enumerate(priors)
+        idx = prior_idx[i]
+        val = model.resolver.fn(x)[idx]
+        r   = (val - target) / sigma^2
+        pen += (val - target)^2 / sigma^2
+        dpv = ForwardDiff.jacobian(x_ -> [model.resolver.fn(x_)[idx]], x)
+        g .+= 2 .* r .* vec(dpv)
+    end
+    return pen
+end
+
+function prior_penalty(x, priors, model, prior_idx)
+    isempty(priors) && return 0.0
+    sum((model.resolver.fn(x)[prior_idx[i]] - target)^2 / sigma^2
+        for (i, (_, target, sigma)) in enumerate(priors))
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fit_model — main entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    fit_model(param_dict, fit_params, data; kwargs...) -> FitResult
+
+Fit a parametric model to interferometric data using NLopt.
+
+# Arguments
+- `param_dict::Dict{String}` — flat parameter dictionary (values are numbers or expression strings)
+- `fit_params::Vector{String}` — names of the free parameters to optimize
+- `data::OIdata` — interferometric data
+
+# Keywords
+- `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds per parameter (default: ±Inf)
+- `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
+- `priors` — Vector of `(expr_str, target, sigma)` tuples for Gaussian penalties
+- `method` — NLopt algorithm (default `:LD_LBFGS`; use `:LN_NELDERMEAD` for gradient-free)
+- `maxeval` — maximum function evaluations (default 2000)
+- `ftol_rel`, `xtol_rel` — convergence tolerances
+- `vonmises` — use von Mises statistic for T3phi
+- `nB_workspace` — Hankel workspace size (default: nuv from data)
+- `verb` — print per-evaluation chi2 breakdown
+"""
+function fit_model(param_dict   ::Dict{String},
+                   fit_params   ::Vector{String},
+                   data         ::OIdata;
+    lb           = Dict{String,Float64}(),
+    ub           = Dict{String,Float64}(),
+    weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    priors       = [],
+    method       = :LD_LBFGS,
+    maxeval      = 2000,
+    ftol_rel     = 1e-8,
+    xtol_rel     = 1e-6,
+    vonmises     = false,
+    nB_workspace = nothing,
+    verb         = false,
+)
+    # ── 1. Augment param_dict with prior expressions ─────────────────────────
+    augmented = copy(param_dict)
+    prior_keys = String[]
+    for (i, (expr, _, _)) in enumerate(priors)
+        key = "__prior_$(i)__"
+        augmented[key] = _dollarify(expr)
+        push!(prior_keys, key)
+    end
+
+    # ── 2. Compile the model (once) ──────────────────────────────────────────
+    nB = something(nB_workspace, size(data.uv, 2))
+    model = parse_model(augmented, fit_params; nB_workspace=nB)
+
+    # ── 3. Resolve prior indices ─────────────────────────────────────────────
+    prior_idx = [findfirst(==(k), model.all_names) for k in prior_keys]
+
+    # ── 4. Detect gradient need ──────────────────────────────────────────────
+    use_grad = startswith(string(method), "LD_")
+
+    # ── 5. Build objective ───────────────────────────────────────────────────
+    n_evals = Ref(0)
+    function objective(x, g)
+        n_evals[] += 1
+        if use_grad
+            chi2, grad = chi2_flat_fg(model, x, data; weights, vonmises, verb)
+            chi2 += prior_penalty_and_grad!(grad, x, priors, model, prior_idx)
+            g .= grad
+        else
+            chi2 = chi2_flat(model, x, data; weights, vonmises, verb)
+            chi2 += prior_penalty(x, priors, model, prior_idx)
+        end
+        return chi2
+    end
+
+    # ── 6. Configure NLopt ───────────────────────────────────────────────────
+    opt = Opt(method, length(fit_params))
+    min_objective!(opt, objective)
+    ftol_rel!(opt, ftol_rel)
+    xtol_rel!(opt, xtol_rel)
+    maxeval!(opt, maxeval)
+    lower_bounds!(opt, [get(lb, p, -Inf) for p in fit_params])
+    upper_bounds!(opt, [get(ub, p,  Inf) for p in fit_params])
+
+    # ── 7. Run ───────────────────────────────────────────────────────────────
+    x0 = Float64[param_dict[p] for p in fit_params]
+    local minf, minx, ret
+    try
+        minf, minx, ret = optimize(opt, x0)
+    catch e
+        if e isa NLopt.ForcedStop
+            minf = objective(opt.last_optimum_value isa Vector ? opt.last_optimum_value : x0, Float64[])
+            minx = opt.last_optimum_value isa Vector ? opt.last_optimum_value : x0
+            ret  = :MAXEVAL_REACHED
+        else
+            rethrow(e)
+        end
+    end
+
+    # ── 8. Return result ─────────────────────────────────────────────────────
+    ndof = _ndof(data, weights)
+    return FitResult(minx, fit_params, minf, minf / ndof, ndof, n_evals[], ret, model)
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UltraNest result
+# ─────────────────────────────────────────────────────────────────────────────
+
+struct UltraNestResult
+    x_opt       ::Vector{Float64}   # maximum-likelihood parameter values
+    fit_params  ::Vector{String}    # parameter names, same order as x_opt
+    chi2        ::Float64           # chi2 at x_opt
+    chi2r       ::Float64           # chi2 / ndof
+    ndof        ::Int
+    logz        ::Float64           # log-evidence
+    logzerr     ::Float64           # log-evidence uncertainty
+    posterior   ::Matrix{Float64}   # (n_samples, n_params) posterior samples
+    result      ::Any               # raw UltraNest result dict (PyObject)
+    model       ::FlatModel
+end
+
+function Base.show(io::IO, r::UltraNestResult)
+    @printf(io, "UltraNestResult: χ²r = %.4f  (chi2=%.2f, ndof=%d)\n",
+            r.chi2r, r.chi2, r.ndof)
+    @printf(io, "  log(Z) = %.2f ± %.2f\n", r.logz, r.logzerr)
+    for (i, p) in enumerate(r.fit_params)
+        samples = r.posterior[:, i]
+        med  = sort(samples)[length(samples) ÷ 2]
+        lo   = sort(samples)[max(1, round(Int, 0.16 * length(samples)))]
+        hi   = sort(samples)[min(length(samples), round(Int, 0.84 * length(samples)))]
+        @printf(io, "  %-20s = %10.4f  (%.4f … %.4f)\n", p, r.x_opt[i], lo, hi)
+    end
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fit_model_ultranest — Bayesian nested sampling via UltraNest
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    fit_model_ultranest(param_dict, fit_params, data; kwargs...) -> UltraNestResult
+
+Fit a parametric model to interferometric data using UltraNest nested sampling.
+
+Requires PyCall and the Python `ultranest` package.
+
+# Arguments
+- `param_dict::Dict{String}` — flat parameter dictionary
+- `fit_params::Vector{String}` — names of the free parameters
+- `data::OIdata` — interferometric data
+
+# Keywords
+- `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds (REQUIRED for all fit_params)
+- `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
+- `vonmises` — use von Mises statistic for T3phi
+- `nB_workspace` — Hankel workspace size
+- `min_num_live_points` — minimum number of live points (default 400)
+- `cluster_num_live_points` — live points for clustering (default 100)
+- `num_bootstraps` — number of bootstraps for evidence (default 30)
+- `use_stepsampler` — use RegionSliceSampler (default false)
+- `nsteps` — steps per slice for stepsampler (default 400)
+- `frac_remain` — termination fraction (default 0.001)
+- `log_interval` — logging interval (default 100)
+- `verb` — print progress (default true)
+- `cornerplot` — show corner plot (default true)
+"""
+function fit_model_ultranest(param_dict   ::Dict{String},
+                             fit_params   ::Vector{String},
+                             data         ::OIdata;
+    lb                       = Dict{String,Float64}(),
+    ub                       = Dict{String,Float64}(),
+    weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    vonmises                 = false,
+    nB_workspace             = nothing,
+    min_num_live_points      = 400,
+    cluster_num_live_points  = 100,
+    num_bootstraps           = 30,
+    use_stepsampler          = false,
+    nsteps                   = 400,
+    frac_remain              = 0.001,
+    log_interval             = 100,
+    verb                     = true,
+    cornerplot               = true,
+)
+    # ── 1. Validate bounds ──────────────────────────────────────────────────
+    for p in fit_params
+        haskey(lb, p) || error("Lower bound required for '$p' (UltraNest needs finite bounds)")
+        haskey(ub, p) || error("Upper bound required for '$p' (UltraNest needs finite bounds)")
+    end
+    lbounds = Float64[lb[p] for p in fit_params]
+    ubounds = Float64[ub[p] for p in fit_params]
+
+    # ── 2. Compile the model (once) ─────────────────────────────────────────
+    nB = something(nB_workspace, size(data.uv, 2))
+    model = parse_model(param_dict, fit_params; nB_workspace=nB)
+
+    # ── 3. Prior transform: uniform [0,1]^n → [lb, ub] ─────────────────────
+    Δx = ubounds .- lbounds
+    function prior_transform(u::AbstractVector{<:Real})
+        u .* Δx .+ lbounds
+    end
+
+    prior_transform_vectorized = let trafo = prior_transform
+        (U::AbstractMatrix{<:Real}) -> reduce(vcat, (u -> trafo(u)').(eachrow(U)))
+    end
+
+    # ── 4. Log-likelihood: -0.5 * chi2 ─────────────────────────────────────
+    loglikelihood = let model=model, data=data, weights=weights, vonmises=vonmises
+        param::AbstractVector{<:Real} -> -0.5 * chi2_flat(model, param, data;
+                                                           weights, vonmises)
+    end
+
+    loglikelihood_vectorized = let loglikelihood = loglikelihood
+        (X::AbstractMatrix{<:Real}) -> loglikelihood.(eachrow(X))
+    end
+
+    # ── 5. Run UltraNest ───────────────────────────────────────────────────
+    ultranest = pyimport("ultranest")
+
+    param_names = fit_params  # UltraNest wants a list of strings
+
+    if !verb
+        log_interval = 1_000_000
+    end
+
+    smplr = ultranest.ReactiveNestedSampler(
+        param_names, loglikelihood_vectorized;
+        transform       = prior_transform_vectorized,
+        num_bootstraps  = num_bootstraps,
+        vectorized      = true,
+    )
+
+    if use_stepsampler
+        stepsampler_mod = pyimport("ultranest.stepsampler")
+        smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
+            nsteps         = nsteps,
+            adaptive_nsteps = "move-distance",
+        )
+    end
+
+    result = smplr.run(;
+        min_num_live_points     = min_num_live_points,
+        cluster_num_live_points = cluster_num_live_points,
+        log_interval            = log_interval,
+        frac_remain             = frac_remain,
+    )
+
+    # ── 6. Extract results ─────────────────────────────────────────────────
+    minx = Float64.(result["maximum_likelihood"]["point"])
+    minf = chi2_flat(model, minx, data; weights, vonmises)
+
+    if verb
+        @printf("Best-fit χ² = %.4f\n", minf)
+        smplr.print_results()
+    end
+
+    # ── 7. Corner plot ─────────────────────────────────────────────────────
+    if cornerplot
+        PyDict(pyimport("matplotlib")."rcParams")["font.size"] = [8]
+        histogram_color = "black"
+        contour_colors = py"{'colors': ['#0072B2','#56B4E9','#009E73','#F0E442'], 'linestyles': ['-', '-', '-', '-']}"
+        pyimport("ultranest.plot").cornerplot(result;
+            contour_kwargs = contour_colors,
+            color          = histogram_color,
+        )
+    end
+
+    # ── 8. Build posterior matrix ──────────────────────────────────────────
+    samples_py = result["samples"]
+    posterior  = convert(Matrix{Float64}, samples_py)
+
+    logz    = Float64(result["logz"])
+    logzerr = Float64(result["logzerr"])
+    ndof    = _ndof(data, weights)
+
+    return UltraNestResult(
+        minx, fit_params, minf, minf / ndof, ndof,
+        logz, logzerr, posterior, result, model,
+    )
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# model_to_obs — compute observables from a FlatModel
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    model_to_obs(model, x, data) -> (v2, t3amp, t3phi, visamp, visphi)
+
+Evaluate a `FlatModel` at parameter vector `x` and return the model
+observables matching the data structure.
+
+Returns a NamedTuple with fields `v2`, `t3amp`, `t3phi` (degrees),
+`visamp`, `visphi` (degrees).  Empty vectors are returned for
+observable types not present in `data`.
+"""
+function model_to_obs(model::FlatModel, x::AbstractVector, data::OIdata)
+    cvis = eval_model(model, x, data.uv)
+
+    # V²
+    v2_model = data.nv2 > 0 ? abs2.(cvis[data.indx_v2]) : Float64[]
+
+    # Triple products
+    if data.nt3amp > 0 || data.nt3phi > 0
+        t3 = cvis[data.indx_t3_1] .* cvis[data.indx_t3_2] .* cvis[data.indx_t3_3]
+        t3amp_model = abs.(t3)
+        t3phi_model = angle.(t3) .* (180.0 / π)
+    else
+        t3amp_model = Float64[]
+        t3phi_model = Float64[]
+    end
+
+    # Visibility amplitude & phase
+    if data.nvisamp > 0 || data.nvisphi > 0
+        Vvis = cvis[data.indx_vis]
+        visamp_model = abs.(Vvis)
+        visphi_model = angle.(Vvis) .* (180.0 / π)
+    else
+        visamp_model = Float64[]
+        visphi_model = Float64[]
+    end
+
+    return (v2=v2_model, t3amp=t3amp_model, t3phi=t3phi_model,
+            visamp=visamp_model, visphi=visphi_model)
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# model_to_image — synthesise an image from a FlatModel via inverse FFT
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    model_to_sed(model, x, wl_grid) -> (total, components)
+
+Evaluate the spectral energy distribution of a `FlatModel` by computing
+`V(u=0, v=0)` at each wavelength — the zero-baseline visibility equals
+the total flux.
+
+Per-component fluxes are obtained by resolving the `f` / `spectrum`
+parameters at each wavelength.
+
+# Arguments
+- `model::FlatModel` — compiled model from `parse_model`
+- `x::AbstractVector` — current free-parameter values
+- `wl_grid` — wavelength array in microns
+
+# Returns
+- `total::Vector{Float64}` — total flux at each wavelength (= V(0,0))
+- `components::Dict{String,Vector{Float64}}` — per-component flux
+"""
+function model_to_sed(model::FlatModel,
+                      x::AbstractVector,
+                      wl_grid::AbstractVector)
+    nwl = length(wl_grid)
+
+    # Total flux = V(0,0) at each wavelength
+    uv_zero = zeros(2, 1)   # single (u,v) = (0,0) point
+    total = Vector{Float64}(undef, nwl)
+    for (i, wl) in enumerate(wl_grid)
+        V = eval_model(model, x, uv_zero; wl)
+        total[i] = real(V[1])
+    end
+
+    # Per-component fluxes from the resolver
+    comp_fluxes = Dict{String, Vector{Float64}}()
+    for comp in model.components
+        comp_fluxes[comp.comp_name] = zeros(nwl)
+    end
+    for (i, wl) in enumerate(wl_grid)
+        pv = model.resolver.fn(x, wl, NaN)
+        for comp in model.components
+            f = comp.f_idx == 0 ? 1.0 : pv[comp.f_idx]
+            comp_fluxes[comp.comp_name][i] = f
+        end
+    end
+
+    return total, comp_fluxes
+end
+
+
+const _MAS2RAD_IMG = 2.0626480624709636e8   # 1 rad in mas (same as _MAS2RAD_PM)
+
+"""
+    model_to_image(model, x; nx=256, pixsize=0.1, oversample=1, normalize=true, wl=nothing)
+        -> Matrix{Float64}
+
+Synthesise an image from a `FlatModel` at parameter vector `x`.
+
+The image is computed by evaluating the model visibility on the 2-D FFT
+frequency grid and applying an inverse real FFT (`irfft`), which exploits
+the Hermitian symmetry V(-u,-v) = conj(V(u,v)) to halve the number of
+visibility evaluations.
+
+# Arguments
+- `model::FlatModel` — compiled model from `parse_model`
+- `x::AbstractVector` — current free-parameter values
+
+# Keywords
+- `nx` — image size in pixels (default 256)
+- `pixsize` — pixel size in mas (default 0.1)
+- `oversample` — oversampling factor (default 1)
+- `normalize` — normalize image to unit sum (default true)
+- `wl` — wavelength in microns (scalar); enables `\$WL` in spectrum expressions
+
+# Returns
+`img` — `nx × nx` Matrix{Float64}
+"""
+function model_to_image(model::FlatModel,
+                        x::AbstractVector;
+                        nx::Int       = 256,
+                        pixsize::Real = 0.1,
+                        oversample::Int = 1,
+                        normalize::Bool = true,
+                        wl = nothing)
+
+    ns = nx * oversample
+    ps = pixsize / oversample   # pixel size after oversampling (mas)
+
+    # ── Spatial frequency grids (cycles/rad) ────────────────────────────────
+    # Natural FFT order (NOT shifted) — matches what irfft expects.
+    # u-axis (dim 1): rfft gives frequencies 0, 1/(ns·ps), ..., 1/(2·ps)
+    # v-axis (dim 2): fft  gives frequencies 0, 1/(ns·ps), ..., -1/(ns·ps)
+    nrfft = ns ÷ 2 + 1
+    freq_u = rfftfreq(ns) ./ ps .* _MAS2RAD_IMG   # cycles/rad, length nrfft
+    freq_v = fftfreq(ns)  ./ ps .* _MAS2RAD_IMG   # cycles/rad, length ns
+
+    # ── Build UV grid for the half-plane (rfft convention) ──────────────────
+    nuv_half = nrfft * ns
+    uv = Matrix{Float64}(undef, 2, nuv_half)
+    k = 0
+    for jv in 1:ns         # v index (full, natural order)
+        for iu in 1:nrfft  # u index (rfft half)
+            k += 1
+            uv[1, k] = freq_u[iu]
+            uv[2, k] = freq_v[jv]
+        end
+    end
+
+    # ── Evaluate model visibility on the half-plane ─────────────────────────
+    V_half = eval_model(model, x, uv; wl)
+
+    # Reshape to (nrfft, ns) — rfft output layout
+    V_mat = reshape(V_half, nrfft, ns)
+
+    # ── Inverse real FFT → real image ───────────────────────────────────────
+    # irfft(F, ns) on a 2D array does irfft along dim 1 and ifft along dim 2,
+    # recovering the full ns×ns real image.  fftshift centers the result.
+    img = fftshift(irfft(V_mat, ns))
+
+    # Clamp negatives (numerical noise from Gibbs ringing)
+    @. img = max(img, 0.0)
+
+    # ── Downsample oversampled image by block-averaging ───────────────────
+    if oversample > 1
+        img_ds = zeros(nx, nx)
+        for j in 1:nx
+            for i in 1:nx
+                s = 0.0
+                for dj in 0:(oversample-1)
+                    for di in 0:(oversample-1)
+                        s += img[(i-1)*oversample + di + 1,
+                                 (j-1)*oversample + dj + 1]
+                    end
+                end
+                img_ds[i, j] = s / oversample^2
+            end
+        end
+        img = img_ds
+    end
+
+    if normalize && sum(img) > 0
+        img ./= sum(img)
+    end
+
+    return img
+end

@@ -283,7 +283,7 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
-function simulate(facility,target,combiner,wavelength,dates,errors,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model(), dft=false,nonoise=false)
+function simulate(facility,target,combiner,wavelength,dates,errors,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,nonoise=false)
     outfilename= string("!", out_file)   
     #simulate an observation using input hour angles, info about array and combiner, and input image
     ntel=facility.ntel[1];
@@ -353,14 +353,14 @@ function simulate(facility,target,combiner,wavelength,dates,errors,out_file; ima
             end
             cvis_model = vec(hcat(cvis...))
         end
-    elseif model.components !=[]
-        # Model
-        cvis_model = model_to_vis(model, uv, λ);
+    elseif flat_model !== nothing
+        # Flat-dict parametric model
+        cvis_model = eval_model(flat_model, flat_params, uv)
     else
-        warning("No image nor model definition in call to simulate()");
-        warning("Will generate zero visibilities");
+        @warn("No image nor model definition in call to simulate()")
+        @warn("Will generate zero visibilities")
         cvis_model = zeros(ComplexF64, size(uv,2))
-    end        
+    end
 
     # Compute true values of observables
     v2_model = vis_to_v2(cvis_model, v2_indx_w);
@@ -432,7 +432,7 @@ function simulate(facility,target,combiner,wavelength,dates,errors,out_file; ima
     fits_close_file(f);
 end
 
-function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[],  image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, model::OImodel=create_model())
+function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[],  image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[])
  
     outfilename= string("!", out_file)
     data = (readoifits(in_oifits,filter_bad_data=false))[1,1];
@@ -450,11 +450,11 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         x = vec(x)/sum(x);
         ft = setup_nfft(data, nx, pixsize);
         cvis_model = image_to_vis(x, ft);
-    elseif model.components !=[]
-        # Model
-        cvis_model = model_to_vis(model, data.uv, data.uv_lam);
+    elseif flat_model !== nothing
+        # Flat-dict parametric model
+        cvis_model = eval_model(flat_model, flat_params, data.uv)
     else
-        error("Bad image or model definition in call to simulate()");
+        error("Bad image or model definition in call to simulate()")
     end
 
     f = fits_create_file(outfilename);

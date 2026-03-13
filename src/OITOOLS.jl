@@ -16,7 +16,14 @@ module OITOOLS
 include("readoifits.jl")
 include("vis_functions.jl")
 include("model_chainrules.jl")
-include("modelfit.jl")
+
+# ── Flat-dict model fitting stack ────────────────────────────────────────────
+include("resolvers.jl")          # SharedUtils, RGF, HandRolled, Symbolic
+include("hankel.jl")             # Hankel transform + chainrules + profile compiler
+include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
+include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
+include("fit_model.jl")          # fit_model (NLopt), fit_model_ultranest, display_model
+
 include("write_oifits_ha.jl")
 include("write_oifits_obs.jl")
 include("utils.jl")
@@ -35,19 +42,12 @@ export readoifits, readoifits_multiepochs, readfits, writefits
 export oifits_prep, updatefits_aspro, readoifits_multicolors, list_oifits_targets
 export remove_redundant_uv!, filter_data, set_data_filter
 
-# modelfit
-export pos_fixed, spectrum_powerlaw, spectrum_gray, model_to_image, limbdarkened_disk
-export OIparam, OIcomponent, OImodel
-export create_component, create_model, update_model, model_to_vis, dispatch_params,
-       model_to_obs, model_to_chi2, visfunc_to_chi2, get_model_bounds, get_model_params,
-       get_model_pnames, fit_model_ultranest, fit_model_levenberg, fit_model_nlopt,
-       fit_visfunc_nlopt, resample_data, bootstrap_fit
 
 # oiplot
 export set_oiplot_defaults, uvplot, onclickidentify, plot_v2,
        plot_diffphi, plot_visphi, plot_t3phi, plot_v2_and_t3phi_wav, imdisp,
        imdisp_temporal, plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
-       plot_v2_model_vs_func, plot_t3amp, plot_v2_multifile, imdisp_polychromatic,
+       plot_t3amp, plot_v2_multifile, imdisp_polychromatic,
        plot_flux
 
 # oichi2
@@ -71,6 +71,26 @@ export bb, visibility_ud, visibility_ldpow, visibility_ldquad, visibility_ldquad
 export vis_ud, vis_ldlin, vis_ldquad, vis_ldpow,
        vis_ldlin_fwd, vis_ldlin_fwd!,
        visibility_ud_d, visibility_ldlin_d, visibility_ldquad_d, visibility_ldpow_d
+
+# resolvers — flat-dict parameter expression resolvers
+export SharedUtils, RGF, HandRolled
+
+# hankel — numerical Hankel transform for radial profiles
+export trapz, trapz_weights, hankel_transform, hankel_norm, hankel_vis,
+       hankel_vis_interp, hankel_vis_full,
+       eval_profile, compile_profile,
+       HankelWorkspace, hankel_vis_fwd!, hankel_vis_pullback!
+
+# parse_model — compile flat param dicts into evaluable models
+export FlatModel, AnalyticSpec, HankelSpec, AbstractComponentSpec,
+       parse_model, eval_model, eval_model_grad
+
+# chi2_flat — chi-squared for flat parametric models
+export chi2_flat, chi2_flat_fg
+
+# fit_model — new flat-dict model fitting (NLopt + UltraNest)
+export FitResult, UltraNestResult, display_model,
+       fit_model, fit_model_ultranest, model_to_obs, model_to_image, model_to_sed
 
 export get_uv, get_uv_indxes, prep_arrays, read_array_file, read_obs_file,
        read_comb_file, read_wave_file, simulate, simulate_from_oifits, vis_to_t3_conj,
