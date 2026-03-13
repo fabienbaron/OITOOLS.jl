@@ -15,6 +15,7 @@ module OITOOLS
 
 include("readoifits.jl")
 include("vis_functions.jl")
+include("model_chainrules.jl")
 include("modelfit.jl")
 include("write_oifits_ha.jl")
 include("write_oifits_obs.jl")
@@ -66,6 +67,11 @@ export bb, visibility_ud, visibility_ldpow, visibility_ldquad, visibility_ldquad
        visibility_ellipse_uniform, visibility_thin_ring, visibility_Gaussian_ring,
        visibility_Gaussian_ring_az, visibility_ldsquareroot, visibility_Lorentzian_ring,
        visibility_GaussianLorentzian_ring_az
+# model_chainrules — AD-compatible visibility functions with ChainRules rrules
+export vis_ud, vis_ldlin, vis_ldquad, vis_ldpow,
+       vis_ldlin_fwd, vis_ldlin_fwd!,
+       visibility_ud_d, visibility_ldlin_d, visibility_ldquad_d, visibility_ldpow_d
+
 export get_uv, get_uv_indxes, prep_arrays, read_array_file, read_obs_file,
        read_comb_file, read_wave_file, simulate, simulate_from_oifits, vis_to_t3_conj,
        get_v2_baselines, v2mapt3, get_t3_baselines, hour_angle_calc
@@ -77,7 +83,7 @@ export optimize_sparco_parameters
 export facility_info, obsv_info, combiner_info, wave_info, error_struct,
        read_facility_file, define_errors
 export disk
-export chi2_sparco_f, chi2_sparco_f_alt, chi2_sparco_fg, reconstruct_sparco_gray
+export chi2_sparco_f, chi2_sparco_fg, reconstruct_sparco_gray
 
 # simulate
 export hours_to_date, sunrise_sunset, mjd_to_utdate, dates_to_jd, jd_to_hour_angle,
