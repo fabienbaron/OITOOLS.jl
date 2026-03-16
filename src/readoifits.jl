@@ -87,23 +87,58 @@ _safe_field(obj, field::Symbol) = try; getproperty(obj, field); catch; nothing; 
 # corrindx_obs[r] = 1-based start in OI_CORR matrix for obs r (0 = no corr).
 # offset: added to all non-zero indices for block-diagonal assembly.
 # corr_ndata: size of the OI_CORR matrix — used for bounds validation.
-function _expand_corrindx(corrindx_obs, nwave::Int, offset::Int, corr_ndata::Int)
+# mjd_obs: optional MJD vector (one per obs) to detect multi-baseline timestamp
+#          groups (GRAVITY-style files where CORRINDX=1 for all rows but
+#          corr_ndata = nbase × nwave).
+function _expand_corrindx(corrindx_obs, nwave::Int, offset::Int, corr_ndata::Int;
+                          mjd_obs::Union{Nothing,AbstractVector}=nothing)
     nobs   = length(corrindx_obs)
     result = zeros(Int64, nwave * nobs)
+
+    # Detect multi-baseline correlation blocks:
+    # When corr_ndata > nwave and is an exact multiple, multiple rows within
+    # one timestamp collectively span the full block.  GRAVITY writes
+    # CORRINDX=1 for every row, so we must assign per-row offsets within
+    # each timestamp group based on row order.
+    nrows_per_group = corr_ndata ÷ nwave
+    multi_baseline  = (nrows_per_group > 1 && corr_ndata == nrows_per_group * nwave
+                       && !isnothing(mjd_obs))
+
+    # Track position within each timestamp group (keyed by CORRINDX + MJD)
+    group_counter = Dict{Tuple{Int64,Float64}, Int}()
+
     for obs in 1:nobs
         base = Int64(corrindx_obs[obs])
         base == 0 && continue
-        # Bounds check: raw indices must fit inside the OI_CORR matrix
-        max_raw = base + nwave - 1
+
+        # In multi-baseline mode, compute the intra-group row index (0-based)
+        row_offset = 0
+        if multi_baseline
+            mjd_val = Float64(mjd_obs[obs])
+            key = (base, mjd_val)
+            row_offset = get(group_counter, key, 0)
+            group_counter[key] = row_offset + 1
+            if row_offset >= nrows_per_group
+                @warn("CORRINDX expansion: timestamp group at MJD=$mjd_val has " *
+                      "more than $nrows_per_group rows — skipping excess.")
+                continue
+            end
+        end
+
+        # Effective base index for this row
+        effective_base = base + row_offset * nwave
+
+        # Bounds check
+        max_raw = effective_base + nwave - 1
         if max_raw > corr_ndata
-            @warn("CORRINDX expansion out of bounds: obs $obs has base=$base, " *
-                  "nwave=$nwave → max index $max_raw > NDATA=$corr_ndata. " *
-                  "Skipping this observation's correlation.")
+            @warn("CORRINDX expansion out of bounds: obs $obs has " *
+                  "effective_base=$effective_base, nwave=$nwave → " *
+                  "max index $max_raw > NDATA=$corr_ndata. Skipping.")
             continue
         end
-        base += offset
+        effective_base += offset
         for w in 1:nwave
-            result[(obs-1)*nwave + w] = base + (w - 1)
+            result[(obs-1)*nwave + w] = effective_base + (w - 1)
         end
     end
     return result
@@ -113,10 +148,12 @@ end
 # Uses a Dict{String,Int} (corrname_offsets) to map each CORRNAME to its stable
 # block-diagonal offset, independent of the order data tables are encountered.
 # Returns zeros(Int64, nwave*nobs) if correlation is unavailable for this table.
+# mjd_col: optional MJD vector (one per obs in tid_ok) for multi-baseline detection.
 function _process_corrindx(corrname_val, corrindx_col, tid_ok, nwave::Int,
                             correlt::Dict,
                             corrname_offsets::Dict{String,Int},
-                            seen_corrnames::Vector{String})
+                            seen_corrnames::Vector{String};
+                            mjd_obs::Union{Nothing,AbstractVector}=nothing)
     nobs = length(tid_ok)
     cn   = isnothing(corrname_val) ? "" : strip(string(corrname_val))
     (isempty(cn) || !haskey(correlt, cn) || isnothing(corrindx_col)) &&
@@ -131,7 +168,7 @@ function _process_corrindx(corrname_val, corrindx_col, tid_ok, nwave::Int,
     end
     offset     = corrname_offsets[cn]
     corr_ndata = size(correlt[cn], 1)
-    return _expand_corrindx(cidx_obs, nwave, offset, corr_ndata)
+    return _expand_corrindx(cidx_obs, nwave, offset, corr_ndata; mjd_obs)
 end
 
 # Build the final block-diagonal corr sparse matrix from the accumulated list.
@@ -669,7 +706,8 @@ function read_flux_tables(fluxtables, targetid_filter,
 
         push!(flux_corr_idx_parts, _process_corrindx(
             _safe_field(db, :corrname), _safe_field(db, :corrindx_fluxdata),
-            tid_ok, nwave, correlt, flux_corr_offsets, seen_flux_names))
+            tid_ok, nwave, correlt, flux_corr_offsets, seen_flux_names;
+            mjd_obs=db.mjd[tid_ok]))
 
         append!(flux_all,          vec(fdata));  append!(flux_err_all,      vec(ferr))
         append!(flux_mjd_all,      vec(fmjd));   append!(flux_lam_all,      vec(flam))
@@ -733,10 +771,13 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
         end
 
         cn = _safe_field(db, :corrname)
+        _mjd_tid = db.mjd[tid_ok]
         push!(visamp_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_visamp), tid_ok, nwave, correlt, va_corr_offsets, seen_va_names))
+            cn, _safe_field(db, :corrindx_visamp), tid_ok, nwave, correlt, va_corr_offsets, seen_va_names;
+            mjd_obs=_mjd_tid))
         push!(visphi_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_visphi), tid_ok, nwave, correlt, vp_corr_offsets, seen_vp_names))
+            cn, _safe_field(db, :corrindx_visphi), tid_ok, nwave, correlt, vp_corr_offsets, seen_vp_names;
+            mjd_obs=_mjd_tid))
 
         append!(visamp_all, vec(vamp));   append!(visamp_err_all, vec(verr))
         append!(visphi_all, vec(vphi));   append!(visphi_err_all, vec(vperr))
@@ -798,7 +839,8 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
 
         push!(v2_corr_idx_parts, _process_corrindx(
             _safe_field(db, :corrname), _safe_field(db, :corrindx_vis2data),
-            tid_ok, nwave, correlt, v2_corr_offsets, seen_v2_names))
+            tid_ok, nwave, correlt, v2_corr_offsets, seen_v2_names;
+            mjd_obs=db.mjd[tid_ok]))
 
         append!(v2_all, vec(v2d));    append!(v2_err_all, vec(v2e))
         append!(v2_mjd_all, vec(v2mjd))
@@ -866,10 +908,13 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
         end
 
         cn = _safe_field(db, :corrname)
+        _mjd_tid = db.mjd[tid_ok]
         push!(t3amp_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_t3amp), tid_ok, nwave, correlt, ta_corr_offsets, seen_ta_names))
+            cn, _safe_field(db, :corrindx_t3amp), tid_ok, nwave, correlt, ta_corr_offsets, seen_ta_names;
+            mjd_obs=_mjd_tid))
         push!(t3phi_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_t3phi), tid_ok, nwave, correlt, tp_corr_offsets, seen_tp_names))
+            cn, _safe_field(db, :corrindx_t3phi), tid_ok, nwave, correlt, tp_corr_offsets, seen_tp_names;
+            mjd_obs=_mjd_tid))
 
         append!(t3amp_all, vec(t3a));   append!(t3amp_err_all, vec(t3ae))
         append!(t3phi_all, vec(t3p));   append!(t3phi_err_all, vec(t3pe))

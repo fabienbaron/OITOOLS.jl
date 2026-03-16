@@ -17,7 +17,7 @@ using SparseArrays, LinearAlgebra, SpecialFunctions
 function main()
     # ── 1. Read the data ─────────────────────────────────────────────────────
     oifitsfile = joinpath(@__DIR__, "data", "BC2026", "OBJECT2_K.oifits")
-    data = readoifits(oifitsfile)[1,1]
+    data = readoifits(oifitsfile, filter_bad_data=false)[1,1]
 
     println("V² points:  $(data.nv2)")
     println("Corr matrix size: $(size(data.v2_corr))")
@@ -37,43 +37,52 @@ function main()
     nbase = length(mjd1_mask) ÷ nwave
     println("Detected: nwave=$nwave  nbase=$nbase  nblock=$(nwave*nbase)")
 
-    # Build corrected cidx: within each timestamp, consecutive groups of nwave
-    # points get offsets 0, nwave, 2*nwave, ...
+    # Build a mapping from (baseline_pair, wavelength_index) → global corr index.
+    # We assign baselines a canonical order from the first complete timestamp.
+    baseline_order = Dict{Tuple{Int,Int}, Int}()  # (sta1,sta2) → 0-based baseline index
+    for b in 0:nbase-1
+        idx = mjd1_mask[b * nwave + 1]
+        pair = (data.v2_sta_index[1, idx], data.v2_sta_index[2, idx])
+        baseline_order[pair] = b
+    end
+    # Build per-point wavelength index within each baseline
+    # Within a timestamp, points for one baseline appear as consecutive nwave entries
+    # with wavelengths in order.
+    lam_sorted = data.v2_lam[mjd1_mask[1:nwave]]  # reference wavelength grid
+
+    # Build corrected cidx for every point
     cidx_fixed = zeros(Int, data.nv2)
     for mjd in unique_mjds
         mask = findall(data.v2_mjd .== mjd)
-        n = length(mask)
-        if n != nwave * nbase
-            @warn "MJD=$mjd has $n points, expected $(nwave*nbase) — skipping"
-            continue
-        end
-        for b in 0:nbase-1
-            offset = b * nwave
-            for w in 1:nwave
-                idx = mask[b * nwave + w]
-                cidx_fixed[idx] = offset + w   # 1-based global index
-            end
+        for idx in mask
+            pair = (data.v2_sta_index[1, idx], data.v2_sta_index[2, idx])
+            b = get(baseline_order, pair, -1)
+            b == -1 && continue
+            # Find wavelength channel (exact match in the reference grid)
+            lam_val = data.v2_lam[idx]
+            w = findfirst(==(lam_val), lam_sorted)
+            w === nothing && continue
+            cidx_fixed[idx] = b * nwave + w  # 1-based global index
         end
     end
 
-    println("Fixed cidx range: $(extrema(cidx_fixed[cidx_fixed .> 0]))")
+    ngood = count(>(0), cidx_fixed)
+    println("Points with valid corr index: $ngood / $(data.nv2)")
 
     # Dense correlation matrix — small enough for GRAVITY
     C = Matrix(data.v2_corr)
 
     # ── 3. Point-source model (V² = 1) ───────────────────────────────────────
-    chi2_corr_total, chi2_diag_total, nskipped =
-        _correlated_chi2(ones(data.nv2), data, C, cidx_fixed, unique_mjds,
-                         nwave * nbase, ndata_corr)
+    chi2_corr_total, chi2_diag_total, npts_corr, npts_diag =
+        _correlated_chi2(ones(data.nv2), data, C, cidx_fixed, unique_mjds, ndata_corr)
 
-    ndof = data.nv2
     println("\n── Results (point-source model, V² = 1) ──")
-    println("Timestamps processed:   $(length(unique_mjds) - nskipped) / $(length(unique_mjds))")
+    println("Points with correlation: $npts_corr")
+    println("Points diagonal only:    $npts_diag")
     println("Total correlated chi2:  $(round(chi2_corr_total, digits=2))")
     println("Total diagonal chi2:    $(round(chi2_diag_total, digits=2))")
-    println("N data points:          $ndof")
-    println("Correlated chi2/N:      $(round(chi2_corr_total/ndof, digits=4))")
-    println("Diagonal chi2/N:        $(round(chi2_diag_total/ndof, digits=4))")
+    println("Correlated chi2/N:      $(round(chi2_corr_total/data.nv2, digits=4))")
+    println("Diagonal chi2/N:        $(round(chi2_diag_total/data.nv2, digits=4))")
     println("Ratio corr/diag:        $(round(chi2_corr_total/chi2_diag_total, digits=4))")
 
     # ── 4. UD grid search ────────────────────────────────────────────────────
@@ -81,7 +90,6 @@ function main()
 
     best_diam = 0.0
     best_chi2 = Inf
-    nblock = nwave * nbase
 
     B   = data.v2_baseline
     lam = data.v2_lam
@@ -91,8 +99,8 @@ function main()
         V      = @. ifelse(abs(x) < 1e-12, 1.0, 2 * besselj1(x) / x)
         v2_mod = @. V^2
 
-        chi2_total, _, _ = _correlated_chi2(v2_mod, data, C, cidx_fixed,
-                                            unique_mjds, nblock, ndata_corr)
+        chi2_total, _, _, _ = _correlated_chi2(v2_mod, data, C, cidx_fixed,
+                                               unique_mjds, ndata_corr)
 
         if chi2_total < best_chi2
             best_chi2 = chi2_total
@@ -102,41 +110,53 @@ function main()
 
     println("Best UD diameter:       $(best_diam) mas")
     println("Best correlated chi2:   $(round(best_chi2, digits=2))")
-    println("Best chi2/N:            $(round(best_chi2/ndof, digits=4))")
+    println("Best chi2/N:            $(round(best_chi2/data.nv2, digits=4))")
 end
 
 # ── Helper: correlated chi2 summed over all timestamps ────────────────────────
-function _correlated_chi2(v2_mod, data, C, cidx_fixed, unique_mjds,
-                          nblock, ndata_corr)
+# For each timestamp, extract points with valid correlation indices,
+# build the sub-block of Σ, and compute rᵀ Σ⁻¹ r.
+# Points without valid correlation indices use diagonal chi2.
+function _correlated_chi2(v2_mod, data, C, cidx_fixed, unique_mjds, ndata_corr)
     chi2_corr_total = 0.0
     chi2_diag_total = 0.0
-    nskipped = 0
+    npts_corr = 0
+    npts_diag = 0
 
     for mjd in unique_mjds
         mask = findall(data.v2_mjd .== mjd)
         cidx = cidx_fixed[mask]
 
-        r      = data.v2[mask] .- v2_mod[mask]
-        v2_err = data.v2_err[mask]
+        # Split into points with and without valid correlation
+        good = findall(c -> c > 0 && c <= ndata_corr, cidx)
+        bad  = findall(c -> c <= 0 || c > ndata_corr, cidx)
 
-        # Fall back to diagonal if invalid indices
-        if any(cidx .== 0) || maximum(cidx) > ndata_corr || length(mask) != nblock
-            chi2_d = sum((r ./ v2_err).^2)
+        # Diagonal fallback for points without correlation
+        if !isempty(bad)
+            r_bad = data.v2[mask[bad]] .- v2_mod[mask[bad]]
+            chi2_d = sum((r_bad ./ data.v2_err[mask[bad]]).^2)
             chi2_corr_total += chi2_d
             chi2_diag_total += chi2_d
-            nskipped += 1
-            continue
+            npts_diag += length(bad)
         end
 
-        # Covariance: Σ = diag(σ) · C_block · diag(σ)
-        D     = Diagonal(v2_err)
-        Sigma = Symmetric(D * C[cidx, cidx] * D)
+        # Correlated chi2 for points with valid indices
+        if !isempty(good)
+            idx_g  = mask[good]
+            cidx_g = cidx[good]
+            r      = data.v2[idx_g] .- v2_mod[idx_g]
+            v2_err = data.v2_err[idx_g]
 
-        chi2_corr_total += dot(r, Sigma \ r)
-        chi2_diag_total += sum((r ./ v2_err).^2)
+            D     = Diagonal(v2_err)
+            Sigma = Symmetric(D * C[cidx_g, cidx_g] * D)
+
+            chi2_corr_total += dot(r, Sigma \ r)
+            chi2_diag_total += sum((r ./ v2_err).^2)
+            npts_corr += length(good)
+        end
     end
 
-    return chi2_corr_total, chi2_diag_total, nskipped
+    return chi2_corr_total, chi2_diag_total, npts_corr, npts_diag
 end
 
 main()
