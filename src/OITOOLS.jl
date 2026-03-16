@@ -73,7 +73,8 @@ export vis_ud, vis_ldlin, vis_ldquad, vis_ldpow,
        visibility_ud_d, visibility_ldlin_d, visibility_ldquad_d, visibility_ldpow_d
 
 # resolvers — flat-dict parameter expression resolvers
-export SharedUtils, RGF, HandRolled
+export extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
+export RGF, HandRolled
 
 # hankel — numerical Hankel transform for radial profiles
 export trapz, trapz_weights, hankel_transform, hankel_norm, hankel_vis,

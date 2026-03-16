@@ -539,8 +539,8 @@ function parse_model(param_dict::Dict{String},
                 error("$cn,profile must be a String expression")
 
             # Extract param names referenced in the profile (excluding implicit vars)
-            raw_refs  = SharedUtils.extract_refs(profile_expr)
-            prof_refs = filter(r -> r ∉ SharedUtils.IMPLICIT_VARS, raw_refs)
+            raw_refs  = extract_refs(profile_expr)
+            prof_refs = filter(r -> r ∉ IMPLICIT_VARS, raw_refs)
             # Qualify unqualified refs with component name, but fall back to
             # global name if the component-qualified name doesn't exist
             prof_param_names = map(prof_refs) do r

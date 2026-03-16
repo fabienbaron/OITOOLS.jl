@@ -16,9 +16,6 @@ using RuntimeGeneratedFunctions
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared utilities (used by all implementations)
 # ─────────────────────────────────────────────────────────────────────────────
-module SharedUtils
-
-export extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
 
 # Reserved implicit variables available in expressions (not parameter names).
 # $R, $MU  — radial grid variables (profile expressions)
@@ -121,15 +118,13 @@ function broadcastify(expr)
     end
 end
 
-end # module SharedUtils
-
 
 ##############################################################################
 # IMPLEMENTATION 1: Hand-rolled AST interpreter
 ##############################################################################
 module HandRolled
 
-using ..SharedUtils
+using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
 
 # ── Upgraded AST: Using Indices instead of Names ──────────────────────────────
 abstract type Expr_ end
@@ -254,7 +249,7 @@ module RGF
 using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
-using ..SharedUtils
+using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
 
 mangle(name::AbstractString) = replace(name, "," => "__")
 
@@ -330,7 +325,7 @@ end # module RGF
 ##############################################################################
 module Symbolic
 
-using ..SharedUtils
+using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
 
 # Lazy-load Symbolics
 const _symbolics_loaded = Ref(false)
