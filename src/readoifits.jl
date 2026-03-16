@@ -1294,6 +1294,7 @@ function readoifits(oifitsfile;
         cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
         special_filter_diffvis = false,
         verb = true,
+        verbose = false,
         T::Type{<:AbstractFloat} = Float64)
 
     if !isfile(oifitsfile)
@@ -1368,7 +1369,7 @@ function readoifits(oifitsfile;
         _at, _pt = _read_vis_header_keywords(oifitsfile)
         raw_vis = merge(raw_vis, (; amptyp=_at, phityp=_pt))
     end
-    if use_vis && verb && (!isempty(raw_vis.amptyp) || !isempty(raw_vis.phityp))
+    if use_vis && verbose && (!isempty(raw_vis.amptyp) || !isempty(raw_vis.phityp))
         printstyled("OI_VIS: AMPTYP=$(raw_vis.amptyp) PHITYP=$(raw_vis.phityp)\n", color=:cyan)
     end
 
