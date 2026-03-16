@@ -1,0 +1,17 @@
+target_id = 1
+target = "Superstar"
+raep0 = 0.0
+decep0 = 0.0
+equinox = 2000.0
+ra_err = -1.0
+dec_err = -1.0
+sysvel = -1.0
+veltyp = "LSR"
+veldef = "OPTICAL"
+pmra = -1.0
+pmdec = -1.0
+pmra_err = -1.0
+pmdec_err = -1.0
+parallax = -1.0
+para_err = -1.0
+spectyp = "Unknown"

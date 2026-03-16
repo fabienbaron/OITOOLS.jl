@@ -1,0 +1,15 @@
+name = "MIRCX"
+int_trans = 1.0
+vis = 0.90
+n_pix_fringe = 150
+n_pix_photometry = 2
+flux_frac_photometry = 0.20
+flux_frac_fringes = 0.80
+throughput_photometry = 0.03
+throughput_fringes = 0.125
+n_splits = 4
+read_noise = 1.0
+quantum_efficiency = 0.50
+v2_cal_err = 0.005
+phase_cal_err = 1.0
+incoh_int_time = 100.0

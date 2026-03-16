@@ -1,0 +1,39 @@
+name = "VLTI"
+lat = -24.62743941
+lon = -70.40498688
+alt = 2635.0
+throughput = 1.0
+wind_speed = 10.0
+r0 = 0.126
+
+[[telescope]]
+name = "UT1"
+station = "UT1"
+diameter = 8.0
+gain = 1.0
+index = 1
+xyz = [-20.3346, -9.9249, 13.0461]
+
+[[telescope]]
+name = "UT2"
+station = "UT2"
+diameter = 8.0
+gain = 1.0
+index = 2
+xyz = [30.5037, 14.8873, 13.0408]
+
+[[telescope]]
+name = "UT3"
+station = "UT3"
+diameter = 8.0
+gain = 1.0
+index = 3
+xyz = [66.1794, 44.9146, 13.0428]
+
+[[telescope]]
+name = "UT4"
+station = "UT4"
+diameter = 8.0
+gain = 1.0
+index = 4
+xyz = [43.9978, 103.3058, 13.0462]

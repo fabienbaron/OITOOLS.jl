@@ -1,0 +1,39 @@
+name = "VLTI"
+lat = -24.62743941
+lon = -70.40498688
+alt = 2635.0
+throughput = 1.0
+wind_speed = 10.0
+r0 = 0.126
+
+[[telescope]]
+name = "D0"
+station = "D0"
+diameter = 1.8
+gain = 1.0
+index = 1
+xyz = [-45.3982, 15.6280, 4.5471]
+
+[[telescope]]
+name = "G2"
+station = "G2"
+diameter = 1.8
+gain = 1.0
+index = 2
+xyz = [-12.2883, 38.0630, 4.5404]
+
+[[telescope]]
+name = "J3"
+station = "J3"
+diameter = 1.8
+gain = 1.0
+index = 3
+xyz = [36.1917, 80.6276, 4.5411]
+
+[[telescope]]
+name = "K0"
+station = "K0"
+diameter = 1.8
+gain = 1.0
+index = 4
+xyz = [-14.1630, 106.3969, 4.5401]
