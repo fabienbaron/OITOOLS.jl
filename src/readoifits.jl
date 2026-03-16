@@ -67,11 +67,11 @@ end
 # ---------------------------------------------------------------------------
 
 # Build a symmetric sparse correlation matrix from an OI_CORR table entry.
-# OI_CORR stores only the upper-triangle off-diagonal (i < j); diagonal is
-# implicitly 1.  We symmetrize here so the returned matrix is fully populated.
+# OI_CORR stores only the upper-triangle off-diagonal (j > i per the standard);
+# diagonal is implicitly 1.  We explicitly store both triangles so the sparse
+# matrix is symmetric.  (Symmetric wrapper deferred to Cholesky decomposition.)
 function _build_corr_sparse(ct; T::Type{<:AbstractFloat}=Float64)
     n    = ct.ndata
-    ni   = length(ct.iindx)
     iis  = vcat(Int64.(ct.iindx), Int64.(ct.jindx), Int64.(1:n))
     jjs  = vcat(Int64.(ct.jindx), Int64.(ct.iindx), Int64.(1:n))
     vals = vcat(T.(ct.corr),      T.(ct.corr),      ones(T, n))
@@ -83,15 +83,24 @@ end
 _safe_field(obj, field::Symbol) = try; getproperty(obj, field); catch; nothing; end
 
 # Expand per-observation corrindx to a flat per-(wave,obs) index vector.
-# Data is stored column-major (wave varies fastest): flat k ↔ wave=(k-1)%nwave+1.
+# Per OIFITSv2 §7.2: index for channel j = CORRINDX + j − 1.
 # corrindx_obs[r] = 1-based start in OI_CORR matrix for obs r (0 = no corr).
 # offset: added to all non-zero indices for block-diagonal assembly.
-function _expand_corrindx(corrindx_obs, nwave::Int, offset::Int)
+# corr_ndata: size of the OI_CORR matrix — used for bounds validation.
+function _expand_corrindx(corrindx_obs, nwave::Int, offset::Int, corr_ndata::Int)
     nobs   = length(corrindx_obs)
     result = zeros(Int64, nwave * nobs)
     for obs in 1:nobs
         base = Int64(corrindx_obs[obs])
         base == 0 && continue
+        # Bounds check: raw indices must fit inside the OI_CORR matrix
+        max_raw = base + nwave - 1
+        if max_raw > corr_ndata
+            @warn("CORRINDX expansion out of bounds: obs $obs has base=$base, " *
+                  "nwave=$nwave → max index $max_raw > NDATA=$corr_ndata. " *
+                  "Skipping this observation's correlation.")
+            continue
+        end
         base += offset
         for w in 1:nwave
             result[(obs-1)*nwave + w] = base + (w - 1)
@@ -101,25 +110,28 @@ function _expand_corrindx(corrindx_obs, nwave::Int, offset::Int)
 end
 
 # For one data table: produce the flat corr-index vector for nwave*nobs points.
-# Updates seen_corrnames/seen_corr_sizes for block-diagonal offset tracking.
+# Uses a Dict{String,Int} (corrname_offsets) to map each CORRNAME to its stable
+# block-diagonal offset, independent of the order data tables are encountered.
 # Returns zeros(Int64, nwave*nobs) if correlation is unavailable for this table.
 function _process_corrindx(corrname_val, corrindx_col, tid_ok, nwave::Int,
                             correlt::Dict,
-                            seen_corrnames::Vector{String},
-                            seen_corr_sizes::Vector{Int})
+                            corrname_offsets::Dict{String,Int},
+                            seen_corrnames::Vector{String})
     nobs = length(tid_ok)
     cn   = isnothing(corrname_val) ? "" : strip(string(corrname_val))
     (isempty(cn) || !haskey(correlt, cn) || isnothing(corrindx_col)) &&
         return zeros(Int64, nwave * nobs)
     cidx_obs = Int64.(corrindx_col[tid_ok])
-    pidx     = findfirst(==(cn), seen_corrnames)
-    if isnothing(pidx)
+    # Register this CORRNAME if first encounter; offset is determined by
+    # the order CORRNAMEs appear in the OI_CORR tables (via correlt iteration
+    # order), NOT by the order data tables happen to reference them.
+    if !haskey(corrname_offsets, cn)
         push!(seen_corrnames, cn)
-        push!(seen_corr_sizes, size(correlt[cn], 1))
-        pidx = length(seen_corrnames)
+        corrname_offsets[cn] = sum(size(correlt[k], 1) for k in seen_corrnames[1:end-1]; init=0)
     end
-    offset = sum(seen_corr_sizes[1:pidx-1]; init=0)
-    return _expand_corrindx(cidx_obs, nwave, offset)
+    offset     = corrname_offsets[cn]
+    corr_ndata = size(correlt[cn], 1)
+    return _expand_corrindx(cidx_obs, nwave, offset, corr_ndata)
 end
 
 # Build the final block-diagonal corr sparse matrix from the accumulated list.
@@ -622,7 +634,7 @@ function read_flux_tables(fluxtables, targetid_filter,
     flux_lam_all = T[]; flux_dlam_all = T[]; flux_flag_all = Bool[]
     flux_sta_index_all = Int64[]
     flux_corr_idx_parts = Vector{Int64}[]
-    seen_flux_names = String[]; seen_flux_sizes = Int[]
+    seen_flux_names = String[]; flux_corr_offsets = Dict{String,Int}()
 
     for db in fluxtables
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
@@ -657,7 +669,7 @@ function read_flux_tables(fluxtables, targetid_filter,
 
         push!(flux_corr_idx_parts, _process_corrindx(
             _safe_field(db, :corrname), _safe_field(db, :corrindx_fluxdata),
-            tid_ok, nwave, correlt, seen_flux_names, seen_flux_sizes))
+            tid_ok, nwave, correlt, flux_corr_offsets, seen_flux_names))
 
         append!(flux_all,          vec(fdata));  append!(flux_err_all,      vec(ferr))
         append!(flux_mjd_all,      vec(fmjd));   append!(flux_lam_all,      vec(flam))
@@ -686,8 +698,8 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
     vis_baseline_all  = T[]
     vis_sta_index_all = Matrix{Int64}(undef, 2, 0)  # 2×N
     visamp_corr_idx_parts = Vector{Int64}[]; visphi_corr_idx_parts = Vector{Int64}[]
-    seen_va_names = String[]; seen_va_sizes = Int[]
-    seen_vp_names = String[]; seen_vp_sizes = Int[]
+    seen_va_names = String[]; va_corr_offsets = Dict{String,Int}()
+    seen_vp_names = String[]; vp_corr_offsets = Dict{String,Int}()
     amptyp_all = ""; phityp_all = ""
 
     for (itable, db) in enumerate(vistables)
@@ -722,9 +734,9 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
 
         cn = _safe_field(db, :corrname)
         push!(visamp_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_visamp), tid_ok, nwave, correlt, seen_va_names, seen_va_sizes))
+            cn, _safe_field(db, :corrindx_visamp), tid_ok, nwave, correlt, va_corr_offsets, seen_va_names))
         push!(visphi_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_visphi), tid_ok, nwave, correlt, seen_vp_names, seen_vp_sizes))
+            cn, _safe_field(db, :corrindx_visphi), tid_ok, nwave, correlt, vp_corr_offsets, seen_vp_names))
 
         append!(visamp_all, vec(vamp));   append!(visamp_err_all, vec(verr))
         append!(visphi_all, vec(vphi));   append!(visphi_err_all, vec(vperr))
@@ -760,7 +772,7 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
     v2_baseline_all  = T[]
     v2_sta_index_all = Matrix{Int64}(undef, 2, 0)  # 2×N
     v2_corr_idx_parts = Vector{Int64}[]
-    seen_v2_names = String[]; seen_v2_sizes = Int[]
+    seen_v2_names = String[]; v2_corr_offsets = Dict{String,Int}()
 
     for (itable, db) in enumerate(v2tables)
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
@@ -786,7 +798,7 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
 
         push!(v2_corr_idx_parts, _process_corrindx(
             _safe_field(db, :corrname), _safe_field(db, :corrindx_vis2data),
-            tid_ok, nwave, correlt, seen_v2_names, seen_v2_sizes))
+            tid_ok, nwave, correlt, v2_corr_offsets, seen_v2_names))
 
         append!(v2_all, vec(v2d));    append!(v2_err_all, vec(v2e))
         append!(v2_mjd_all, vec(v2mjd))
@@ -823,8 +835,8 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
     t3_maxbaseline_all = T[]
     t3_sta_index_all   = Matrix{Int64}(undef, 3, 0)  # 3×N
     t3amp_corr_idx_parts = Vector{Int64}[]; t3phi_corr_idx_parts = Vector{Int64}[]
-    seen_ta_names = String[]; seen_ta_sizes = Int[]
-    seen_tp_names = String[]; seen_tp_sizes = Int[]
+    seen_ta_names = String[]; ta_corr_offsets = Dict{String,Int}()
+    seen_tp_names = String[]; tp_corr_offsets = Dict{String,Int}()
 
     for (itable, db) in enumerate(t3tables)
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
@@ -855,9 +867,9 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
 
         cn = _safe_field(db, :corrname)
         push!(t3amp_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_t3amp), tid_ok, nwave, correlt, seen_ta_names, seen_ta_sizes))
+            cn, _safe_field(db, :corrindx_t3amp), tid_ok, nwave, correlt, ta_corr_offsets, seen_ta_names))
         push!(t3phi_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_t3phi), tid_ok, nwave, correlt, seen_tp_names, seen_tp_sizes))
+            cn, _safe_field(db, :corrindx_t3phi), tid_ok, nwave, correlt, tp_corr_offsets, seen_tp_names))
 
         append!(t3amp_all, vec(t3a));   append!(t3amp_err_all, vec(t3ae))
         append!(t3phi_all, vec(t3p));   append!(t3phi_err_all, vec(t3pe))

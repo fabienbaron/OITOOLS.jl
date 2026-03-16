@@ -1,41 +1,30 @@
-# Model fittng example: multiple components
+# Model fitting example: multiple components
 # Trying to model-fit the 2004 Beauty Contest data set
 using OITOOLS
 
-data= readoifits("./data/2004-data1.oifits")[1,1];
+data = readoifits("./data/2004-data1.oifits")[1,1];
 
-# Setup components for the 2004 Model
-c1 = create_component(type="ud", name="star")
-c1.spectrum_params[1].free = true; # we have two components, we just need to fit the flux of the first
-c1.vis_params[1].free = false; # diameter in mas
-c1.vis_params[1].val = 0.0; # maximum diameter in mas (we expect a barely reslved star)
-c2 = create_component(type="ring", name="ring")
-c2.spectrum_params[1].free = false; # we have two components, we just need to fit the flux of the first
-c2.vis_params[5].free = false
-c2.vis_params[6].free = false
-c2.vis_params[7].free = false
-c2.vis_params[8].free = false
-c2.vis_params[9].free = false
+# Setup model: unresolved star + Gaussian ring
+param = Dict{String,Any}(
+    "star,ud"       => 0.0,     # unresolved star (fixed at 0 diameter)
+    "star,f"        => 0.5,     # star flux fraction (free)
+    "ring,gaussian_ring" => 1.0, # ring radius (free)
+    "ring,fwhm"     => 0.5,     # ring FWHM (free)
+    "ring,incl"     => 0.0,     # inclination (fixed for now)
+    "ring,pa"       => 0.0,     # position angle (fixed for now)
+    "ring,f"        => "1.0 - \$star,f", # ring flux = complement of star flux
+)
 
-# If one wants to fit the ring a little better, uncomment this
-# More free parameters, so much much slower (with Ultranest)
-# c2.vis_params[5].free = true
-# c2.vis_params[6].free = true
-# c2.vis_params[7].free = true
-# c2.vis_params[8].free = true
+fit_params = ["star,f", "ring,gaussian_ring", "ring,fwhm"]
 
-# Put the model together
-model = create_model(c1,c2)
+lb = Dict("star,f" => 0.0, "ring,gaussian_ring" => 0.1, "ring,fwhm" => 0.01)
+ub = Dict("star,f" => 1.0, "ring,gaussian_ring" => 10.0, "ring,fwhm" => 5.0)
 
-# Note: after ceating the model, changing component parameters from free or fixed (or opposite) *will* affect the model
-# We need to update the internal model parameter map using update_model(model) in such a case
+display_model(param, fit_params; lb=lb, ub=ub)
 
-display(model) # tis shows all the model parameters and does a few tests
-minf, minx, cvis_model, result = fit_model_ultranest(data, model, min_num_live_points = 400, cluster_num_live_points = 200)
+# UltraNest nested sampling for robust posterior exploration
+result = fit_model_ultranest(param, fit_params, data;
+    lb=lb, ub=ub,
+    min_num_live_points=400, cluster_num_live_points=200)
 
-
-
-
-# Smaller numbers -> faster convergence but worse posterior characterization
-# For optimization, min_num_live_points= 100-400 works fine
-# For logZ estimation, >1000 would typically be OK
+println(result)

@@ -1245,10 +1245,10 @@ end
 
 
 function plot_facility(facility)
-    coords=reshape(facility.sta_xyz, 3, facility.ntel[1])
+    coords = facility.sta_xyz'  # (3, ntel)
     scatter(coords[1,:], coords[2,:])
     axis("equal")
-    for i=1:facility.ntel[1]
+    for i=1:facility.ntel
         text(coords[1,i]+1, coords[2,i]+1, facility.sta_names[i])
     end
 end

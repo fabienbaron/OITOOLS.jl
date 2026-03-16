@@ -2,156 +2,365 @@ using NFFT
 using DelimitedFiles
 using FITSIO
 using CFITSIO
+import TOML
 
-mutable struct facility_info
-    facility_name::Array{Any,1}
-    lat::Array{Any,1}
-    lon::Array{Any,1}
-    atl::Array{Any,1}
-    coord::Array{Any,1}
-    throughput::Array{Any,1}
-    wind_speed::Array{Any,1}
-    r0::Array{Any,1}
-    ntel::Array{Any,1}
-    tel_diams::Array{Any,2}
-    tel_gain::Array{Any,2}
-    tel_names::Array{Any,2}
-    sta_names::Array{Any,2}
-    sta_index::Array{Any,2}
-    sta_xyz::Array{Float64,2}
+# ─── Configuration structs ────────────────────────────────────────────────────
+
+Base.@kwdef mutable struct FacilityConfig
+    name::String                = ""
+    lat::Float64                = 0.0
+    lon::Float64                = 0.0
+    alt::Float64                = 0.0
+    throughput::Float64         = 1.0
+    wind_speed::Float64         = 10.0
+    r0::Float64                 = 0.1
+    ntel::Int                   = 0
+    tel_names::Vector{String}   = String[]
+    sta_names::Vector{String}   = String[]
+    tel_diams::Vector{Float64}  = Float64[]
+    tel_gain::Vector{Float64}   = Float64[]
+    sta_index::Vector{Int}      = Int[]
+    sta_xyz::Matrix{Float64}    = zeros(Float64, 0, 3)
 end
 
-mutable struct obsv_info
-    target_id::Array{Any,1}
-    target::Array{Any,1}
-    raep0::Array{Any,1}
-    decep0::Array{Any,1}
-    equinox::Array{Any,1}
-    ra_err::Array{Any,1}
-    dec_err::Array{Any,1}
-    sysvel::Array{Any,1}
-    veltyp::Array{Any,1}
-    veldef::Array{Any,1}
-    pmra::Array{Any,1}
-    pmdec::Array{Any,1}
-    pmra_err::Array{Any,1}
-    pmdec_err::Array{Any,1}
-    parallax::Array{Any,1}
-    para_err::Array{Any,1}
-    spectyp::Array{Any,1}
+Base.@kwdef mutable struct TargetConfig
+    target_id::Int      = 1
+    target::String      = "OBJECT"
+    raep0::Float64      = 0.0
+    decep0::Float64     = 0.0
+    equinox::Float64    = 2000.0
+    ra_err::Float64     = 0.0
+    dec_err::Float64    = 0.0
+    sysvel::Float64     = 0.0
+    veltyp::String      = "LSR"
+    veldef::String      = "OPTICAL"
+    pmra::Float64       = 0.0
+    pmdec::Float64      = 0.0
+    pmra_err::Float64   = 0.0
+    pmdec_err::Float64  = 0.0
+    parallax::Float64   = 0.0
+    para_err::Float64   = 0.0
+    spectyp::String     = "G0"
 end
 
-mutable struct combiner_info
-    comb_name::Array{Any,1}
-    int_trans::Array{Any,1}
-    vis::Array{Any,1}
-    n_pix::Array{Any,1}
-    n_pix_photometry::Array{Any,1}
-    flux_frac_photometry::Array{Any,1}
-    flux_frac_fringes::Array{Any,1}
-    throughput_photometry::Array{Any,1}
-    throughput_fringes::Array{Any,1}
-    n_splits::Array{Any,1}
-    read_noise::Array{Any,1}
-    quantum_efficiency::Array{Any,1}
-    v2_cal_err::Array{Any,1}
-    phase_cal_err::Array{Any,1}
-    incoh_int_time::Array{Any,1}
+Base.@kwdef mutable struct CombinerConfig
+    name::String                    = ""
+    int_trans::Float64              = 1.0
+    vis::Float64                    = 0.9
+    n_pix_fringe::Int               = 128
+    n_pix_photometry::Int           = 4
+    flux_frac_photometry::Float64   = 0.5
+    flux_frac_fringes::Float64      = 0.5
+    throughput_photometry::Float64  = 0.1
+    throughput_fringes::Float64     = 0.1
+    n_splits::Int                   = 4
+    read_noise::Float64             = 10.0
+    quantum_efficiency::Float64     = 0.7
+    v2_cal_err::Float64             = 0.005
+    phase_cal_err::Float64          = 1.0
+    incoh_int_time::Float64         = 100.0
 end
 
-mutable struct wave_info
-    combiner_name::String
-    combiner_mode::String
-    λ::Array{Float64,1}
-    δλ::Array{Float64,1}
+Base.@kwdef mutable struct WaveConfig
+    combiner::String            = ""
+    mode::String                = ""
+    λ::Vector{Float64}          = Float64[]
+    δλ::Vector{Float64}         = Float64[]
 end
 
-mutable struct error_info
-    v2_multit::Float64
-    v2_addit::Float64
-    t3amp_multit::Float64
-    t3amp_addit::Float64
-    t3phi_multit::Float64
-    t3phi_addit::Float64
+# Backward-compatible type aliases
+const facility_info = FacilityConfig
+const obsv_info     = TargetConfig
+const combiner_info = CombinerConfig
+const wave_info     = WaveConfig
+
+# ─── Config file resolution ───────────────────────────────────────────────────
+
+const _CONFIGS_DIR = joinpath(@__DIR__, "configs")
+
+function _resolve_config(path::AbstractString)
+    isfile(path) && return path
+    fallback = joinpath(_CONFIGS_DIR, basename(path))
+    isfile(fallback) && return fallback
+    # Try adding .toml extension
+    for p in (path * ".toml", joinpath(_CONFIGS_DIR, basename(path) * ".toml"))
+        isfile(p) && return p
+    end
+    return path  # let downstream code raise the error
 end
 
-function read_facility_file(facility_file)
-    facility=readdlm(facility_file)
-    facility_name=facility[(LinearIndices(facility.=="name"))[findall(facility.=="name")],3]
-    latitude=facility[(LinearIndices(facility.=="lat"))[findall(facility.=="lat")],3]
-    longitude=facility[(LinearIndices(facility.=="lon"))[findall(facility.=="lon")],3]
-    altitude=facility[(LinearIndices(facility.=="alt"))[findall(facility.=="alt")],3]
-    coordinates=facility[(LinearIndices(facility.=="coord"))[findall(facility.=="coord")],3]
-    facility_throughput=facility[(LinearIndices(facility.=="throughput"))[findall(facility.=="throughput")],3]
-    windspeed=facility[(LinearIndices(facility.=="wind_speed"))[findall(facility.=="wind_speed")],3]
-    r_0=facility[(LinearIndices(facility.=="r0"))[findall(facility.=="r0")],3]
-    n_tel=facility[(LinearIndices(facility.=="ntel"))[findall(facility.=="ntel")],3]
-    teldiams=facility[(LinearIndices(facility.=="tel_diams"))[findall(facility.=="tel_diams")],3:n_tel[1]+2]
-    telgain=facility[(LinearIndices(facility.=="tel_gain"))[findall(facility.=="tel_gain")],3:n_tel[1]+2]
-    telnames=facility[(LinearIndices(facility.=="tel_names"))[findall(facility.=="tel_names")],3:n_tel[1]+2]
-    stanames=facility[(LinearIndices(facility.=="sta_names"))[findall(facility.=="sta_names")],3:n_tel[1]+2]
-    staindex=facility[(LinearIndices(facility.=="sta_index"))[findall(facility.=="sta_index")],3:n_tel[1]+2]
-    staxyz=facility[(LinearIndices(facility.=="sta_xyz"))[findall(facility.=="sta_xyz")],3:n_tel[1]*3+2]
-    facility_out=facility_info(facility_name,latitude,longitude,altitude,coordinates,facility_throughput,windspeed,r_0,n_tel,teldiams,telgain,telnames,stanames,staindex,staxyz)
-    return facility_out
- end
+# ─── TOML readers (primary) ──────────────────────────────────────────────────
+
+function _read_facility_toml(path)
+    d = TOML.parsefile(path)
+    tels = get(d, "telescope", [])
+    ntel = length(tels)
+    xyz = zeros(ntel, 3)
+    for (i, t) in enumerate(tels)
+        xyz[i, :] .= Float64.(t["xyz"])
+    end
+    FacilityConfig(
+        name       = String(get(d, "name", "")),
+        lat        = Float64(get(d, "lat", 0.0)),
+        lon        = Float64(get(d, "lon", 0.0)),
+        alt        = Float64(get(d, "alt", 0.0)),
+        throughput = Float64(get(d, "throughput", 1.0)),
+        wind_speed = Float64(get(d, "wind_speed", 10.0)),
+        r0         = Float64(get(d, "r0", 0.1)),
+        ntel       = ntel,
+        tel_names  = [String(get(t, "name", "T$i"))    for (i,t) in enumerate(tels)],
+        sta_names  = [String(get(t, "station", get(t, "name", "S$i"))) for (i,t) in enumerate(tels)],
+        tel_diams  = [Float64(get(t, "diameter", 1.0))  for t in tels],
+        tel_gain   = [Float64(get(t, "gain", 1.0))      for t in tels],
+        sta_index  = [Int(get(t, "index", i))            for (i,t) in enumerate(tels)],
+        sta_xyz    = xyz,
+    )
+end
+
+function _read_target_toml(path)
+    d = TOML.parsefile(path)
+    TargetConfig(
+        target_id = Int(get(d, "target_id", 1)),
+        target    = String(get(d, "target", "OBJECT")),
+        raep0     = Float64(get(d, "raep0", 0.0)),
+        decep0    = Float64(get(d, "decep0", 0.0)),
+        equinox   = Float64(get(d, "equinox", 2000.0)),
+        ra_err    = Float64(get(d, "ra_err", 0.0)),
+        dec_err   = Float64(get(d, "dec_err", 0.0)),
+        sysvel    = Float64(get(d, "sysvel", 0.0)),
+        veltyp    = String(get(d, "veltyp", "LSR")),
+        veldef    = String(get(d, "veldef", "OPTICAL")),
+        pmra      = Float64(get(d, "pmra", 0.0)),
+        pmdec     = Float64(get(d, "pmdec", 0.0)),
+        pmra_err  = Float64(get(d, "pmra_err", 0.0)),
+        pmdec_err = Float64(get(d, "pmdec_err", 0.0)),
+        parallax  = Float64(get(d, "parallax", 0.0)),
+        para_err  = Float64(get(d, "para_err", 0.0)),
+        spectyp   = String(get(d, "spectyp", "G0")),
+    )
+end
+
+function _read_combiner_toml(path)
+    d = TOML.parsefile(path)
+    CombinerConfig(
+        name                = String(get(d, "name", "")),
+        int_trans           = Float64(get(d, "int_trans", 1.0)),
+        vis                 = Float64(get(d, "vis", 0.9)),
+        n_pix_fringe        = Int(get(d, "n_pix_fringe", 128)),
+        n_pix_photometry    = Int(get(d, "n_pix_photometry", 4)),
+        flux_frac_photometry = Float64(get(d, "flux_frac_photometry", 0.5)),
+        flux_frac_fringes   = Float64(get(d, "flux_frac_fringes", 0.5)),
+        throughput_photometry = Float64(get(d, "throughput_photometry", 0.1)),
+        throughput_fringes  = Float64(get(d, "throughput_fringes", 0.1)),
+        n_splits            = Int(get(d, "n_splits", 4)),
+        read_noise          = Float64(get(d, "read_noise", 10.0)),
+        quantum_efficiency  = Float64(get(d, "quantum_efficiency", 0.7)),
+        v2_cal_err          = Float64(get(d, "v2_cal_err", 0.005)),
+        phase_cal_err       = Float64(get(d, "phase_cal_err", 1.0)),
+        incoh_int_time      = Float64(get(d, "incoh_int_time", 100.0)),
+    )
+end
+
+function _read_wave_toml(path)
+    d = TOML.parsefile(path)
+    WaveConfig(
+        combiner = String(get(d, "combiner", "")),
+        mode     = String(get(d, "mode", "")),
+        λ        = Float64.(d["lambda"]),
+        δλ       = Float64.(d["delta_lambda"]),
+    )
+end
+
+# ─── Legacy .txt readers (backward compatibility) ────────────────────────────
+
+function _read_facility_txt(path)
+    f = readdlm(path)
+    _get(key) = f[(LinearIndices(f .== key))[findall(f .== key)], 3]
+    n = Int(_get("ntel")[1])
+    _row(key, n) = f[(LinearIndices(f .== key))[findall(f .== key)], 3:n+2]
+    flat_xyz = Float64.(f[(LinearIndices(f .== "sta_xyz"))[findall(f .== "sta_xyz")], 3:n*3+2])
+    xyz = reshape(vec(flat_xyz), 3, n)'  # (ntel, 3)
+    FacilityConfig(
+        name       = String(_get("name")[1]),
+        lat        = Float64(_get("lat")[1]),
+        lon        = Float64(_get("lon")[1]),
+        alt        = Float64(_get("alt")[1]),
+        throughput = Float64(_get("throughput")[1]),
+        wind_speed = Float64(_get("wind_speed")[1]),
+        r0         = Float64(_get("r0")[1]),
+        ntel       = n,
+        tel_names  = String.(vec(_row("tel_names", n))),
+        sta_names  = String.(vec(_row("sta_names", n))),
+        tel_diams  = Float64.(vec(_row("tel_diams", n))),
+        tel_gain   = Float64.(vec(_row("tel_gain", n))),
+        sta_index  = Int.(vec(_row("sta_index", n))),
+        sta_xyz    = xyz,
+    )
+end
+
+function _read_target_txt(path)
+    f = readdlm(path)
+    _get(key) = f[(LinearIndices(f .== key))[findall(f .== key)], 3]
+    TargetConfig(
+        target_id = Int(_get("target_id")[1]),
+        target    = String(_get("target")[1]),
+        raep0     = Float64(_get("raep0")[1]),
+        decep0    = Float64(_get("decep0")[1]),
+        equinox   = Float64(_get("equinox")[1]),
+        ra_err    = Float64(_get("ra_err")[1]),
+        dec_err   = Float64(_get("dec_err")[1]),
+        sysvel    = Float64(_get("sysvel")[1]),
+        veltyp    = String(_get("veltyp")[1]),
+        veldef    = String(_get("veldef")[1]),
+        pmra      = Float64(_get("pmra")[1]),
+        pmdec     = Float64(_get("pmdec")[1]),
+        pmra_err  = Float64(_get("pmra_err")[1]),
+        pmdec_err = Float64(_get("pmdec_err")[1]),
+        parallax  = Float64(_get("parallax")[1]),
+        para_err  = Float64(_get("para_err")[1]),
+        spectyp   = String(_get("spectyp")[1]),
+    )
+end
+
+function _read_combiner_txt(path)
+    f = readdlm(path)
+    _get(key) = f[(LinearIndices(f .== key))[findall(f .== key)], 3]
+    CombinerConfig(
+        name                = String(_get("name")[1]),
+        int_trans           = Float64(_get("int_trans")[1]),
+        vis                 = Float64(_get("vis")[1]),
+        n_pix_fringe        = Int(_get("n_pix_fringe")[1]),
+        n_pix_photometry    = Int(_get("n_pix_photometry")[1]),
+        flux_frac_photometry = Float64(_get("flux_frac_photometry")[1]),
+        flux_frac_fringes   = Float64(_get("flux_frac_fringes")[1]),
+        throughput_photometry = Float64(_get("throughput_photometry")[1]),
+        throughput_fringes  = Float64(_get("throughput_fringes")[1]),
+        n_splits            = Int(_get("n_splits")[1]),
+        read_noise          = Float64(_get("read_noise")[1]),
+        quantum_efficiency  = Float64(_get("quantum_efficiency")[1]),
+        v2_cal_err          = Float64(_get("v2_cal_err")[1]),
+        phase_cal_err       = Float64(_get("phase_cal_err")[1]),
+        incoh_int_time      = Float64(_get("incoh_int_time")[1]),
+    )
+end
+
+function _read_wave_txt(path)
+    f = readdlm(path)
+    _get(key) = String.(f[(LinearIndices(f .== key))[findall(f .== key)], 3])[1]
+    WaveConfig(
+        combiner = _get("combiner"),
+        mode     = _get("mode"),
+        λ        = Float64.(f[3:end, 1]),
+        δλ       = Float64.(f[3:end, 2]),
+    )
+end
+
+# ─── Public API: auto-detect format by extension ─────────────────────────────
+
+function read_facility_file(path)
+    p = _resolve_config(path)
+    endswith(p, ".toml") ? _read_facility_toml(p) : _read_facility_txt(p)
+end
+
+function read_obs_file(path)
+    p = _resolve_config(path)
+    endswith(p, ".toml") ? _read_target_toml(p) : _read_target_txt(p)
+end
+
+function read_comb_file(path)
+    p = _resolve_config(path)
+    endswith(p, ".toml") ? _read_combiner_toml(p) : _read_combiner_txt(p)
+end
+
+function read_wave_file(path)
+    p = _resolve_config(path)
+    endswith(p, ".toml") ? _read_wave_toml(p) : _read_wave_txt(p)
+end
 
 
+# Zero-point flux for a mag=0 star in photons/s/m²/μm
+# Log-linear interpolation from standard photometric bands (Cohen et al. 2003, Bessell et al. 1998)
+const _F0_λ_μm = [0.55, 0.70, 0.90, 1.25, 1.65, 2.20, 3.50, 4.80, 10.0]
+const _F0_phot = [3.6e10, 1.8e10, 8.4e9, 3.1e9, 1.15e9, 4.3e8, 8.1e7, 2.1e7, 9.7e5]
 
-function read_obs_file(obsv_file)
-    obs=readdlm(obsv_file)
-    targetid=obs[(LinearIndices(obs.=="target_id"))[findall(obs.=="target_id")],3]
-    target_name=obs[(LinearIndices(obs.=="target"))[findall(obs.=="target")],3]
-    raep_0=obs[(LinearIndices(obs.=="raep0"))[findall(obs.=="raep0")],3]
-    decep_0=obs[(LinearIndices(obs.=="decep0"))[findall(obs.=="decep0")],3]
-    equi=obs[(LinearIndices(obs.=="equinox"))[findall(obs.=="equinox")],3]
-    raerr=obs[(LinearIndices(obs.=="ra_err"))[findall(obs.=="ra_err")],3]
-    decerr = obs[(LinearIndices(obs.=="dec_err"))[findall(obs.=="dec_err")],3]
-    sys_vel = obs[(LinearIndices(obs.=="sysvel"))[findall(obs.=="sysvel")],3]
-    vel_typ =  obs[(LinearIndices(obs.=="veltyp"))[findall(obs.=="veltyp")],3]
-    vel_def = obs[(LinearIndices(obs.=="veldef"))[findall(obs.=="veldef")],3]
-    pm_ra = obs[(LinearIndices(obs.=="pmra"))[findall(obs.=="pmra")],3]
-    pm_dec =  obs[(LinearIndices(obs.=="pmdec"))[findall(obs.=="pmdec")],3]
-    pm_ra_err =  obs[(LinearIndices(obs.=="pmra_err"))[findall(obs.=="pmra_err")],3]
-    pm_dec_err =  obs[(LinearIndices(obs.=="pmdec_err"))[findall(obs.=="pmdec_err")],3]
-    para =  obs[(LinearIndices(obs.=="parallax"))[findall(obs.=="parallax")],3]
-    par_err =   obs[(LinearIndices(obs.=="para_err"))[findall(obs.=="para_err")],3]
-    spec_typ =  obs[(LinearIndices(obs.=="spectyp"))[findall(obs.=="spectyp")],3]
-    obs_out=obsv_info(targetid,target_name,raep_0,decep_0,equi,raerr,decerr,sys_vel,vel_typ,vel_def,pm_ra,pm_dec,pm_ra_err,pm_dec_err,para,par_err,spec_typ)
-    return obs_out
- end
+function zero_point_flux(λ_meters)
+    λ_μm = clamp(λ_meters * 1e6, _F0_λ_μm[1], _F0_λ_μm[end])
+    logλ = log.(_F0_λ_μm)
+    logF = log.(_F0_phot)
+    for i in 1:length(_F0_λ_μm)-1
+        if λ_μm <= _F0_λ_μm[i+1]
+            t = (log(λ_μm) - logλ[i]) / (logλ[i+1] - logλ[i])
+            return exp(logF[i] + t * (logF[i+1] - logF[i]))
+        end
+    end
+    return _F0_phot[end]
+end
 
-function read_comb_file(comb_file)
-    comb=readdlm(comb_file)
-    name =comb[(LinearIndices(comb.=="name"))[findall(comb.=="name")],3]
-    int_trans = comb[(LinearIndices(comb.=="int_trans"))[findall(comb.=="int_trans")],3]
-    vis = comb[(LinearIndices(comb.=="vis"))[findall(comb.=="vis")],3]
-    n_pix_fringe =comb[(LinearIndices(comb.=="n_pix_fringe"))[findall(comb.=="n_pix_fringe")],3]
-    n_pix_photometry = comb[(LinearIndices(comb.=="n_pix_photometry"))[findall(comb.=="n_pix_photometry")],3]
-    flux_frac_photometry = comb[(LinearIndices(comb.=="flux_frac_photometry"))[findall(comb.=="flux_frac_photometry")],3]
-    flux_frac_fringes = comb[(LinearIndices(comb.=="flux_frac_fringes"))[findall(comb.=="flux_frac_fringes")],3]
-    throughput_photometry = comb[(LinearIndices(comb.=="throughput_photometry"))[findall(comb.=="throughput_photometry")],3]
-    throughput_fringes = comb[(LinearIndices(comb.=="throughput_fringes"))[findall(comb.=="throughput_fringes")],3]
-    n_splits = comb[(LinearIndices(comb.=="n_splits"))[findall(comb.=="n_splits")],3]
-    read_noise = comb[(LinearIndices(comb.=="read_noise"))[findall(comb.=="read_noise")],3]
-    quantum_efficiency = comb[(LinearIndices(comb.=="quantum_efficiency"))[findall(comb.=="quantum_efficiency")],3]
-    v2_cal_err = comb[(LinearIndices(comb.=="v2_cal_err"))[findall(comb.=="v2_cal_err")],3]
-    phase_cal_err = comb[(LinearIndices(comb.=="phase_cal_err"))[findall(comb.=="phase_cal_err")],3]
-    incoh_int_time = comb[(LinearIndices(comb.=="incoh_int_time"))[findall(comb.=="incoh_int_time")],3]
-    return combiner_info(name,int_trans,vis,n_pix_fringe,n_pix_photometry,flux_frac_photometry,flux_frac_fringes,throughput_photometry,throughput_fringes,n_splits,read_noise,quantum_efficiency,v2_cal_err,phase_cal_err,incoh_int_time)
- end
+function compute_telescope_snr(mag, λ, δλ, facility, combiner, ntel, nwavs)
+    # Single-telescope photometric SNR per telescope per wavelength
+    # Returns (ntel, nwavs) matrix
+    r0_ref   = facility.r0
+    v_wind   = facility.wind_speed
+    T_atm    = facility.throughput
+    T_phot   = combiner.throughput_photometry
+    QE       = combiner.quantum_efficiency
+    n_pix_ph = combiner.n_pix_photometry
+    σ_ron    = combiner.read_noise
+    t_incoh  = combiner.incoh_int_time
+    T_total  = T_atm * T_phot * QE
+    snr = zeros(ntel, nwavs)
+    for w in 1:nwavs
+        F0 = zero_point_flux(λ[w])
+        r0_λ = r0_ref * (λ[w] / 0.5e-6)^(6/5)
+        τ0 = 0.31 * r0_λ / v_wind
+        DIT = min(τ0, t_incoh)
+        N_frames = max(1.0, t_incoh / DIT)
+        δλ_μm = δλ[w] * 1e6
+        for t in 1:ntel
+            D_t = facility.tel_diams[t]
+            η_t = min(1.0, (r0_λ / D_t)^2)
+            Nphot = F0 * 10^(-mag / 2.5) * (π / 4 * D_t^2) * δλ_μm * DIT * T_total * η_t
+            N_noise = Nphot + n_pix_ph * σ_ron^2
+            snr[t, w] = sqrt(max(Nphot, 0.0)) / sqrt(max(N_noise, 1.0)) * sqrt(N_frames)
+        end
+    end
+    return snr
+end
 
-function read_wave_file(wave_file)
-    wave       = readdlm(wave_file)
-    combiner   = String.(wave[(LinearIndices(wave.=="combiner"))[findall(wave.=="combiner")],3])[1]
-    mode       = String.(wave[(LinearIndices(wave.=="mode"))[findall(wave.=="mode")],3])[1]
-    λ          = Float64.(wave[3:size(wave)[1],1])
-    δλ         = Float64.(wave[3:size(wave)[1],2])
-    return wave_info(combiner,mode,λ,δλ)
- end
-
-function define_errors(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
- return error_info(v2mult,v2add,t3ampmult,t3ampadd,t3phimult,t3phiadd)
+function compute_baseline_snr(mag, λ, δλ, facility, combiner, v2_stations, nv2, nwavs)
+    # Photometric SNR (for unresolved source V=1) per baseline per wavelength
+    # Returns (nv2, nwavs) matrix
+    r0_ref   = facility.r0
+    v_wind   = facility.wind_speed
+    T_atm    = facility.throughput
+    T_inst   = combiner.throughput_fringes
+    QE       = combiner.quantum_efficiency
+    n_pix    = combiner.n_pix_fringe
+    n_splits = combiner.n_splits
+    σ_ron    = combiner.read_noise
+    t_incoh  = combiner.incoh_int_time
+    T_total  = T_atm * T_inst * QE
+    snr = zeros(nv2, nwavs)
+    for w in 1:nwavs
+        F0 = zero_point_flux(λ[w])
+        r0_λ = r0_ref * (λ[w] / 0.5e-6)^(6/5)
+        τ0 = 0.31 * r0_λ / v_wind
+        DIT = min(τ0, t_incoh)
+        N_frames = max(1.0, t_incoh / DIT)
+        δλ_μm = δλ[w] * 1e6
+        for b in 1:nv2
+            i, j = v2_stations[1, b], v2_stations[2, b]
+            D_i = facility.tel_diams[i]
+            D_j = facility.tel_diams[j]
+            η_i = min(1.0, (r0_λ / D_i)^2)
+            η_j = min(1.0, (r0_λ / D_j)^2)
+            Nphot_i = F0 * 10^(-mag / 2.5) * (π / 4 * D_i^2) * δλ_μm * DIT * T_total * η_i
+            Nphot_j = F0 * 10^(-mag / 2.5) * (π / 4 * D_j^2) * δλ_μm * DIT * T_total * η_j
+            N_noise = (Nphot_i + Nphot_j) / n_splits + n_pix * σ_ron^2
+            snr[b, w] = sqrt(max(Nphot_i * Nphot_j, 0.0)) / sqrt(max(N_noise, 1.0)) * sqrt(N_frames)
+        end
+    end
+    return snr
 end
 
 
@@ -178,7 +387,7 @@ function get_v2_baselines(N,station_xyz,tel_names)
     v2_indx      = Array{Int64}(undef,nv2);
     baseline_name = Array{String}(undef,nv2);
     ind = 1
-    for i=1:N+1
+    for i=1:N-1
       for j=i+1:N
             v2_baselines[:,ind] .= station_xyz[j,:]-station_xyz[i,:];
             v2_stations[:,ind] = [i,j];
@@ -283,27 +492,23 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
-function simulate(facility,target,combiner,wavelength,dates,errors,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,nonoise=false)
-    outfilename= string("!", out_file)   
+function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,nonoise=false, mag::Float64=2.0)
     #simulate an observation using input hour angles, info about array and combiner, and input image
-    ntel=facility.ntel[1];
-    
+    ntel=facility.ntel;
+
     # Override RA and DEC if not fixed (e.g. Sat) -- input RA and DEC should be in (decimal) degrees
-    dec = target.decep0[1]/180*pi 
-    ra = target.raep0[1]/180*pi
-    
-    lst, hour_angles = hour_angle_calc(dates,facility.lon[1], ra*180/pi);
+    dec = target.decep0/180*pi
+    ra = target.raep0/180*pi
+
+    lst, hour_angles = hour_angle_calc(dates,facility.lon, ra*180/pi);
     nhours = length(hour_angles);
     h_rad = hour_angles' .* pi / 12;
-    l = facility.lat[1]/180*pi;
+    l = facility.lat/180*pi;
     λ = wavelength.λ;
     δλ = wavelength.δλ;
     nwavs = length(λ)
 
-    station_xyz=zeros(Float64,ntel,3) #✓
-    for i=1:ntel
-        station_xyz[i,1:3]=facility.sta_xyz[(i*3-2):i*3]#✓
-    end
+    station_xyz = facility.sta_xyz  # (ntel, 3) matrix
 
     # Find physical baselines and triangles combinations
     nv2,v2_baselines,v2_stations,v2_indx,baseline_name         = get_v2_baselines(ntel,station_xyz,facility.tel_names);
@@ -355,7 +560,11 @@ function simulate(facility,target,combiner,wavelength,dates,errors,out_file; ima
         end
     elseif flat_model !== nothing
         # Flat-dict parametric model
-        cvis_model = eval_model(flat_model, flat_params, uv)
+        # Build per-UV-point wavelength and MJD vectors matching the uv ordering
+        # uv is (nuv, nhours, nwavs) flattened: baseline fastest, wavelength slowest
+        wl_per_uv  = repeat(λ, inner=nuv*nhours)                          # (nuv*nhours*nwavs,)
+        mjd_per_uv = repeat(repeat(Float64.(value.(modified_julian.(dates))), inner=nuv), outer=nwavs)
+        cvis_model = eval_model(flat_model, flat_params, uv; wl=wl_per_uv, mjd=mjd_per_uv)
     else
         @warn("No image nor model definition in call to simulate()")
         @warn("Will generate zero visibilities")
@@ -366,70 +575,223 @@ function simulate(facility,target,combiner,wavelength,dates,errors,out_file; ima
     v2_model = vis_to_v2(cvis_model, v2_indx_w);
     t3_model, t3amp_model, t3phi_model = vis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
 
-    # Compute uncertainties
-    v2_model_err = errors.v2_multit*v2_model .+ errors.v2_addit;
-    t3amp_model_err = errors.t3amp_multit*t3amp_model .+ errors.t3amp_addit;
-    t3phi_model_err = zeros(length(t3phi_model)) .+ errors.t3phi_addit; # degree  -- there is another way of setting this with Haniff's formula
+    # Compute uncertainties — physical noise model from magnitude, instrument, and atmosphere
+    snr0 = compute_baseline_snr(mag, λ, δλ, facility, combiner, v2_stations, nv2, nwavs)
+    # Expand (nv2, nwavs) → flat vector matching v2_model ordering (baseline fastest, hour, wavelength)
+    snr0_v2 = vec(repeat(max.(snr0, 1.0), nhours, 1))
 
+    # V² error: σ(V²) ≈ 2|V|/SNR_0 + calibration systematic
+    v2_model_err = 2.0 .* sqrt.(abs.(v2_model)) ./ snr0_v2 .+ combiner.v2_cal_err .* abs.(v2_model)
+
+    # T3 errors: get SNR for each triangle baseline
+    snr0_t3_1 = max.(snr0[t3_indx_1, :], 1.0)  # (nt3, nwavs)
+    snr0_t3_2 = max.(snr0[t3_indx_2, :], 1.0)
+    snr0_t3_3 = max.(snr0[t3_indx_3, :], 1.0)
+
+    # |V| per triangle baseline from v2_model
+    v2_per_bw = reshape(v2_model, nv2, nhours, nwavs)[:, 1, :]  # (nv2, nwavs)
+    V_t3_1 = sqrt.(clamp.(v2_per_bw[t3_indx_1, :], 1e-20, Inf))
+    V_t3_2 = sqrt.(clamp.(v2_per_bw[t3_indx_2, :], 1e-20, Inf))
+    V_t3_3 = sqrt.(clamp.(v2_per_bw[t3_indx_3, :], 1e-20, Inf))
+
+    # Inverse SNR² sum for the three baselines
+    inv_snr2_sum = 1.0 ./ (V_t3_1 .* snr0_t3_1).^2 .+ 1.0 ./ (V_t3_2 .* snr0_t3_2).^2 .+ 1.0 ./ (V_t3_3 .* snr0_t3_3).^2
+
+    # Closure phase error (degrees) with calibration floor
+    sigma_t3phi_bw = sqrt.((180.0/π)^2 .* inv_snr2_sum .+ combiner.phase_cal_err^2)
+    t3phi_model_err = vec(repeat(sigma_t3phi_bw, nhours, 1))
+
+    # T3 amplitude error
+    t3amp_model_err = abs.(t3amp_model) .* vec(repeat(sqrt.(inv_snr2_sum), nhours, 1))
+
+    # OI_VIS observables: visibility amplitude and differential phase
+    visamp_model = abs.(cvis_model[v2_indx_w])
+    visphi_abs   = angle.(cvis_model[v2_indx_w]) .* (180.0 / π)  # absolute phase [deg]
+
+    # Differential phase: subtract mean phase across wavelengths per baseline/hour
+    phi_3d = reshape(visphi_abs, nv2, nhours, nwavs)
+    phi_ref = sum(phi_3d, dims=3) ./ nwavs
+    dphi_model = vec(phi_3d .- phi_ref)
+
+    # Visibility amplitude error: σ(|V|) ≈ 1/SNR_0 + calibration systematic
+    visamp_model_err = 1.0 ./ snr0_v2 .+ combiner.v2_cal_err .* visamp_model
+
+    # Differential phase error [deg]: σ(φ) ≈ (180/π)/SNR_0 + calibration floor
+    dphi_model_err = (180.0 / π) ./ snr0_v2 .+ combiner.phase_cal_err
+
+    # OI_FLUX: per-telescope photometric flux (normalised to 1)
+    snr_tel = compute_telescope_snr(mag, λ, δλ, facility, combiner, ntel, nwavs)
+    nobs_flux = ntel * nhours
+    flux_model     = ones(nobs_flux * nwavs)  # normalised total flux
+    flux_model_err = vec(repeat(1.0 ./ max.(snr_tel, 1.0), nhours, 1))
+
+    # Add noise
     if nonoise==true
-    v2_model_err[:] .= 1.0
-    t3amp_model_err[:] .= 1.0
-    t3phi_model_err[:] .= 1.0
-    else # Add errors
-        v2_model    += v2_model_err.*randn(length(v2_model));
-        t3amp_model += t3amp_model_err.*randn(length(t3amp_model));
-        t3phi_model += t3phi_model_err.*randn(length(t3phi_model));
+        v2_model_err[:] .= 1.0
+        t3amp_model_err[:] .= 1.0
+        t3phi_model_err[:] .= 1.0
+        visamp_model_err[:] .= 1.0
+        dphi_model_err[:] .= 1.0
+        flux_model_err[:] .= 1.0
+    else
+        v2_model       += v2_model_err     .* randn(length(v2_model))
+        t3amp_model    += t3amp_model_err  .* randn(length(t3amp_model))
+        t3phi_model    += t3phi_model_err  .* randn(length(t3phi_model))
+        visamp_model   += visamp_model_err .* randn(length(visamp_model))
+        dphi_model     += dphi_model_err   .* randn(length(dphi_model))
+        flux_model     += flux_model_err   .* randn(length(flux_model))
     end
-    # norm((v2_model-vis_to_v2(image_to_vis(x, ft),v2_indx_w))./v2_model_err)^2/length(v2_model)
 
-    #setup arrays for OIFITS format
-    sta_names=facility.tel_names
-    sta_index=Int64.(collect(range(1,step=1,length=ntel)))
+    # --- Build OIFITS data structures and save ---
+    nobs_v2  = nv2 * nhours
+    nobs_t3  = nt3 * nhours
+    mjd_vals = Float64.(value.(modified_julian.(dates)))
+    date_obs = string(Dates.Date(dates[1]))
+    tid      = target.target_id
 
-    #input telescope data
-    target_id_vis2   = ones(nv2*nhours).*target.target_id[1]
-    time_vis2        = zeros(nv2*nhours)     # OIFITS v2 requires zeros
-    mjd_vis2         = repeat(value.(modified_julian.(dates)), nv2) # TOCHECK (could be transposed)
-    int_time_vis2    = ones(Float64,nv2*nhours)      # TODO
-    flag_vis2        = fill(false,nv2*nhours,1)
-    # need to get vis2,vis2err,u,v,sta_index from DATA
-    target_id_t3     = ones(nt3*nhours).*target.target_id[1]
-    time_t3          = zeros(nt3*nhours) #change
-    mjd_t3           = repeat(value.(modified_julian.(dates)), nt3)  #change
-    int_time_t3      = ones(Float64, nt3*nhours)      #  TODO;
-    flag_t3          = fill(false,(nt3*nhours),1);
+    # Reshape flat vectors to (nwavs, nobs) matrices for OIFITS tables.
+    # simulate ordering is (element, hour, wavelength-slowest), reshape via
+    # (n1, nhours, nwavs) → (nwavs, n1*nhours) by permuting dims.
+    function to_oifits_matrix(flat, n1, nh, nw)
+        return reshape(permutedims(reshape(flat, n1, nh, nw), (3, 1, 2)), nw, n1*nh)
+    end
 
-    ucoord_vis2 = u_M[v2_indx_M]
-    vcoord_vis2 = v_M[v2_indx_M]
-    u1coord = u_M[t3_indx_1_M]
-    v1coord = v_M[t3_indx_1_M]
-    u2coord = u_M[t3_indx_2_M]
-    v2coord = v_M[t3_indx_2_M]
+    v2_matrix       = to_oifits_matrix(v2_model,        nv2, nhours, nwavs)
+    v2_err_matrix   = to_oifits_matrix(v2_model_err,    nv2, nhours, nwavs)
+    t3amp_matrix    = to_oifits_matrix(t3amp_model,     nt3, nhours, nwavs)
+    t3amperr_matrix = to_oifits_matrix(t3amp_model_err, nt3, nhours, nwavs)
+    t3phi_matrix    = to_oifits_matrix(t3phi_model,     nt3, nhours, nwavs)
+    t3phierr_matrix = to_oifits_matrix(t3phi_model_err, nt3, nhours, nwavs)
+    visamp_matrix   = to_oifits_matrix(visamp_model,     nv2, nhours, nwavs)
+    visamperr_matrix= to_oifits_matrix(visamp_model_err, nv2, nhours, nwavs)
+    dphi_matrix     = to_oifits_matrix(dphi_model,       nv2, nhours, nwavs)
+    dphierr_matrix  = to_oifits_matrix(dphi_model_err,   nv2, nhours, nwavs)
+    flux_matrix     = to_oifits_matrix(flux_model,       ntel, nhours, nwavs)
+    fluxerr_matrix  = to_oifits_matrix(flux_model_err,   ntel, nhours, nwavs)
 
-    v2_model          = reshape(reshape(v2_model,(nhours,nv2,nwavs)),(nhours*nv2,nwavs))';
-    v2_model_err      = reshape(reshape(v2_model_err,(nhours,nv2,nwavs)),(nhours*nv2,nwavs))';
-    t3amp_model       = reshape(reshape(t3amp_model,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
-    t3amp_model_err   = reshape(reshape(t3amp_model_err,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
-    t3phi_model       = reshape(reshape(t3phi_model,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
-    t3phi_model_err   = reshape(reshape(t3phi_model_err,(nhours,nt3,nwavs)),(nhours*nt3,nwavs))';
-    v2_model_stations = repeat(v2_stations,1,nhours);
-    t3_model_stations = repeat(t3_stations,1,nhours);
+    # Per-observation vectors (meter-baseline coords, MJD, station indices)
+    ucoord_vis2 = vec(u_M[v2_indx_M])
+    vcoord_vis2 = vec(v_M[v2_indx_M])
+    u1coord     = vec(u_M[t3_indx_1_M])
+    v1coord     = vec(v_M[t3_indx_1_M])
+    u2coord     = vec(u_M[t3_indx_2_M])
+    v2coord     = vec(v_M[t3_indx_2_M])
+    mjd_vis2    = repeat(mjd_vals, inner=nv2)
+    mjd_t3      = repeat(mjd_vals, inner=nt3)
+    mjd_flux    = repeat(mjd_vals, inner=ntel)
+    sta_idx_arr = facility.sta_index
 
-    oiarray     = [facility.tel_names,sta_names,facility.sta_index,facility.tel_diams,station_xyz'];
-    oitarget    = [target.target_id[1],target.target[1],target.raep0[1],target.decep0[1],target.equinox[1],target.ra_err[1],target.dec_err[1],target.sysvel[1],target.veltyp[1],target.veldef[1],target.pmra[1],target.pmdec[1],target.pmra_err[1],target.pmdec_err[1],target.parallax[1],target.para_err[1],target.spectyp[1]];
-    oiwavelength= [λ,δλ];
-    oivis2      = [target_id_vis2,time_vis2,mjd_vis2,int_time_vis2,v2_model,v2_model_err,vec(ucoord_vis2),vec(vcoord_vis2),v2_model_stations,flag_vis2];
-    oit3        = [target_id_t3,time_t3,mjd_t3,int_time_t3,t3amp_model,t3amp_model_err,t3phi_model,t3phi_model_err,vec(u1coord),vec(v1coord),vec(u2coord),vec(v2coord),t3_model_stations,flag_t3];
+    # OI_TARGET
+    tgt = OIFITS.OI_TARGET([OIFITS.OITargetEntry(
+        tid, target.target,
+        target.raep0,  target.decep0,
+        target.equinox,
+        target.ra_err, target.dec_err,
+        target.sysvel, target.veltyp,
+        target.veldef,
+        target.pmra,   target.pmdec,
+        target.pmra_err, target.pmdec_err,
+        target.parallax, target.para_err,
+        target.spectyp,  "SCI")]; revn=1)
 
-    # Write everything
-    f = fits_create_file(outfilename);
-    write_oi_header(f,1);
-    write_oi_array(f,oiarray);
-    write_oi_target(f,oitarget)
-    write_oi_wavelength(f,oiwavelength);
-    write_oi_vis2(f,oivis2);
-    write_oi_t3(f,oit3);
-    fits_close_file(f);
+    # OI_ARRAY
+    arr = OIFITS.OI_ARRAY(undef)
+    arr.revn    = 1
+    arr.arrname = facility.name
+    arr.frame   = "GEOCENTRIC"
+    arr.arrayx  = 0.0; arr.arrayy = 0.0; arr.arrayz = 0.0
+    arr.tel_name  = facility.tel_names
+    arr.sta_name  = facility.sta_names
+    arr.sta_index = sta_idx_arr
+    arr.diameter  = facility.tel_diams
+    arr.staxyz    = collect(facility.sta_xyz')  # (ntel,3)' → (3,ntel)
+
+    # OI_WAVELENGTH
+    ins = OIFITS.OI_WAVELENGTH(undef)
+    ins.revn     = 1
+    ins.insname  = string(wavelength.combiner, "_", wavelength.mode)
+    ins.eff_wave = Float64.(λ)
+    ins.eff_band = Float64.(δλ)
+
+    # OI_VIS2
+    db_vis2 = OIFITS.OI_VIS2(undef)
+    db_vis2.revn      = 2
+    db_vis2.date_obs  = date_obs
+    db_vis2.arrname   = arr.arrname
+    db_vis2.insname   = ins.insname
+    db_vis2.target_id = fill(tid, nobs_v2)
+    db_vis2.time      = zeros(nobs_v2)
+    db_vis2.mjd       = mjd_vis2
+    db_vis2.int_time  = ones(nobs_v2)
+    db_vis2.vis2data  = v2_matrix
+    db_vis2.vis2err   = v2_err_matrix
+    db_vis2.ucoord    = ucoord_vis2
+    db_vis2.vcoord    = vcoord_vis2
+    db_vis2.sta_index = repeat(v2_stations, 1, nhours)
+    db_vis2.flag      = fill(false, nwavs, nobs_v2)
+
+    # OI_VIS (differential visibility amplitude and phase)
+    db_vis = OIFITS.OI_VIS(undef)
+    db_vis.revn      = 2
+    db_vis.date_obs  = date_obs
+    db_vis.arrname   = arr.arrname
+    db_vis.insname   = ins.insname
+    db_vis.amptyp    = "ABSOLUTE"
+    db_vis.phityp    = "DIFFERENTIAL"
+    db_vis.target_id = fill(tid, nobs_v2)
+    db_vis.time      = zeros(nobs_v2)
+    db_vis.mjd       = mjd_vis2
+    db_vis.int_time  = ones(nobs_v2)
+    db_vis.visamp    = visamp_matrix
+    db_vis.visamperr = visamperr_matrix
+    db_vis.visphi    = dphi_matrix
+    db_vis.visphierr = dphierr_matrix
+    db_vis.ucoord    = ucoord_vis2
+    db_vis.vcoord    = vcoord_vis2
+    db_vis.sta_index = repeat(v2_stations, 1, nhours)
+    db_vis.flag      = fill(false, nwavs, nobs_v2)
+
+    # OI_T3
+    db_t3 = OIFITS.OI_T3(undef)
+    db_t3.revn      = 2
+    db_t3.date_obs  = date_obs
+    db_t3.arrname   = arr.arrname
+    db_t3.insname   = ins.insname
+    db_t3.target_id = fill(tid, nobs_t3)
+    db_t3.time      = zeros(nobs_t3)
+    db_t3.mjd       = mjd_t3
+    db_t3.int_time  = ones(nobs_t3)
+    db_t3.t3amp     = t3amp_matrix
+    db_t3.t3amperr  = t3amperr_matrix
+    db_t3.t3phi     = t3phi_matrix
+    db_t3.t3phierr  = t3phierr_matrix
+    db_t3.u1coord   = u1coord
+    db_t3.v1coord   = v1coord
+    db_t3.u2coord   = u2coord
+    db_t3.v2coord   = v2coord
+    db_t3.sta_index = repeat(t3_stations, 1, nhours)
+    db_t3.flag      = fill(false, nwavs, nobs_t3)
+
+    # OI_FLUX (per-telescope spectrophotometry)
+    db_flux = OIFITS.OI_FLUX(undef)
+    db_flux.revn      = 1
+    db_flux.date_obs  = date_obs
+    db_flux.arrname   = arr.arrname
+    db_flux.insname   = ins.insname
+    db_flux.calstat   = "C"
+    db_flux.fov       = 0.0
+    db_flux.fovtype   = "FWHM"
+    db_flux.target_id = fill(tid, nobs_flux)
+    db_flux.mjd       = mjd_flux
+    db_flux.int_time  = ones(nobs_flux)
+    db_flux.fluxdata  = flux_matrix
+    db_flux.fluxerr   = fluxerr_matrix
+    db_flux.sta_index = repeat(sta_idx_arr, nhours)
+    db_flux.flag      = fill(false, nwavs, nobs_flux)
+
+    # Assemble and write
+    ds = OIFITS.OIDataSet(tgt, arr, ins, db_vis2, db_vis, db_t3, db_flux)
+    OIFITS.write(out_file, ds; overwrite=true)
 end
 
 function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[],  image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[])

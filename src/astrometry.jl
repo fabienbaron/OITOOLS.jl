@@ -264,8 +264,8 @@ end
 
 function get_baselines(facility; config = []) # similar to get_v2_baselines in simulate.jl, but here for planning
     # determine baselines and make necessary arrays
-    N = facility.ntel[1]
-    station_xyz= hcat([facility.sta_xyz[(i*3-2):i*3] for i=1:N]...)'
+    N = facility.ntel
+    station_xyz = facility.sta_xyz
 
     # Use all scopes by default, without a specific reference cart
     if config == []

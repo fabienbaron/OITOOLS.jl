@@ -9,10 +9,19 @@ data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, e
 diameters=range(1.0,10.0, step=0.1) #mas
 ld=range(0.0,1.0, step=0.01) # limb darkening
 chi2 = zeros(length(diameters), length(ld))
-model = create_model(create_component(type="ldlin", name="Model"));
+
+# Compile model once, then evaluate chi2 at each grid point
+param = Dict{String,Any}(
+    "star,ldlin" => 8.0,
+    "star,u"     => 0.3,
+    "star,f"     => 1.0,
+)
+fit_params = ["star,ldlin", "star,u"]
+model = parse_model(param, fit_params)
+
 for i= 1:length(diameters)
     for j=1:length(ld)
-     chi2[i,j] = model_to_chi2(data, model, [diameters[i], ld[j]], weights=[1.0,0,0])
+     chi2[i,j] = chi2_flat(model, [diameters[i], ld[j]], data, weights=[1.0,0,0])
  end
 end
 res = findmin(chi2)

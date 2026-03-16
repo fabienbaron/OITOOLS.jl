@@ -1,0 +1,15 @@
+name = "MIRC"
+int_trans = 1.0
+vis = 0.90
+n_pix_fringe = 128
+n_pix_photometry = 32
+flux_frac_photometry = 0.50
+flux_frac_fringes = 0.50
+throughput_photometry = 0.90
+throughput_fringes = 0.90
+n_splits = 4
+read_noise = 15
+quantum_efficiency = 0.65
+v2_cal_err = 0.001
+phase_cal_err = 0.80
+incoh_int_time = 100

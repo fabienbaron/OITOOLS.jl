@@ -90,7 +90,8 @@ export chi2_flat, chi2_flat_fg
 
 # fit_model — new flat-dict model fitting (NLopt + UltraNest)
 export FitResult, UltraNestResult, display_model,
-       fit_model, fit_model_ultranest, model_to_obs, model_to_image, model_to_sed
+       fit_model, fit_model_ultranest, model_to_obs, model_to_image, model_to_sed,
+       resample_data
 
 export get_uv, get_uv_indxes, prep_arrays, read_array_file, read_obs_file,
        read_comb_file, read_wave_file, simulate, simulate_from_oifits, vis_to_t3_conj,
@@ -100,8 +101,9 @@ export write_oi_header, write_oi_array, write_oi_target, write_oi_wavelength,
 export setup_nfft_polychromatic, reconstruct_polychromatic,
        image_to_vis_polychromatic_nfft, chi2_polychromatic_nfft_f
 export optimize_sparco_parameters
-export facility_info, obsv_info, combiner_info, wave_info, error_struct,
-       read_facility_file, define_errors
+export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig,
+       facility_info, obsv_info, combiner_info, wave_info,
+       read_facility_file
 export disk
 export chi2_sparco_f, chi2_sparco_fg, reconstruct_sparco_gray
 

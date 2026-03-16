@@ -15,6 +15,10 @@ data1 = readoifits(in_oifits); plot_v2(data1);
 data2 = readoifits(out_oifits); plot_v2(data2);
 
 # Example 2 - One can also use a model instead of an image
-model = create_model(create_component(type="ldlin", name="Model"));
-dispatch_params([3.0,0.15], model);
-simulate_from_oifits(in_oifits,out_oifits,model=model,pixsize=pixsize)
+param = Dict{String,Any}(
+    "star,ldlin" => 3.0,
+    "star,u"     => 0.15,
+    "star,f"     => 1.0,
+)
+model = parse_model(param, String[])
+simulate_from_oifits(in_oifits, out_oifits, flat_model=model, flat_params=Float64[])

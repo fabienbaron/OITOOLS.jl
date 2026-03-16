@@ -15,7 +15,7 @@ ra, dec = (radec[1]'*[1.0, 1/60., 1/3600], radec[2]'*[1.0, 1/60., 1/3600])
 obsdate = DateTime(2020, 6, 03);
 
 # Observatory location
-facility = read_facility_file("./data/CHARA.txt");
+facility = read_facility_file("CHARA");
 lat, lon = facility.lat[1], facility.lon[1]; #CHARA
 
 lst_midnight, _ = hour_angle_calc(obsdate+Dates.Day(1)+Dates.Hour(7),lon, ra)
@@ -91,9 +91,9 @@ delay_pop = [pop_array[ baseline_stations[2, i] , pop[baseline_stations[2, i]]] 
 delay_carts = 0.5*( delay_geo .- delay_airpath .- delay_pop )
 has_delay = (delay_carts.>-43).&(delay_carts.<43);
 good_delay = findall(vec(prod(has_delay, dims=1)).>0);
-gantt_onenight(targetname,obsdate, lst, lst_midnight, az, alt, good_alt, good_delay);tight_layout();
+gantt_onenight(targetname,obsdate, lst, lst_midnight, az, alt, good_alt, good_delay);
 
-# LST vs delay
+# LST vs delay -- CHARA_plan style plot
 figure()
 plot(lst, delay_carts[4,:], label="E2")
 plot(lst, delay_carts[3,:], label="E1")

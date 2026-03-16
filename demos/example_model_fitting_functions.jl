@@ -1,7 +1,7 @@
 # Generate fake uv, compute visibilities for a model and invert to find the model Image
 #
 # Note: This example directly uses the visibility functions
-# Not the recommended method for a beginner (use create_model(...) instead)
+# Not the recommended method for a beginner (use parse_model / fit_model instead)
 #
 using OITOOLS
 using PyPlot, FFTW, NFFT
@@ -94,9 +94,16 @@ V = Complex.(visibility_GaussianLorentzian_ring_az([10.0, -90, 60, .15, 0, 0,0, 
 img = real.(adjoint(fftplan)*V); img = img.*(img .>0); imdisp(img, pixscale=pixsize); scatter(0,0, marker="*", color=:red)
 
 
-# Example with the new interface
-c1 = create_component(type="ring", name="ring")
-c2 = create_component(type="ud", name="star")
-model = create_model(c1,c2);
-dispatch_params([0.5, 10.0, -90, 60, .15, 0, 0,0, 0, .4],model)
-model_to_image(model, nx=256, pixsize=0.1)
+# Example with the flat-dict model interface
+param = Dict{String,Any}(
+    "ring,gaussian_ring" => 10.0,
+    "ring,fwhm"   => 0.15,
+    "ring,incl"   => 60.0,
+    "ring,pa"     => -90.0,
+    "ring,f"      => 0.5,
+    "star,ud"     => 0.0,
+    "star,f"      => "1.0 - \$ring,f",
+)
+model = parse_model(param, String[])
+img = model_to_image(model, Float64[], nx=256, pixsize=0.1)
+imdisp(img, pixsize=0.1)

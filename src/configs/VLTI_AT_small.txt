@@ -1,0 +1,16 @@
+name = VLTI
+lat = -24.62743941
+lon = -70.40498688
+alt = 2635.0
+coord = 1
+throughput = 1.00
+wind_speed = 10.0
+r0 = 0.126
+ntel = 4
+
+tel_names = A0 B2 C1 D0
+sta_names = A0 B2 C1 D0
+tel_diams = 1.80 1.80 1.80 1.80
+tel_gain = 1.00 1.00 1.00 1.00
+sta_index = 1 2 3 4
+sta_xyz = -55.8130 -14.6416 4.5477 -75.8937 0.7394 4.5473 -65.7168 5.6914 4.5451 -45.3982 15.6280 4.5471
