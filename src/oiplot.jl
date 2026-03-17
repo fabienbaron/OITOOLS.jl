@@ -200,22 +200,29 @@ end
 
 """
     plot_obs(data, spec; color="baseline", logplot=false, figsize=oiplot_figsize,
-             figtitle="", markopt=false, legend_below=false)
+             figtitle="", markopt=false, legend_below=false, ax=nothing)
 
 Generic plotting engine for any interferometric observable described by an
 `ObsPlotSpec`. All public `plot_*` functions delegate here.
+
+When `ax` is provided (a matplotlib Axes object), plot into that axes instead of
+creating a new figure. In that mode, figure creation, `tight_layout`, `show`,
+legend, and colorbar are skipped (the caller manages those).
 """
 function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSpec;
                   color::String="baseline", logplot::Bool=false, figsize=oiplot_figsize,
                   figtitle::String="", markopt::Bool=false, legend_below::Bool=false,
                   plot_title::String=spec.plot_title, ylabel_str::String=spec.ylabel,
-                  xlabel_str::String=spec.xlabel)
+                  xlabel_str::String=spec.xlabel, ax=nothing)
     set_oiplot_defaults()
     data = as_datavec(data)
 
-    fig = figure(string(figtitle, plot_title, " data"), figsize=figsize, facecolor="White")
-    clf()
-    ax = gca()
+    standalone = isnothing(ax)
+    if standalone
+        fig = figure(string(figtitle, plot_title, " data"), figsize=figsize, facecolor="White")
+        clf()
+        ax = gca()
+    end
     if logplot && spec.logplot_ok
         ax.set_yscale("log")
     end
@@ -239,64 +246,137 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSpe
             yvals = vcat([getfield(data[n], spec.y_field)[loc[n]] for n in eachindex(data)]...)
             yerr  = vcat([getfield(data[n], spec.yerr_field)[loc[n]] for n in eachindex(data)]...)
             if markopt
-                errorbar(xvals, yvals, yerr=yerr, fmt="o", marker=oiplot_markers[i],
+                ax.errorbar(xvals, yvals, yerr=yerr, fmt="o", marker=oiplot_markers[i],
                          markeredgecolor="Black", markersize=oiplot_markersize, color="Black",
                          ecolor="Gainsboro", elinewidth=oiplot_elinewidth, label=groups[i])
             else
-                errorbar(xvals, yvals, yerr=yerr, fmt="o",
+                ax.errorbar(xvals, yvals, yerr=yerr, fmt="o",
                          markeredgecolor=oiplot_colors[i], color=oiplot_colors[i],
                          markersize=oiplot_markersize, ecolor="Gainsboro",
                          elinewidth=oiplot_elinewidth, label=groups[i])
             end
         end
-        if legend_below
-            ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
-                      ncol=oiplot_legend_ncol_below,
-                      loc="upper center", bbox_to_anchor=(0.5, -0.15))
-        else
-            ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
-                      ncol=oiplot_legend_ncol, loc="best")
+        if standalone
+            if legend_below
+                ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
+                          ncol=oiplot_legend_ncol_below,
+                          loc="upper center", bbox_to_anchor=(0.5, -0.15))
+            else
+                ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
+                          ncol=oiplot_legend_ncol, loc="best")
+            end
         end
     elseif cc == "wav"
         wavcol = vcat([getfield(data[n], spec.lam_field)*1e6 for n in eachindex(data)]...)
         xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
-        sc = scatter(xvals, yvals, c=wavcol, cmap="Spectral_r", alpha=1.0,
+        sc = ax.scatter(xvals, yvals, c=wavcol, cmap="Spectral_r", alpha=1.0,
                      s=oiplot_scatter_size, zorder=100)
-        errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
+        ax.errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
                  ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
-        setup_wav_colorbar(sc)
+        standalone && setup_wav_colorbar(sc)
     elseif cc == "mjd"
         mjdcol = vcat([getfield(data[n], spec.mjd_field) for n in eachindex(data)]...)
         xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
-        sc = scatter(xvals, yvals, c=mjdcol, cmap="plasma", alpha=1.0,
+        sc = ax.scatter(xvals, yvals, c=mjdcol, cmap="plasma", alpha=1.0,
                      s=oiplot_scatter_size, zorder=100)
-        errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
+        ax.errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
                  ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
-        setup_mjd_colorbar(sc)
+        standalone && setup_mjd_colorbar(sc)
     else
         xvals = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr  = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
-        errorbar(xvals, yvals, yerr=yerr, fmt="o", markersize=oiplot_markersize,
+        ax.errorbar(xvals, yvals, yerr=yerr, fmt="o", markersize=oiplot_markersize,
                  color=color, ecolor="Gainsboro", elinewidth=oiplot_elinewidth)
     end
 
-    if oiplot_show_title
-        title(plot_title * " data")
+    if standalone && oiplot_show_title
+        ax.set_title(plot_title * " data")
     end
-    xlabel(xlabel_str)
-    PyPlot.ylabel(ylabel_str)
+    ax.set_ylabel(ylabel_str)
     ax.grid(true, which="both", color="Grey", linestyle=":")
-    tight_layout()
-    show(block=false)
+
+    if standalone
+        ax.set_xlabel(xlabel_str)
+        tight_layout()
+        show(block=false)
+    end
+    return ax
 end
 
+"""
+    plot_multi(data; obs=["V2","T3PHI","T3AMP"], color="baseline",
+               figsize=nothing, figtitle="", markopt=false)
 
+Multi-panel figure with one subplot per observable, sharing the x-axis and a
+single legend. Panels are stacked vertically; only the bottom panel gets an
+x-axis label.
 
+`obs` is a vector of spec keys from `OBS_PLOT_SPECS` (e.g. `"V2"`, `"T3PHI"`,
+`"T3AMP"`, `"VISAMP"`, `"VISPHI"`, `"FLUX"`). Panels whose data is empty are
+skipped automatically.
+"""
+function plot_multi(data::Union{OIdata, AbstractArray{<:OIdata}};
+                    obs::Vector{String}=["V2", "T3PHI", "T3AMP"],
+                    color::String="baseline", figsize=nothing,
+                    figtitle::String="", markopt::Bool=false)
+    set_oiplot_defaults()
+    dvec = as_datavec(data)
+
+    # Count field for each spec to skip empty panels
+    _count_field = Dict("V2"=>:nv2, "T3PHI"=>:nt3phi, "T3PHI_MAX"=>:nt3phi,
+                        "T3AMP"=>:nt3amp, "T3AMP_MAX"=>:nt3amp,
+                        "VISAMP"=>:nvisamp, "VISPHI"=>:nvisphi, "FLUX"=>:nflux)
+    active = [k for k in obs if haskey(OBS_PLOT_SPECS, k) &&
+              any(getfield(d, _count_field[k]) > 0 for d in dvec)]
+    npanels = length(active)
+    npanels == 0 && (@warn("plot_multi: no data for requested observables"); return nothing)
+
+    if isnothing(figsize)
+        h = oiplot_compact ? 2.0 : 3.0
+        figsize = (oiplot_figsize[1], h * npanels + 0.8)
+    end
+
+    fig, axes = plt.subplots(num=string(figtitle, "Multi-observable"),
+                             nrows=npanels, ncols=1, sharex=true,
+                             figsize=figsize, facecolor="White")
+    # When npanels==1, axes is not an array
+    if npanels == 1
+        axes = [axes]
+    end
+
+    for (i, key) in enumerate(active)
+        spec = OBS_PLOT_SPECS[key]
+        plot_obs(data, spec; color=color, markopt=markopt, ax=axes[i])
+    end
+
+    # Shared x-axis label on bottom panel only
+    axes[npanels].set_xlabel(OBS_PLOT_SPECS[active[npanels]].xlabel)
+
+    # Shared legend from the first "baseline"/"station" panel (has labeled artists)
+    cc = canonical_color(color)
+    if cc == "baseline" || cc == "station"
+        handles, labels = axes[1].get_legend_handles_labels()
+        if length(handles) > 0
+            fig.legend(handles, labels, fontsize=oiplot_legend_fontsize,
+                       fancybox=true, shadow=true, ncol=oiplot_legend_ncol_below,
+                       loc="lower center", bbox_to_anchor=(0.5, 0.0))
+        end
+    end
+
+    subplots_adjust(hspace=0.05)
+    tight_layout()
+    # Make room for the shared legend at the bottom
+    if cc == "baseline" || cc == "station"
+        subplots_adjust(bottom=0.12)
+    end
+    show(block=false)
+    return fig
+end
 
 # Overloaded uvplot functions
 function uvplot(uv::Array{Float64,2})

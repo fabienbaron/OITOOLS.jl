@@ -40,13 +40,13 @@ plot_visphi(data, color="mjd")
 plot_flux(data)                     # colour by station (default)
 plot_flux(data, color="mjd")
 
-# ── Compact mode for stacked plots ──────────────────────────────────────────
-# Switch to compact styling: smaller fonts/markers, shorter figure, no in-plot titles
+# ── Multi-panel overview ───────────────────────────────────────────────────
+plot_multi(data)                                             # default: V², T3φ, T3amp
+plot_multi(data, obs=["V2", "T3PHI", "VISAMP"])    # custom selection
+plot_multi(data, color="wav")                                # colour by wavelength
+
+# ── Compact multi-panel ───────────────────────────────────────────────────
 set_oiplot_defaults(compact=true)
-plot_v2(data)
-plot_t3phi(data)
-plot_t3amp(data)
-plot_visamp(data)
-plot_flux(data)
-# Restore normal styling
+plot_multi(data)
+plot_multi(data, obs=["V2", "T3PHI", "T3AMP", "VISAMP", "VISPHI"])
 set_oiplot_defaults(compact=false)

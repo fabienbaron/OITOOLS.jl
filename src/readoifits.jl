@@ -449,7 +449,8 @@ function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
         data.vis_sta_index= data.vis_sta_index[:, vis_good]
         !isempty(data.visamp_corr_idx) && (data.visamp_corr_idx = data.visamp_corr_idx[vis_good])
         !isempty(data.visphi_corr_idx) && (data.visphi_corr_idx = data.visphi_corr_idx[vis_good])
-        data.nvisamp      = length(data.visamp);      data.nvisphi      = length(data.visphi)
+        data.nvisamp      = count(i -> !isnan(data.visamp[i]) && !isnan(data.visamp_err[i]) && data.visamp_err[i] > 0, eachindex(data.visamp))
+        data.nvisphi      = count(i -> !isnan(data.visphi[i]) && !isnan(data.visphi_err[i]) && data.visphi_err[i] > 0, eachindex(data.visphi))
     end
     if data.nv2 > 0
         v2_good          = setdiff(1:length(data.indx_v2), indexes_to_discard[3])
@@ -473,7 +474,8 @@ function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
         data.t3_sta_index   = data.t3_sta_index[:, t3_good]
         !isempty(data.t3amp_corr_idx) && (data.t3amp_corr_idx = data.t3amp_corr_idx[t3_good])
         !isempty(data.t3phi_corr_idx) && (data.t3phi_corr_idx = data.t3phi_corr_idx[t3_good])
-        data.nt3amp         = length(data.t3amp);     data.nt3phi         = length(data.t3phi)
+        data.nt3amp         = count(i -> !isnan(data.t3amp[i]) && !isnan(data.t3amp_err[i]) && data.t3amp_err[i] > 0, eachindex(data.t3amp))
+        data.nt3phi         = count(i -> !isnan(data.t3phi[i]) && !isnan(data.t3phi_err[i]) && data.t3phi_err[i] > 0, eachindex(data.t3phi))
     end
     if data.nflux > 0 && length(indexes_to_discard) >= 5
         flux_good            = setdiff(1:data.nflux, indexes_to_discard[5])
@@ -1043,8 +1045,9 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         vis_baseline = raw_vis.vis_baseline[bin_vis]
         vis_uv     = hcat(raw_vis.vis_uv[bin_vis, 1], raw_vis.vis_uv[bin_vis, 2])'  # 2×nvis
         vis_sta_index = raw_vis.vis_sta_index[:, bin_vis]
-        nvisamp    = length(visamp);  nvisphi = length(visphi)
-        indx_vis   = collect(1:nvisamp)
+        nvisamp    = count(i -> !isnan(visamp[i]) && !isnan(visamp_err[i]) && visamp_err[i] > 0, eachindex(visamp))
+        nvisphi    = count(i -> !isnan(visphi[i]) && !isnan(visphi_err[i]) && visphi_err[i] > 0, eachindex(visphi))
+        indx_vis   = collect(1:length(visamp))
         visamp_corr_idx = isempty(raw_vis.visamp_corr_idx) ? Int64[] : raw_vis.visamp_corr_idx[bin_vis]
         visphi_corr_idx = isempty(raw_vis.visphi_corr_idx) ? Int64[] : raw_vis.visphi_corr_idx[bin_vis]
     else
@@ -1086,8 +1089,10 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         t3_baseline    = raw_t3.t3_baseline[bin_t3]
         t3_maxbaseline = raw_t3.t3_maxbaseline[bin_t3]
         t3_sta_index   = raw_t3.t3_sta_index[:, bin_t3]
-        nt3amp = length(t3amp);  nt3phi = length(t3phi);  nt3 = nt3amp
-        off    = nvisamp + nv2
+        nt3    = length(t3amp)
+        nt3amp = count(i -> !isnan(t3amp[i]) && !isnan(t3amp_err[i]) && t3amp_err[i] > 0, eachindex(t3amp))
+        nt3phi = count(i -> !isnan(t3phi[i]) && !isnan(t3phi_err[i]) && t3phi_err[i] > 0, eachindex(t3phi))
+        off    = length(visamp) + nv2
         indx_t3_1 = collect(off .+ (1:nt3))
         indx_t3_2 = collect(off .+ (nt3+1:2nt3))
         indx_t3_3 = collect(off .+ (2nt3+1:3nt3))
@@ -1180,7 +1185,8 @@ function filter_bad_observables!(bd::BinData{T};
         good_uv_vis          = bd.indx_vis[vis_good]
         bd.visamp            = bd.visamp[vis_good];    bd.visamp_err    = bd.visamp_err[vis_good]
         bd.visphi            = bd.visphi[vis_good];    bd.visphi_err    = bd.visphi_err[vis_good]
-        bd.nvisamp           = length(bd.visamp);       bd.nvisphi       = length(bd.visphi)
+        bd.nvisamp           = count(i -> !isnan(bd.visamp[i]) && !isnan(bd.visamp_err[i]) && bd.visamp_err[i] > 0, eachindex(bd.visamp))
+        bd.nvisphi           = count(i -> !isnan(bd.visphi[i]) && !isnan(bd.visphi_err[i]) && bd.visphi_err[i] > 0, eachindex(bd.visphi))
         bd.vis_baseline      = bd.vis_baseline[vis_good]
         bd.vis_mjd           = bd.vis_mjd[vis_good];   bd.vis_lam       = bd.vis_lam[vis_good]
         bd.vis_dlam          = bd.vis_dlam[vis_good];  bd.vis_flag      = bd.vis_flag[vis_good]
@@ -1215,7 +1221,8 @@ function filter_bad_observables!(bd::BinData{T};
         good_uv_t3_3         = bd.indx_t3_3[t3_good]
         bd.t3amp             = bd.t3amp[t3_good];      bd.t3amp_err     = bd.t3amp_err[t3_good]
         bd.t3phi             = bd.t3phi[t3_good];      bd.t3phi_err     = bd.t3phi_err[t3_good]
-        bd.nt3amp            = length(bd.t3amp);        bd.nt3phi        = length(bd.t3phi)
+        bd.nt3amp            = count(i -> !isnan(bd.t3amp[i]) && !isnan(bd.t3amp_err[i]) && bd.t3amp_err[i] > 0, eachindex(bd.t3amp))
+        bd.nt3phi            = count(i -> !isnan(bd.t3phi[i]) && !isnan(bd.t3phi_err[i]) && bd.t3phi_err[i] > 0, eachindex(bd.t3phi))
         bd.t3_baseline       = bd.t3_baseline[t3_good]; bd.t3_maxbaseline = bd.t3_maxbaseline[t3_good]
         bd.t3_mjd            = bd.t3_mjd[t3_good];    bd.t3_lam        = bd.t3_lam[t3_good]
         bd.t3_dlam           = bd.t3_dlam[t3_good];   bd.t3_flag       = bd.t3_flag[t3_good]
@@ -1539,7 +1546,8 @@ function readoifits(oifitsfile;
             indx = findall(common_good)
             for i in 1:nwavbin
                 d = OIdataArr[i,itimebin]
-                d.nvisamp       = length(indx);          d.nvisphi       = length(indx)
+                d.nvisamp       = count(j -> !isnan(d.visamp[j]) && !isnan(d.visamp_err[j]) && d.visamp_err[j] > 0, indx)
+                d.nvisphi       = count(j -> !isnan(d.visphi[j]) && !isnan(d.visphi_err[j]) && d.visphi_err[j] > 0, indx)
                 d.visamp        = d.visamp[indx];        d.visamp_err    = d.visamp_err[indx]
                 d.visphi        = d.visphi[indx];        d.visphi_err    = d.visphi_err[indx]
                 d.vis_baseline  = d.vis_baseline[indx];  d.vis_mjd       = d.vis_mjd[indx]

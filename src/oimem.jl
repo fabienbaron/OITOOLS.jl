@@ -502,7 +502,7 @@ Run the MaximENT iterative reconstruction loop and return the result as an
 `nx × nx` `Matrix{Float64}`, normalised to unit flux.
 
 `ctx`, `s`, and `p` are all modified in-place.  The same result is accessible
-afterwards as `reshape(s.h, ctx.nx, ctx.nx)`.  Call [`maxent_setup`](@ref)
+afterwards as `reshape(s.h, ctx.nx, ctx.nx)`.  Call `maxent_setup`
 to build all three from an `OIdata` struct.
 
 # Arguments
@@ -531,7 +531,7 @@ image = maxent_reconstruct!(ctx, s, p; maxiter=200, verbose=true)
 imdisp(image; pixsize)
 ```
 
-See also: [`maxent_setup`](@ref), [`reconstruct_bsmem`](@ref).
+See also: `maxent_setup`, [`reconstruct_bsmem`](@ref).
 """
 function maxent_reconstruct!(ctx :: ImagingContext,
                              s   :: MaximENTState,
@@ -619,7 +619,7 @@ x = reconstruct_bsmem(prior, data, ft;
 imdisp(x; pixsize)
 ```
 
-See also: [`maxent_setup`](@ref), [`maxent_reconstruct!`](@ref).
+See also: `maxent_setup`, `maxent_reconstruct!`.
 """
 function reconstruct_bsmem(x_start, data::OIdata, ft;
                             regularizers      = [],

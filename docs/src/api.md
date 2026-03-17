@@ -25,13 +25,16 @@ set_data_filter
 ## Plotting
 
 ```@docs
+set_oiplot_defaults
 uvplot
 plot_v2
 plot_t3phi
 plot_t3amp
 plot_visamp
 plot_visphi
+plot_diffphi
 plot_flux
+plot_multi
 imdisp
 imdisp_multi
 ```
@@ -39,6 +42,7 @@ imdisp_multi
 | Function | Description |
 |----------|-------------|
 | `set_oiplot_defaults(; compact=false)` | Apply matplotlib style settings; `compact=true` for small stacked plots |
+| `plot_multi(data; obs, color, ...)` | Multi-panel figure with shared x-axis and legend |
 | `plot_v2_residuals(data, v2_model)` | Plot V\u00B2 residuals against a model |
 | `plot_t3phi_residuals(data, t3phi_model)` | Plot closure-phase residuals |
 | `plot_t3amp_residuals(data, t3amp_model)` | Plot triple-amplitude residuals |
