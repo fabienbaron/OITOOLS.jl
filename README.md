@@ -1,4 +1,3 @@
-
 # OITOOLS: the All-in-One Tool Package for Optical Interferometry
 
 |     **Status**                  | **Documentation**               | **License**                     |**Build**                      |
@@ -17,118 +16,147 @@
 [build-img]: https://github.com/fabienbaron/OITOOLS.jl/workflows/CI/badge.svg
 [build-url]: https://github.com/fabienbaron/OITOOLS.jl/actions
 
+OITOOLS is a Julia package for optical interferometry data analysis, developed
+by Prof. Fabien Baron (Georgia State University) and collaborators. It covers
+the full workflow for data from arrays such as CHARA, VLTI, and NPOI:
+reading, plotting, model fitting, image reconstruction, and observation
+simulation.
 
-OITOOLS is a Julia package to read, plot, model-fit and image optical interferometric data coming from astronomical arrays such as CHARA, VLTI, and NPOI. Note that despite having the same name as [JMMC's oitools](https://github.com/JMMC-OpenDev/oitools), they are completely unrelated and were developed independently.
+> **Note:** Despite having the same name as [JMMC's oitools](https://github.com/JMMC-OpenDev/oitools),
+> the two packages are completely unrelated and were developed independently.
 
 ## Installation
 
-If you're new to Julia, you may want to install OITOOLS and its dependencies without learning about activate/instantiate. 
-You will only have to do this one.
-
 ```julia
-using Pkg;
-pkg"registry add General"  # if not yet any registries
+using Pkg
+pkg"registry add General"
 pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
-# Then check everything got installed properly
 using OITOOLS
 ```
 
-## Plotting and loading data
+See the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for
+Python dependencies (UltraNest, Astroquery) and PackageCompiler setup.
 
-* Load and filter data on the fly: split by spectral channel or time
+## Features
 
-* All the classic plots: uv coverage, V2, T3, etc. by baseline or wavelengths
+### Reading OIFITS data
 
-|    **uv coverage**                  | **V2**               |
+- OIFITS v1 and v2 with automatic quality filtering
+- Spectral and temporal binning, polychromatic (per-channel) mode
+- OI\_CORR correlation matrices (e.g. GRAVITY)
+- `Float32` mode for large datasets (`readoifits(file; T=Float32)`)
+
+### Plotting
+
+All the classic plots: UV coverage, V², closure phases, triple amplitudes,
+differential phases, flux spectra. Colour by baseline, wavelength, or MJD.
+
+|    **UV coverage**                  | **V²**               |
 |:--------------------------------:|:--------------------------------:|
 | ![uvplot](docs/src/assets/uvplot.png)  | ![v2plot](docs/src/assets/v2plot.png) |
 
-## Image reconstruction
+### Model fitting
 
-* Classic image reconstruction
+Parametric model fitting with a flat-dictionary interface compatible with
+[PMOIRED](https://github.com/amerand/PMOIRED):
+
+- **Component types:** uniform disk, Gaussian, limb-darkened (linear,
+  quadratic, power-law), ring, Gaussian ring, crescent, point source,
+  resolved background, and arbitrary radial profiles via Hankel transform
+- **Chromatic and time-variable models** using expression strings with
+  `$WL`, `$MJD`, and inter-parameter `$`-references
+- **Azimuthal modulations** with harmonic coefficients for disk asymmetries
+- **Three fitting backends:**
+  - NLopt (gradient-based and gradient-free optimizers)
+  - LsqFit (Levenberg-Marquardt with covariance and 1-sigma errors)
+  - UltraNest (Bayesian nested sampling with log-evidence)
+- **Bootstrap error estimation** by baseline, time, or wavelength
+- **PMOIRED conversion:** `pmoired_to_julia()` converts Python dict
+  literals to Julia
+
+### Image reconstruction
+
+- Gradient-based reconstruction with VMLMB (OptimPackNextGen)
+- NFFT for speed or exact DFT
+- Polychromatic and time-variable imaging
+- SPARCO framework for chromatic environments
+- Maximum Entropy (BSMEM) reconstruction
+- Multiple regularizations: total variation, L1-L2, compactness,
+  entropy, support constraints, and more
 
 ![2004bc1](docs/src/assets/types-tvsq.png)
 ![2004bc2](docs/src/assets/types-compactness.png)
 ![2004bc3](docs/src/assets/types-l1l2.png)
 
-* Polychromatic and dynamical imaging with several regularizations
-
-* The [ROTIR](https://github.com/fabienbaron/ROTIR.jl/) package uses OITOOLS to do stellar surface imaging with:
-  + light curve inversion
-  + Doppler imaging
-  + interferometric imaging
+The [ROTIR](https://github.com/fabienbaron/ROTIR.jl/) package uses OITOOLS
+for stellar surface imaging (light curve inversion, Doppler imaging,
+interferometric imaging):
 
 ![rotir](docs/src/assets/rotir.png)
 
-## Model fitting
+### Observation simulation
 
-* Fast multiple component fitting.
+- Simulate synthetic OIFITS from images or parametric models
+- Build observations from TOML-based array/combiner/wavelength configs
+- Pre-built configs for CHARA, VLTI (UT and AT), and their combiners
+  (MIRC-X, MYSTIC, GRAVITY, MATISSE, SPICA)
+- Observation planning with Gantt charts, delay-line feasibility,
+  and SIMBAD target queries
 
-* Polychromatic models
-  + Power and black-body laws
-  + Spectral line fitting
-  + Add your own laws!
-
-* Dynamical models (time variable parameters)
-
-* Optimization with several libraries
-  + Levenberg for classic error analysis
-  + NLOpt for flexibility in the parameter search (local and global optimizers including Nelder Mead and Genetic Algorithm)
-  + UltraNest for Bayesan model selection
-
-* Derive boostrap errors
-  + Boostrap by baseline, time, or wavelengths
-
-* Quickly make images from models.
-
-## Observation planning
-
-|     **ASPRO-like Gantt chart**                  | **chara_plan-like plots**               |
+|     **ASPRO-like Gantt chart**                  | **chara\_plan-like plots**               |
 |:--------------------------------:|:--------------------------------:|
-| ![gantt](docs/src/assets/gantt.svg) | ![chara_plan](docs/src/assets/chara_plan.png) |
+| ![gantt](docs/src/assets/gantt.svg) | ![chara\_plan](docs/src/assets/chara_plan.png) |
 
+## Documentation
 
-## Simulations
+Full documentation is available at
+[fabienbaron.github.io/OITOOLS.jl](https://fabienbaron.github.io/OITOOLS.jl/dev),
+including:
 
-* Can simulate fake data from models or images
+- [Reading OIFITS files](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/reading/)
+- [Model fitting guide](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/modeling/)
+- [Image reconstruction](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/imaging/)
+- [Simulation and planning](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/simulating/)
+- [API reference](https://fabienbaron.github.io/OITOOLS.jl/dev/api/)
+- [Demo scripts](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/intro/)
 
-* Can create your own telescope and/or instrumental configurations
+## Speeding up load times with PackageCompiler
 
-## How to speed up the use of OITOOLS with PackageCompiler
-
-Julia compiles your code on the fly, and OITOOLS functions are no exception.
-The so-called "time to first plot" will significantly decrease if you take the time to compile OITOOLS with PackageCompiler,
-The functions that will be accelerated are in precompile_oitools.jl from the OITOOLS.jl/demos/ directory.
-Feel free to add OITOOLS functions that you frequenly use.
-To precompile OITOOLS:
 ```julia
 using PackageCompiler
-create_sysimage([:OITOOLS], sysimage_path="oitools.so", precompile_execution_file="precompile_oitools.jl")
+create_sysimage([:OITOOLS];
+    sysimage_path = "oitools.so",
+    precompile_execution_file = "demos/oitools_precomp.jl")
 ```
-then launch julia with
+
+Then launch Julia with:
+
 ```
 julia --sysimage oitools.so
 ```
 
-## Package install for development
-
-Here is a quick scropt to install all the packages needed to develop OITOOLS:
+## Development install
 
 ```julia
-using Pkg; 
-#Install python packages
-Pkg.add("Conda"); 
-using Conda; 
-Conda.add("ultranest", channel="conda-forge"); 
-Conda.add("astroquery", channel="astropy");
-# Install mainstream Julia packages
-Pkg.add(["CFITSIO","AstroTime","Crayons", "Dates","DelimitedFiles","Documenter","DocumenterTools","FFTW", "FITSIO","Glob","LaTeXStrings","LinearAlgebra","NFFT","NLopt","UltraNest","LsqFit","NearestNeighbors","PyCall","PyPlot","Random","SparseArrays","SpecialFunctions","Statistics","Parameters", "Match", "ProgressMeter"]); 
-# Install Eric Thiebaut's packages
-Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))
-Pkg.add(["ArrayTools", "LazyAlgebra", "OptimPackNextGen", "OIFITS"]);
-# Install FB's packages
+using Pkg
+# Python packages
+ENV["PYTHON"] = ""
+Pkg.add("Conda")
+using Conda
+Conda.add("ultranest", channel="conda-forge")
+Conda.add("astroquery", channel="astropy")
+# Julia packages
+pkg"registry add General"
+pkg"registry add https://github.com/emmt/EmmtRegistry"
+Pkg.add([
+    "AstroTime", "CFITSIO", "Crayons", "Dates", "DelimitedFiles",
+    "FFTW", "FITSIO", "Glob", "LaTeXStrings", "LinearAlgebra",
+    "LsqFit", "Match", "NFFT", "NLopt", "NearestNeighbors",
+    "Parameters", "PyCall", "PyPlot", "Random", "SparseArrays",
+    "SpecialFunctions", "Statistics", "UltraNest",
+    "ArrayTools", "LazyAlgebra", "OptimPackNextGen", "OIFITS",
+])
 Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
-# Then check everything got installed properly
 using OITOOLS
 ```

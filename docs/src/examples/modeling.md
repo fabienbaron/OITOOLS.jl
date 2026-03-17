@@ -3,7 +3,7 @@
 OITOOLS supports parametric model fitting using a flat-dictionary interface
 compatible with [PMOIRED](https://github.com/amerand/PMOIRED).
 Models are assembled from named components, each described by key-value pairs
-in a `Dict{String,Any}`. Expression strings with `$`-references let parameters
+in a `Dict{String,Any}`. Expression strings with `\$`-references let parameters
 depend on each other (e.g. `"1 - \$star,f"`).
 
 ## Defining a model
@@ -167,7 +167,7 @@ params = Dict{String,Any}(
 
 ## Expression strings
 
-Parameter values can be strings referencing other parameters with `$`.
+Parameter values can be strings referencing other parameters with `\$`.
 References are resolved in topological order, so forward and backward
 references both work:
 
