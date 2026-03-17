@@ -8,6 +8,8 @@ if CI
             Pkg.build("PyCall")
             Pkg.add("Conda")
             using Conda
+            # Pin Python <3.13 — ultranest's conda builds don't support 3.13+ yet
+            Conda.add("python>=3.10,<3.13", channel="conda-forge")
             Conda.add("astroquery", channel="astropy")
             Conda.add("ultranest", channel="conda-forge")
             Pkg.build("PyCall")
@@ -35,6 +37,8 @@ else
     Pkg.build("PyCall")
     Pkg.add("Conda")
     using Conda
+    # Pin Python <3.13 — ultranest's conda builds don't support 3.13+ yet
+    Conda.add("python>=3.10,<3.13", channel="conda-forge")
     Conda.add("astroquery", channel="astropy")
     Conda.add("ultranest", channel="conda-forge")
     Pkg.build("PyCall")
