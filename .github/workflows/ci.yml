@@ -7,6 +7,9 @@ on:
     branches:
       - main
     tags: '*'
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
@@ -32,7 +35,7 @@ jobs:
             arch: aarch64
             version: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
@@ -45,7 +48,7 @@ jobs:
           PYTHON: ''
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -59,7 +62,7 @@ jobs:
       contents: write
       statuses: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
