@@ -714,6 +714,212 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# residuals_flat / residuals_flat_jac — residual vector and Jacobian for LsqFit
+#
+# LsqFit minimises Σ r_i².  We define r_i = (model_i - data_i) / σ_i
+# for each enabled observable, concatenated into a single flat vector.
+# The Jacobian J[i,j] = ∂r_i/∂x_j is computed analytically from the
+# complex visibility Jacobian ∂V/∂x via the Wirtinger chain rule.
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    residuals_flat(model, x, data; weights, vonmises) -> Vector{Float64}
+
+Compute the weighted residual vector `r` such that `chi2 = dot(r, r)`.
+
+Each element is `(model_observable - data_observable) / σ`, concatenated
+in order: [V2; T3amp; T3phi; visamp; visphi; flux].
+"""
+function residuals_flat(model::FlatModel,
+                        x::AbstractVector,
+                        data::OIdata;
+                        weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                        vonmises::Bool = false)
+
+    w = _pad_weights(weights)
+    need_flux = w[6] > 0 && data.nflux > 0
+
+    _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
+    _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    if need_flux
+        uv_aug  = hcat(zeros(2, 1), data.uv)
+        wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
+        mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
+        V_aug   = eval_model(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
+        model_flux = real(V_aug[1])
+        V = V_aug[2:end]
+    else
+        V = eval_model(model, x, data.uv; wl=_wl, mjd=_mjd)
+        model_flux = NaN
+    end
+
+    r = Float64[]
+
+    # V2
+    if w[1] > 0 && data.nv2 > 0
+        v2_model = abs2.(V[data.indx_v2])
+        append!(r, sqrt(w[1]) .* (v2_model .- data.v2) ./ data.v2_err)
+    end
+
+    # T3amp
+    if w[2] > 0 && data.nt3amp > 0
+        t3 = V[data.indx_t3_1] .* V[data.indx_t3_2] .* V[data.indx_t3_3]
+        append!(r, sqrt(w[2]) .* (abs.(t3) .- data.t3amp) ./ data.t3amp_err)
+    end
+
+    # T3phi
+    if w[3] > 0 && data.nt3phi > 0
+        t3 = V[data.indx_t3_1] .* V[data.indx_t3_2] .* V[data.indx_t3_3]
+        t3phi_model = angle.(t3) .* (180.0 / π)
+        append!(r, sqrt(w[3]) .* _mod360(t3phi_model .- data.t3phi) ./ data.t3phi_err)
+    end
+
+    # Visamp
+    if w[4] > 0 && data.nvisamp > 0
+        visamp_model = abs.(V[data.indx_vis])
+        append!(r, sqrt(w[4]) .* (visamp_model .- data.visamp) ./ data.visamp_err)
+    end
+
+    # Visphi
+    if w[5] > 0 && data.nvisphi > 0
+        visphi_model = angle.(V[data.indx_vis]) .* (180.0 / π)
+        append!(r, sqrt(w[5]) .* _mod360(visphi_model .- data.visphi) ./ data.visphi_err)
+    end
+
+    # Flux
+    if need_flux
+        fl = _chi2_flux(model_flux, data)
+        fm = fill(fl.C * model_flux, data.nflux)
+        append!(r, sqrt(w[6]) .* (fm .- data.flux) ./ data.flux_err)
+    end
+
+    return r
+end
+
+
+"""
+    residuals_flat_jac(model, x, data; weights, vonmises) -> (Vector{Float64}, Matrix{Float64})
+
+Compute the weighted residual vector and its Jacobian `J[i,j] = ∂r_i/∂x_j`.
+
+Returns `(r, J)` where `chi2 = dot(r, r)` and `∂chi2/∂x = 2 Jᵀ r`.
+"""
+function residuals_flat_jac(model::FlatModel,
+                            x::AbstractVector,
+                            data::OIdata;
+                            weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                            vonmises::Bool = false)
+
+    w = _pad_weights(weights)
+    w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi, w_flux = w[1], w[2], w[3], w[4], w[5], w[6]
+    need_flux = w_flux > 0 && data.nflux > 0
+    nparams = length(x)
+
+    _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
+    _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    if need_flux
+        uv_aug  = hcat(zeros(2, 1), data.uv)
+        wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
+        mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
+        V_aug, dV_aug = eval_model_grad(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
+        model_flux = real(V_aug[1])
+        V  = V_aug[2:end]
+        dV = dV_aug[2:end, :]
+    else
+        V, dV = eval_model_grad(model, x, data.uv; wl=_wl, mjd=_mjd)
+        model_flux = NaN
+    end
+
+    r_parts = Vector{Float64}[]
+    J_parts = Matrix{Float64}[]
+    ε = eps(Float64)
+
+    # ── V2: r = (|V|² - d) / σ,  ∂r/∂x = 2 Re(V* · ∂V/∂x) / σ ──────────
+    if w_v2 > 0 && data.nv2 > 0
+        idx = data.indx_v2
+        Vv2 = V[idx]
+        v2_model = abs2.(Vv2)
+        r_v2 = sqrt(w_v2) .* (v2_model .- data.v2) ./ data.v2_err
+        # J_v2[i,j] = sqrt(w) * 2 Re(conj(V_i) * dV[i,j]) / σ_i
+        J_v2 = sqrt(w_v2) .* 2.0 .* real.(conj.(Vv2) .* dV[idx, :]) ./ data.v2_err
+        push!(r_parts, r_v2); push!(J_parts, J_v2)
+    end
+
+    # ── T3amp: r = (|T3| - d) / σ ────────────────────────────────────────────
+    if w_t3amp > 0 && data.nt3amp > 0
+        V1 = V[data.indx_t3_1]; V2c = V[data.indx_t3_2]; V3 = V[data.indx_t3_3]
+        t3 = V1 .* V2c .* V3
+        t3amp_model = abs.(t3)
+        r_t3a = sqrt(w_t3amp) .* (t3amp_model .- data.t3amp) ./ data.t3amp_err
+        # ∂|T3|/∂x = Re(conj(T3)/|T3| · ∂T3/∂x)
+        # ∂T3/∂x = V2·V3·∂V1/∂x + V1·V3·∂V2/∂x + V1·V2·∂V3/∂x
+        safe_amp = max.(t3amp_model, ε)
+        phase_factor = conj.(t3) ./ safe_amp
+        dT3 = (V2c .* V3) .* dV[data.indx_t3_1, :] .+
+               (V1 .* V3) .* dV[data.indx_t3_2, :] .+
+               (V1 .* V2c) .* dV[data.indx_t3_3, :]
+        J_t3a = sqrt(w_t3amp) .* real.(phase_factor .* dT3) ./ data.t3amp_err
+        push!(r_parts, r_t3a); push!(J_parts, J_t3a)
+    end
+
+    # ── T3phi: r = mod360(φ_model - φ_data) / σ ──────────────────────────────
+    if w_t3phi > 0 && data.nt3phi > 0
+        V1 = V[data.indx_t3_1]; V2c = V[data.indx_t3_2]; V3 = V[data.indx_t3_3]
+        t3 = V1 .* V2c .* V3
+        t3phi_model = angle.(t3) .* (180.0 / π)
+        dphi = _mod360(t3phi_model .- data.t3phi)
+        r_t3p = sqrt(w_t3phi) .* dphi ./ data.t3phi_err
+        # ∂angle(T3)/∂x = Im(conj(T3)/|T3|² · ∂T3/∂x) · 180/π
+        safe_amp2 = max.(abs2.(t3), ε)
+        phase_factor = conj.(t3) ./ safe_amp2
+        dT3 = (V2c .* V3) .* dV[data.indx_t3_1, :] .+
+               (V1 .* V3) .* dV[data.indx_t3_2, :] .+
+               (V1 .* V2c) .* dV[data.indx_t3_3, :]
+        J_t3p = sqrt(w_t3phi) .* (180.0 / π) .* imag.(phase_factor .* dT3) ./ data.t3phi_err
+        push!(r_parts, r_t3p); push!(J_parts, J_t3p)
+    end
+
+    # ── Visamp: r = (|V| - d) / σ ────────────────────────────────────────────
+    if w_visamp > 0 && data.nvisamp > 0
+        idx = data.indx_vis
+        Vvis = V[idx]
+        visamp_model = abs.(Vvis)
+        r_va = sqrt(w_visamp) .* (visamp_model .- data.visamp) ./ data.visamp_err
+        safe_amp = max.(visamp_model, ε)
+        J_va = sqrt(w_visamp) .* real.(conj.(Vvis) ./ safe_amp .* dV[idx, :]) ./ data.visamp_err
+        push!(r_parts, r_va); push!(J_parts, J_va)
+    end
+
+    # ── Visphi: r = mod360(φ_model - φ_data) / σ ─────────────────────────────
+    if w_visphi > 0 && data.nvisphi > 0
+        idx = data.indx_vis
+        Vvis = V[idx]
+        visphi_model = angle.(Vvis) .* (180.0 / π)
+        dphi = _mod360(visphi_model .- data.visphi)
+        r_vp = sqrt(w_visphi) .* dphi ./ data.visphi_err
+        safe_amp2 = max.(abs2.(Vvis), ε)
+        J_vp = sqrt(w_visphi) .* (180.0 / π) .* imag.(conj.(Vvis) ./ safe_amp2 .* dV[idx, :]) ./ data.visphi_err
+        push!(r_parts, r_vp); push!(J_parts, J_vp)
+    end
+
+    # ── Flux (no Jacobian for now — C_flux treated as constant) ───────────────
+    if need_flux
+        fl = _chi2_flux(model_flux, data)
+        fm = fill(fl.C * model_flux, data.nflux)
+        r_fl = sqrt(w_flux) .* (fm .- data.flux) ./ data.flux_err
+        # J_flux[i,j] = sqrt(w) * C * Re(∂V_zero/∂x_j) / σ_i
+        J_zero = real.(dV_aug[1:1, :])  # 1 × nparams
+        J_fl = sqrt(w_flux) .* fl.C .* repeat(J_zero, data.nflux, 1) ./ data.flux_err
+        push!(r_parts, r_fl); push!(J_parts, J_fl)
+    end
+
+    r = vcat(r_parts...)
+    J = vcat(J_parts...)
+    return r, J
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # chi2_flat_reduced  (chi2 / ndof — for display)
 # ─────────────────────────────────────────────────────────────────────────────
 

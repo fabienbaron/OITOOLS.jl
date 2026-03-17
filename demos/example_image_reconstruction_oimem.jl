@@ -5,12 +5,12 @@ pixsize  = 0.1   # mas/pixel; set to 0 to use auto_pixsize
 #pixsize = 0.05
 nx       = 128
 flux_err = 1e-5   # tight flux constraint
-data = readoifits(oifitsfile)[1,1]
-ft = setup_nfft(data, nx, pixsize)
+data = readoifits(oifitsfile)[1,1];
+ft = setup_nfft(data, nx, pixsize);
 
 # Prior: Gaussian centred on the image, FWHM = 1/5 of FoV
 prior_fwhm = nx * pixsize / 5.0
-prior = gaussian_prior(nx, pixsize; fwhm_mas = prior_fwhm)
+prior = gaussian_prior(nx, pixsize; fwhm_mas = prior_fwhm);
 
 x = reconstruct_bsmem(prior, data, ft;
                        regularizers = [["mem", prior]],

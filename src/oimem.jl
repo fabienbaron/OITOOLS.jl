@@ -1,26 +1,15 @@
 """
-oimem.jl – Optical-interferometry operators for maximent, with OITOOLS integration.
+oimem.jl – Optical-interferometry operators for MaximENT, with OITOOLS integration.
 
-This module provides the application-specific operators connecting MaximENT4 to
+This module provides the application-specific operators connecting MaximENT to
 OIFITS data (power spectra + bispectra).  It can be used either with raw arrays
 (low-level) or directly with an `OIdata` struct from OITOOLS (high-level).
 
-Original sources
-----------------
-- bsmem.c   : C implementations of VMEMEX/VOPUS/VTROP, set_maximent_dataspace, uvchuck.
-
-Julia redesign
---------------
-- UAREA / MEINIT        → allocate MaximENTState(nhid, ndat) directly.
-- ICF / TRICF            → identity by construction (s.f = s.h throughout).
-- UFETCH / USTORE        → dropped (disc-paging stubs, already STOP'd in Fortran).
-- UDIAG                  → dropped (interactive terminal debugger).
-- OPUS / TROPUS / MEMEX  → three closures returned by make_operators(ctx).
-- VMEMEX / VOPUS / VTROP → compute_data!, linearised_fwd!, linearised_adj! (hot path, allocation-free).
-- set_maximent_dataspace   → set_dataspace!(s, ctx, data, ...) with full elliptic /
-                           classic bispectrum error models and triple-amplitude
-                           extrapolation from power spectra.
-- uvchuck                → handled upstream by OITOOLS before calling imaging_context.
+Operators:
+- `compute_data!`, `linearised_fwd!`, `linearised_adj!` — hot-path, allocation-free.
+- `set_dataspace!` — populate data vector with full elliptic / classic bispectrum
+  error models and triple-amplitude extrapolation from power spectra.
+- ICF = identity by construction (hidden-space = visible-space).
 
 Data vector layout  (length  npow + 2·nbis)
 --------------------------------------------
@@ -101,7 +90,6 @@ end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ImagingContext
-# Replaces the C `USER` struct and the Fortran VPOINT/OUTPUT COMMON blocks.
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
@@ -554,8 +542,8 @@ function maxent_reconstruct!(ctx :: ImagingContext,
     linadj! = (δdat, δim) -> linearised_adj!(ctx, δdat, δim)
     fwd!    = (im,  dat)  -> compute_data!(ctx, im, dat)
 
-    # Warm-up: populate ctx.visi from the starting model (mirrors VMEMEX call
-    # before the first MEM4 iteration in bsmem.c)
+    # Warm-up: populate ctx.visi from the starting model
+    # before the first MaxEnt iteration
     compute_data!(ctx, s.h, s.d_w2)
 
     reconstruct!(s, p, maxiter, linfwd!, linadj!, fwd!; verbose)
@@ -651,7 +639,7 @@ function reconstruct_bsmem(x_start, data::OIdata, ft;
                             ritz_alpha   :: Bool    = false)
 
     # ── Extract nx and pixsize from the OITOOLS NFFT plan ─────────────────────
-    # setup_nfft stores ft[1].k[:, j] = pixsize_rad * [-u_j; +v_j],
+    # setup_nfft stores ft[1].k[:, j] = pixsize_rad * [u_j; v_j],
     # so norm(ft[1].k[:, j]) = pixsize_rad * norm(data.uv[:, j]).
     nx  = ft[1].N[1]
     j   = argmax(vec(sqrt.(sum(data.uv .^ 2, dims=1))))
@@ -687,9 +675,9 @@ end
 
 Return the three operator closures for use with `reconstruct!`:
 
-    linfwd!(δimage, δdata)   – linearised forward  (VOPUS)
-    linadj!(δdata, δimage)   – adjoint              (VTROP)
-    fwd!(image,  data)       – nonlinear forward    (VMEMEX); updates ctx.visi
+    linfwd!(δimage, δdata)   – linearised forward operator
+    linadj!(δdata, δimage)   – adjoint operator
+    fwd!(image,  data)       – nonlinear forward model; updates ctx.visi
 """
 function make_operators(ctx::ImagingContext)
     linfwd! = (δim, δdat) -> linearised_fwd!(ctx, δim, δdat)
@@ -702,16 +690,16 @@ end
 # Internal: sign-aware visibility lookup helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Forward pass (vopus): conjugate if sign < 0
+# Forward pass (linearised_fwd): conjugate if sign < 0
 @inline _visleg(visi, pnt::Int, sgn::Int8) =
     sgn < 0 ? conj(visi[pnt]) : visi[pnt]
 
-# Adjoint pass (vtrop): conjugate if sign ≥ 0  (C VTROP: conj first, then maybe double-conj)
+# Adjoint pass (linearised_adj): conjugate if sign ≥ 0  (conj first, then maybe double-conj)
 @inline _visleg_adj(visi, pnt::Int, sgn::Int8) =
     sgn < 0 ? visi[pnt] : conj(visi[pnt])
 
 # ─────────────────────────────────────────────────────────────────────────────
-# compute_data!  –  nonlinear forward model  (MEMEX callback)
+# compute_data!  –  nonlinear forward model
 # image[1..nx²]  →  data[1..npow+2·nbis]
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -742,7 +730,7 @@ function compute_data!(ctx   :: ImagingContext,
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# linearised_fwd!  –  linearised forward operator  (OPUS callback)
+# linearised_fwd!  –  linearised forward operator
 # δimage[1..nx²]  →  δdata[1..npow+2·nbis]
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -777,18 +765,18 @@ function linearised_fwd!(ctx    :: ImagingContext,
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# linearised_adj!  –  adjoint of linearised_fwd!  (TROPUS callback)
+# linearised_adj!  –  adjoint of linearised_fwd!
 # δdata[1..npow+2·nbis]  →  δimage[1..nx²]
 #
 # Adjoint derivation
 # ------------------
-# Power-spectrum: vopus returns 2 Re(δV·V*).
+# Power-spectrum: linearised_fwd returns 2 Re(δV·V*).
 #   Adjoint w.r.t. δV:  2·δdata·V  → accumulated into _dvisi.
 #
-# Bispectrum: vopus packs [Re(t), Im(t)], t = φ·(δVab·Vbc·Vca + …).
+# Bispectrum: linearised_fwd packs [Re(t), Im(t)], t = φ·(δVab·Vbc·Vca + …).
 #   Adjoint undoes the phasor (×conj(φ)) and applies the *reversed*
-#   conjugation convention (_visleg_adj vs _visleg), matching C VTROP
-#   which takes conj(V[pnt]) first and then optionally double-conjugates.
+#   conjugation convention (_visleg_adj vs _visleg):
+#   conj(V[pnt]) first and then optionally double-conjugates.
 # ─────────────────────────────────────────────────────────────────────────────
 
 function linearised_adj!(ctx    :: ImagingContext,
@@ -851,7 +839,7 @@ end
 
 Print `msg` to stdout if `mlevel` is within the verbosity gate `level`.
 
-Two-digit encoding (original Fortran convention):
+Two-digit encoding:
   tens digit  : threshold for numerical diagnostics   (mlevel ≥ 10)
   units digit : threshold for progress diagnostics    (mlevel  < 10)
 """

@@ -10,13 +10,14 @@ end
 
 # setup_dft: generic in the floating-point type T of the uv coordinates.
 # Returns a Matrix{Complex{T}} DFT kernel.
+# Convention: V(u,v) = Σ I(x,y) exp(-2πi(u·x + v·y))  (astronomical standard)
 function setup_dft(uv::Matrix{T}, nx, pixsize) where T<:AbstractFloat
     scale_rad = T(pixsize * (pi / 180.0) / 3600000.0)
     nuv = size(uv, 2)
     span = T.((2 * (1:nx) .- (nx + 1)) .* (scale_rad * pi))
     xvals = reshape(span, 1, nx, 1)
     yvals = reshape(span, 1, 1, nx)
-    dft = Complex{T}.(reshape(cis.((uv[1, :] .* xvals) .- (uv[2, :] .* yvals)), nuv, nx^2))
+    dft = Complex{T}.(reshape(cis.(.-((uv[1, :] .* xvals) .+ (uv[2, :] .* yvals))), nuv, nx^2))
     return dft
 end
 
@@ -43,8 +44,10 @@ end
 
 # setup_nfft: dispatches on OIdata{T}; plan_nfft infers T from Matrix{T} uv coords,
 # returning NFFTPlan{T,2,1}. Works for both Float32 and Float64.
+# Convention: NFFT kernel is exp(-2πi k·x), so passing (u,v) directly gives
+# V(u,v) = Σ I(x,y) exp(-2πi(u·x + v·y))  (astronomical standard)
 function setup_nfft(data::OIdata{T}, nx, pixsize) where T
-    scale_rad = T(pixsize * (pi / 180.0) / 3600000.0) * [-one(T); one(T)] .* data.uv
+    scale_rad = T(pixsize * (pi / 180.0) / 3600000.0) .* data.uv
     fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0)
     fftplan_vis  = plan_nfft(scale_rad[:, data.indx_vis], (nx,nx), m=4, σ=2.0)
     fftplan_v2   = plan_nfft(scale_rad[:, data.indx_v2],  (nx,nx), m=4, σ=2.0)
@@ -56,7 +59,7 @@ end
 
 # Raw-uv overload: caller must pass Matrix{T} explicitly typed.
 function setup_nfft(uv::Matrix{T}, indx_vis, indx_v2, indx_t3_1, indx_t3_2, indx_t3_3, nx, pixsize) where T<:AbstractFloat
-    scale_rad = T(pixsize * (pi / 180.0) / 3600000.0) * [-one(T); one(T)] .* uv
+    scale_rad = T(pixsize * (pi / 180.0) / 3600000.0) .* uv
     fftplan_uv  = plan_nfft(scale_rad, (nx,nx), m=4, σ=2.0)
     fftplan_vis  = plan_nfft(scale_rad[:, indx_vis], (nx,nx), m=4, σ=2.0)
     fftplan_v2   = plan_nfft(scale_rad[:, indx_v2],  (nx,nx), m=4, σ=2.0)

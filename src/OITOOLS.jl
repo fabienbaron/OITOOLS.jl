@@ -35,6 +35,7 @@ include("simulate.jl")
 include("oifitslib.jl")
 include("maximent.jl")
 include("oimem.jl")
+include("pmoired_compat.jl")
 
 # readoifits
 export OIdata
@@ -87,15 +88,16 @@ export FlatModel, AnalyticSpec, HankelSpec, AbstractComponentSpec,
        parse_model, eval_model, eval_model_grad
 
 # chi2_flat — chi-squared for flat parametric models
-export chi2_flat, chi2_flat_fg
+export chi2_flat, chi2_flat_fg, residuals_flat, residuals_flat_jac
 
-# fit_model — new flat-dict model fitting (NLopt + UltraNest)
-export FitResult, UltraNestResult, display_model,
-       fit_model, fit_model_ultranest, model_to_obs, model_to_image, model_to_sed,
+# fit_model — new flat-dict model fitting (NLopt + LsqFit + UltraNest)
+export FitResult, LsqFitResult, UltraNestResult, display_model,
+       fit_model, fit_model_lsqfit, fit_model_ultranest,
+       model_to_obs, model_to_image, model_to_sed,
        resample_data
 
 export get_uv, get_uv_indxes, prep_arrays, read_array_file, read_obs_file,
-       read_comb_file, read_wave_file, simulate, simulate_from_oifits, vis_to_t3_conj,
+       read_comb_file, read_wave_file, simulate, simulate_from_oifits,
        get_v2_baselines, v2mapt3, get_t3_baselines, hour_angle_calc
 export write_oi_header, write_oi_array, write_oi_target, write_oi_wavelength,
        write_oi_vis2, write_oi_t3
@@ -125,5 +127,8 @@ export MaximENTParams, MaximENTState, maxent_step!, reconstruct!
 export ImagingContext, imaging_context, make_operators, set_dataspace!,
        maxent_setup, maxent_reconstruct!, reconstruct_bsmem,
        auto_pixsize, gaussian_prior, set_mask!, log_message
+
+# pmoired_compat — convert PMOIRED Python dicts to Julia
+export pmoired_to_julia, pmoired_to_julia_file
 
 end

@@ -208,8 +208,8 @@ function _vis_crescent(params::AbstractVector, u::AbstractVector, v::AbstractVec
     V_out = vis_ud(crout, ρ)
     V_in  = vis_ud(crin,  ρ)
 
-    phase_out = @. 2π * (u * offXo + v * offYo) / _MAS2RAD_PM
-    phase_in  = @. 2π * (u * offXi + v * offYi) / _MAS2RAD_PM
+    phase_out = @. -2π * (u * offXo + v * offYo) / _MAS2RAD_PM
+    phase_in  = @. -2π * (u * offXi + v * offYi) / _MAS2RAD_PM
 
     return @. (crout^2 * V_out * cis(phase_out) -
                crin^2  * V_in  * cis(phase_in)) / (crout^2 - crin^2)
@@ -741,7 +741,7 @@ function eval_model(model::FlatModel,
         if comp.x_idx != 0 || comp.y_idx != 0
             dx = comp.x_idx != 0 ? pv[comp.x_idx] : 0.0
             dy = comp.y_idx != 0 ? pv[comp.y_idx] : 0.0
-            phase = @. 2π * (u_raw * dx + v_raw * dy) / _MAS2RAD_PM
+            phase = @. -2π * (u_raw * dx + v_raw * dy) / _MAS2RAD_PM
             @. V += f * Vi * cis(phase)
         else
             @. V += f * Vi

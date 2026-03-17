@@ -17,7 +17,7 @@
 #   fit_model(param_dict, fit_params, data; lb, ub, weights, priors, method, ...)
 #       → FitResult
 
-using NLopt, ForwardDiff, Printf, PyCall, FFTW
+using NLopt, LsqFit, ForwardDiff, Printf, PyCall, FFTW
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -501,6 +501,126 @@ function fit_model_ultranest(param_dict   ::Dict{String},
         minx, fit_params, minf, minf / ndof, ndof,
         logz, logzerr, posterior, result, model,
     )
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LsqFit result
+# ─────────────────────────────────────────────────────────────────────────────
+
+struct LsqFitResult
+    x_opt       ::Vector{Float64}       # best-fit parameter values
+    fit_params  ::Vector{String}        # parameter names, same order as x_opt
+    chi2        ::Float64               # raw chi2 at x_opt
+    chi2r       ::Float64               # chi2 / ndof
+    ndof        ::Int
+    covar       ::Matrix{Float64}       # parameter covariance matrix
+    stderror    ::Vector{Float64}       # 1σ uncertainties (sqrt of diag(covar))
+    converged   ::Bool                  # did LsqFit converge?
+    model       ::FlatModel
+    lsqfit_result ::LsqFit.LsqFitResult  # raw LsqFit result (for confidence_interval etc.)
+end
+
+function Base.show(io::IO, r::LsqFitResult)
+    @printf(io, "LsqFitResult: χ²r = %.4f  (chi2=%.2f, ndof=%d, converged=%s)\n",
+            r.chi2r, r.chi2, r.ndof, r.converged)
+    for (i, p) in enumerate(r.fit_params)
+        @printf(io, "  %-20s = %10.4f ± %.4f\n", p, r.x_opt[i], r.stderror[i])
+    end
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# fit_model_lsqfit — Levenberg-Marquardt via LsqFit.jl
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    fit_model_lsqfit(param_dict, fit_params, data; kwargs...) -> LsqFitResult
+
+Fit a parametric model to interferometric data using Levenberg-Marquardt
+(LsqFit.jl).  Returns parameter covariance and 1σ uncertainties.
+
+Uses the analytic Jacobian from `residuals_flat_jac` (Wirtinger chain rule
+through the complex visibility Jacobian), so no finite-difference overhead.
+
+# Arguments
+- `param_dict::Dict{String}` — flat parameter dictionary
+- `fit_params::Vector{String}` — names of the free parameters to optimize
+- `data::OIdata` — interferometric data
+
+# Keywords
+- `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds per parameter
+- `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
+- `vonmises` — use von Mises statistic for T3phi
+- `nB_workspace` — Hankel workspace size
+- `maxIter` — maximum iterations (default 200)
+- `verb` — print per-evaluation chi2 breakdown
+"""
+function fit_model_lsqfit(param_dict   ::Dict{String},
+                          fit_params   ::Vector{String},
+                          data         ::OIdata;
+    lb           = Dict{String,Float64}(),
+    ub           = Dict{String,Float64}(),
+    weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    vonmises     = false,
+    nB_workspace = nothing,
+    maxIter      = 200,
+    verb         = false,
+)
+    # ── 1. Compile the model (once) ──────────────────────────────────────────
+    nB = something(nB_workspace, size(data.uv, 2))
+    model = parse_model(param_dict, fit_params; nB_workspace=nB)
+    nparams = length(fit_params)
+
+    # ── 2. Build the model function and Jacobian for LsqFit ─────────────────
+    # LsqFit convention: model_fn(xdata, p) -> predicted ydata
+    # We use xdata = [1] as a dummy — the data is captured in the closure.
+    # The "ydata" is zeros (we want residuals = predicted - 0 = residuals).
+
+    function model_fn(_, p)
+        residuals_flat(model, p, data; weights, vonmises)
+    end
+
+    function jacobian_fn(_, p)
+        _, J = residuals_flat_jac(model, p, data; weights, vonmises)
+        return J
+    end
+
+    # ── 3. Initial parameter vector and bounds ───────────────────────────────
+    x0 = Float64[param_dict[p] for p in fit_params]
+    xdata = [1]  # dummy
+    ydata = zeros(length(model_fn(xdata, x0)))  # target = 0 (residuals)
+
+    # Build lower/upper bound vectors
+    lb_vec = Float64[get(lb, p, -Inf) for p in fit_params]
+    ub_vec = Float64[get(ub, p,  Inf) for p in fit_params]
+
+    # ── 4. Run LsqFit ───────────────────────────────────────────────────────
+    fit = curve_fit(model_fn, jacobian_fn, xdata, ydata, x0;
+                    lower=lb_vec, upper=ub_vec,
+                    maxIter=maxIter, inplace=false)
+
+    # ── 5. Extract results ───────────────────────────────────────────────────
+    minx = fit.param
+    r_final = fit.resid
+    chi2_val = dot(r_final, r_final)
+    ndof = _ndof(data, weights)
+
+    # Covariance matrix from LsqFit (may fail if Jacobian is singular,
+    # e.g. when parameters hit bounds)
+    cov, σ = try
+        vcov(fit), stderror(fit)
+    catch
+        @warn "Covariance estimation failed (singular Jacobian — parameters may be at bounds)"
+        fill(NaN, nparams, nparams), fill(NaN, nparams)
+    end
+
+    if verb
+        chi2_flat(model, minx, data; weights, verb=true, vonmises)
+    end
+
+    return LsqFitResult(minx, fit_params, chi2_val, chi2_val / ndof, ndof,
+                         cov, σ, fit.converged, model, fit)
 end
 
 

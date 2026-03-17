@@ -367,15 +367,8 @@ end
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
 
 #Functions used in main Functions
-function vis_to_t3_conj(cvis, indx1, indx2, indx3)
-    #get t3 from caculated visibilities
-    #because of ordering of v_ij j>i we need to use conjugate (we use conj(t3_13), rather than t3_31)
- # t3 = cvis[indx1].*cvis[indx2].*conj(cvis[indx3]);
-  t3 = cvis[indx1].*cvis[indx2].*conj(cvis[indx3]);
-  t3amp = abs.(t3);
-  t3phi = angle.(t3)*180 ./pi;
-  return t3, t3amp, t3phi
-end
+# vis_to_t3_conj is removed — use vis_to_t3 from oichi2.jl instead.
+# The conjugate was a workaround for a sign convention mismatch that is now fixed.
 
 
 function get_v2_baselines(N,station_xyz,tel_names)
@@ -446,14 +439,14 @@ function get_uv(l, h, λ, δ::Float64, baselines)
     v_M = (sin.(l)*sin(δ)*cos.(h).+cos.(l)*cos(δ)).* baselines[1,:]  + sin(δ)*sin.(h) .*baselines[2,:]   +(-cos.(l)*cos.(h)*sin(δ).+sin.(l)*cos(δ)) .* baselines[3,:];
     w_M = (-sin.(l)*cos(δ)*cos.(h).+cos.(l)*sin(δ)).* baselines[1,:] - cos(δ)*sin.(h) .*baselines[2,:]   + (cos.(l)*cos.(h)*cos(δ).+sin.(l)sin(δ))  .* baselines[3,:];
     # proj baselines to (uv wav)
-    u = reshape((1 ./λ)'.*vec(-u_M), (nuv,nhours,length(λ))); #TODO: we have -u_M for the moment, need to fix nfft first
+    u = reshape((1 ./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
     v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
     w = reshape((1 ./λ)'.*vec(w_M), (nuv,nhours,length(λ)));
     uv = vcat(vec(u)',vec(v)')
     return nuv,uv,u_M,v_M,w_M
 end
 
-function get_uv(l, h, λ, δ::Matrix{Float64}, baselines) 
+function get_uv(l, h, λ, δ::Matrix{Float64}, baselines)
     # Use following expression only if there are missing baselines somewhere
     # baselines = hcat(v2_baselines, t3_baselines[:, 1, :], t3_baselines[:, 2, :], t3_baselines[:, 3, :])
     # Expression to use for pure simulation where the full complement of v2 and t3 are created
@@ -465,7 +458,7 @@ function get_uv(l, h, λ, δ::Matrix{Float64}, baselines)
     v_M = ( sin(l)*sin.(δ).*cos.(h).+cos(l).*cos.(δ)).* baselines[1,:]  + sin.(δ).*sin.(h) .*baselines[2,:]   +(-cos(l)*cos.(h).*sin.(δ).+sin(l).*cos.(δ)) .* baselines[3,:];
     w_M = (-sin(l)*cos.(δ).*cos.(h).+cos(l).*sin.(δ)).* baselines[1,:] - cos.(δ).*sin.(h) .*baselines[2,:]   + (cos(l)*cos.(h).*cos.(δ).+sin(l).*sin.(δ)) .* baselines[3,:];
     # proj baselines to (uv wav)
-    u = reshape((1 ./λ)'.*vec(-u_M), (nuv,nhours,length(λ))); #TODO: we have -u_M for the moment, need to fix nfft first
+    u = reshape((1 ./λ)'.*vec(u_M), (nuv,nhours,length(λ)));
     v = reshape((1 ./λ)'.*vec(v_M), (nuv,nhours,length(λ)));
     w = reshape((1 ./λ)'.*vec(w_M), (nuv,nhours,length(λ)));
     uv = vcat(vec(u)',vec(v)')
@@ -573,7 +566,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
 
     # Compute true values of observables
     v2_model = vis_to_v2(cvis_model, v2_indx_w);
-    t3_model, t3amp_model, t3phi_model = vis_to_t3_conj(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
+    t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
 
     # Compute uncertainties — physical noise model from magnitude, instrument, and atmosphere
     snr0 = compute_baseline_snr(mag, λ, δλ, facility, combiner, v2_stations, nv2, nwavs)

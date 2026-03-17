@@ -1,28 +1,16 @@
 """
 MaximENT.jl
 
-Pure-Julia port of MaximENT — Quantified Maximum Entropy Image Reconstruction
+Quantified Maximum Entropy Image Reconstruction
 (Gull, Charter & Skilling, 1990–1991, Maximum Entropy Data Consultants Ltd).
 
-Original Fortran architecture:
-  • A flat workspace array `ST` indexed by 40 numbered "areas" (hidden /
-    visible / data spaces), managed through MFETCH/MWHILE/VSTORE blocking
-    machinery needed when RAM was scarce.
-  • Two Fortran COMMON blocks (`MEMCOM`, `MEINFO`) held all control scalars.
-  • OPUS/TROPUS/ICF/MEMEX were global subroutine callbacks.
-
-Julia design:
-  • `MaximENTState`  — named Vector fields replacing the numbered area system.
-  • `MaximENTParams` — mutable struct replacing the COMMON blocks.
+Design:
+  • `MaximENTState`  — named Vector fields for each workspace area.
+  • `MaximENTParams` — mutable struct holding all control scalars.
   • User supplies `linfwd!`, `linadj!`, `fwd!` as ordinary Julia functions.
-  • The entire MFETCH/MWHILE/VFETCH/VSTORE block-management layer is dropped;
-    Julia operates on whole arrays directly.
-  • VRAND replaced by Julia's built-in `randn!` / `rand`.
-  • MEMDET (bidiagonal eigensolver) replaced by `svd(Bidiagonal(…))`, which
-    calls LAPACK's dedicated bidiagonal SVD (`dbdsqr`) directly — more accurate
-    and simpler than explicitly forming L·Lᵀ as a `SymTridiagonal`.
-  • ICF = identity (as in the original BSMEM application), so hidden-space
-    and visible-space have the same dimension.
+  • The bidiagonal eigensolver uses `svd(Bidiagonal(…))`, which calls
+    LAPACK's dedicated bidiagonal SVD (`dbdsqr`) directly.
+  • ICF = identity, so hidden-space and visible-space have the same dimension.
 
 Entropy modes (methd1):
   1 = Standard          S = Σ(m − h + h·log(h/m))
@@ -136,7 +124,7 @@ end
 
 Working storage for one MaxEnt reconstruction problem.
 
-Areas correspond to the original Fortran numbering:
+Areas correspond to the internal numbering convention:
   Hidden space (size nhid):   <1> sqrt_metric, <2> gradS, <3> model,
                               <4> gradL, <5> h
   Visible space (size nhid):  <11> f  (= h when ICF = identity)
@@ -173,11 +161,10 @@ function MaximENTState(nhid::Int, ndat::Int)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Low-level transform wrappers
-# These correspond to Fortran MEMOP / MEMTR / MEMEX, with the ICF = identity.
+# Low-level transform wrappers (ICF = identity)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# MEMOP(J,K,FLAG=true): out_d = [acc] · Opus · √[metric] · in_h
+# Linearised forward: out_d = [acc] · linfwd · √[metric] · in_h
 function _apply_fwd!(s, p, in_h, out_d, linfwd!)
     tmp = s.sqrt_metric .* in_h
     linfwd!(tmp, out_d)
@@ -185,7 +172,7 @@ function _apply_fwd!(s, p, in_h, out_d, linfwd!)
     p.ntrans += 1
 end
 
-# MEMTR(K,J,FLAG=true): out_h = √[metric] · Tropus · [acc] · in_d
+# Linearised adjoint: out_h = √[metric] · linadj · [acc] · in_d
 function _apply_adj!(s, p, in_d, out_h, linadj!)
     linadj!(in_d .* s.acc_vec, out_h)
     out_h .*= s.sqrt_metric
@@ -443,9 +430,9 @@ end
     mackay_alpha_update!(p, omega; damp=p.mackay_damp) → Bool
 
 MacKay fixed-point update for the regularisation parameter α, operating on
-the MemSys4 ω estimate directly.
+the Maximum Entropy ω estimate directly.
 
-**Derivation.**  MemSys4 defines ω as
+**Derivation.**  Maximum Entropy defines ω as
 
     ω = Good · scale² · aim / (−2 · α · S)
 
@@ -495,7 +482,7 @@ end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hidden-space CG  (MEMCGY)
-# Solves  (β I + A) y = b,  b = √[metric] · (−∇L),  A = Memtr∘Memop
+# Solves  (β I + A) y = b,  b = √[metric] · (−∇L),  A = A_adj∘A_fwd
 # Updates h ← clamp(h + √[metric]·y)
 # Returns (hlow, hhigh, dist, lcodeb, lcodec)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -524,7 +511,7 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
     # Beta control: β ≥ α such that ‖y‖ ≤ rate·√summet
     beta, lcodeb = beta_lower_bound(p, temp / (p.rate^2 * summet))
 
-    # First forward transform: w28 = Memop(b) / scale
+    # First forward transform: w28 = A_fwd(b) / scale
     _apply_fwd!(s, p, b, w28, linfwd!)
     w28 ./= scale
     fill!(w26, 0.0)
@@ -548,7 +535,7 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
         # Update data-space gradient accumulator: w26 -= w28 / delta
         @. w26 -= w28 / delta
 
-        # Backward transform: w2 = Memtr(w26)
+        # Backward transform: w2 = A_adj(w26)
         _apply_adj!(s, p, w26, w2, linadj!)
 
         # w2 += b/scale  and  gamma = ‖w2‖²
@@ -567,7 +554,7 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
         phi_b += beta / (eps_b * gamma * eps_b) +
                  (1.0/eps_b - tmp2) * delta * (1.0/eps_b - tmp2)
 
-        # Forward transform: w25 = Memop(w2)
+        # Forward transform: w25 = A_fwd(w2)
         _apply_fwd!(s, p, w2, w25, linfwd!)
 
         # w28 += w25 / gamma  and  delta = ‖w28‖²
@@ -586,8 +573,7 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
         @. w23 += w27 * tmp
     end
 
-    # Reconstruct solution: b (area <4>) ← y = b*Y0 + Memtr(scale·w23)
-    # Fortran: MEMSMA(ST,4,Y0,2,4) means <4> := <4>*Y0 + <2>
+    # Reconstruct solution: b (area <4>) ← y = b*Y0 + A_adj(scale·w23)
     # i.e. b = b*Y0 + w2  (NOT b += Y0*w2)
     w23 .*= scale
     _apply_adj!(s, p, w23, w2, linadj!)
@@ -610,17 +596,13 @@ end
 # Additional transform variants (FLAG=FALSE for MESCAL)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# MEMOP FLAG=FALSE: generate mock data (fwd!, no metric)
-# Fortran: CALL MEMOP(ST,5,25,.FALSE.)  →  <25> = MemEx(ICF * <5>)
-# With ICF=identity: out_d = memex(h)
+# Generate mock data (fwd!, no metric): out_d = fwd(h)
 function _compute_mockdata!(s::MaximENTState, p::MaximENTParams, out_d, fwd!)
     fwd!(s.h, out_d)
     p.ntrans += 1
 end
 
-# MEMTR FLAG=FALSE: backward transform without metric scaling
-# Fortran: CALL MEMTR(ST,24,4,.FALSE.)  →  <4> = TrICF * Tropus * [acc] * <24>
-# Used in MESCAL to get gradL without sqrt_metric factor
+# Backward transform without metric scaling: out_h = linadj * [acc] * in_d
 function _compute_gradient!(s::MaximENTState, p::MaximENTParams, in_d, out_h, linadj!)
     linadj!(in_d .* s.acc_vec, out_h)
     p.ntrans += 1
@@ -629,12 +611,12 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 # Data-space conjugate gradient  (MEMCGP)
 # Builds Lanczos bidiagonalisation scalars gam[], del[] for evidence calc.
-# Operator:  A = Memop ∘ Memtr   (data space)
+# Operator:  A = A_fwd ∘ A_adj   (data space)
 #
 # Input:  s.d_w3 (<26>) = random vector b  (modified in-place)
 # Uses:   s.gradS (<2>), s.d_w2 (<25>), s.d_w5 (<28>)
 # Returns: (gam[0..M], del[0..N], M, N, lcodec)
-#          gam and del are 1-indexed in Julia (Fortran 0-indexed)
+#          gam and del are 1-indexed (index k here corresponds to k-1 in the algorithm)
 # ─────────────────────────────────────────────────────────────────────────────
 function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
     b   = s.d_w3   # <26>  input random vector, modified in-place
@@ -655,7 +637,7 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
     scale  = sqrt(temp)
     gamma0 = 1.0
     gamma  = gamma0
-    gam[1] = scale            # gam[0] in Fortran = sqrt(gamma)*scale = scale
+    gam[1] = scale            # gam[0] = sqrt(gamma)*scale = scale
 
     b ./= scale               # Normalise b (area <26>) in-place
 
@@ -666,13 +648,13 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
     eps_b  = 1.0
     QB     = 0.0
 
-    # Initial pass: w28 = b/gamma  (=b since gamma=1),  w2 = Memtr(w28)
-    # delta = ||w2||^2,  w25 = Memop(w2)
+    # Initial pass: w28 = b/gamma  (=b since gamma=1),  w2 = A_adj(w28)
+    # delta = ||w2||^2,  w25 = A_fwd(w2)
     copy!(w28, b)           # MESMUL(26, 1/gamma, 28) with gamma=1
-    _apply_adj!(s, p, w28, w2, linadj!)   # w2 = sqrt_metric * Tropus * [acc] * w28
+    _apply_adj!(s, p, w28, w2, linadj!)   # w2 = sqrt_metric * linadj * [acc] * w28
     delta  = dot(w2, w2)
-    _apply_fwd!(s, p, w2, w25, linfwd!)     # w25 = [acc] * Opus * sqrt_metric * w2
-    del[1] = sqrt(delta) / scale      # del[0] in Fortran
+    _apply_fwd!(s, p, w2, w25, linfwd!)     # w25 = [acc] * linfwd * sqrt_metric * w2
+    del[1] = sqrt(delta) / scale      # del[0]
     phi_b  = p.alpha / gamma          # = alpha
 
     icode = 3
@@ -685,7 +667,7 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
         p.utol * QAB + QAB + p.alpha * QB >= gamma0 && (icode = 0; break)
         delta <= TINY                                 && (icode = 4; break)
 
-        # ── For L>1, recompute w25 = Memop(w2) ──
+        # ── For L>1, recompute w25 = A_fwd(w2) ──
         L > 1 && _apply_fwd!(s, p, w2, w25, linfwd!)
 
         # ── QAB update scalars ──
@@ -699,7 +681,7 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
 
         delab  = phi_ab + (gamma / eps_ab) / eps_ab
         M      = L
-        gam[M+1] = sqrt(gamma) * scale   # gam[M] in Fortran
+        gam[M+1] = sqrt(gamma) * scale   # gam[M]
         eps_ab = gamma / (eps_ab * delab)
         QAB   += 1.0 / delab
 
@@ -716,11 +698,11 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
         phi_b += p.alpha / (eps_b * gamma * eps_b) +
                  (1.0/eps_b - tmp2) * delta * (1.0/eps_b - tmp2)
 
-        # ── New backward transform: w2 = Memtr(w28), delta = ||w2||^2 ──
+        # ── New backward transform: w2 = A_adj(w28), delta = ||w2||^2 ──
         _apply_adj!(s, p, w28, w2, linadj!)
         delta = dot(w2, w2)
         N     = L
-        del[N+1] = sqrt(delta) / scale   # del[N] in Fortran
+        del[N+1] = sqrt(delta) / scale   # del[N]
     end
 
     lcodec = (icode <= 2)
@@ -729,7 +711,7 @@ end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hidden-space CG for quantification  (MEMCGH)
-# Estimates Q = b^T (αI + A)^{-1} b,  A = Memtr ∘ Memop  (hidden space)
+# Estimates Q = b^T (αI + A)^{-1} b,  A = A_adj ∘ A_fwd  (hidden space)
 # Optionally builds the output vector t = (αI + A)^{-1/2} b  (if flag=true)
 #
 # Input:  s.gradL (<4>) = b  (used as workspace, output if flag=false or t)
@@ -759,13 +741,13 @@ function cg_hessian!(s::MaximENTState, p::MaximENTParams, alpha::Float64, flag::
     scale  = sqrt(temp)
     gamma0 = 1.0
     gamma  = gamma0
-    gam[1] = scale              # gam[0] Fortran
+    gam[1] = scale              # gam[0]
 
-    # Normalise b → w2 (Fortran: MESMUL(4, 1/scale, 2))
+    # Normalise b → w2
     @. w2 = b / scale
     fill!(w26, 0.0)
     fill!(w28, 0.0)
-    T0 = flag ? coeff[1] : 0.0  # coeff[0] in Fortran (1-indexed here)
+    T0 = flag ? coeff[1] : 0.0  # coeff[0] (1-indexed here)
     flag && (fill!(w27, 0.0))
 
     eps_b  = 1.0
@@ -780,12 +762,12 @@ function cg_hessian!(s::MaximENTState, p::MaximENTParams, alpha::Float64, flag::
     L     = 0
     while true
         # ── Forward transform and MEMSMD:
-        #    w28 += (1/gamma)*Memop(w2);  delta = dot(w28,w28) ──
-        _apply_fwd!(s, p, w2, w25, linfwd!)    # w25 = Memop(w2)
+        #    w28 += (1/gamma)*A_fwd(w2);  delta = dot(w28,w28) ──
+        _apply_fwd!(s, p, w2, w25, linfwd!)    # w25 = A_fwd(w2)
         @. w28 += w25 / gamma
         delta = dot(w28, w28)
         N     = L
-        del[N+1] = sqrt(delta) / scale   # del[L] Fortran
+        del[N+1] = sqrt(delta) / scale   # del[L]
 
         L += 1
 
@@ -805,13 +787,13 @@ function cg_hessian!(s::MaximENTState, p::MaximENTParams, alpha::Float64, flag::
         # ── MEMSMA(28, -1/delta, 26, 26):  w26 += (-1/delta)*w28 ──
         @. w26 -= w28 / delta
 
-        # ── Backward transform: w2 = Memtr(w26) ──
+        # ── Backward transform: w2 = A_adj(w26) ──
         _apply_adj!(s, p, w26, w2, linadj!)
 
         # ── MEMSMD(4, 1/scale, 2, gamma):  w2 += b/scale;  gamma = dot(w2,w2) ──
         @. w2 += b / scale
         gamma = dot(w2, w2)
-        gam[L+1] = sqrt(gamma) * scale   # gam[L] Fortran
+        gam[L+1] = sqrt(gamma) * scale   # gam[L]
 
         delab  = phi_ab + (gamma / eps_ab) / eps_ab
         eps_ab = gamma / (eps_ab * delab)
@@ -840,8 +822,8 @@ function cg_hessian!(s::MaximENTState, p::MaximENTParams, alpha::Float64, flag::
     lcode = (icode <= 2)
 
     if flag
-        # Build output vector in b (<4>): t = Memtr(w27) + (T0/scale)*b
-        _apply_adj!(s, p, w27, w2, linadj!)    # w2 = Memtr(w27)
+        # Build output vector in b (<4>): t = A_adj(w27) + (T0/scale)*b
+        _apply_adj!(s, p, w27, w2, linadj!)    # w2 = A_adj(w27)
         T0_s = T0 / scale
         @. w2 += T0_s * b                   # MEMSMD(4, T0/scale, 2, temp)
         temp2 = dot(w2, w2)
@@ -905,7 +887,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 # alpha*good for Classic MaxEnt at alpha=∞  (MEPRB0)
 # Called from MESCAL when MEMRUN=1, methods 1 or 2.
-# Returns alfgd = E[||Memtr(rand)||^2]  (trace estimate)
+# Returns alfgd = E[||A_adj(rand)||^2]  (trace estimate)
 # ─────────────────────────────────────────────────────────────────────────────
 function trace_estimate_init!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
     w26 = s.d_w3   # <26>  random vector workspace
@@ -914,7 +896,7 @@ function trace_estimate_init!(s::MaximENTState, p::MaximENTParams, linfwd!, lina
     alfgd = 0.0
     for _ in 1:p.nrand
         random_vector!(s, p, w26, 0)          # random signs
-        _apply_adj!(s, p, w26, w2, linadj!)  # w2 = sqrt_metric * Tropus * [acc] * w26
+        _apply_adj!(s, p, w26, w2, linadj!)  # w2 = sqrt_metric * linadj * [acc] * w26
         alfgd += dot(w2, w2)
     end
     return alfgd / p.nrand
@@ -1020,7 +1002,7 @@ function maxent_scalars!(s::MaximENTState, p::MaximENTParams, memrun::Int,
     DIV(x, y) = x / max(y, EPS)
 
     # ── Step 1: mock data →  residuals ──
-    _compute_mockdata!(s, p, s.d_w2, fwd!)    # <25> = MemEx(h)
+    _compute_mockdata!(s, p, s.d_w2, fwd!)    # <25> = fwd(h)
 
     local alhood::Float64, data_cnt::Float64, units::Float64
     if p.methd2 == 1
@@ -1030,7 +1012,7 @@ function maxent_scalars!(s::MaximENTState, p::MaximENTParams, memrun::Int,
     end
     units -= data_cnt * PILOG
 
-    # ── Step 2: gradL = Tropus([acc] * residuals)  (no metric) ──
+    # ── Step 2: gradL = linadj([acc] * residuals)  (no metric) ──
     _compute_gradient!(s, p, s.residuals, s.gradL, linadj!)
 
     # ── Step 3: entropy → sqrt_metric, gradS, S, summet ──
@@ -1197,7 +1179,6 @@ function maxent_step!(s::MaximENTState, p::MaximENTParams, memrun::Int,
         p.ntrans = 0
     else
         # copy h (area 5) from previous result (already in s.h)
-        # (Fortran: MECOPY(1,5) → already done by previous iterate exit)
     end
 
     # ── Compute statistics for current h ──
@@ -1243,8 +1224,7 @@ function maxent_step!(s::MaximENTState, p::MaximENTParams, memrun::Int,
                             lcode2, lcode4)
         end
 
-        # ── b = alpha*gradS - gradL  (Fortran: MEMSMA(2, -alpha, 4, 4)) ──
-        # area4 = (-alpha)*area2 + area4  = alpha*gradS - gradL
+        # ── b = alpha*gradS - gradL ──
         @. s.gradL = -p.alpha * s.gradS + s.gradL
 
         # ── Hidden-space CG step: updates h ──

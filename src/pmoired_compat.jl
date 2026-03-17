@@ -1,8 +1,9 @@
 """
-pmoired_compat.jl
+    pmoired_to_julia(s) -> String
 
-Utility to convert a PMOIRED-style Python dict literal (as a Julia String)
-into an equivalent Julia Dict literal string.
+Convert a PMOIRED Python dict literal string to an equivalent Julia Dict
+literal string.  Handles nested dicts, expression strings with `\$` references,
+single-quoted strings, Python boolean/None literals, and list literals.
 
 Transformation rules applied:
   { ... }           ->  Dict( ... )
@@ -12,18 +13,6 @@ Transformation rules applied:
   'expr with \$ref' ->  raw"expr with \$ref"   (raw string prevents interpolation)
   True / False      ->  true / false
   None              ->  nothing
-
-Usage:
-    julia_str = pmoired_to_julia(python_str)
-    param     = eval(Meta.parse(julia_str))   # only at parse_model time, not in hot path
-"""
-
-"""
-    pmoired_to_julia(s) -> String
-
-Convert a PMOIRED Python dict literal string to an equivalent Julia Dict
-literal string.  Handles nested dicts, expression strings with `\$` references,
-single-quoted strings, Python boolean/None literals, and list literals.
 
 Example
 -------
@@ -167,93 +156,3 @@ function pmoired_to_julia_file(infile::AbstractString, outfile::AbstractString)
         end
     end
 end
-
-
-# ===========================================================================
-# Self-tests
-# ===========================================================================
-function _test_pmoired_to_julia()
-    println("Running pmoired_to_julia tests...\n")
-    pass = 0; fail = 0
-
-    function check(input, expected, label)
-        got = pmoired_to_julia(input)
-        if got == expected
-            println("  PASS  $label")
-            pass += 1
-        else
-            println("  FAIL  $label")
-            println("    input:    $input")
-            println("    expected: $expected")
-            println("    got:      $got")
-            fail += 1
-        end
-    end
-
-    # -- basic key-value ---------------------------------------------------
-    check("{'ud': 3.2}",
-          "Dict(\"ud\" => 3.2)",
-          "simple ud key")
-
-    # -- multi-component comma key -----------------------------------------
-    check("{'star,ud': 0.2, 'star,f': 0.7}",
-          "Dict(\"star,ud\" => 0.2, \"star,f\" => 0.7)",
-          "comma in key name")
-
-    # -- plain string value ------------------------------------------------
-    check("{'type': 'ring'}",
-          "Dict(\"type\" => \"ring\")",
-          "plain string value")
-
-    # -- expression with $ — must become raw"..." --------------------------
-    check("{'ring,f': '1 - \$star,f'}",
-          "Dict(\"ring,f\" => raw\"1 - \$star,f\")",
-          "dollar expression -> raw string")
-
-    # -- expression with multiple $ refs -----------------------------------
-    check("{'ring,udout': '\$star,ud * \$scale'}",
-          "Dict(\"ring,udout\" => raw\"\$star,ud * \$scale\")",
-          "multiple dollar refs in expression")
-
-    # -- Python True/False/None --------------------------------------------
-    check("{'flag': True, 'other': False, 'val': None}",
-          "Dict(\"flag\" => true, \"other\" => false, \"val\" => nothing)",
-          "Python bool/None keywords")
-
-    # -- list literal (fitOnly) --------------------------------------------
-    check("['star,ud', 'ring,f']",
-          "[\"star,ud\", \"ring,f\"]",
-          "list of strings (fitOnly)")
-
-    # -- nested dict -------------------------------------------------------
-    check("{'a': {'b': 1}}",
-          "Dict(\"a\" => Dict(\"b\" => 1))",
-          "nested dict")
-
-    # -- scientific notation and negative numbers --------------------------
-    check("{'wl0': 1.6e-6, 'flux': -0.3}",
-          "Dict(\"wl0\" => 1.6e-6, \"flux\" => -0.3)",
-          "scientific notation and negatives")
-
-    # -- escape sequence in string value -----------------------------------
-    check("""{'note': 'it\\'s fine'}""",
-          """Dict("note" => "it\\'s fine")""",
-          "escaped single quote inside single-quoted string")
-
-    # -- comment passthrough -----------------------------------------------
-    check("# a comment",
-          "# a comment",
-          "comment passthrough")
-
-    # -- whitespace preserved in keys, values  ----------------------------
-    check("{ 'ud' : 3.2 }",
-          "Dict( \"ud\"  => 3.2 )",
-          "extra whitespace around : preserved")
-
-    println("\n$pass passed, $fail failed.")
-    return fail == 0
-end
-
-
-# Uncomment to run tests when this file is included:
-# _test_pmoired_to_julia()

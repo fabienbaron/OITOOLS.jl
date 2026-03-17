@@ -33,7 +33,12 @@ Each `OIdata{T}` bin holds flat vectors for every observable:
 | `mean_mjd` | Mean MJD of the bin (always `Float64`) |
 | `nv2`, `nt3phi`, `nt3amp`, `nvisamp`, `nvisphi`, `nflux`, `nuv` | Counts |
 
-Correlation matrices from `OI_CORR` tables (empty sparse when absent):
+Call `display(data)` or `display(data[1,1])` to print a compact summary.
+
+## Correlated data (OI_CORR)
+
+OITOOLS reads OIFITSv2 `OI_CORR` tables and stores the correlation matrix
+and per-point indices in the `OIdata` struct:
 
 | Field | Description |
 |-------|-------------|
@@ -46,7 +51,12 @@ Correlation matrices from `OI_CORR` tables (empty sparse when absent):
 
 `*_corr_idx[i] == 0` means point `i` has no associated correlation row.
 
-Call `display(data)` or `display(data[1,1])` to print a compact summary.
+Multi-baseline correlation blocks (e.g. GRAVITY, where `NDATA > nwave`) are
+automatically detected and expanded so that each baseline within a timestamp
+maps to the correct slice of the correlation matrix.
+
+See `example_chi2_correlated.jl` for a worked example computing whitened
+(correlated) chi-squared from GRAVITY data.
 
 ## Selecting a target
 
@@ -104,6 +114,17 @@ To selectively disable loading of specific observable types:
 data = readoifits("mystar.oifits"; use_flux=false, use_vis=false)
 ```
 
+### Verbose output
+
+By default `readoifits` prints a data summary. Pass `verb=false` to suppress
+all output, or `verbose=true` to additionally print OI_VIS amplitude/phase
+type information (AMPTYP/PHITYP):
+
+```julia
+data = readoifits("mystar.oifits"; verbose=true)   # extra diagnostics
+data = readoifits("mystar.oifits"; verb=false)      # silent
+```
+
 ## UV deduplication
 
 Redundant UV points (within `uvtol` cycles/rad, i.e. B/λ; default 200) are merged:
@@ -148,17 +169,3 @@ data = readoifits_multicolors(files)
 Files following the older OIFITS v1 standard (0-based station indices) are loaded
 automatically. A warning is printed indicating that station indices have been
 reindexed from 1 internally.
-
-## Internal pipeline
-
-For reference, `readoifits` calls the following internal functions in order:
-
-1. `load_oifits` — opens the file via OIFITS.jl (falls back to `hack_revn=1` for v1 files)
-2. `collect_station_info` — builds a sparse station-index conversion table from all `OI_ARRAY` tables
-3. `read_flux/vis/v2/t3_tables` — flattens all relevant HDUs into merged NamedTuples
-4. `slice_to_bin` — selects the spectral/temporal window and assembles the UV plane
-5. `filter_bad_observables!` — quality cuts, in-place
-6. `remove_redundant_uv!` — KDTree-based UV deduplication, in-place
-7. `make_oidata` — packages everything into the final `OIdata{T}` struct
-
-See the [API Reference](@ref) for full docstrings.
