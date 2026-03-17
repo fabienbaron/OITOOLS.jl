@@ -164,6 +164,33 @@ files = ["H_band.oifits", "K_band.oifits"]
 data = readoifits_multicolors(files)
 ```
 
+## Error inflation
+
+`oifits_prep` inflates error bars in-place, which is useful for preventing
+underestimated uncertainties from dominating the fit:
+
+```julia
+oifits_prep(data[1,1];
+    min_v2_err_add   = 0.01,    # additive floor for V² errors
+    min_v2_err_rel   = 0.02,    # relative floor (2% of |V²|)
+    v2_err_mult      = 1.0,     # multiplicative scaling
+    min_t3phi_err_add = 1.0,    # additive floor for T3φ errors (degrees)
+    t3phi_err_mult   = 1.0,
+    quad             = false)   # true = combine in quadrature
+```
+
+By default errors are replaced when the floor exceeds the original; set
+`quad=true` to add floors in quadrature instead.
+
+## ASPRO-compatible FITS headers
+
+`updatefits_aspro` adds WCS metadata (pixel scale, reference pixel) to a FITS
+image so that ASPRO can read it:
+
+```julia
+updatefits_aspro("input.fits", "output.fits", 0.1)   # pixsize in mas
+```
+
 ## OIFITSv1 compatibility
 
 Files following the older OIFITS v1 standard (0-based station indices) are loaded

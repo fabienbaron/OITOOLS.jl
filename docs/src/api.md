@@ -24,11 +24,9 @@ set_data_filter
 ```@docs
 set_oiplot_defaults
 uvplot
-onclickidentify
 plot_v2
 plot_t3phi
 plot_t3amp
-plot_v2_and_t3phi_wav
 plot_visphi
 plot_diffphi
 plot_flux
@@ -39,12 +37,16 @@ plot_v2_multifile
 imdisp
 imdisp_temporal
 imdisp_polychromatic
+plot_facility
 ```
 
 ## Model definition and parsing
 
 ```@docs
 FlatModel
+AnalyticSpec
+HankelSpec
+AbstractComponentSpec
 parse_model
 eval_model
 eval_model_grad
@@ -117,7 +119,9 @@ trapz
 trapz_weights
 ```
 
-## Image reconstruction (chi2 / regularization)
+## Image reconstruction
+
+### Forward model and chi-squared
 
 ```@docs
 setup_dft
@@ -137,6 +141,7 @@ chi2_fg
 chi2_vis_nfft_f
 chi2_vis_dft_fg
 chi2_vis_nfft_fg
+chi2_polychromatic_f
 crit_f
 crit_fg
 crit_polychromatic_fg
@@ -198,7 +203,6 @@ simulate_from_oifits
 get_uv
 get_uv_indxes
 prep_arrays
-read_array_file
 read_obs_file
 read_comb_file
 read_wave_file

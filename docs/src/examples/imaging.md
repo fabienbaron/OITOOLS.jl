@@ -26,13 +26,19 @@ See `example_image_reconstruction_basic.jl`.
 
 Several regularizations can be combined in the `regularizers` list:
 
-| Name | Description |
-|------|-------------|
-| `"centering"` | Soft centroid constraint |
-| `"l1l2"` | Edge-preserving smoothness (L1–L2 prior) |
-| `"tvsq"` | Total variation squared |
-| `"tv"` | Total variation |
-| `"l2sq"` | Quadratic smoothness |
+| Name | Syntax | Description |
+|------|--------|-------------|
+| `"centering"` | `["centering", μ]` | Soft centroid constraint |
+| `"l1l2"` | `["l1l2", μ, α]` | Edge-preserving smoothness (L1–L2 prior with threshold α) |
+| `"l1l2w"` | `["l1l2w", μ]` | Weighted L1–L2 smoothness |
+| `"l1hyp"` | `["l1hyp", μ]` | L1 hyperbolic smoothness |
+| `"tvsq"` | `["tvsq", μ]` | Total variation squared |
+| `"tv"` | `["tv", μ]` | Total variation |
+| `"l2sq"` | `["l2sq", μ]` | Quadratic smoothness |
+| `"compactness"` | `["compactness", μ]` or `["compactness", μ, w]` | Compactness with optional weight map |
+| `"radialvar"` | `["radialvar", μ, H, G]` | Radial variance (requires precomputed H, G from `setup_radial_reg`) |
+| `"entropy"` | `["entropy", μ]` | Maximum entropy |
+| `"support"` | `["support", μ, mask]` | Support constraint (penalise flux outside mask) |
 
 Use `example_image_reconstruction_lcurve.jl` to find a good regularization weight
 via the L-curve method, and `example_image_reconstruction_regularization_types.jl`
@@ -94,7 +100,6 @@ ft      = setup_nfft(data, nx, pixsize)
 
 prior = gaussian_prior(nx, pixsize; fwhm_mas = nx * pixsize / 5)
 x = reconstruct_bsmem(prior, data, ft;
-                      regularizers = [["mem", prior]],
                       method       = [1, 1, 1, 2],
                       maxiter      = 100,
                       flux_err     = 1e-5)

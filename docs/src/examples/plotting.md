@@ -62,13 +62,6 @@ plot_visphi(data)                  # visibility phases
 plot_diffphi(data)                 # differential phases (vector of OIdata)
 ```
 
-## Combined V² + closure-phase panel
-
-```julia
-plot_v2_and_t3phi_wav(data)
-plot_v2_and_t3phi_wav(data; logplot=true, figsize=(14,14))
-```
-
 ## Residuals vs model
 
 Pass a precomputed model vector alongside the data:
@@ -98,7 +91,10 @@ imdisp_temporal(image_cube, nepochs; pixsize=0.5)
 
 ## Facility / array layout
 
+Plot the telescope positions from a `FacilityConfig`:
+
 ```julia
+facility = read_facility_file("CHARA_new.toml")
 plot_facility(facility)
 ```
 

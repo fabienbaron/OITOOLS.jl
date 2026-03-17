@@ -45,11 +45,11 @@ export remove_redundant_uv!, filter_data, set_data_filter
 
 
 # oiplot
-export set_oiplot_defaults, uvplot, onclickidentify, plot_v2,
-       plot_diffphi, plot_visphi, plot_t3phi, plot_v2_and_t3phi_wav, imdisp,
+export set_oiplot_defaults, uvplot, plot_v2,
+       plot_diffphi, plot_visphi, plot_t3phi, imdisp,
        imdisp_temporal, plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
        plot_t3amp, plot_v2_multifile, imdisp_polychromatic,
-       plot_flux
+       plot_flux, plot_facility
 
 # oichi2
 export setup_dft, setup_dft_polychromatic, setup_nfft, setup_nfft_multiepochs,
@@ -70,18 +70,14 @@ export bb, visibility_ud, visibility_ldpow, visibility_ldquad, visibility_ldquad
        visibility_GaussianLorentzian_ring_az
 # model_chainrules — AD-compatible visibility functions with ChainRules rrules
 export vis_ud, vis_ldlin, vis_ldquad, vis_ldpow,
-       vis_ldlin_fwd, vis_ldlin_fwd!,
        visibility_ud_d, visibility_ldlin_d, visibility_ldquad_d, visibility_ldpow_d
 
-# resolvers — flat-dict parameter expression resolvers
-export extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
-export RGF, HandRolled
+# resolvers — flat-dict parameter expression resolvers (internals not exported)
 
 # hankel — numerical Hankel transform for radial profiles
 export trapz, trapz_weights, hankel_transform, hankel_norm, hankel_vis,
        hankel_vis_interp, hankel_vis_full,
-       eval_profile, compile_profile,
-       HankelWorkspace, hankel_vis_fwd!, hankel_vis_pullback!
+       eval_profile, compile_profile
 
 # parse_model — compile flat param dicts into evaluable models
 export FlatModel, AnalyticSpec, HankelSpec, AbstractComponentSpec,
@@ -96,13 +92,12 @@ export FitResult, LsqFitResult, UltraNestResult, display_model,
        model_to_obs, model_to_image, model_to_sed,
        resample_data
 
-export get_uv, get_uv_indxes, prep_arrays, read_array_file, read_obs_file,
+export get_uv, get_uv_indxes, prep_arrays, read_obs_file,
        read_comb_file, read_wave_file, simulate, simulate_from_oifits,
        get_v2_baselines, v2mapt3, get_t3_baselines, hour_angle_calc
 export write_oi_header, write_oi_array, write_oi_target, write_oi_wavelength,
        write_oi_vis2, write_oi_t3
-export setup_nfft_polychromatic, reconstruct_polychromatic,
-       image_to_vis_polychromatic_nfft, chi2_polychromatic_nfft_f
+export setup_nfft_polychromatic, reconstruct_polychromatic
 export optimize_sparco_parameters
 export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig,
        facility_info, obsv_info, combiner_info, wave_info,
@@ -123,10 +118,9 @@ export gaussianwrapped_to_vonmises_fast, logbesselI0
 export oifits_check, oifits_merge, oifits_filter
 
 # maximent / oimem — MaxEnt image reconstruction
-export MaximENTParams, MaximENTState, maxent_step!, reconstruct!
-export ImagingContext, imaging_context, make_operators, set_dataspace!,
+export MaximENTParams, maxent_step!, reconstruct!,
        maxent_setup, maxent_reconstruct!, reconstruct_bsmem,
-       auto_pixsize, gaussian_prior, set_mask!, log_message
+       auto_pixsize, gaussian_prior
 
 # pmoired_compat — convert PMOIRED Python dicts to Julia
 export pmoired_to_julia, pmoired_to_julia_file
