@@ -70,8 +70,7 @@ export setup_dft, setup_dft_polychromatic,
 export image_to_vis_dft, image_to_vis,
        image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs
 export vis_to_v2, vis_to_t3, observables
-export chi2_f, chi2_fg, chi2_vis_nfft_f, chi2_vis_dft_fg, chi2_vis_nfft_fg,
-       chi2_polychromatic_f
+export chi2_f, chi2_fg, chi2_polychromatic_f
 export crit_f, crit_fg, crit_polychromatic_fg, crit_multitemporal_fg
 export reconstruct, reconstruct_multitemporal, reconstruct_polychromatic
 export reconstruct_sparco_gray

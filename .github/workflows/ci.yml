@@ -9,18 +9,19 @@ on:
     tags: '*'
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    env:
+      JULIA_PKG_PRECOMPILE_AUTO: 0
     continue-on-error: ${{ matrix.version == 'nightly' }}
     strategy:
       fail-fast: false
       matrix:
         version:
-          - '1.10'
-          - '1.12'
+          - '1.10'     # LTS
+          - '1'        # latest stable release
         os:
           - ubuntu-latest
-#          - windows-latest
         arch:
           - x64
         include:
@@ -29,57 +30,48 @@ jobs:
             version: '1.10'
           - os: macos-latest
             arch: aarch64
-            version: '1.12'
+            version: '1'
     steps:
-      - uses: actions/checkout@v3
-      - uses: julia-actions/setup-julia@latest
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - name: Cache artifacts
-        uses: actions/cache@v3
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
+      - uses: julia-actions/cache@v2
       - name: Add Emmt Registry
         run: julia -e 'using Pkg; Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))'
-        shell: bash
-      - uses: julia-actions/julia-buildpkg@latest
+      - uses: julia-actions/julia-buildpkg@v1
         env:
           PYTHON: ''
-      - uses: julia-actions/julia-runtest@latest
+      - uses: julia-actions/julia-runtest@v1
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    env:
+      JULIA_PKG_PRECOMPILE_AUTO: 0
+    permissions:
+      contents: write
+      statuses: write
     steps:
-      - uses: actions/checkout@v3
-      - uses: julia-actions/setup-julia@latest
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
         with:
-          version: '1.10'
-      - name: Cache artifacts
-        uses: actions/cache@v3
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/docs/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
+          version: '1'
+      - uses: julia-actions/cache@v2
       - name: Add Emmt Registry
         run: julia -e 'using Pkg; Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))'
-        shell: bash
-      - uses: julia-actions/julia-buildpkg@latest
-      - uses: julia-actions/julia-docdeploy@latest
+      - uses: julia-actions/julia-buildpkg@v1
+        env:
+          PYTHON: ''
+      - uses: julia-actions/julia-docdeploy@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Needed due to https://github.com/JuliaDocs/Documenter.jl/issues/1177
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+          PYTHON: ''
           GKSwstype: 'nul'

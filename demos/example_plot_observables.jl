@@ -6,10 +6,8 @@ data = readoifits(oifitsfile)
 uvplot(data, color="bases");
 uvplot(data, color="wav");
 uvplot(data, color="mjd");
-
 plot_v2(data,color="bases")
 plot_v2(data,color="wav")
 plot_t3phi(data);
 plot_t3phi(data, t3base="geom");
 
-#plot_v2_and_t3phi_wav(data, logplot=true, figsize=(14,14))

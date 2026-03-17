@@ -122,11 +122,8 @@ All take baseline spatial frequency arguments and return complex visibilities.
 
 | Function | Description |
 |----------|-------------|
-| `chi2_f(x, ft, data)` | Image chi-squared (value only) |
-| `chi2_fg(x, g, ft, data)` | Image chi-squared with gradient |
-| `chi2_vis_nfft_f(x, plan, data)` | Chi-squared via NFFT (value only) |
-| `chi2_vis_dft_fg(x, g, dft, data)` | Chi-squared + gradient via DFT |
-| `chi2_vis_nfft_fg(x, g, plan, data)` | Chi-squared + gradient via NFFT |
+| `chi2_f(x, ft, data)` | Image chi-squared (value only); `ft` can be a DFT matrix or NFFT plan |
+| `chi2_fg(x, g, ft, data)` | Image chi-squared with gradient; dispatches on `ft` type |
 | `chi2_polychromatic_f(x, ft, data)` | Polychromatic chi-squared (value only) |
 | `crit_f(x, ft, data)` | Criterion = chi-squared + regularization (value only) |
 | `crit_fg(x, g, ft, data)` | Criterion + gradient (includes normalization correction) |
