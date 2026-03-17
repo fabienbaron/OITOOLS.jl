@@ -8,6 +8,7 @@ using Documenter, OITOOLS
 makedocs(;
     modules=[OITOOLS],
     sitename = "OITOOLS",
+    checkdocs = :exports,
     doctest = false,
     format = Documenter.HTML(;
         prettyurls = CI,
