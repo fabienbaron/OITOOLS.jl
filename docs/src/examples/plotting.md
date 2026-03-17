@@ -83,8 +83,8 @@ plot_v2_multifile(files_data)
 
 ```julia
 imdisp(image; pixsize=0.5, colormap="gist_heat", use_colorbar=true)
-imdisp_polychromatic(image_cube; wavs=wavs, pixsize=0.5)
-imdisp_temporal(image_cube, nepochs; pixsize=0.5)
+imdisp_multi(image_cube; labels=string.(wavs), pixsize=0.5)           # polychromatic
+imdisp_multi(image_cube; labels=["Epoch $i" for i in 1:n], pixsize=0.5) # multi-temporal
 ```
 
 `pixsize` is in mas/pixel. `beamsize` (mas) draws a PSF indicator.

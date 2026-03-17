@@ -32,7 +32,7 @@ plot_t3amp
 plot_visphi
 plot_flux
 imdisp
-imdisp_polychromatic
+imdisp_multi
 ```
 
 | Function | Description |
@@ -43,7 +43,6 @@ imdisp_polychromatic
 | `plot_t3phi_residuals(data, t3phi_model)` | Plot closure-phase residuals |
 | `plot_t3amp_residuals(data, t3amp_model)` | Plot triple-amplitude residuals |
 | `plot_v2_multifile(data_vec)` | Overlay V\u00B2 from multiple datasets |
-| `imdisp_temporal(cube, nepochs)` | Display a time-variable image cube |
 | `plot_facility(facility)` | Plot telescope positions from a `FacilityConfig` |
 
 ## Model fitting
@@ -144,8 +143,6 @@ All take baseline spatial frequency arguments and return complex visibilities.
 
 ```@docs
 reconstruct_bsmem
-maxent_setup
-maxent_reconstruct!
 auto_pixsize
 gaussian_prior
 ```

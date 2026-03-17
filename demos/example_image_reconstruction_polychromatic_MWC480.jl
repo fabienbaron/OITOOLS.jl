@@ -59,7 +59,7 @@ x = repeat(x_mono,1,1,nwavs)
 for i=1:3
     x = reconstruct_polychromatic(x, data, ft, regularizers = regularizers, maxiter = 400, verb=true);
 end
-imdisp_polychromatic(x.^.2, pixsize=pixsize)
+imdisp_multi(x.^.2, pixsize=pixsize)
 
 # Check chi2
 chi2 = chi2_polychromatic_f(x, ft, data, verb = true)

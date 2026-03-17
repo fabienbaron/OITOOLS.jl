@@ -936,133 +936,98 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixsize
     show(block=false)
 end
 
-#TODO: work for rectangular
 """
-    imdisp_polychromatic(image_vector; kwargs...)
+    imdisp_multi(cube; kwargs...)
 
-Display a set of polychromatic images in a grid of subplots, one panel per channel.
-`image_vector` may be a flat 1-D vector, a `(npix, nwavs)` matrix, or a
-`(nx, ny, nwavs)` cube. Each channel image is normalised independently.
+Display a 3-D stack of images (e.g. polychromatic channels or multi-temporal epochs)
+in a grid of subplots, one panel per slice.  Each slice is normalised independently
+and rendered with the same formatting as [`imdisp`](@ref).
+
+`cube` is an `(nx, nx, nslices)` array.
 
 # Keyword arguments
-- `wavs` — vector of wavelength labels for subplot titles. Default: channel index.
-- `nwavs` — number of channels (inferred from array dims when possible).
-- `pixsize` — pixel scale in mas. Default: `-1` (pixel indices).
-- `colormap` — matplotlib colormap. Default: `"gist_heat"`.
-- `figtitle` — figure window title.
+- `labels`        — vector of strings for subplot titles. Default: `"1"`, `"2"`, ….
+- `pixsize`       — pixel scale in mas (`-1` = pixel indices).
+- `colormap`      — matplotlib colormap name. Default: `"gist_heat"`.
+- `figtitle`      — figure window title. Default: `"OITOOLS images"`.
+- `tickinterval`  — minor-tick spacing (auto-adjusted for large fields of view).
+- `use_colorbar`  — show a colour bar beside each panel.
+- `beamsize`      — if `> 0`, draw a beam circle on each panel.
+- `beamlocation`  — `[x, y]` fractional position for the beam circle.
 """
-function imdisp_polychromatic(image_vector::Union{Array{Float64,1}, Array{Float64,2},Array{Float64,3}}; wavs = [], figtitle="Polychromatic image", nwavs = 1, colormap = "gist_heat", pixsize = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-    if typeof(image_vector)==Array{Float64,2}
-        nwavs = size(image_vector,2)
-    elseif typeof(image_vector)==Array{Float64,3}
-        nwavs = size(image_vector,3)
+function imdisp_multi(cube::Array{Float64,3};
+        labels::Vector{String} = String[],
+        figtitle::String       = "OITOOLS images",
+        colormap::String       = "gist_heat",
+        pixsize::Float64       = -1.0,
+        tickinterval::Float64  = 0.5,
+        use_colorbar::Bool     = false,
+        beamsize::Float64      = -1.0,
+        beamlocation::Vector{Float64} = Float64[])
+
+    nx, ny, nslices = size(cube)
+    nside = ceil(Int64, sqrt(nslices))
+
+    pixmode = pixsize == -1
+    pix = pixmode ? 1.0 : pixsize
+
+    # Auto-adjust tick interval to field of view
+    fov = nx * pix
+    if fov > 1000
+        tickinterval = 50.0
+    elseif fov > 100
+        tickinterval = 5.0
     end
-    nside = ceil(Int64,sqrt(nwavs))
 
-    fig = figure(figtitle,figsize=(10,10),facecolor="White")
-    clf();
-    images_all =reshape(image_vector, (div(length(vec(image_vector)),nwavs), nwavs))
-    for i=1:nwavs
-        fig.add_subplot(nside,nside,i)
-        if wavs==[]
-            title("λ: $i")
-        else
-            title("λ: $(wavs[i])")
+    fig = figure(figtitle, figsize=(4*nside, 4*nside), facecolor="White")
+    clf()
+
+    for i in 1:nslices
+        fig.add_subplot(nside, nside, i)
+
+        lab = isempty(labels) ? "$i" : labels[i]
+        title(lab)
+
+        panel = cube[:, :, i]
+        scaling = maximum(panel)
+        if abs(scaling) < 1e-20
+            scaling = 1.0
         end
 
-        image = images_all[:,i]
-        nx=ny=-1;
-        pixmode = false;
-        if pixsize == -1
-            pixmode = true;
-            pixsize = 1
-        end
-        ny=nx=Int64.(sqrt(length(image)))
-        img = imshow(rotl90(reshape(image,nx,nx))/maximum(image), ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
-        # if pixmode == false
-        #     xlabel("RA (mas)")
-        #     ylabel("DEC (mas)")
-        # end
-        #
-        # ax = gca()
-        # ax.set_aspect("equal")
-        # mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
-        # ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
-        # ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
-        # ax.xaxis.set_tick_params(which="major",length=5,width=2)
-        # ax.xaxis.set_tick_params(which="minor",length=2,width=1)
-        # ax.yaxis.set_tick_params(which="major",length=5,width=2)
-        # ax.yaxis.set_tick_params(which="minor",length=2,width=1)
-        #
-        # if use_colorbar == true
-        #     divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
-        #     cax = divider.append_axes("right", size="5%", pad=0.2)
-        #     colorbar(img, cax=cax, ax=ax)
-        # end
-        #
-        # if beamsize > 0
-        #     c = matplotlib.patches.Circle((0.5*nx*pixsize*beamlocation[1],-0.5*ny*pixsize*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
-        #     ax.add_artist(c)
-        # end
-        tight_layout()
-    end
-    show(block=false)
-end
+        img = imshow(rotl90(panel) / scaling, ColorMap(colormap),
+                      interpolation="none",
+                      extent=[0.5*nx*pix, -0.5*nx*pix, -0.5*ny*pix, 0.5*ny*pix])
 
-# TODO: rework for julia 1.0+
-function imdisp_temporal(image_vector, nepochs; colormap = "gist_heat", name="Time-variable images",pixsize = -1.0, tickinterval = 10, use_colorbar = false, beamsize = -1, beamlocation = [.9, .9])
-    fig = figure(name,figsize=(nepochs*10,6+round(nepochs/3)),facecolor="White")
-    images_all =reshape(image_vector, (div(length(image_vector),nepochs), nepochs))
-    cols=6
-    rows=div(nepochs,cols)+1
-    for i=1:nepochs
-        #plotnum = 100*(div(nepochs,9)+1)
-        fig.add_subplot(rows,cols,i)
-        #subplot()
-        title("Epoch $i")
-        image = images_all[:,i]
-        nx=ny=-1;
-        pixmode = false;
-        if pixsize == -1
-            pixmode = true;
-            pixsize = 1
-        end
-        img = []
-        if ndims(image) ==1
-            ny=nx=Int64(sqrt(length(image)))
-            img = imshow(rotl90(reshape(image,nx,nx)), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixsize,0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
-        else
-            nx,ny = size(image);
-            img = imshow(rotl90(image), ColorMap(colormap), interpolation="none", extent=[-0.5*nx*pixsize,0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
-        end
-        if pixmode == false
-            xlabel("RA (mas)")
-            ylabel("DEC (mas)")
+        if !pixmode
+            xlabel("x ← E (mas)")
+            ylabel("y → N (mas)")
         end
 
         ax = gca()
         ax.set_aspect("equal")
-        mx = matplotlib.ticker.MultipleLocator(tickinterval) # Define interval of minor ticks
-        ax.xaxis.set_minor_locator(mx) # Set interval of minor ticks
-        ax.yaxis.set_minor_locator(mx) # Set interval of minor ticks
-        ax.xaxis.set_tick_params(which="major",length=10,width=2)
-        ax.xaxis.set_tick_params(which="minor",length=5,width=1)
-        ax.yaxis.set_tick_params(which="major",length=10,width=2)
-        ax.yaxis.set_tick_params(which="minor",length=5,width=1)
+        mx = matplotlib.ticker.MultipleLocator(tickinterval)
+        ax.xaxis.set_minor_locator(mx)
+        ax.yaxis.set_minor_locator(mx)
+        ax.xaxis.set_tick_params(which="major", length=10, width=2)
+        ax.xaxis.set_tick_params(which="minor", length=5, width=1)
+        ax.yaxis.set_tick_params(which="major", length=10, width=2)
+        ax.yaxis.set_tick_params(which="minor", length=5, width=1)
 
-        if use_colorbar == true
+        if use_colorbar
             divider = pyimport("mpl_toolkits.axes_grid1").make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad=0.2)
             colorbar(img, cax=cax, ax=ax)
         end
 
-
         if beamsize > 0
-            c = matplotlib.patches.Circle((0.5*nx*pixsize*beamlocation[1],-0.5*ny*pixsize*beamlocation[2]),beamsize,fc="white",ec="white",linewidth=.5)
+            bloc = isempty(beamlocation) ? [0.8, 0.8] : beamlocation
+            c = matplotlib.patches.Circle(
+                (0.5*nx*pix*bloc[1], -0.5*ny*pix*bloc[2]),
+                0.5*beamsize, fc="white", ec="white", linewidth=0)
             ax.add_artist(c)
         end
-        tight_layout()
     end
+    tight_layout()
     show(block=false)
 end
 

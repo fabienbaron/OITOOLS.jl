@@ -53,7 +53,7 @@ When the data span multiple spectral channels, pass `polychromatic=true` to
 data = vec(readoifits("data/MWC480.oifits"; polychromatic=true))
 ft   = setup_nfft_polychromatic(data, nx, pixsize)
 x    = reconstruct_polychromatic(x0_cube, data, ft; regularizers)
-imdisp_polychromatic(x; wavs, pixsize)
+imdisp_multi(x; labels=string.(wavs), pixsize)
 ```
 
 See `example_image_reconstruction_polychromatic_MWC480.jl`.
@@ -67,7 +67,7 @@ regularization to link successive frames:
 nepochs, tepochs, data = readoifits_multiepochs(files)
 ft = setup_nfft_multiepochs(data, nx, pixsize)
 x  = reconstruct_multitemporal(x0_cube, data, ft; regularizers)
-imdisp_temporal(x, nepochs; pixsize)
+imdisp_multi(x; labels=["Epoch $i" for i in 1:nepochs], pixsize)
 ```
 
 ## SPARCO grey reconstruction
@@ -139,15 +139,6 @@ longest baseline with a given oversampling factor:
 
 ```julia
 pixsize = auto_pixsize(data; oversampling=3.0)
-```
-
-### Low-level interface
-
-For more control, call `maxent_setup` and `maxent_reconstruct!` directly:
-
-```julia
-ctx, s, p = maxent_setup(data, nx, pixsize, prior; nrand=10)
-image = maxent_reconstruct!(ctx, s, p; maxiter=200, verbose=true)
 ```
 
 See `example_image_reconstruction_oimem.jl` for a complete worked example.

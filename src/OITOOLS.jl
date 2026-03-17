@@ -49,7 +49,7 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
        plot_visphi, plot_diffphi, plot_flux,
        plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
        plot_v2_multifile,
-       imdisp, imdisp_temporal, imdisp_polychromatic, plot_facility
+       imdisp, imdisp_multi, plot_facility
 
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
 export FlatModel, parse_model, eval_model, eval_model_grad, display_model
@@ -77,7 +77,7 @@ export reconstruct_sparco_gray
 export gaussian2d
 
 # ── Maximum entropy (BSMEM) ──────────────────────────────────────────────────
-export reconstruct_bsmem, maxent_setup, maxent_reconstruct!
+export reconstruct_bsmem
 export auto_pixsize, gaussian_prior
 
 # ── Simulation ───────────────────────────────────────────────────────────────
