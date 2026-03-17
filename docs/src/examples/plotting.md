@@ -3,6 +3,8 @@
 All plot functions accept either a single `OIdata` or an array `AbstractArray{<:OIdata}`
 (e.g., the 2D output of `readoifits`, a polychromatic array, or a multi-epoch vector).
 Call `set_oiplot_defaults()` to apply consistent matplotlib style settings.
+Use `set_oiplot_defaults(compact=true)` for smaller plots suitable for stacking
+in a multi-panel figure (smaller fonts, markers, error bars, and no in-plot title).
 
 ## UV coverage
 
@@ -30,37 +32,47 @@ Key arguments: `figsize`, `logplot`, `color`, `markopt`, `legend_below`, `figtit
 ## Closure phases
 
 ```julia
-plot_t3phi(data)                   # x-axis = shortest baseline in triangle
+plot_t3phi(data)                   # x-axis = geometric mean baseline (default)
 plot_t3phi(data; t3base="max")     # x-axis = longest baseline
-plot_t3phi(data; t3base="geom")    # x-axis = geometric mean baseline
+plot_t3phi(data; color="mjd")      # colour by MJD
 ```
+
+Key arguments: `figsize`, `color`, `markopt`, `legend_below`, `t3base`, `figtitle`.
 
 ## Triple amplitudes
 
 ```julia
 plot_t3amp(data)
-plot_t3amp(data; t3base="max")
+plot_t3amp(data; logplot=true)     # log scale
+plot_t3amp(data; color="mjd")      # colour by MJD
 ```
+
+Key arguments: `figsize`, `logplot`, `color`, `markopt`, `legend_below`, `t3base`, `figtitle`.
+
+## Visibility amplitudes and phases
+
+```julia
+plot_visamp(data)                  # adapts title to AMPTYP (absolute, differential, correlated flux)
+plot_visamp(data; logplot=true)    # log scale
+plot_visamp(data; color="wav")     # colour by wavelength
+plot_visphi(data)                  # auto-detects PHITYP: absolute → single panel, differential → per-baseline subplots
+plot_visphi(data; color="mjd")     # colour by MJD (absolute phases)
+```
+
+Key arguments: `figsize`, `logplot` (visamp only), `color`, `markopt`, `legend_below`, `figtitle`.
 
 ## Flux spectra
 
 ```julia
-plot_flux(data)                    # colour by station; "Calibrated" for CALSTAT=C data
+plot_flux(data)                    # coloured by wavelength (default)
+plot_flux(data; color="station")   # colour by station; "Calibrated" for CALSTAT=C data
 plot_flux(data; color="mjd")       # scatter coloured by MJD with colorbar
-plot_flux(data; color="red")       # fixed colour for all points
 ```
 
 `plot_flux` maps `flux_sta_index == 0` (calibrated OI_FLUX) to the label
 `"Calibrated"` and uses the station name otherwise.
 
-Key arguments: `figsize`, `color`, `markopt`, `legend_below`.
-
-## Differential / complex visibilities
-
-```julia
-plot_visphi(data)                  # visibility phases
-plot_diffphi(data)                 # differential phases (vector of OIdata)
-```
+Key arguments: `figsize`, `color`, `markopt`, `legend_below`, `figtitle`.
 
 ## Residuals vs model
 

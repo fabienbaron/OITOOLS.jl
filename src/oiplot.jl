@@ -5,21 +5,75 @@
 # gather common display tasks
 using PyPlot,PyCall, LaTeXStrings, Statistics
 
-function set_oiplot_defaults()
-    PyDict(pyimport("matplotlib")."rcParams")["font.family"]=["serif"]
-    PyDict(pyimport("matplotlib")."rcParams")["font.size"]=[14]
-    PyDict(pyimport("matplotlib")."rcParams")["xtick.major.size"]=[6]
-    PyDict(pyimport("matplotlib")."rcParams")["ytick.major.size"]=[6]
-    PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.size"]=[6]
-    PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.size"]=[6]
-    PyDict(pyimport("matplotlib")."rcParams")["xtick.major.width"]=[1]
-    PyDict(pyimport("matplotlib")."rcParams")["ytick.major.width"]=[1]
-    PyDict(pyimport("matplotlib")."rcParams")["xtick.minor.width"]=[1]
-    PyDict(pyimport("matplotlib")."rcParams")["ytick.minor.width"]=[1]
-    PyDict(pyimport("matplotlib")."rcParams")["lines.markeredgewidth"]=[1]
-    PyDict(pyimport("matplotlib")."rcParams")["legend.numpoints"]=[1]
-    PyDict(pyimport("matplotlib")."rcParams")["legend.handletextpad"]=[0.3]
-    #PyDict(pyimport("matplotlib")."rcParams")["agg.path.chunksize"]=[10000]
+# ── Styling globals (set by set_oiplot_defaults) ──────────────────────────────
+global oiplot_markersize    = 3.0
+global oiplot_scatter_size  = 6.0
+global oiplot_elinewidth    = 1.0
+global oiplot_cbar_pad      = 0.18
+global oiplot_cbar_fraction = 0.05
+global oiplot_legend_fontsize = 8
+global oiplot_legend_ncol     = 4
+global oiplot_legend_ncol_below = 8
+global oiplot_show_title    = true
+global oiplot_compact       = false
+global oiplot_figsize       = (12, 6)
+
+"""
+    set_oiplot_defaults(; compact=oiplot_compact)
+
+Apply consistent matplotlib style settings. When `compact=true`, all sizes are
+reduced for stacking multiple plots in a single figure. Calling without arguments
+preserves the current compact state.
+"""
+function set_oiplot_defaults(; compact::Bool=oiplot_compact)
+    global oiplot_compact = compact
+    rc = PyDict(pyimport("matplotlib")."rcParams")
+    rc["font.family"] = ["serif"]
+    rc["legend.numpoints"] = [1]
+    rc["legend.handletextpad"] = [0.3]
+    if compact
+        rc["font.size"]              = [9]
+        rc["xtick.major.size"]       = [3]
+        rc["ytick.major.size"]       = [3]
+        rc["xtick.minor.size"]       = [3]
+        rc["ytick.minor.size"]       = [3]
+        rc["xtick.major.width"]      = [0.5]
+        rc["ytick.major.width"]      = [0.5]
+        rc["xtick.minor.width"]      = [0.5]
+        rc["ytick.minor.width"]      = [0.5]
+        rc["lines.markeredgewidth"]  = [0.5]
+        global oiplot_markersize       = 1.5
+        global oiplot_scatter_size     = 3.0
+        global oiplot_elinewidth       = 0.5
+        global oiplot_cbar_pad         = 0.10
+        global oiplot_cbar_fraction    = 0.03
+        global oiplot_legend_fontsize  = 6
+        global oiplot_legend_ncol      = 6
+        global oiplot_legend_ncol_below = 10
+        global oiplot_show_title       = false
+        global oiplot_figsize          = (8, 3)
+    else
+        rc["font.size"]              = [14]
+        rc["xtick.major.size"]       = [6]
+        rc["ytick.major.size"]       = [6]
+        rc["xtick.minor.size"]       = [6]
+        rc["ytick.minor.size"]       = [6]
+        rc["xtick.major.width"]      = [1]
+        rc["ytick.major.width"]      = [1]
+        rc["xtick.minor.width"]      = [1]
+        rc["ytick.minor.width"]      = [1]
+        rc["lines.markeredgewidth"]  = [1]
+        global oiplot_markersize       = 3.0
+        global oiplot_scatter_size     = 6.0
+        global oiplot_elinewidth       = 1.0
+        global oiplot_cbar_pad         = 0.18
+        global oiplot_cbar_fraction    = 0.05
+        global oiplot_legend_fontsize  = 8
+        global oiplot_legend_ncol      = 4
+        global oiplot_legend_ncol_below = 8
+        global oiplot_show_title       = true
+        global oiplot_figsize          = (12, 6)
+    end
 end
 
 const global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
@@ -27,6 +81,219 @@ const global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","l
 "sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen","salmon","slategray","lime","coral","maroon","mistyrose","sandybrown","tan","olivedrab"]
 
 const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
+
+# ── Data normalization ────────────────────────────────────────────────────────
+"""
+    as_datavec(data) -> Vector{OIdata}
+
+Ensure `data` is a flat `Vector{OIdata}`, wrapping a single `OIdata` or
+flattening a 2-D array as needed.
+"""
+function as_datavec(data::Union{OIdata, AbstractArray{<:OIdata}})
+    data isa OIdata && return [data]
+    ndims(data) == 2 && return vec(data)
+    return data
+end
+
+# ── Generic observable plotting infrastructure ────────────────────────────────
+
+struct ObsPlotSpec
+    plot_title::String
+    ylabel::String
+    xlabel::String
+    y_field::Symbol          # :v2, :visamp, :t3phi, ...
+    yerr_field::Symbol       # :v2_err, :visamp_err, ...
+    x_field::Symbol          # :v2_baseline, :vis_baseline, :flux_lam, ...
+    lam_field::Symbol        # :v2_lam, :vis_lam, :t3_lam, :flux_lam
+    mjd_field::Symbol        # :v2_mjd, :vis_mjd, :t3_mjd, :flux_mjd
+    sta_index_field::Symbol  # :v2_sta_index, :vis_sta_index, :flux_sta_index
+    grouping::Symbol         # :baseline, :triplet, or :station
+    logplot_ok::Bool
+    x_scale::Float64         # multiplicative factor for x values (1e-6 for Mλ, 1e6 for μm)
+end
+
+const OBS_PLOT_SPECS = Dict{String, ObsPlotSpec}(
+    "V2" => ObsPlotSpec(
+        "V²", "V²",
+        L"Baseline (M$\lambda$)",
+        :v2, :v2_err, :v2_baseline, :v2_lam, :v2_mjd,
+        :v2_sta_index, :baseline, true, 1e-6),
+    "T3PHI" => ObsPlotSpec(
+        "T3φ", "T3φ (°)",
+        L"Baseline (M$\lambda$)",
+        :t3phi, :t3phi_err, :t3_baseline, :t3_lam, :t3_mjd,
+        :t3_sta_index, :triplet, false, 1e-6),
+    "T3PHI_MAX" => ObsPlotSpec(
+        "T3φ", "T3φ (°)",
+        L"Max. baseline (M$\lambda$)",
+        :t3phi, :t3phi_err, :t3_maxbaseline, :t3_lam, :t3_mjd,
+        :t3_sta_index, :triplet, false, 1e-6),
+    "T3AMP" => ObsPlotSpec(
+        "T3amp", "T3amp",
+        L"Baseline (M$\lambda$)",
+        :t3amp, :t3amp_err, :t3_baseline, :t3_lam, :t3_mjd,
+        :t3_sta_index, :triplet, true, 1e-6),
+    "T3AMP_MAX" => ObsPlotSpec(
+        "T3amp", "T3amp",
+        L"Max. baseline (M$\lambda$)",
+        :t3amp, :t3amp_err, :t3_maxbaseline, :t3_lam, :t3_mjd,
+        :t3_sta_index, :triplet, true, 1e-6),
+    "VISAMP" => ObsPlotSpec(
+        "Visamp", "Visamp",
+        L"Baseline (M$\lambda$)",
+        :visamp, :visamp_err, :vis_baseline, :vis_lam, :vis_mjd,
+        :vis_sta_index, :baseline, true, 1e-6),
+    "VISPHI" => ObsPlotSpec(
+        "Visφ", "Visφ (°)",
+        L"Baseline (M$\lambda$)",
+        :visphi, :visphi_err, :vis_baseline, :vis_lam, :vis_mjd,
+        :vis_sta_index, :baseline, false, 1e-6),
+    "FLUX" => ObsPlotSpec(
+        "Flux", "Flux",
+        "Wavelength (μm)",
+        :flux, :flux_err, :flux_lam, :flux_lam, :flux_mjd,
+        :flux_sta_index, :station, false, 1e6),
+)
+
+# Normalize color aliases to a canonical form
+function canonical_color(color::String)
+    color in ("baseline", "base", "bases", "baselines") && return "baseline"
+    color in ("station", "stations")                     && return "station"
+    color in ("wavelength", "wav", "wavs", "wavelengths") && return "wav"
+    color in ("mjd", "time", "timestamp", "timestamps")  && return "mjd"
+    return color
+end
+
+# Place colorbar label to the right instead of below
+function cbar_label_right!(cbar, label::String)
+    fs = oiplot_compact ? 9 : 14
+    cbar.ax.text(1.02, 0.5, label, transform=cbar.ax.transAxes,
+                 va="center", ha="left", fontsize=fs, family="serif")
+end
+
+# Set up MJD colorbar ticks
+function setup_mjd_colorbar(sc)
+    cbar = colorbar(sc, aspect=50, orientation="horizontal",
+                    pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
+    cbar_label_right!(cbar, "MJD")
+    mjdvals = sc.get_array()
+    mjds = sort(unique(mjdvals))
+    if length(mjds) < 5
+        cbar.set_ticks(round.(mjds*100)/100)
+    else
+        cbar_range = round.(collect(range(minimum(mjdvals), maximum(mjdvals), length=5))*100)/100
+        cbar.set_ticks(cbar_range)
+    end
+    return cbar
+end
+
+# Set up wavelength colorbar ticks
+function setup_wav_colorbar(sc)
+    cbar = colorbar(sc, aspect=50, orientation="horizontal",
+                    pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
+    cbar_label_right!(cbar, "λ (μm)")
+    wavvals = sc.get_array()
+    cbar_range = floor.(collect(range(minimum(wavvals), maximum(wavvals), length=11))*100)/100
+    cbar.set_ticks(cbar_range)
+    return cbar
+end
+
+"""
+    plot_obs(data, spec; color="baseline", logplot=false, figsize=oiplot_figsize,
+             figtitle="", markopt=false, legend_below=false)
+
+Generic plotting engine for any interferometric observable described by an
+`ObsPlotSpec`. All public `plot_*` functions delegate here.
+"""
+function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSpec;
+                  color::String="baseline", logplot::Bool=false, figsize=oiplot_figsize,
+                  figtitle::String="", markopt::Bool=false, legend_below::Bool=false,
+                  plot_title::String=spec.plot_title, ylabel_str::String=spec.ylabel,
+                  xlabel_str::String=spec.xlabel)
+    set_oiplot_defaults()
+    data = as_datavec(data)
+
+    fig = figure(string(figtitle, plot_title, " data"), figsize=figsize, facecolor="White")
+    clf()
+    ax = gca()
+    if logplot && spec.logplot_ok
+        ax.set_yscale("log")
+    end
+
+    cc = canonical_color(color)
+    xs = spec.x_scale
+
+    if cc == "baseline" || cc == "station"
+        # Group by baseline/triplet/station name
+        if spec.grouping == :triplet
+            label_lists = [get_triplet_names(data[n].sta_name, getfield(data[n], spec.sta_index_field)) for n in eachindex(data)]
+        elseif spec.grouping == :station
+            label_lists = [get_station_names(data[n].sta_name, getfield(data[n], spec.sta_index_field)) for n in eachindex(data)]
+        else
+            label_lists = [get_baseline_names(data[n].sta_name, getfield(data[n], spec.sta_index_field)) for n in eachindex(data)]
+        end
+        groups = sort(unique(vcat(label_lists...)))
+        for i in eachindex(groups)
+            loc = [findall(label_lists[n] .== groups[i]) for n in eachindex(data)]
+            xvals = vcat([getfield(data[n], spec.x_field)[loc[n]] for n in eachindex(data)]...) * xs
+            yvals = vcat([getfield(data[n], spec.y_field)[loc[n]] for n in eachindex(data)]...)
+            yerr  = vcat([getfield(data[n], spec.yerr_field)[loc[n]] for n in eachindex(data)]...)
+            if markopt
+                errorbar(xvals, yvals, yerr=yerr, fmt="o", marker=oiplot_markers[i],
+                         markeredgecolor="Black", markersize=oiplot_markersize, color="Black",
+                         ecolor="Gainsboro", elinewidth=oiplot_elinewidth, label=groups[i])
+            else
+                errorbar(xvals, yvals, yerr=yerr, fmt="o",
+                         markeredgecolor=oiplot_colors[i], color=oiplot_colors[i],
+                         markersize=oiplot_markersize, ecolor="Gainsboro",
+                         elinewidth=oiplot_elinewidth, label=groups[i])
+            end
+        end
+        if legend_below
+            ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
+                      ncol=oiplot_legend_ncol_below,
+                      loc="upper center", bbox_to_anchor=(0.5, -0.15))
+        else
+            ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
+                      ncol=oiplot_legend_ncol, loc="best")
+        end
+    elseif cc == "wav"
+        wavcol = vcat([getfield(data[n], spec.lam_field)*1e6 for n in eachindex(data)]...)
+        xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
+        yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
+        yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
+        sc = scatter(xvals, yvals, c=wavcol, cmap="Spectral_r", alpha=1.0,
+                     s=oiplot_scatter_size, zorder=100)
+        errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
+                 ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
+        setup_wav_colorbar(sc)
+    elseif cc == "mjd"
+        mjdcol = vcat([getfield(data[n], spec.mjd_field) for n in eachindex(data)]...)
+        xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
+        yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
+        yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
+        sc = scatter(xvals, yvals, c=mjdcol, cmap="plasma", alpha=1.0,
+                     s=oiplot_scatter_size, zorder=100)
+        errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
+                 ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
+        setup_mjd_colorbar(sc)
+    else
+        xvals = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
+        yvals = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
+        yerr  = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
+        errorbar(xvals, yvals, yerr=yerr, fmt="o", markersize=oiplot_markersize,
+                 color=color, ecolor="Gainsboro", elinewidth=oiplot_elinewidth)
+    end
+
+    if oiplot_show_title
+        title(plot_title * " data")
+    end
+    xlabel(xlabel_str)
+    PyPlot.ylabel(ylabel_str)
+    ax.grid(true, which="both", color="Grey", linestyle=":")
+    tight_layout()
+    show(block=false)
+end
 
 
 
@@ -197,101 +464,16 @@ vector, or 2-D array.
 - `color` — `"baseline"` (default), `"wav"`, `"mjd"`, or an explicit colour string.
 - `logplot` — logarithmic y-axis. Default: `false`.
 - `figsize` — figure size. Default: `(12, 6)`.
+- `figtitle` — prefix for the figure window title.
 - `markopt` — use distinct marker shapes per baseline. Default: `false`.
 - `legend_below` — place legend below the plot. Default: `false`.
-- `figtitle` — plot title string.
 """
-function plot_v2(data::Union{OIdata, AbstractArray{<:OIdata}};figsize=(12, 6), logplot = false, remove = false,idpoint=false,clean=true,color::String="baseline",markopt=false, legend_below=false, figtitle="")
-    set_oiplot_defaults()
-
-    if idpoint==true # interactive plot, click to identify point
-        global v2base=data.v2_baseline
-        global v2value=data.v2
-        global v2err=data.v2_err
-        global clickbase=data.v2_sta_index
-        global clickname=data.sta_name
-        global clickmjd=data.v2_mjd
-        global clicklam=data.v2_lam
-        global clickdlam=data.v2_dlam
-        global clickfile=[]
-        push!(clickfile,data.filename)
-    end
-    if data isa OIdata
-        data = [data]
-    end
-    if ndims(data) == 2
-        data = vec(data)
-    end
-    fig = figure(string(figtitle, "V2 data"),figsize=figsize,facecolor="White");
-    if clean == true # do not overplot on existing window by default
-        clf();
-    end
-    ax = gca();
-    if logplot==true
-        ax.set_yscale("log")
-    end
-    #if remove == true
-    #    fig.canvas.mpl_connect("button_press_event",onclickv2)
-    #end
-    if (color == "baseline" || color =="base"|| color =="bases" || color =="baselines") # we need to identify corresponding baselines #TBD --> could be offloaded to readoifits
-        baseline_list_v2 = [get_baseline_names(data[n].sta_name,data[n].v2_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_v2...)))
-        for i=1:length(baseline)
-            loc = [findall(baseline_list_v2[n] .== baseline[i]) for n=1:length(data)]
-            baseline_v2 = vcat([data[n].v2_baseline[loc[n]] for n=1:length(data)]...)/1e6
-            v2 = vcat([data[n].v2[loc[n]] for n=1:length(data)]...)
-            v2_err = vcat([data[n].v2_err[loc[n]] for n=1:length(data)]...)
-            if markopt == false
-                errorbar(baseline_v2,v2,yerr=v2_err,fmt="o", markeredgecolor=oiplot_colors[i],markersize=3,ecolor="Gainsboro",color=oiplot_colors[i],elinewidth=1.0,label=baseline[i])
-            else
-                errorbar(baseline_v2,v2,yerr=v2_err,fmt="o",marker=oiplot_markers[i], markeredgecolor="Black",markersize=3,ecolor="Gainsboro",color="Black",elinewidth=1.0,label=baseline[i])
-            end
-        end
-        if legend_below == false
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
-        else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
-        end
-    elseif (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
-        wavcol = vcat([data[n].v2_lam*1e6 for n=1:length(data)]...)
-        baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
-        v2 = vcat([data[n].v2 for n=1:length(data)]...);
-        v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
-        sc = scatter(baseline_v2,v2, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
-        el = errorbar(baseline_v2,v2,yerr=v2_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
-        cbar.set_ticks(cbar_range)
-    elseif (color == "mjd" || color == "time" || color == "timestamp" || color == "timestamps")
-        mjdcol = vcat([data[n].v2_mjd for n=1:length(data)]...)
-        baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
-        v2 = vcat([data[n].v2 for n=1:length(data)]...);
-        v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
-        sc = scatter(baseline_v2, v2, c=mjdcol, cmap="plasma", alpha=1.0, s=6.0, zorder=100)
-        el = errorbar(baseline_v2, v2, yerr=v2_err, fmt="none", marker="none", ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="MJD", pad=0.18, fraction=0.05)
-        mjds = sort(unique(mjdcol))
-        if length(mjds) < 5
-            cbar.set_ticks(round.(mjds*100)/100)
-        else
-            cbar_range = round.(collect(range(minimum(mjdcol), maximum(mjdcol), length=5))*100)/100
-            cbar.set_ticks(cbar_range)
-        end
-    else
-        baseline_v2 = vcat([data[n].v2_baseline for n=1:length(data)]...)/1e6
-        v2 = vcat([data[n].v2 for n=1:length(data)]...);
-        v2_err = vcat([data[n].v2_err for n=1:length(data)]...);
-        errorbar(baseline_v2,v2,yerr=v2_err,fmt="o", markersize=3,color="Black",ecolor="Gainsboro",elinewidth=1.0);
-    end
-    title("Squared Visibility Amplitude Data")
-    xlabel(L"Baseline (M$\lambda$)")
-    ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="Grey", linestyle=":")
-    tight_layout()
-    #if idpoint==true
-    #    cid=fig.canvas.mpl_connect("button_press_event",onclickidentify)
-    #end
-    show(block=false)
+function plot_v2(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
+                 logplot=false, color::String="baseline", markopt=false,
+                 legend_below=false, figtitle="")
+    plot_obs(data, OBS_PLOT_SPECS["V2"]; color=color, logplot=logplot,
+             figsize=figsize, figtitle=figtitle, markopt=markopt,
+             legend_below=legend_below)
 end
 
 
@@ -302,99 +484,19 @@ Plot closure phases T3φ (degrees) vs a representative baseline length (Mλ).
 Accepts a single `OIdata`, vector, or 2-D array.
 
 # Keyword arguments
-- `t3base` — x-axis baseline:
-  - `"max"` (default) — longest side of the triangle
-  - `"geom"` — geometric-mean baseline (`t3_baseline`)
+- `t3base` — x-axis baseline: `"geom"` (default, geometric mean) or `"max"` (longest side).
 - `color` — `"baseline"` (default), `"wav"`, `"mjd"`, or explicit colour string.
 - `figsize` — figure size. Default: `(12, 6)`.
+- `figtitle` — prefix for the figure window title.
 - `markopt` — use distinct marker shapes. Default: `false`.
 - `legend_below` — place legend below the plot. Default: `false`.
 """
-function plot_t3phi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
-    set_oiplot_defaults()
-
-    if data isa OIdata
-        data = [data]
-    end
-    if ndims(data) == 2
-        data = vec(data)
-    end
-    fig = figure("Closure phase data",figsize=figsize,facecolor="White");
-    clf();
-    ax=gca();
-    if (color == "baseline" || color =="base"|| color =="bases" || color =="baselines")
-        baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_t3...)))
-        #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
-        for i=1:length(baseline)
-            loc =  [findall(baseline_list_t3[n] .== baseline[i]) for n=1:length(data)]
-            if t3base=="max"
-                baseline_t3 = vcat([data[n].t3_maxbaseline[loc[n]] for n=1:length(data)]...)/1e6
-            elseif t3base=="geom"
-                baseline_t3 = vcat([data[n].t3_baseline[loc[n]] for n=1:length(data)]...)/1e6
-            end
-            t3phi = vcat([data[n].t3phi[loc[n]] for n=1:length(data)]...)
-            t3phi_err = vcat([data[n].t3phi_err[loc[n]] for n=1:length(data)]...)
-            errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
-        end
-        if legend_below == false
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
-        else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=5,loc="upper center", bbox_to_anchor=(0.5, -0.15))
-        end
-    elseif  (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
-        wavcol = vcat([data[n].t3_lam*1e6 for n=1:length(data)]...)
-        if t3base=="max"
-            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
-        elseif t3base=="geom"
-            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
-        end
-        t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
-        t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
-        sc = scatter(baseline_t3, t3phi, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
-        el = errorbar(baseline_t3, t3phi,yerr=t3phi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
-        cbar.set_ticks(cbar_range)
-    elseif (color == "mjd" || color == "time" || color == "timestamp" || color == "timestamps")
-        mjdcol = vcat([data[n].t3_mjd for n=1:length(data)]...)
-        if t3base=="max"
-            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
-        elseif t3base=="geom"
-            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
-        end
-        t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
-        t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
-        sc = scatter(baseline_t3, t3phi, c=mjdcol, cmap="plasma", alpha=1.0, s=6.0, zorder=100)
-        el = errorbar(baseline_t3, t3phi, yerr=t3phi_err, fmt="none", marker="none", ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="MJD", pad=0.18, fraction=0.05)
-        mjds = sort(unique(mjdcol))
-        if length(mjds) < 5
-            cbar.set_ticks(round.(mjds*100)/100)
-        else
-            cbar_range = round.(collect(range(minimum(mjdcol), maximum(mjdcol), length=5))*100)/100
-            cbar.set_ticks(cbar_range)
-        end
-    else
-        if t3base=="max"
-            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
-        elseif t3base=="geom"
-            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
-        end
-        t3phi = vcat([data[n].t3phi for n=1:length(data)]...);
-        t3phi_err = vcat([data[n].t3phi_err for n=1:length(data)]...);
-        errorbar(baseline_t3,t3phi,yerr=t3phi_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
-    end
-    title("Closure phase data")
-    if t3base=="max"
-        xlabel(L"Maximum Baseline (M$\lambda$)")
-    elseif t3base=="geom"
-        xlabel(L"Geometric Mean Baseline (M$\lambda$)")
-    end
-    ylabel("Closure phase (degrees)")
-    ax.grid(true,which="both",color="Grey",linestyle=":")
-    tight_layout()
-    show(block=false)
+function plot_t3phi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
+                    color::String="baseline", markopt=false, legend_below=false,
+                    t3base="geom", figtitle="")
+    spec = t3base == "max" ? OBS_PLOT_SPECS["T3PHI_MAX"] : OBS_PLOT_SPECS["T3PHI"]
+    plot_obs(data, spec; color=color, figsize=figsize, figtitle=figtitle,
+             markopt=markopt, legend_below=legend_below)
 end
 
 function plot_v2_residuals(x, data::OIdata, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
@@ -509,81 +611,20 @@ Plot triple amplitudes T3amp vs a representative baseline length (Mλ).
 Accepts a single `OIdata`, vector, or 2-D array.
 
 # Keyword arguments
-- `t3base` — x-axis baseline: `"max"` (default, longest side) or `"geom"` (geometric mean).
-- `color` — `"baseline"` (default), `"wav"`, or explicit colour string.
+- `t3base` — x-axis baseline: `"geom"` (default, geometric mean) or `"max"` (longest side).
+- `color` — `"baseline"` (default), `"wav"`, `"mjd"`, or explicit colour string.
+- `logplot` — use logarithmic y-axis. Default: `false`.
 - `figsize` — figure size. Default: `(12, 6)`.
+- `figtitle` — prefix for the figure window title.
 - `markopt` — use distinct marker shapes. Default: `false`.
 - `legend_below` — place legend below the plot. Default: `false`.
 """
-function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6), color::String="baseline",markopt=false, legend_below=false, t3base="max")
-    set_oiplot_defaults()
-
-    if data isa OIdata
-        data = [data]
-    end
-    if ndims(data) == 2
-        data = vec(data)
-    end
-    fig = figure("Triple amplitude data",figsize=(12,6),facecolor="White");
-    clf();
-    ax=gca();
-    baseline_t3 = []
-
-    if (color == "baseline" || color =="base"|| color =="bases" || color =="baselines")
-        baseline_list_t3 = [get_triplet_names(data[n].sta_name,data[n].t3_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_t3...)))
-        #indx_t3 = [hcat(data[n].indx_t3_1,data[n].indx_t3_2, data[n].indx_t3_3)' for n=1:length(data)]
-        for i=1:length(baseline)
-            loc =  [findall(baseline_list_t3[n] .== baseline[i]) for n=1:length(data)]
-            if t3base=="max"
-                baseline_t3 = vcat([data[n].t3_maxbaseline[loc[n]] for n=1:length(data)]...)/1e6
-            elseif t3base=="geom"
-                baseline_t3 = vcat([data[n].t3_baseline[loc[n]] for n=1:length(data)]...)/1e6
-            end
-            t3amp = vcat([data[n].t3amp[loc[n]] for n=1:length(data)]...)
-            t3amp_err = vcat([data[n].t3amp_err[loc[n]] for n=1:length(data)]...)
-            errorbar(baseline_t3,t3amp,yerr=t3amp_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
-        end
-        if legend_below == false
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
-        else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
-        end
-    elseif  (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
-        wavcol = vcat([data[n].uv_lam[data[n].indx_t3_1]*1e6 for n=1:length(data)]...)
-        
-        if t3base=="max"
-            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
-        elseif t3base=="geom"
-            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
-        end
-        t3amp = vcat([data[n].t3amp for n=1:length(data)]...);
-        t3amp_err = vcat([data[n].t3amp_err for n=1:length(data)]...);
-        sc = scatter(baseline_t3, t3amp, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
-        el = errorbar(baseline_t3, t3amp,yerr=t3amp_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
-        cbar.set_ticks(cbar_range)
-    else
-        if t3base=="max"
-            baseline_t3 = vcat([data[n].t3_maxbaseline for n=1:length(data)]...)/1e6
-        elseif t3base=="geom"
-            baseline_t3 = vcat([data[n].t3_baseline for n=1:length(data)]...)/1e6
-        end
-        t3amp = vcat([data[n].t3amp for n=1:length(data)]...);
-        t3amp_err = vcat([data[n].t3amp_err for n=1:length(data)]...);
-        errorbar(baseline_t3,t3amp,yerr=t3amp_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
-    end
-    title("Triple amplitude data")
-    if t3base=="max"
-        xlabel(L"Maximum Baseline (M$\lambda$)")
-    elseif t3base=="geom"
-        xlabel(L"Geometric Mean Baseline (M$\lambda$)")
-    end
-    ylabel("Triple amplitude")
-    ax.grid(true,which="both",color="Grey",linestyle=":")
-    tight_layout()
-    show(block=false)
+function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
+                    color::String="baseline", markopt=false, legend_below=false,
+                    t3base="geom", logplot=false, figtitle="")
+    spec = t3base == "max" ? OBS_PLOT_SPECS["T3AMP_MAX"] : OBS_PLOT_SPECS["T3AMP"]
+    plot_obs(data, spec; color=color, logplot=logplot, figsize=figsize,
+             figtitle=figtitle, markopt=markopt, legend_below=legend_below)
 end
 
 """
@@ -593,182 +634,133 @@ Plot flux spectra vs wavelength (μm). Accepts a single `OIdata`, vector, or 2-D
 
 # Keyword arguments
 - `color` — colouring scheme:
-  - `"station"` (default) — one colour per station; OI_FLUX entries with `CALSTAT=C`
+  - `"wav"` (default) — coloured by wavelength with a horizontal colorbar.
+  - `"station"` — one colour per station; OI_FLUX entries with `CALSTAT=C`
     (i.e. `flux_sta_index == 0`) are labelled `"Calibrated"`.
   - `"mjd"` / `"time"` — scatter coloured by MJD with a horizontal colorbar.
   - any other string — treated as a matplotlib colour applied uniformly.
 - `figsize` — figure size. Default: `(12, 6)`.
+- `figtitle` — prefix for the figure window title.
 - `markopt` — use black markers with distinct shapes. Default: `false`.
 - `legend_below` — place legend below the plot. Default: `false`.
 """
-function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=(12,6),
-                   color::String="station", markopt=false, legend_below=false)
-    set_oiplot_defaults()
-    data isa OIdata && (data = [data])
-    ndims(data) == 2 && (data = vec(data))
-    fig = figure("Flux data", figsize=figsize, facecolor="White")
-    clf()
-    ax = gca()
-
-    # Map flux_sta_index → human-readable label ("Calibrated" for index 0)
-    _flux_label(d, si) = si == 0 ? "Calibrated" : d.sta_name[si]
-    station_labels = [[_flux_label(data[n], data[n].flux_sta_index[k])
-                       for k in eachindex(data[n].flux_sta_index)]
-                      for n in eachindex(data)]
-    stations = sort(unique(vcat(station_labels...)))
-
-    if color == "station" || color == "baseline" || color == "base" || color == "stations"
-        for i in eachindex(stations)
-            locs = [findall(station_labels[n] .== stations[i]) for n in eachindex(data)]
-            wav  = vcat([data[n].flux_lam[locs[n]]*1e6 for n in eachindex(data)]...)
-            flux = vcat([data[n].flux[locs[n]]          for n in eachindex(data)]...)
-            ferr = vcat([data[n].flux_err[locs[n]]      for n in eachindex(data)]...)
-            if markopt
-                errorbar(wav, flux, yerr=ferr, fmt="o", marker=oiplot_markers[i],
-                    markeredgecolor="Black", markersize=3, color="Black",
-                    ecolor="Gainsboro", elinewidth=1.0, label=stations[i])
-            else
-                errorbar(wav, flux, yerr=ferr, fmt="o", markersize=3,
-                    markeredgecolor=oiplot_colors[i], color=oiplot_colors[i],
-                    ecolor="Gainsboro", elinewidth=1.0, label=stations[i])
-            end
-        end
-        if legend_below
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,
-                      loc="upper center", bbox_to_anchor=(0.5, -0.15))
-        else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4, loc="best")
-        end
-    elseif color == "mjd" || color == "time" || color == "timestamp" || color == "timestamps"
-        wav  = vcat([data[n].flux_lam*1e6  for n in eachindex(data)]...)
-        flux = vcat([data[n].flux           for n in eachindex(data)]...)
-        ferr = vcat([data[n].flux_err       for n in eachindex(data)]...)
-        mjd  = vcat([data[n].flux_mjd       for n in eachindex(data)]...)
-        sc = scatter(wav, flux, c=mjd, cmap="plasma", alpha=1.0, s=6.0, zorder=100)
-        errorbar(wav, flux, yerr=ferr, fmt="none", marker="none",
-                 ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="MJD", pad=0.18, fraction=0.05)
-        mjds = sort(unique(mjd))
-        if length(mjds) < 5
-            cbar.set_ticks(round.(mjds*100)/100)
-        else
-            cbar_range = round.(collect(range(minimum(mjd), maximum(mjd), length=5))*100)/100
-            cbar.set_ticks(cbar_range)
-        end
-    else
-        wav  = vcat([data[n].flux_lam*1e6  for n in eachindex(data)]...)
-        flux = vcat([data[n].flux           for n in eachindex(data)]...)
-        ferr = vcat([data[n].flux_err       for n in eachindex(data)]...)
-        errorbar(wav, flux, yerr=ferr, fmt="o", markersize=3,
-                 color=color, ecolor="Gainsboro", elinewidth=1.0)
-    end
-    title("Flux data")
-    xlabel("Wavelength (μm)")
-    ylabel("Flux")
-    ax.grid(true, which="both", color="Grey", linestyle=":")
-    tight_layout()
-    show(block=false)
+function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
+                   color::String="wav", markopt=false, legend_below=false, figtitle="")
+    plot_obs(data, OBS_PLOT_SPECS["FLUX"]; color=color, figsize=figsize,
+             figtitle=figtitle, markopt=markopt, legend_below=legend_below)
 end
 
 """
     plot_visphi(data; kwargs...)
 
-Plot visibility phases (degrees) vs baseline length (Mλ). Accepts a single `OIdata`,
-vector, or 2-D array.
+Plot visibility phases (degrees). The layout is chosen automatically from the
+`PHITYP` header stored in `data.phityp`:
+
+- **differential** (`phityp == "differential"`) — one subplot per baseline with
+  wavelength (nm) on the x-axis.
+- **absolute** (default) — single panel with baseline (Mλ) on the x-axis, coloured
+  by baseline, wavelength, or MJD.
+
+Accepts a single `OIdata`, vector, or 2-D array.
 
 # Keyword arguments
-- `color` — `"baseline"` (default) or explicit colour string.
+- `color` — `"baseline"` (default), `"wav"`, `"mjd"`, or explicit colour string
+  (ignored for differential layout).
+- `figsize` — figure size. Default: `(12, 6)`.
+- `figtitle` — prefix for the figure window title.
 - `markopt` — use distinct marker shapes. Default: `false`.
 - `legend_below` — place legend below the plot. Default: `false`.
 """
-function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; color::String="baseline",markopt=false, legend_below=false)
-    if data isa OIdata
-        data = [data]
-    end
-    if ndims(data) == 2
-        data = vec(data)
-    end
-    fig = figure("Visibility phase data",figsize=(10,5),facecolor="White");
-    clf();
-    ax=gca();
-    if (color == "baseline" || color =="base")
-        baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
-        baseline=sort(unique(vcat(baseline_list_vis...)))
-        for i=1:length(baseline)
-            loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
-            baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
-            visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
-            visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
-            errorbar(baseline_vis,visphi,yerr=visphi_err,fmt="o",markeredgecolor=oiplot_colors[i],color=oiplot_colors[i], markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline[i])
+function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
+                     color::String="baseline", markopt=false, legend_below=false, figtitle="")
+    dvec = as_datavec(data)
+    is_diff = any(d.phityp == "differential" for d in dvec)
+
+    if is_diff
+        # ── Differential phase layout: one subplot per baseline, wavelength on x-axis ──
+        set_oiplot_defaults()
+        baseline_list_vis = [get_baseline_names(dvec[n].sta_name, dvec[n].vis_sta_index) for n in eachindex(dvec)]
+        baselines = sort(unique(vcat(baseline_list_vis...)))
+        nbase = length(baselines)
+        fig, ax = plt.subplots(num=string(figtitle, "Differential phase data"),
+                               nrows=nbase, sharex=true, figsize=figsize, facecolor="White")
+        suptitle("Differential phase data")
+        subplots_adjust(hspace=0.0)
+        mx = matplotlib.ticker.MultipleLocator(20)
+        if nbase == 1
+            ax = [ax]
         end
-        if legend_below == false
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=4,loc="best")
-        else
-            ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.15))
+        for i in 1:nbase
+            plt.axes(ax[i])
+            ax[i].set_title(baselines[i], x=0.9, y=0.75)
+            loc = [findall(baseline_list_vis[n] .== baselines[i]) for n in eachindex(dvec)]
+            wavcol  = vcat([dvec[n].vis_lam[loc[n]]*1e9 for n in eachindex(dvec)]...)
+            visphi  = vcat([dvec[n].visphi[loc[n]]       for n in eachindex(dvec)]...)
+            vp_err  = vcat([dvec[n].visphi_err[loc[n]]   for n in eachindex(dvec)]...)
+            errorbar(wavcol, visphi, yerr=vp_err, fmt="o", markersize=0.5,
+                     ecolor="Gainsboro", elinewidth=0.5)
+            ax[i].xaxis.set_minor_locator(mx)
+            if i == nbase
+                xlabel("Wavelength (nm)")
+            end
+            ylabel("Δφ (°)")
+            ax[i].grid(true, which="both", color="Grey", linestyle=":")
         end
-    elseif (color == "wavelength" || color == "wav")
-        wavcol = vcat([data[n].uv_lam[data[n].indx_vis]*1e6 for n=1:length(data)]...)
-        baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
-        visphi = vcat([data[n].visphi for n=1:length(data)]...);
-        visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
-        sc = scatter(baseline_vis, visphi, c=wavcol, cmap="Spectral_r", alpha=1.0, s=6.0, zorder=100)
-        el = errorbar(baseline_vis, visphi,yerr=visphi_err,fmt="none", marker="none",ecolor="Gainsboro", elinewidth=1.0, zorder=0)
-        cbar = colorbar(sc, aspect=50, orientation="horizontal", label="Wavelength (μm)", pad=0.18, fraction=0.05)
-        cbar_range = floor.(collect(range(minimum(wavcol), maximum(wavcol), length=11))*100)/100
-        cbar.set_ticks(cbar_range)
+        ax[nbase].tick_params(axis="x", which="major", length=10.0)
+        ax[nbase].tick_params(axis="x", which="minor", length=5.0)
+        tight_layout()
+        show(block=false)
     else
-        baseline_vis = vcat([data[n].vis_baseline for n=1:length(data)]...)/1e6
-        visphi = vcat([data[n].visphi for n=1:length(data)]...);
-        visphi_err = vcat([data[n].visphi_err for n=1:length(data)]...);
-        errorbar(baseline_vis,visphi,yerr=visphi_err,fmt="o", markersize=3,color="Black", ecolor="Gainsboro",elinewidth=1.0)
+        # ── Absolute phase layout: delegate to generic engine ──
+        plot_obs(data, OBS_PLOT_SPECS["VISPHI"]; color=color, figsize=figsize,
+                 figtitle=figtitle, markopt=markopt, legend_below=legend_below)
     end
-    title("Visibility phase phase data")
-    xlabel(L"Maximum Baseline (M$\lambda$)")
-    ylabel("Visibility phase (degrees)")
-    ax.grid(true,which="both",color="Grey",linestyle=":")
-    tight_layout()
-    if filename !=""
-        savefig(filename)
-    end
-    show(block=false)
 end
 
+"""
+    plot_visamp(data; kwargs...)
 
+Plot visibility amplitudes vs baseline length (Mλ). Accepts a single `OIdata`,
+vector, or 2-D array. The title and y-label adapt to the `AMPTYP` header stored
+in `data.amptyp` (`"absolute"`, `"differential"`, `"correlated flux"`, or generic).
 
-function plot_diffphi(data::AbstractVector{<:OIdata}; color="Black",markopt=false, legend_below=false, filename="")
-    #
-    # Note: this is a special kind of plot, which doesn't follow the classic plotting recipe
-    #
-    baseline_list_vis = [get_baseline_names(data[n].sta_name,data[n].vis_sta_index) for n=1:length(data)];
-    baseline=sort(unique(vcat(baseline_list_vis...)))
-    # Creating one subplot per baseline
-    fig ,ax=  plt.subplots(num="Differential phase data",nrows=length(baseline), sharex=true,figsize=(10,5),facecolor="White")
-    suptitle("Differential phase data")
-    subplots_adjust(hspace=0.0)
-    mx=matplotlib[:ticker][:MultipleLocator](20)
-    for i=1:length(baseline)
-        title(baseline[i], x=0.9, y=0.75)
-        loc =  [findall(baseline_list_vis[n] .== baseline[i]) for n=1:length(data)]
-        baseline_vis = vcat([data[n].vis_baseline[loc[n]] for n=1:length(data)]...)/1e6
-        wavcol = vcat([data[n].uv_lam[data[n].indx_vis[loc[n]]]*1e9 for n=1:length(data)]...)
-        visphi = vcat([data[n].visphi[loc[n]] for n=1:length(data)]...)
-        visphi_err = vcat([data[n].visphi_err[loc[n]] for n=1:length(data)]...)
-        plt.axes(ax[i])
-        ax[i][:xaxis][:set_minor_locator](mx)
-        errorbar(wavcol,visphi,yerr=visphi_err,fmt="o",markersize=0.5,ecolor="Gainsboro",elinewidth=.5)
-        if i==length(baseline)
-            xlabel("λ (nm)")
-        end
-        ylabel("Δϕ (°)")
-        grid(true,which="both",color="Grey",linestyle=":")
+# Keyword arguments
+- `color` — `"baseline"` (default), `"wav"`, `"mjd"`, or explicit colour string.
+- `logplot` — use logarithmic y-axis. Default: `false`.
+- `figsize` — figure size. Default: `(12, 6)`.
+- `figtitle` — prefix for the figure window title.
+- `markopt` — use distinct marker shapes. Default: `false`.
+- `legend_below` — place legend below the plot. Default: `false`.
+"""
+function plot_visamp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
+                     logplot=false, color::String="baseline", markopt=false,
+                     legend_below=false, figtitle="")
+    dvec = as_datavec(data)
+    amptyp = dvec[1].amptyp
+    if amptyp == "correlated flux"
+        amp_title  = "Correlated flux"
+        amp_ylabel = "Correlated flux"
+    elseif amptyp == "differential"
+        amp_title  = "Diff. visamp"
+        amp_ylabel = "Diff. visamp"
+    else
+        amp_title  = "Visamp"
+        amp_ylabel = "Visamp"
     end
-    ax[length(baseline)][:tick_params](axis="x", which="major", length=10.0)
-    ax[length(baseline)][:tick_params](axis="x", which="minor", length=5.0)
-    tight_layout();
-    if filename !=""
-        savefig(filename)
-    end
-    show(block=false)
+    plot_obs(data, OBS_PLOT_SPECS["VISAMP"]; color=color, logplot=logplot,
+             figsize=figsize, figtitle=figtitle, markopt=markopt,
+             legend_below=legend_below, plot_title=amp_title, ylabel_str=amp_ylabel)
+end
+
+"""
+    plot_diffphi(data; kwargs...)
+
+Deprecated — use `plot_visphi` instead, which auto-detects differential phases
+from `data.phityp`.
+"""
+function plot_diffphi(data::Union{OIdata, AbstractArray{<:OIdata}}; kwargs...)
+    @warn("plot_diffphi is deprecated, use plot_visphi instead (auto-detects differential phases)")
+    plot_visphi(data; kwargs...)
 end
 
 
@@ -1031,6 +1023,10 @@ function imdisp_multi(cube::Array{Float64,3};
     show(block=false)
 end
 
+
+function get_station_names(sta_names, sta_indx::AbstractVector)
+    return [si == 0 ? "Calibrated" : sta_names[si] for si in sta_indx]
+end
 
 function get_baseline_names(sta_names,sta_indx)
     nbaselines = size(sta_indx,2)

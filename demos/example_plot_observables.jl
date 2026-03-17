@@ -1,13 +1,52 @@
 using OITOOLS
-# read the data file
-oifitsfile = "./data/rho_Cas_example.oifits"
-data = readoifits(oifitsfile)
-# Display the data
-uvplot(data, color="bases");
-uvplot(data, color="wav");
-uvplot(data, color="mjd");
-plot_v2(data,color="bases")
-plot_v2(data,color="wav")
-plot_t3phi(data);
-plot_t3phi(data, t3base="geom");
 
+# Read BC2026 = Fake GRAVITY K-band data
+oifitsfile = "./data/BC2026/OBJECT2_K.oifits"
+data = readoifits(oifitsfile)
+
+# ── UV coverage ──────────────────────────────────────────────────────────────
+uvplot(data, color="baseline")
+uvplot(data, color="wav")
+uvplot(data, color="mjd")
+
+# ── Squared visibilities ─────────────────────────────────────────────────────
+plot_v2(data, color="baseline")
+plot_v2(data, color="wav")
+plot_v2(data, color="mjd")
+plot_v2(data, logplot=true)
+
+# ── Closure phases ───────────────────────────────────────────────────────────
+plot_t3phi(data)                        # geometric mean baseline (default)
+plot_t3phi(data, t3base="max")          # longest baseline
+plot_t3phi(data, color="wav")
+plot_t3phi(data, color="mjd")
+
+# ── Triple amplitudes ────────────────────────────────────────────────────────
+plot_t3amp(data)
+plot_t3amp(data, logplot=true, color="wav")
+plot_t3amp(data, color="mjd")
+
+# ── Visibility amplitudes ────────────────────────────────────────────────────
+plot_visamp(data)
+plot_visamp(data, logplot=true, color="wav")
+plot_visamp(data, color="mjd")
+
+# ── Visibility phases ────────────────────────────────────────────────────────
+plot_visphi(data)                       # auto-detects absolute vs differential
+plot_visphi(data, color="wav")
+plot_visphi(data, color="mjd")
+
+# ── Flux (if present) ────────────────────────────────────────────────────────
+plot_flux(data)                     # colour by station (default)
+plot_flux(data, color="mjd")
+
+# ── Compact mode for stacked plots ──────────────────────────────────────────
+# Switch to compact styling: smaller fonts/markers, shorter figure, no in-plot titles
+set_oiplot_defaults(compact=true)
+plot_v2(data)
+plot_t3phi(data)
+plot_t3amp(data)
+plot_visamp(data)
+plot_flux(data)
+# Restore normal styling
+set_oiplot_defaults(compact=false)

@@ -304,7 +304,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    set_data_filter(data; kwargs...) -> [uv_bad, vis_bad, v2_bad, t3_bad]
+    set_data_filter(data; kwargs...) -> [uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]
 
 Compute lists of indices to discard from a loaded `OIdata` bin without modifying it.
 Pass the result to `filter_data` to obtain a filtered copy.
@@ -315,7 +315,7 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `mjd_range` — MJD window(s), same format. Default: keep all.
 - `baseline_range` — `[min, max]` baseline in cycles/m. Default: keep all.
 - `filter_bad_data` — apply quality cuts (flags, NaN, SNR, amplitude range). Default: `false`.
-- `filter_vis`, `filter_v2`, `filter_t3amp`, `filter_t3phi` — enable cuts per observable type.
+- `filter_vis`, `filter_v2`, `filter_t3amp`, `filter_t3phi`, `filter_flux` — enable cuts per observable type.
 - `cutoff_minv2`, `cutoff_maxv2` — V² range cut. Default: `(-1, 2.0)`.
 - `cutoff_mint3amp`, `cutoff_maxt3amp` — T3 amplitude range cut. Default: `(-1.0, 1.5)`.
 - `filter_v2_snr_threshold` — minimum |V²/σ| to keep. Default: `0.01`.
@@ -325,14 +325,14 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `uv_bad` — pre-supplied list of UV indices to remove.
 - `filter_visphi`, `filter_visamp` — enable visibility phase/amplitude filtering.
 
-Returns `[uv_bad, vis_bad, v2_bad, t3_bad]` — four `Vector{Int64}` of indices to discard.
+Returns `[uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]` — five `Vector{Int64}` of indices to discard.
 """
 function set_data_filter(data::OIdata{T};
         wav_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
         mjd_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
         baseline_range::Vector{Float64} = [0.0, 1e99],
         filter_bad_data = false, filter_vis = true, filter_v2 = true,
-        filter_t3amp = true, filter_t3phi = true,
+        filter_t3amp = true, filter_t3phi = true, filter_flux = true,
         cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
         special_filter_diffvis = false, force_full_vis = false, force_full_t3 = false,
         filter_v2_snr_threshold = 0.01, uv_bad = Int64[],
@@ -341,11 +341,12 @@ function set_data_filter(data::OIdata{T};
     !isempty(wav_range) && typeof(wav_range) == Vector{Float64} && (wav_range = [wav_range])
     !isempty(mjd_range) && typeof(mjd_range) == Vector{Float64} && (mjd_range = [mjd_range])
 
-    use_vis = ((data.nvisphi > 0) && filter_visphi) || ((data.nvisamp > 0) && filter_visamp)
-    use_v2  = (data.nv2 > 0) && filter_v2
-    use_t3  = ((data.nt3amp > 0) && filter_t3amp) || ((data.nt3phi > 0) && filter_t3phi)
+    use_vis  = ((data.nvisphi > 0) && filter_visphi) || ((data.nvisamp > 0) && filter_visamp)
+    use_v2   = (data.nv2 > 0) && filter_v2
+    use_t3   = ((data.nt3amp > 0) && filter_t3amp) || ((data.nt3phi > 0) && filter_t3phi)
+    use_flux = (data.nflux > 0) && filter_flux
 
-    vis_bad = Int64[]; v2_bad = Int64[]; t3_bad = Int64[]
+    vis_bad = Int64[]; v2_bad = Int64[]; t3_bad = Int64[]; flux_bad = Int64[]
 
     if filter_bad_data
         if use_vis
@@ -373,6 +374,13 @@ function set_data_filter(data::OIdata{T};
                 findall(.!data.t3_flag .& (ta_ok .| tp_ok))
             t3_bad = setdiff(1:length(data.t3_flag), t3_good)
         end
+        if use_flux
+            flux_good = findall(
+                (.!data.flux_flag) .&
+                .!isnan.(data.flux) .& .!isnan.(data.flux_err) .&
+                (data.flux_err .> 0))
+            flux_bad = setdiff(1:length(data.flux_flag), flux_good)
+        end
     end
 
     baseline_range != [0.0, 1e99] && (uv_bad = union(uv_bad,
@@ -393,14 +401,29 @@ function set_data_filter(data::OIdata{T};
         (t3_bad = union(t3_bad, findall([
             data.indx_t3_1[i] ∉ uv_good || data.indx_t3_2[i] ∉ uv_good || data.indx_t3_3[i] ∉ uv_good
             for i in eachindex(data.indx_t3_1)])))
-    return [uv_bad, vis_bad, v2_bad, t3_bad]
+
+    # Flux is not tied to the UV grid, but filter by wavelength and MJD ranges
+    if data.nflux > 0
+        flux_good_range = collect(1:data.nflux)
+        if !isempty(wav_range) && wav_range != [[-1.0, 1e99]]
+            flux_good_range = intersect(flux_good_range,
+                vcat([findall(wav_range[i][1] .<= data.flux_lam .<= wav_range[i][2]) for i in eachindex(wav_range)]...))
+        end
+        if !isempty(mjd_range) && mjd_range != [[-1.0, 1e99]]
+            flux_good_range = intersect(flux_good_range,
+                vcat([findall(mjd_range[i][1] .<= data.flux_mjd .<= mjd_range[i][2]) for i in eachindex(mjd_range)]...))
+        end
+        flux_bad = union(flux_bad, setdiff(1:data.nflux, flux_good_range))
+    end
+
+    return [uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]
 end
 
 """
     filter_data(data, indexes_to_discard) -> OIdata
 
 Return a deep copy of `data` with the specified points removed. `indexes_to_discard`
-must be the four-element vector `[uv_bad, vis_bad, v2_bad, t3_bad]` returned by
+must be the five-element vector `[uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]` returned by
 `set_data_filter`. UV points that become unreferenced after removing observables are
 pruned automatically and all index arrays are remapped.
 
@@ -451,6 +474,15 @@ function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
         !isempty(data.t3amp_corr_idx) && (data.t3amp_corr_idx = data.t3amp_corr_idx[t3_good])
         !isempty(data.t3phi_corr_idx) && (data.t3phi_corr_idx = data.t3phi_corr_idx[t3_good])
         data.nt3amp         = length(data.t3amp);     data.nt3phi         = length(data.t3phi)
+    end
+    if data.nflux > 0 && length(indexes_to_discard) >= 5
+        flux_good            = setdiff(1:data.nflux, indexes_to_discard[5])
+        data.flux            = data.flux[flux_good];        data.flux_err      = data.flux_err[flux_good]
+        data.flux_mjd        = data.flux_mjd[flux_good];    data.flux_lam      = data.flux_lam[flux_good]
+        data.flux_dlam       = data.flux_dlam[flux_good];   data.flux_flag     = data.flux_flag[flux_good]
+        data.flux_sta_index  = data.flux_sta_index[flux_good]
+        !isempty(data.flux_corr_idx) && (data.flux_corr_idx = data.flux_corr_idx[flux_good])
+        data.nflux           = length(data.flux)
     end
     uv_sel = falses(data.nuv)
     isempty(good_uv_vis)  || (uv_sel[good_uv_vis]  .= true)

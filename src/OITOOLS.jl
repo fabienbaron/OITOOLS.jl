@@ -46,7 +46,7 @@ export remove_redundant_uv!, filter_data, set_data_filter
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
-       plot_visphi, plot_diffphi, plot_flux,
+       plot_visamp, plot_visphi, plot_diffphi, plot_flux,
        plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
        plot_v2_multifile,
        imdisp, imdisp_multi, plot_facility

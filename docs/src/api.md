@@ -29,6 +29,7 @@ uvplot
 plot_v2
 plot_t3phi
 plot_t3amp
+plot_visamp
 plot_visphi
 plot_flux
 imdisp
@@ -37,8 +38,7 @@ imdisp_multi
 
 | Function | Description |
 |----------|-------------|
-| `set_oiplot_defaults()` | Apply consistent matplotlib style settings |
-| `plot_diffphi(data)` | Plot differential phases |
+| `set_oiplot_defaults(; compact=false)` | Apply matplotlib style settings; `compact=true` for small stacked plots |
 | `plot_v2_residuals(data, v2_model)` | Plot V\u00B2 residuals against a model |
 | `plot_t3phi_residuals(data, t3phi_model)` | Plot closure-phase residuals |
 | `plot_t3amp_residuals(data, t3amp_model)` | Plot triple-amplitude residuals |
