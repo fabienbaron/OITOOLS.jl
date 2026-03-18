@@ -52,7 +52,7 @@
 #   T3phi:   g += Im(   Jᵀ[indx_t3_k,:]· (r_t3p .* conj(V[k]) ./ |V[k]|²)    ) summed k
 #   visamp:  g += Re(   Jᵀ[indx_vis,:] · (r_va  .* conj(V[indx_vis]) ./ |V[indx_vis]|) )
 #   visphi:  g += Im(   Jᵀ[indx_vis,:] · (r_vp  .* conj(V[indx_vis]) ./ |V[indx_vis]|²))
-#   flux:    g += 2·C·Σ(r_flux)·Re(J_zero)  (zero-baseline Jacobian, C_flux treated as constant)
+#   flux:    g += 2·C·Σ(r_flux)·Re(J_zero)  (C=1 if calibrated; C_flux constant if uncalibrated)
 #   diffphi: g += Im(   Jᵀ[indx_vis,:] · (r_dp  .* conj(V[indx_vis]) ./ |V[indx_vis]|²))
 #                 (per-channel, following oichi2.jl leading-order approximation)
 #
@@ -218,23 +218,31 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# _chi2_flux: compute flux chi2 with optimal scaling C_flux
-# Following oichi2.jl: C = Σ(fm·fd·w) / Σ(fm²·w) where w = 1/σ²
+# _chi2_flux: compute flux chi2.
+# If flux is calibrated (CALSTAT=C), compare model directly to data.
+# If uncalibrated (CALSTAT=U), fit optimal scaling C = Σ(fm·fd·w) / Σ(fm²·w).
 # ─────────────────────────────────────────────────────────────────────────────
 
 function _chi2_flux(model_flux::Float64, data::OIdata)
     fm = fill(model_flux, data.nflux)
-    w  = 1.0 ./ data.flux_err.^2
-    C  = sum(fm .* data.flux .* w) / sum(fm.^2 .* w)
-    residual = (C .* fm .- data.flux) ./ data.flux_err.^2
-    chi2 = sum(((C .* fm .- data.flux) ./ data.flux_err).^2)
+    if data.flux_calibrated
+        residual = (fm .- data.flux) ./ data.flux_err.^2
+        chi2 = sum(((fm .- data.flux) ./ data.flux_err).^2)
+        C = 1.0
+    else
+        w  = 1.0 ./ data.flux_err.^2
+        C  = sum(fm .* data.flux .* w) / sum(fm.^2 .* w)
+        residual = (C .* fm .- data.flux) ./ data.flux_err.^2
+        chi2 = sum(((C .* fm .- data.flux) ./ data.flux_err).^2)
+    end
     return (; chi2, C, residual)
 end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# _chi2_flux_polychromatic: flux chi2 across multiple wavelength channels
-# Single C_flux across all channels (following oichi2.jl)
+# _chi2_flux_polychromatic: flux chi2 across multiple wavelength channels.
+# Calibrated: direct comparison (no scaling).
+# Uncalibrated: single C_flux across all channels.
 # ─────────────────────────────────────────────────────────────────────────────
 
 function _chi2_flux_polychromatic(model_fluxes::Vector{Float64}, data::Vector{<:OIdata})
@@ -247,11 +255,18 @@ function _chi2_flux_polychromatic(model_fluxes::Vector{Float64}, data::Vector{<:
         append!(fe, d.flux_err)
         append!(chan_idx, fill(i, d.nflux))
     end
-    isempty(fm) && return (; chi2=0.0, C=NaN, residual=Float64[], chan_idx=Int[])
-    w = 1.0 ./ fe.^2
-    C = sum(fm .* fd .* w) / sum(fm.^2 .* w)
-    residual = (C .* fm .- fd) ./ fe.^2
-    chi2 = sum(((C .* fm .- fd) ./ fe).^2)
+    isempty(fm) && return (; chi2=0.0, C=1.0, residual=Float64[], chan_idx=Int[])
+    calibrated = !isempty(data) && data[1].flux_calibrated
+    if calibrated
+        residual = (fm .- fd) ./ fe.^2
+        chi2 = sum(((fm .- fd) ./ fe).^2)
+        C = 1.0
+    else
+        w = 1.0 ./ fe.^2
+        C = sum(fm .* fd .* w) / sum(fm.^2 .* w)
+        residual = (C .* fm .- fd) ./ fe.^2
+        chi2 = sum(((C .* fm .- fd) ./ fe).^2)
+    end
     return (; chi2, C, residual, chan_idx)
 end
 
@@ -270,7 +285,13 @@ function _verb_print(t, data::OIdata, weights::AbstractVector{<:Real}, chi2_tota
     w[3] > 0 && data.nt3phi > 0 && printstyled(@sprintf("T3P: %.3f ",   t.chi2_t3phi / data.nt3phi), color=:green)
     w[4] > 0 && data.nvisamp> 0 && printstyled(@sprintf("VA: %.3f ",    t.chi2_visamp/ data.nvisamp),color=:magenta)
     w[5] > 0 && data.nvisphi> 0 && printstyled(@sprintf("VP: %.3f ",    t.chi2_visphi/ data.nvisphi),color=:cyan)
-    w[6] > 0 && data.nflux  > 0 && printstyled(@sprintf("FLUX: %.3f (C=%.4f) ", chi2_flux / data.nflux, C_flux), color=:yellow)
+    if w[6] > 0 && data.nflux > 0
+        if C_flux == 1.0
+            printstyled(@sprintf("FLUX: %.3f ", chi2_flux / data.nflux), color=:yellow)
+        else
+            printstyled(@sprintf("FLUX: %.3f (C=%.4f) ", chi2_flux / data.nflux, C_flux), color=:yellow)
+        end
+    end
     printstyled(@sprintf("χ²r: %.3f\n", chi2_total / ndof), color=:white)
 end
 
@@ -446,7 +467,7 @@ function chi2_flat_fg(model::FlatModel,
     end
 
     # Flux: g += 2·C·Σ(r_flux)·Re(J_zero)
-    # C_flux is treated as constant (not differentiated through), matching oichi2.jl
+    # C=1 for calibrated flux; for uncalibrated, C_flux treated as constant
     if need_flux
         g .+= w_flux .* 2.0 .* C_fl .* sum(r_flux) .* real.(vec(J_zero))
     end
@@ -902,7 +923,7 @@ function residuals_flat_jac(model::FlatModel,
         push!(r_parts, r_vp); push!(J_parts, J_vp)
     end
 
-    # ── Flux (no Jacobian for now — C_flux treated as constant) ───────────────
+    # ── Flux (C=1 for calibrated; for uncalibrated, C treated as constant) ────
     if need_flux
         fl = _chi2_flux(model_flux, data)
         fm = fill(fl.C * model_flux, data.nflux)

@@ -468,48 +468,99 @@ function trans_structnorm(x, g;verb=false, ϵ=1e-12)
 end
 
 function trans_tv(x, g; ζ=1e-13)
-    # Transpectral or transtemporal regularization
-    #this x is under the form (npix,nwavs)
-    #but return the gradient as a 1D vector to use with Optimpack
-    xlplus1_minus_xl = circshift(x, (0,0,-1))-x
-    xl_minus_xminus1 = x-circshift(x, (0,0,1))
-    d1 = sqrt.(xlplus1_minus_xl.^2 .+ ζ^2)
-    d2 = sqrt.(xl_minus_xminus1.^2 .+ ζ^2)
-    f = sum(d1.-ζ)
-    g[:] = -xlplus1_minus_xl./d1 + xl_minus_xminus1./d2
+    # Transpectral TV: x is (npix, npix, nwavs)
+    # Forward differences along dim 3, no wrap-around at boundaries
+    dx = diff(x, dims=3)  # (npix, npix, nwavs-1)
+    d = sqrt.(dx.^2 .+ ζ^2)
+    f = sum(d .- ζ)
+    # Gradient: chain rule scatters back to full (npix, npix, nwavs)
+    q = dx ./ d  # (npix, npix, nwavs-1)
+    g[:,:,1]       = -q[:,:,1]
+    g[:,:,2:end-1] = q[:,:,1:end-1] .- q[:,:,2:end]
+    g[:,:,end]     = q[:,:,end]
     return f
 end
 
-
-function trans_tvsq(x, g;verb=false)
-    # Transpectral or transtemporal regularization
-    #this x is under the form (npix,nwavs)
-    #but return the gradient as a 1D vector to use with Optimpack
-    xlplus1_minus_xl = circshift(x, (0,0,-1))-x
-    xl_minus_xminus1 = x-circshift(x, (0,0,1))
-    d1 = xlplus1_minus_xl.^2
-    #d2 = xl_minus_xminus1.^2
-    f = sum(d1)
-    g[:] = 2*(-xlplus1_minus_xl + xl_minus_xminus1)
+function trans_tvsq(x, g; verb=false)
+    # Transpectral quadratic TV: x is (npix, npix, nwavs)
+    dx = diff(x, dims=3)  # (npix, npix, nwavs-1)
+    f = sum(dx.^2)
+    g[:,:,1]       = -2 .* dx[:,:,1]
+    g[:,:,2:end-1] = 2 .* (dx[:,:,1:end-1] .- dx[:,:,2:end])
+    g[:,:,end]     = 2 .* dx[:,:,end]
     return f
 end
 
-function trans_l1l2(x, g;verb=false, ζ=1e-13, δ=2.0)
-    # Transpectral or transtemporal regularization using the L1L2 scheme
-    #  x is under the form (npix,nwavs)
-    #but return the gradient as a 1D vector to use with Optimpack
-    xlplus1_minus_xl = circshift(x, (0,0,-1))-x
-   # xlplus1_minus_xl[:,end] .= 0
-    xl_minus_xminus1 = x-circshift(x, (0,0,1))
-    # xl_minus_xminus1[:,1] .=0
-    d1 = sqrt.(xlplus1_minus_xl.^2 .+ ζ^2)
-    d2 = sqrt.(xl_minus_xminus1.^2 .+ ζ^2)
-    f = sum(d1/δ - log.(1.0 .+d1/δ).-ζ)
-    g[:] = vec((-xlplus1_minus_xl./d1 + xl_minus_xminus1./d2)/δ-((-xlplus1_minus_xl./d1)./(δ .+ d1) + (xl_minus_xminus1./d2)./(δ .+d2)))
+function trans_l1l2(x, g; verb=false, ζ=1e-13, δ=2.0)
+    # Transpectral L1-L2: x is (npix, npix, nwavs)
+    dx = diff(x, dims=3)  # (npix, npix, nwavs-1)
+    d = sqrt.(dx.^2 .+ ζ^2)
+    # f = Σ (d/δ - log(1 + d/δ))
+    f = sum(d ./ δ .- log.(1.0 .+ d ./ δ))
+    # df/d(dx) = (dx/d) · (1/δ - 1/(δ+d)) = (dx/d) · d/(δ(δ+d)) = dx/(δ(δ+d))
+    q = dx ./ (δ .* (δ .+ d))
+    g[:,:,1]       = -q[:,:,1]
+    g[:,:,2:end-1] = q[:,:,1:end-1] .- q[:,:,2:end]
+    g[:,:,end]     = q[:,:,end]
     return f
 end
 
-function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
+# Spectral polynomial prior: penalizes deviation of each pixel's spectrum
+# from its best-fit polynomial of degree `degree`.
+# x is (npix, npix, nwavs), λ is a vector of nwavs wavelengths.
+# f = Σ_pixel ||spectrum - polyfit||², g = 2(spectrum - polyfit) scattered back.
+function trans_polychromatic_polyfit(x, g; degree::Int=1, λ::Vector{Float64}=Float64[])
+    nx, ny, nwavs = size(x)
+    if isempty(λ)
+        λ = collect(range(0.0, 1.0, length=nwavs))
+    end
+    # Build Vandermonde matrix: V[i,j] = λ_i^(j-1), normalized
+    λn = (λ .- mean(λ)) ./ max(std(λ), eps())
+    V = hcat([λn.^k for k in 0:degree]...)  # nwavs × (degree+1)
+    # Projection onto polynomial subspace: P = V (VᵀV)⁻¹ Vᵀ
+    P = V * ((V' * V) \ V')  # nwavs × nwavs
+    R = I - P  # residual projector
+    # For each pixel, residual = R * spectrum, f = ||residual||²
+    # Reshape x to (npix*npix, nwavs) for matrix ops
+    X = reshape(x, nx*ny, nwavs)  # each row is a pixel's spectrum
+    Xres = X * R'  # residuals: (npix*npix, nwavs)
+    f = sum(Xres.^2)
+    g[:] = reshape(2.0 .* Xres * R, nx, ny, nwavs)
+    return f
+end
+
+# Spectral group spatial TV (vectorial/collaborative TV).
+# Encourages edges to appear at the same spatial locations across all wavelengths.
+# f = Σ_{i,j} √( Σ_λ [ (x_{i+1,j,λ} - x_{i,j,λ})² + (x_{i,j+1,λ} - x_{i,j,λ})² ] + ε² ) - ε
+# x is (nx, ny, nwavs).
+function trans_grouptv(x, g; ε=1e-12)
+    nx, ny, nwavs = size(x)
+    # Spatial forward differences with zero-padding (no wrap)
+    dx = zeros(nx, ny, nwavs)  # ∂x/∂i
+    dy = zeros(nx, ny, nwavs)  # ∂x/∂j
+    dx[1:end-1,:,:] = x[2:end,:,:] .- x[1:end-1,:,:]
+    dy[:,1:end-1,:] = x[:,2:end,:] .- x[:,1:end-1,:]
+    # Sum of squared gradients across all wavelengths at each pixel
+    S = dropdims(sum(dx.^2 .+ dy.^2, dims=3), dims=3) .+ ε^2  # (nx, ny)
+    d = sqrt.(S)  # (nx, ny)
+    f = sum(d .- ε)
+    # Gradient: ∂f/∂(dx_{i,j,λ}) = dx_{i,j,λ} / d_{i,j}
+    #           ∂f/∂(dy_{i,j,λ}) = dy_{i,j,λ} / d_{i,j}
+    # Then scatter back through the forward-difference operator
+    qdx = dx ./ d  # (nx, ny, nwavs), broadcasting d over dim 3
+    qdy = dy ./ d
+    # g = -div(qdx, qdy): adjoint of the forward-difference operator
+    g .= 0.0
+    # dx contribution: g[i,j] -= qdx[i,j]; g[i+1,j] += qdx[i,j]
+    g[1:end-1,:,:] .-= qdx[1:end-1,:,:]
+    g[2:end,:,:]   .+= qdx[1:end-1,:,:]
+    # dy contribution: g[i,j] -= qdy[i,j]; g[i,j+1] += qdy[i,j]
+    g[:,1:end-1,:] .-= qdy[:,1:end-1,:]
+    g[:,2:end,:]   .+= qdy[:,1:end-1,:]
+    return f
+end
+
+function regularization(x, reg_g; printcolor = :normal, regularizers=[], verb=true) # compound regularization
     reg_f = 0.0;
     if verb == true && !isempty(regularizers)
         print("\nReg:");
@@ -540,7 +591,7 @@ function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=tru
 end
 
 # DFT version
-function chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:black, verb=true, vonmises=false)
+function chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:normal, verb=true, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -570,13 +621,13 @@ function chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Comple
         printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
         printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue);
         printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green);
-        printstyled(@sprintf("Flux: %.4f ", flux), color=:black);
+        printstyled(@sprintf("Flux: %.4f ", flux), color=:normal);
     end
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
 # NFFT version
-function chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false, vonmises=false)
+function chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan[1]);
     if length(cvis)>0
@@ -607,13 +658,13 @@ function chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFF
         printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
         printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue);
         printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green);
-        printstyled(@sprintf("Flux: %.4f ", flux), color=:black);
+        printstyled(@sprintf("Flux: %.4f ", flux), color=:normal);
     end
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
 # DFT version
-function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:black, verb=true, vonmises=false)
+function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:normal, verb=true, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -657,13 +708,13 @@ function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstrac
         printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
         printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue);
         printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green);
-        printstyled(@sprintf("Flux: %.4f ", flux), color=:black);
+        printstyled(@sprintf("Flux: %.4f ", flux), color=:normal);
     end
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
 #NFFT version
-function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:black,  verb = false, vonmises=false)
+function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan[1]);
     if length(cvis)>0
@@ -707,11 +758,11 @@ function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstrac
         if (weights[1]>0)&&(data.nv2>0)
             printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
         else
-            printstyled("V2: (N/A) ", color=:black) # disabled
+            printstyled("V2: (N/A) ", color=:normal) # disabled
         end
         printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue);
         printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green);
-        printstyled(@sprintf("Flux: %.4f ", flux), color=:black);
+        printstyled(@sprintf("Flux: %.4f ", flux), color=:normal);
     end
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
@@ -728,48 +779,72 @@ function _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
     diffphi_model = nothing; diffphi = nothing; diffphi_err = nothing
     cvis_ref_all = nothing
     # Differential observables (ASPRO2 convention)
+    # These require the same baselines across all channels; we match by (sta1, sta2, mjd).
     if use_diffphases || use_diffvisamp
-        cvis_all = hcat(cvis...)
+        # Build per-channel key→index maps: (sta1, sta2, round(mjd,6)) → position
+        vis_keys = Vector{Vector{Tuple{Int,Int,Float64}}}(undef, nwavs)
+        for i in 1:nwavs
+            d = data[i]; nv = length(d.indx_vis)
+            vis_keys[i] = [(d.vis_sta_index[1,j], d.vis_sta_index[2,j],
+                            round(d.vis_mjd[j], digits=6)) for j in 1:nv]
+        end
+        # Common keys present in every channel (preserving order from channel 1)
+        common_set = reduce(intersect, Set.(vis_keys))
+        # Per-channel index masks for common baselines (ordered as in each channel)
+        cidx = Vector{Vector{Int}}(undef, nwavs)
+        for i in 1:nwavs
+            cidx[i] = [j for (j, k) in enumerate(vis_keys[i]) if k in common_set]
+        end
+        ncommon = length(cidx[1])
+
+        cvis_all = Matrix{ComplexF64}(undef, ncommon, nwavs)
+        for i in 1:nwavs
+            cvis_all[:, i] = cvis[i][cidx[i]]
+        end
         cvis_sum = vec(sum(cvis_all, dims=2))
         if use_diffphases
-            diffphi_model = zeros(size(cvis_all))
-            cvis_ref_all  = zeros(ComplexF64, size(cvis_all))
+            diffphi_model = zeros(ncommon, nwavs)
+            cvis_ref_all  = zeros(ComplexF64, ncommon, nwavs)
             for i=1:nwavs
                 cvis_ref_all[:,i] = (cvis_sum .- cvis_all[:,i]) ./ (nwavs - 1)
                 diffphi_model[:,i] = angle.(cvis_all[:,i] ./ cvis_ref_all[:,i]) .* (180.0/pi)
             end
-            diffphi     = hcat([data[i].visphi for i=1:nwavs]...)
-            diffphi_err = hcat([data[i].visphi_err for i=1:nwavs]...)
+            diffphi     = hcat([data[i].visphi[cidx[i]] for i=1:nwavs]...)
+            diffphi_err = hcat([data[i].visphi_err[cidx[i]] for i=1:nwavs]...)
             chi2_dp = norm(mod360(diffphi_model-diffphi)./diffphi_err)^2
-            chi2 += chi2_dp;  ndof += sum(data[i].nvisphi for i in 1:nwavs)
+            chi2 += chi2_dp;  ndof += length(diffphi_model)
             verb && printstyled(@sprintf("DiffPhi: %.2f ", chi2_dp/length(diffphi_model)), color=:magenta)
         end
         if use_diffvisamp
-            diffvisamp_model = zeros(size(cvis_all))
+            diffvisamp_model = zeros(ncommon, nwavs)
             for i=1:nwavs
                 cvis_ref = (cvis_sum .- cvis_all[:,i]) ./ (nwavs - 1)
                 diffvisamp_model[:,i] = abs.(cvis_all[:,i] ./ cvis_ref)
             end
             mean_dva = vec(mean(diffvisamp_model, dims=2))
             diffvisamp_model ./= mean_dva
-            diffvisamp     = hcat([data[i].visamp for i=1:nwavs]...)
-            diffvisamp_err = hcat([data[i].visamp_err for i=1:nwavs]...)
+            diffvisamp     = hcat([data[i].visamp[cidx[i]] for i=1:nwavs]...)
+            diffvisamp_err = hcat([data[i].visamp_err[cidx[i]] for i=1:nwavs]...)
             chi2_dva = norm((diffvisamp_model - diffvisamp)./diffvisamp_err)^2
-            chi2 += chi2_dva;  ndof += sum(data[i].nvisamp for i in 1:nwavs)
+            chi2 += chi2_dva;  ndof += length(diffvisamp_model)
             verb && printstyled(@sprintf("DiffVA: %.2f ", chi2_dva/length(diffvisamp_model)), color=:magenta)
         end
     end
-    # Absolute VISAMP
+    # Absolute VISAMP — channels may have different sizes, accumulate per-channel
     if use_abs_visamp && !use_diffvisamp
-        abs_va_model = hcat([abs.(cvis[i]) for i=1:nwavs]...)
-        abs_va       = hcat([data[i].visamp for i=1:nwavs]...)
-        abs_va_err   = hcat([data[i].visamp_err for i=1:nwavs]...)
-        chi2_ava = norm((abs_va_model - abs_va)./abs_va_err)^2
-        chi2 += chi2_ava;  ndof += sum(data[i].nvisamp for i in 1:nwavs)
-        verb && printstyled(@sprintf("VA: %.2f ", chi2_ava/length(abs_va_model)), color=:magenta)
+        chi2_ava = 0.0; ndof_ava = 0
+        for i in 1:nwavs
+            va_model = abs.(cvis[i])
+            va_data  = data[i].visamp
+            va_err   = data[i].visamp_err
+            chi2_ava += norm((va_model - va_data) ./ va_err)^2
+            ndof_ava += data[i].nvisamp
+        end
+        chi2 += chi2_ava;  ndof += ndof_ava
+        verb && printstyled(@sprintf("VA: %.2f ", chi2_ava/ndof_ava), color=:magenta)
     end
     # OI_FLUX
-    C_flux = NaN; flux_residual = Float64[]; flux_chan_idx = Int[]
+    C_flux = 1.0; flux_residual = Float64[]; flux_chan_idx = Int[]
     use_flux = any(data[i].nflux > 0 for i in 1:nwavs)
     if use_flux
         fm = Float64[]; fd = Float64[]; fe = Float64[]
@@ -779,12 +854,25 @@ function _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
             append!(fm, fill(fi, d.nflux)); append!(fd, d.flux)
             append!(fe, d.flux_err);        append!(flux_chan_idx, fill(i, d.nflux))
         end
-        w = 1.0 ./ fe.^2
-        C_flux = sum(fm .* fd .* w) / sum(fm.^2 .* w)
-        flux_residual = (C_flux .* fm .- fd) ./ fe.^2
-        chi2_fl = sum(((C_flux .* fm .- fd) ./ fe).^2)
+        calibrated = data[1].flux_calibrated
+        if calibrated
+            flux_residual = (fm .- fd) ./ fe.^2
+            chi2_fl = sum(((fm .- fd) ./ fe).^2)
+            C_flux = 1.0
+        else
+            w = 1.0 ./ fe.^2
+            C_flux = sum(fm .* fd .* w) / sum(fm.^2 .* w)
+            flux_residual = (C_flux .* fm .- fd) ./ fe.^2
+            chi2_fl = sum(((C_flux .* fm .- fd) ./ fe).^2)
+        end
         chi2 += chi2_fl;  ndof += length(fd)
-        verb && printstyled(@sprintf("OI_FLUX: %.2f (C=%.4f) ", chi2_fl/length(fd), C_flux), color=:yellow)
+        if verb
+            if calibrated
+                printstyled(@sprintf("OI_FLUX: %.2f ", chi2_fl/length(fd)), color=:yellow)
+            else
+                printstyled(@sprintf("OI_FLUX: %.2f (C=%.4f) ", chi2_fl/length(fd), C_flux), color=:yellow)
+            end
+        end
     end
     return (; chi2, ndof, diffphi_model, diffphi, diffphi_err, cvis_ref_all,
               C_flux, flux_residual, flux_chan_idx, use_flux)
@@ -797,7 +885,7 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
-        printcolor=[ :black for i=1:nwavs]
+        printcolor=[ :normal for i=1:nwavs]
     end
 
     # Determine VIS observable types from data metadata
@@ -815,7 +903,8 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
         end
     end
     f = zeros(nwavs)
-    for i=1:nwavs # weighted sum -- should probably do the computation in parallel
+    ndof = 0
+    for i=1:nwavs
         if verb == true
             printstyled("Channel $i ",color=printcolor[i]);
         end
@@ -825,23 +914,34 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
         else
             f[i] = chi2_f(x[:,:,i], ft[i], data[i], verb = verb, weights = weights);
         end
-        fr = f[i]/(weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi)
+        ndof_i = (weights[1]>0 ? data[i].nv2 : 0) + (weights[2]>0 ? data[i].nt3amp : 0) + (weights[3]>0 ? data[i].nt3phi : 0)
+
+        # Per-channel absolute VISAMP
+        if use_abs_visamp && !use_diffvisamp && !isempty(cvis[i])
+            va_model = abs.(cvis[i])
+            chi2_va = norm((va_model - data[i].visamp) ./ data[i].visamp_err)^2
+            f[i] += chi2_va;  ndof_i += data[i].nvisamp
+            verb && printstyled(@sprintf("VA: %.2f ", chi2_va/data[i].nvisamp), color=:magenta)
+        end
+
+        # Per-channel OI_FLUX (raw, no global C yet — printed after global fit below)
+        ndof += ndof_i
         if verb == true
-            printstyled(@sprintf("Chi2r: %.2f Chi2: %.2f\n", fr, f[i]),color=printcolor[i]);
+            printstyled(@sprintf("Chi2r: %.2f Chi2: %.2f\n", f[i]/ndof_i, f[i]),color=printcolor[i]);
         end
     end
     chi2f = sum(f)
-    ndof = Int(sum([weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi for i=1:nwavs]));
-    if verb == true
-    printstyled(@sprintf("All V2+T3A+T3P -- Chi2: %.2f Chi2r: %.2f\n", chi2f, chi2f/ndof), color=:red);
-    end
 
-    # VIS + FLUX chi2 via shared helper
+    # Cross-channel differential observables + OI_FLUX
     vis_flux = _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=use_abs_visamp, verb=verb)
+        use_abs_visamp=false, verb=verb)
     chi2f += vis_flux.chi2
     ndof  += vis_flux.ndof
+
+    if verb == true
+        printstyled(@sprintf("FULLCHI2: %.2f  Chi2r: %.2f  (ndof: %d)\n", chi2f, chi2f/ndof, ndof), color=:red)
+    end
 
     return chi2f/ndof;
 end
@@ -853,7 +953,7 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
-        printcolor=[ :black for i=1:nwavs]
+        printcolor=[ :normal for i=1:nwavs]
     end
 
     # Determine VIS observable types from data metadata
@@ -870,6 +970,7 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
         end
     end
     f = zeros(nwavs)
+    ndof = 0
     for i=1:nwavs
         if verb == true
             printstyled("Channel $i ",color=printcolor[i]);
@@ -880,28 +981,38 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
         else
             f[i] = chi2_f(x[:,:,i], ft[i], data[i], verb = verb, weights = weights);
         end
-        fr = f[i]/(weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi)
+        ndof_i = (weights[1]>0 ? data[i].nv2 : 0) + (weights[2]>0 ? data[i].nt3amp : 0) + (weights[3]>0 ? data[i].nt3phi : 0)
+
+        # Per-channel absolute VISAMP
+        if use_abs_visamp && !use_diffvisamp && !isempty(cvis[i])
+            va_model = abs.(cvis[i])
+            chi2_va = norm((va_model - data[i].visamp) ./ data[i].visamp_err)^2
+            f[i] += chi2_va;  ndof_i += data[i].nvisamp
+            verb && printstyled(@sprintf("VA: %.2f ", chi2_va/data[i].nvisamp), color=:magenta)
+        end
+
+        ndof += ndof_i
         if verb == true
-            printstyled(@sprintf("Chi2r: %.2f Chi2: %.2f\n", fr, f[i]),color=printcolor[i]);
+            printstyled(@sprintf("Chi2r: %.2f Chi2: %.2f\n", f[i]/ndof_i, f[i]),color=printcolor[i]);
         end
     end
     chi2f = sum(f)
-    ndof = Int(sum([weights[1]*data[i].nv2+weights[2]*data[i].nt3amp+weights[3]*data[i].nt3phi for i=1:nwavs]));
-    if verb == true
-    printstyled(@sprintf("All V2+T3A+T3P -- Chi2: %.2f Chi2r: %.2f\n", chi2f, chi2f/ndof), color=:red);
-    end
 
-    # VIS + FLUX chi2 via shared helper
+    # Cross-channel differential observables + OI_FLUX
     vis_flux = _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=use_abs_visamp, verb=verb)
+        use_abs_visamp=false, verb=verb)
     chi2f += vis_flux.chi2
     ndof  += vis_flux.ndof
+
+    if verb == true
+        printstyled(@sprintf("FULLCHI2: %.2f  Chi2r: %.2f  (ndof: %d)\n", chi2f, chi2f/ndof, ndof), color=:red)
+    end
 
     return chi2f/ndof;
 end
 
-function crit_fg(x,g::AbstractMatrix{<:AbstractFloat}, ft, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
+function crit_fg(x,g::AbstractMatrix{<:AbstractFloat}, ft, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :normal, regularizers=[], verb = true)
     chi2 = chi2_fg(x, g, ft, data, cvis = cvis, verb = verb, weights = weights);
     reg = regularization(x, g, regularizers=regularizers, printcolor = printcolor, verb = verb);
     flux = sum(x)
@@ -909,7 +1020,7 @@ function crit_fg(x,g::AbstractMatrix{<:AbstractFloat}, ft, data::OIdata; weights
     return chi2 + reg;
 end
 
-function crit_f(x::AbstractMatrix{<:AbstractFloat}, fftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :black, regularizers=[], verb = true)
+function crit_f(x::AbstractMatrix{<:AbstractFloat}, fftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor = :normal, regularizers=[], verb = true)
     chi2 = chi2_f(x, fftplan, data, cvis = cvis, verb = verb, weights = weights );
     g = zeros(eltype(x), size(x));
     reg = regularization(x, g,  regularizers=regularizers, printcolor = printcolor, verb = verb);
@@ -923,7 +1034,7 @@ function crit_multitemporal_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
     end
     if printcolor == []
         printcolor=Array{Symbol}(undef,nepochs);
-        printcolor[:] .= :black
+        printcolor[:] .= :normal
     end
     npix = div(length(x),nepochs);
     f = 0.0;
@@ -969,18 +1080,35 @@ function _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint
     f = 0.0
 
     if use_diffphases || use_diffvisamp
-        cvis_all = hcat(cvis...)
+        # Match baselines across channels by (sta1, sta2, mjd) — same logic as chi2 helper
+        vis_keys = Vector{Vector{Tuple{Int,Int,Float64}}}(undef, nwavs)
+        for i in 1:nwavs
+            d = data[i]; nv = length(d.indx_vis)
+            vis_keys[i] = [(d.vis_sta_index[1,j], d.vis_sta_index[2,j],
+                            round(d.vis_mjd[j], digits=6)) for j in 1:nv]
+        end
+        common_set = reduce(intersect, Set.(vis_keys))
+        cidx = Vector{Vector{Int}}(undef, nwavs)
+        for i in 1:nwavs
+            cidx[i] = [j for (j, k) in enumerate(vis_keys[i]) if k in common_set]
+        end
+        ncommon = length(cidx[1])
+
+        cvis_all = Matrix{ComplexF64}(undef, ncommon, nwavs)
+        for i in 1:nwavs
+            cvis_all[:, i] = cvis[i][cidx[i]]
+        end
         cvis_sum = vec(sum(cvis_all, dims=2))
 
         if use_diffphases
-            diffphi_model = zeros(size(cvis_all))
-            cvis_ref_all  = zeros(ComplexF64, size(cvis_all))
+            diffphi_model = zeros(ncommon, nwavs)
+            cvis_ref_all  = zeros(ComplexF64, ncommon, nwavs)
             for i=1:nwavs
                 cvis_ref_all[:,i] = (cvis_sum .- cvis_all[:,i]) ./ (nwavs - 1)
                 diffphi_model[:,i] = angle.(cvis_all[:,i] ./ cvis_ref_all[:,i]) .* (180.0/pi)
             end
-            diffphi     = hcat([data[i].visphi for i=1:nwavs]...)
-            diffphi_err = hcat([data[i].visphi_err for i=1:nwavs]...)
+            diffphi     = hcat([data[i].visphi[cidx[i]] for i=1:nwavs]...)
+            diffphi_err = hcat([data[i].visphi_err[cidx[i]] for i=1:nwavs]...)
             chi2_diffphi = norm(mod360(diffphi_model-diffphi)./diffphi_err)^2
             f += chi2_diffphi
             verb && printstyled(@sprintf("DiffPhi: %.2f ", chi2_diffphi/length(diffphi_model)), color=:magenta)
@@ -991,8 +1119,10 @@ function _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint
             # Following the T3phi pattern: rhs = scalar_weight .* V ./ |V|²
             for i=1:nwavs
                 dT3 = -360.0/pi .* mod360(diffphi_model[:,i]-diffphi[:,i])./diffphi_err[:,i].^2
-                rhs_vis = dT3 .* cvis_all[:,i] ./ abs2.(cvis_all[:,i])
-                g_contrib = imag.(vis_adjoint_fn(rhs_vis, i))
+                # Scatter common-baseline rhs back to full-length vis vector for adjoint
+                rhs_full = zeros(ComplexF64, length(cvis[i]))
+                rhs_full[cidx[i]] = dT3 .* cvis_all[:,i] ./ abs2.(cvis_all[:,i])
+                g_contrib = imag.(vis_adjoint_fn(rhs_full, i))
                 g[:,:,i] .+= reshape(g_contrib, npix, npix)
             end
         end
@@ -1024,12 +1154,25 @@ function _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint
             append!(flux_model_vec, fill(fi, d.nflux)); append!(flux_data_vec, d.flux)
             append!(flux_err_vec, d.flux_err); append!(flux_chan_idx, fill(i, d.nflux))
         end
-        w = 1.0 ./ flux_err_vec.^2
-        C_flux = sum(flux_model_vec .* flux_data_vec .* w) / sum(flux_model_vec.^2 .* w)
-        residual_flux = (C_flux .* flux_model_vec .- flux_data_vec) ./ flux_err_vec.^2
-        chi2_flux = sum(((C_flux .* flux_model_vec .- flux_data_vec) ./ flux_err_vec).^2)
+        calibrated = data[1].flux_calibrated
+        if calibrated
+            C_flux = 1.0
+            residual_flux = (flux_model_vec .- flux_data_vec) ./ flux_err_vec.^2
+            chi2_flux = sum(((flux_model_vec .- flux_data_vec) ./ flux_err_vec).^2)
+        else
+            w = 1.0 ./ flux_err_vec.^2
+            C_flux = sum(flux_model_vec .* flux_data_vec .* w) / sum(flux_model_vec.^2 .* w)
+            residual_flux = (C_flux .* flux_model_vec .- flux_data_vec) ./ flux_err_vec.^2
+            chi2_flux = sum(((C_flux .* flux_model_vec .- flux_data_vec) ./ flux_err_vec).^2)
+        end
         f += chi2_flux
-        verb && printstyled(@sprintf("OI_FLUX: %.2f (C=%.4f) ", chi2_flux/length(flux_data_vec), C_flux), color=:yellow)
+        if verb
+            if calibrated
+                printstyled(@sprintf("OI_FLUX: %.2f ", chi2_flux/length(flux_data_vec)), color=:yellow)
+            else
+                printstyled(@sprintf("OI_FLUX: %.2f (C=%.4f) ", chi2_flux/length(flux_data_vec), C_flux), color=:yellow)
+            end
+        end
         for i in 1:nwavs
             idx = findall(flux_chan_idx .== i)
             isempty(idx) && continue
@@ -1042,39 +1185,54 @@ end
 # ===========================================================================
 # _polychromatic_transspectral_reg! — shared transspectral regularization
 # ===========================================================================
-function _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=false)
+function _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=false, data=nothing)
     if length(regularizers) > nwavs
         ntransreg = length(regularizers[nwavs+1])
         tg = zeros(npix, npix, nwavs)
         for i=1:ntransreg
-            if (regularizers[nwavs+1][i][1] == "transspectral_tv")
-                tf = trans_tv(x,tg)
-                f += regularizers[nwavs+1][i][2]*tf
-                g[:,:,:] += regularizers[nwavs+1][i][2]*tg
-                printstyled("Trans-spectral TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
-            end
-            if (regularizers[nwavs+1][i][1] == "transspectral_tvsq")
+            rname = regularizers[nwavs+1][i][1]
+            μ     = regularizers[nwavs+1][i][2]
+            if rname == "transspectral_tv"
+                tf = trans_tv(x, tg)
+                f += μ * tf;  g[:,:,:] += μ * tg
+                verb && printstyled(@sprintf(" ts_tv: %.3f", μ * tf), color=:yellow)
+            elseif rname == "transspectral_tvsq"
                 tf = trans_tvsq(x, tg)
-                f += regularizers[nwavs+1][i][2]*tf
-                g[:,:,:] += regularizers[nwavs+1][i][2]*tg
-                printstyled("Trans-spectral squared TV: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
-            end
-            if (regularizers[nwavs+1][i][1] == "transspectral_structnorm")
-                tf = trans_structnorm(x,tg)
-                f += regularizers[nwavs+1][i][2]*tf
-                g[:,:,:] += regularizers[nwavs+1][i][2]*tg
-                printstyled("Trans-spectral Structured Norm: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
-            end
-            if (regularizers[nwavs+1][i][1] == "transspectral_l1l2")
-                tf = trans_l1l2(x, tg, δ=regularizers[nwavs+1][i][3])
-                f += regularizers[nwavs+1][i][2]*tf
-                g[:,:,:] += regularizers[nwavs+1][i][2]*tg
-                printstyled("Trans-spectral l1l2 norm: $(regularizers[nwavs+1][i][2]*tf)\n", color=:yellow)
+                f += μ * tf;  g[:,:,:] += μ * tg
+                verb && printstyled(@sprintf(" ts_tvsq: %.3f", μ * tf), color=:yellow)
+            elseif rname == "transspectral_structnorm"
+                tf = trans_structnorm(x, tg)
+                f += μ * tf;  g[:,:,:] += μ * tg
+                verb && printstyled(@sprintf(" ts_struct: %.3f", μ * tf), color=:yellow)
+            elseif rname == "transspectral_l1l2"
+                δ = regularizers[nwavs+1][i][3]
+                tf = trans_l1l2(x, tg; δ=δ)
+                f += μ * tf;  g[:,:,:] += μ * tg
+                verb && printstyled(@sprintf(" ts_l1l2: %.3f", μ * tf), color=:yellow)
+            elseif rname == "transspectral_grouptv"
+                tf = trans_grouptv(x, tg)
+                f += μ * tf;  g[:,:,:] += μ * tg
+                verb && printstyled(@sprintf(" ts_gtv: %.3f", μ * tf), color=:yellow)
+            elseif rname == "transspectral_poly"
+                deg = length(regularizers[nwavs+1][i]) > 2 ? Int(regularizers[nwavs+1][i][3]) : 1
+                λ = _get_wavelengths(data, nwavs)
+                tf = trans_polychromatic_polyfit(x, tg; degree=deg, λ=λ)
+                f += μ * tf;  g[:,:,:] += μ * tg
+                verb && printstyled(@sprintf(" ts_poly(d=%d): %.3f", deg, μ * tf), color=:yellow)
             end
         end
-        printstyled(@sprintf("Post trans -- Crit: %.2f Crit/dof: %.2f\n", f, f/ndof), color=:blue)
+        verb && printstyled(@sprintf("\nPost trans -- Crit: %.2f Crit/dof: %.2f\n", f, f/ndof), color=:blue)
     end
     return f
+end
+
+# Extract wavelength vector from data for polynomial regularizer
+function _get_wavelengths(data, nwavs)
+    if !isnothing(data) && length(data) >= nwavs
+        return Float64[mean(data[i].uv_lam) for i in 1:nwavs]
+    else
+        return collect(range(0.0, 1.0, length=nwavs))
+    end
 end
 
 # ===========================================================================
@@ -1082,7 +1240,7 @@ end
 # ===========================================================================
 function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractVector{<:NFFTPlan}}, data::AbstractVector{<:OIdata};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
     nwavs = length(ft); npix = size(x,1)
-    printcolor == [] && (printcolor = [:black for i=1:nwavs])
+    printcolor == [] && (printcolor = [:normal for i=1:nwavs])
     regularizers == [] && (regularizers = fill([], nwavs))
 
     amptyp = !isempty(data) ? data[1].amptyp : ""
@@ -1111,7 +1269,7 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
         use_abs_visamp=use_abs_visamp, verb=verb)
 
-    f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb)
+    f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb, data=data)
     g[:] = g[:]/ndof
     return f/ndof
 end
@@ -1121,7 +1279,7 @@ end
 # ===========================================================================
 function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractMatrix{<:Complex}}, data::AbstractVector{<:OIdata};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
     nwavs = length(ft); npix = size(x,1)
-    printcolor == [] && (printcolor = [:black for i=1:nwavs])
+    printcolor == [] && (printcolor = [:normal for i=1:nwavs])
     regularizers == [] && (regularizers = fill([], nwavs))
 
     amptyp = !isempty(data) ? data[1].amptyp : ""
@@ -1151,7 +1309,7 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
         use_abs_visamp=use_abs_visamp, verb=verb)
 
-    f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb)
+    f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb, data=data)
     g[:] = g[:]/ndof
     return f/ndof
 end
@@ -1167,7 +1325,7 @@ function image_to_vis(x::AbstractArray{<:AbstractFloat,3}, ft::Union{AbstractVec
 end
 
 using OptimPackNextGen
-function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft; weights = [1.0,1.0,1.0], printcolor = :black, verb = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
+function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft; weights = [1.0,1.0,1.0], printcolor = :normal, verb = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     crit = (x,g)->crit_fg(x, g, ft, data, regularizers=regularizers, verb = verb , weights = weights)
     x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
     return x_sol
@@ -1257,7 +1415,7 @@ function chi2_sparco_f(x::AbstractMatrix{<:AbstractFloat}, params::AbstractVecto
         printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
         printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
         printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
-        printstyled(@sprintf("Flux: %.4f ", sum(x)), color=:black)
+        printstyled(@sprintf("Flux: %.4f ", sum(x)), color=:normal)
     end
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
@@ -1343,7 +1501,7 @@ function chi2_sparco_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:
         printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
         printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
         printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
-        printstyled(@sprintf("Flux: %.4f ", sum(x_img)), color=:black)
+        printstyled(@sprintf("Flux: %.4f ", sum(x_img)), color=:normal)
     end
 
     # Parameter gradients via quotient rule on composite visibility
@@ -1374,7 +1532,7 @@ end
 
 function crit_sparco_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:AbstractFloat},
         ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nparams::Int64;
-        weights=[1.0,1.0,1.0], printcolor=:black, regularizers=[], verb=true, vonmises=false)
+        weights=[1.0,1.0,1.0], printcolor=:normal, regularizers=[], verb=true, vonmises=false)
     chi2 = chi2_sparco_fg(x, g, ftplan, data, nparams, weights=weights, verb=verb, vonmises=vonmises)
     nx = Int(sqrt(length(x)-nparams))
     reg_g = zeros(eltype(x), nx, nx)
@@ -1387,7 +1545,7 @@ function crit_sparco_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:
 end
 
 function reconstruct_sparco_gray(x_start::AbstractMatrix{<:AbstractFloat}, params_start::AbstractVector{<:AbstractFloat},
-        data::OIdata, ft; printcolor=:black, verb=false, maxiter=100,
+        data::OIdata, ft; printcolor=:normal, verb=false, maxiter=100,
         regularizers=[], weights=[1.0,1.0,1.0], vonmises=false,
         ftol=(0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
     crit = (x,g)->crit_sparco_fg(x, g, ft, data, length(params_start),
@@ -1395,6 +1553,287 @@ function reconstruct_sparco_gray(x_start::AbstractMatrix{<:AbstractFloat}, param
     sol = OptimPackNextGen.vmlmb(crit, [params_start;vec(x_start)], verb=verb,
         lower=0, maxiter=maxiter, blmvm=false, xtol=xtol, ftol=ftol, gtol=gtol)
     nparams = length(params_start)
+    return (sol[1:nparams], reshape(sol[nparams+1:end], size(x_start)))
+end
+
+# ---------------------------------------------------------------------------
+# Multi-source SPARCO reconstruction
+# ---------------------------------------------------------------------------
+# Generalizes SPARCO to N chromatic point sources + grey environment image.
+#
+#        Σ_k f_k·α_k·V_k  +  f_env·β·V_env
+# V_tot = -------------------------------------------
+#        Σ_k f_k·α_k  +  f_bg·α_bg  +  f_env·β
+#
+# where α_k  = (λ/λ₀)^(-dindex_k)     (per-source chromatic scaling)
+#       α_bg = (λ/λ₀)^(-4)             (Rayleigh–Jeans background)
+#       β    = (λ/λ₀)^(d_env - 4)      (environment power law)
+#       f_env= 1 - Σ_k f_k - f_bg
+#
+# Per-source parameters (5 each):
+#   flux_k, dindex_k, ra_k (mas), dec_k (mas), diam_k (mas)
+#
+# Global parameters (3):
+#   f_bg, d_env, λ₀  (last is fixed)
+#
+# Total nparams = 5*nsources + 3
+# ---------------------------------------------------------------------------
+
+const _MAS2RAD_SPARCO = π / (180.0 * 3600.0 * 1000.0)
+
+function _sparco_multi_model(params, nsources, x_img, ftplan, data)
+    nparams = 5*nsources + 3
+    λ0 = params[nparams]        # reference wavelength (fixed)
+    f_bg  = params[nparams-2]
+    d_env = params[nparams-1]
+    λ  = data.uv_lam
+    λr = λ ./ λ0
+
+    # Background and environment chromatic scaling
+    α_bg = λr.^(-4.0)
+    β    = λr.^(d_env - 4.0)
+
+    # Accumulate source contributions
+    nuv = length(λ)
+    sum_fα   = f_bg .* α_bg                      # denominator accumulator
+    sum_fαV  = zeros(ComplexF64, nuv)             # numerator accumulator
+
+    Vsources = Vector{Vector{ComplexF64}}(undef, nsources)
+    αsources = Vector{Vector{Float64}}(undef, nsources)
+    fluxsources = Vector{Vector{Float64}}(undef, nsources)
+
+    u = data.uv[1,:]
+    v = data.uv[2,:]
+    for k in 1:nsources
+        off = 5*(k-1)
+        fk     = params[off+1]
+        dindex = params[off+2]
+        ra     = params[off+3]   # mas
+        dec    = params[off+4]   # mas
+        diam   = params[off+5]   # mas
+
+        αk = λr.^(-dindex)
+        Vud = visibility_ud([diam], data.uv)
+        phase = @. -2π * _MAS2RAD_SPARCO * (u * ra + v * dec)
+        Vk = Vud .* cis.(phase)
+
+        αsources[k] = αk
+        Vsources[k] = Vk
+        fαk = fk .* αk
+        fluxsources[k] = fαk
+        sum_fα  .+= fαk
+        sum_fαV .+= fαk .* Vk
+    end
+
+    # Environment contribution
+    f_env_scalar = 1.0 - sum(params[5*(j-1)+1] for j in 1:nsources) - f_bg
+    fluxenv = f_env_scalar .* β
+    Venv = image_to_vis(x_img, ftplan[1])
+    sum_fαV .+= fluxenv .* Venv
+    sum_fα  .+= fluxenv
+
+    cvis_model = sum_fαV ./ sum_fα
+    imratio = fluxenv ./ sum_fα
+
+    return (; cvis_model, Venv, Vsources, αsources, fluxsources, α_bg, β,
+              fluxenv, f_env_scalar, sum_fαV, sum_fα, imratio, λr, u, v)
+end
+
+function chi2_sparco_multi_f(x::AbstractMatrix{<:AbstractFloat}, params::AbstractVector{<:AbstractFloat},
+        nsources::Int, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata;
+        verb=true, weights=[1.0,1.0,1.0], vonmises=false)
+    m = _sparco_multi_model(params, nsources, x, ftplan, data)
+    v2_model = vis_to_v2(m.cvis_model, data.indx_v2)
+    t3_model, t3amp_model, t3phi_model = vis_to_t3(m.cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
+    if (weights[1]>0) && (data.nv2>0)
+        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2
+    end
+    if (weights[2]>0) && (data.nt3amp>0)
+        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2
+    end
+    if (weights[3]>0) && (data.nt3phi>0)
+        if !vonmises
+            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2
+        else
+            chi2_t3phi = sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) .+ data.t3phi_vonmises_chi2_offset)
+        end
+    end
+    if verb
+        printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
+        printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
+        printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
+        printstyled(@sprintf("Flux: %.4f ", sum(x)), color=:normal)
+    end
+    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
+end
+
+function optimize_sparco_multi_parameters(params_start, nsources::Int,
+        x::AbstractMatrix{<:AbstractFloat}, ft, data;
+        weights=[1.0,1.0,1.0], lb=nothing, ub=nothing)
+    # Default bounds: per source [flux 0-1, dindex -20..20, ra -500..500, dec -500..500, diam 0..50]
+    #                 global [f_bg 0..1, d_env -20..20]   (λ₀ is fixed)
+    nfree = 5*nsources + 2  # exclude λ₀
+    if lb === nothing
+        lb = Float64[]
+        for _ in 1:nsources
+            append!(lb, [0.0, -20.0, -500.0, -500.0, 0.0])
+        end
+        append!(lb, [0.0, -20.0])
+    end
+    if ub === nothing
+        ub = Float64[]
+        for _ in 1:nsources
+            append!(ub, [1.0, 20.0, 500.0, 500.0, 50.0])
+        end
+        append!(ub, [1.0, 20.0])
+    end
+    λ0 = params_start[end]
+    f_params = (p, _)->chi2_sparco_multi_f(x, [p; λ0], nsources, ft, data; verb=false, weights=weights)
+    optimizer = Opt(:LN_NELDERMEAD, nfree)
+    min_objective!(optimizer, f_params)
+    lower_bounds!(optimizer, lb)
+    upper_bounds!(optimizer, ub)
+    minchi2, params_opt, ret = optimize(optimizer, params_start[1:nfree])
+    return minchi2, [params_opt; λ0], ret
+end
+
+function chi2_sparco_multi_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:AbstractFloat},
+        ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nsources::Int, nparams::Int;
+        verb=true, weights=[1.0,1.0,1.0], vonmises=false)
+    params = x[1:nparams]
+    nx = Int(sqrt(length(x)-nparams))
+    x_img = reshape(x[nparams+1:end], nx, nx)
+
+    m = _sparco_multi_model(params, nsources, x_img, ftplan, data)
+    v2_model = vis_to_v2(m.cvis_model, data.indx_v2)
+    t3_model, t3amp_model, t3phi_model = vis_to_t3(m.cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+
+    # Chi2 + image gradient (same structure as single-source SPARCO)
+    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
+    g_v2 = 0.0; g_t3amp = 0.0; g_t3phi = 0.0
+    if (weights[1]>0) && (data.nv2>0)
+        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2
+        g_v2 = real(adjoint(ftplan[3])*(4*((v2_model-data.v2)./data.v2_err.^2).*m.cvis_model[data.indx_v2].*m.imratio[data.indx_v2]))
+    end
+    if (weights[2]>0) && (data.nt3amp>0)
+        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2
+        dT3 = 2.0*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
+        g_t3amp = real(adjoint(ftplan[4])*(dT3.*m.cvis_model[data.indx_t3_1].*m.imratio[data.indx_t3_1]./abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_2]).*abs.(m.cvis_model[data.indx_t3_3]))) +
+                  real(adjoint(ftplan[5])*(dT3.*m.cvis_model[data.indx_t3_2].*m.imratio[data.indx_t3_2]./abs.(m.cvis_model[data.indx_t3_2]).*abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_3]))) +
+                  real(adjoint(ftplan[6])*(dT3.*m.cvis_model[data.indx_t3_3].*m.imratio[data.indx_t3_3]./abs.(m.cvis_model[data.indx_t3_3]).*abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_2])))
+    end
+    if (weights[3]>0) && (data.nt3phi>0)
+        if !vonmises
+            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2
+            dT3 = -360.0/pi*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
+        else
+            chi2_t3phi = sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) .+ data.t3phi_vonmises_chi2_offset)
+            dT3 = -2.0*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi)/180*pi)
+        end
+        g_t3phi = imag(adjoint(ftplan[4])*(dT3./abs2.(m.cvis_model[data.indx_t3_1]).*m.cvis_model[data.indx_t3_1].*m.imratio[data.indx_t3_1]) +
+                       adjoint(ftplan[5])*(dT3./abs2.(m.cvis_model[data.indx_t3_2]).*m.cvis_model[data.indx_t3_2].*m.imratio[data.indx_t3_2]) +
+                       adjoint(ftplan[6])*(dT3./abs2.(m.cvis_model[data.indx_t3_3]).*m.cvis_model[data.indx_t3_3].*m.imratio[data.indx_t3_3]))
+    end
+    if verb
+        printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
+        printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
+        printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
+        printstyled(@sprintf("Flux: %.4f ", sum(x_img)), color=:normal)
+    end
+
+    # Parameter gradients via quotient rule
+    pgkw = (; weights, vonmises)
+    logλr = log.(m.λr)
+
+    for k in 1:nsources
+        off = 5*(k-1)
+        fk     = params[off+1]
+        dindex = params[off+2]
+        ra     = params[off+3]
+        dec    = params[off+4]
+        diam   = params[off+5]
+        αk     = m.αsources[k]
+        Vk     = m.Vsources[k]
+        fαk    = m.fluxsources[k]
+
+        # ∂/∂fk: affects both source k and f_env (= 1 - Σf - fbg)
+        du_dfk = αk .* Vk .- m.β .* m.Venv         # d(numerator)/dfk
+        dv_dfk = αk .- m.β                           # d(denominator)/dfk
+        dcvis_dfk = (du_dfk .* m.sum_fα .- m.sum_fαV .* dv_dfk) ./ (m.sum_fα.^2)
+        g[off+1] = _sparco_param_grad(dcvis_dfk, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
+
+        # ∂/∂dindex_k
+        du_dind = -logλr .* fαk .* Vk
+        dv_dind = -logλr .* fαk
+        dcvis_dind = (du_dind .* m.sum_fα .- m.sum_fαV .* dv_dind) ./ (m.sum_fα.^2)
+        g[off+2] = _sparco_param_grad(dcvis_dind, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
+
+        # ∂/∂ra_k
+        dphase_dra = @. -2π * _MAS2RAD_SPARCO * m.u
+        dVk_dra = Vk .* (im .* dphase_dra)
+        dcvis_dra = (fαk .* dVk_dra) ./ m.sum_fα
+        g[off+3] = _sparco_param_grad(dcvis_dra, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
+
+        # ∂/∂dec_k
+        dphase_ddec = @. -2π * _MAS2RAD_SPARCO * m.v
+        dVk_ddec = Vk .* (im .* dphase_ddec)
+        dcvis_ddec = (fαk .* dVk_ddec) ./ m.sum_fα
+        g[off+4] = _sparco_param_grad(dcvis_ddec, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
+
+        # ∂/∂diam_k
+        dVud = dvisibility_ud([diam], data.uv)
+        phase = @. -2π * _MAS2RAD_SPARCO * (m.u * ra + m.v * dec)
+        dVk_dD = dVud .* cis.(phase)
+        dcvis_dD = (fαk .* dVk_dD) ./ m.sum_fα
+        g[off+5] = _sparco_param_grad(dcvis_dD, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
+    end
+
+    # ∂/∂f_bg
+    goff = 5*nsources
+    du_dfbg = .- m.β .* m.Venv                       # f_env decreases
+    dv_dfbg = m.α_bg .- m.β
+    dcvis_dfbg = (du_dfbg .* m.sum_fα .- m.sum_fαV .* dv_dfbg) ./ (m.sum_fα.^2)
+    g[goff+1] = _sparco_param_grad(dcvis_dfbg, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
+
+    # ∂/∂d_env
+    du_denv = logλr .* m.fluxenv .* m.Venv
+    dv_denv = logλr .* m.fluxenv
+    dcvis_denv = (du_denv .* m.sum_fα .- m.sum_fαV .* dv_denv) ./ (m.sum_fα.^2)
+    g[goff+2] = _sparco_param_grad(dcvis_denv, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
+
+    # λ₀ is fixed
+    g[goff+3] = 0.0
+
+    # Image pixel gradient
+    g[nparams+1:end] = vec(weights[1]*g_v2 .+ weights[2]*g_t3amp .+ weights[3]*g_t3phi)
+    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
+end
+
+function crit_sparco_multi_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:AbstractFloat},
+        ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nsources::Int, nparams::Int;
+        weights=[1.0,1.0,1.0], printcolor=:normal, regularizers=[], verb=true, vonmises=false)
+    chi2 = chi2_sparco_multi_fg(x, g, ftplan, data, nsources, nparams, weights=weights, verb=verb, vonmises=vonmises)
+    nx = Int(sqrt(length(x)-nparams))
+    reg_g = zeros(eltype(x), nx, nx)
+    reg_f = regularization(reshape(x[nparams+1:end], nx, nx), reg_g, regularizers=regularizers, printcolor=printcolor, verb=verb)
+    g[nparams+1:end] += vec(reg_g)
+    # Flux-normalization correction for image gradient
+    flux = sum(x[nparams+1:end])
+    g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux) / flux
+    return chi2 + reg_f
+end
+
+function reconstruct_sparco_multi(x_start::AbstractMatrix{<:AbstractFloat},
+        params_start::AbstractVector{<:AbstractFloat}, nsources::Int,
+        data::OIdata, ft; printcolor=:normal, verb=false, maxiter=100,
+        regularizers=[], weights=[1.0,1.0,1.0], vonmises=false,
+        ftol=(0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
+    nparams = length(params_start)
+    crit = (x,g)->crit_sparco_multi_fg(x, g, ft, data, nsources, nparams,
+        regularizers=regularizers, verb=verb, weights=weights, vonmises=vonmises)
+    sol = OptimPackNextGen.vmlmb(crit, [params_start;vec(x_start)], verb=verb,
+        lower=0, maxiter=maxiter, blmvm=false, xtol=xtol, ftol=ftol, gtol=gtol)
     return (sol[1:nparams], reshape(sol[nparams+1:end], size(x_start)))
 end
 

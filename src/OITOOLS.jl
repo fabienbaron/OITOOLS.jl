@@ -28,6 +28,7 @@ include("write_oifits_ha.jl")
 include("write_oifits_obs.jl")
 include("utils.jl")
 include("oichi2.jl")
+include("sparco_flat.jl")
 include("oiplot.jl")
 include("astrometry.jl")
 include("vonmises.jl")
@@ -74,8 +75,10 @@ export vis_to_v2, vis_to_t3, observables
 export chi2_f, chi2_fg, chi2_polychromatic_f
 export crit_f, crit_fg, crit_polychromatic_fg, crit_multitemporal_fg
 export reconstruct, reconstruct_multitemporal, reconstruct_polychromatic
-export reconstruct_sparco_gray
-export gaussian2d
+export reconstruct_sparco_gray, reconstruct_sparco_multi
+export chi2_sparco_multi_f, optimize_sparco_multi_parameters
+export reconstruct_sparco_flat, chi2_sparco_flat_f, optimize_sparco_flat_parameters
+export gaussian2d, recenter
 
 # ── Maximum entropy (BSMEM) ──────────────────────────────────────────────────
 export reconstruct_bsmem

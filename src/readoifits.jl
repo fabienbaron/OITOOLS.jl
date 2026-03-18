@@ -199,6 +199,7 @@ vectors of length `nobs`; UV coordinates are stored in a `2×nuv` matrix.
 - `vis_baseline`, `vis_lam`, `vis_dlam`, `vis_mjd`, `vis_flag`
 - `flux`, `flux_err`, `flux_lam`, `flux_dlam`, `flux_mjd`, `flux_flag`
 - `flux_sta_index` — station index for each flux point; `0` means calibrated (OI_FLUX CALSTAT=C)
+- `flux_calibrated` — `true` if OI_FLUX has CALSTAT="C" (calibrated source spectrum / SED)
 
 # UV plane
 - `uv` — `2×nuv` matrix of (u, v) spatial frequencies in cycles/m (i.e. baseline/λ)
@@ -248,6 +249,7 @@ mutable struct OIdata{T<:AbstractFloat}
     flux::Vector{T};               flux_err::Vector{T}
     flux_mjd::Vector{T};           flux_lam::Vector{T};  flux_dlam::Vector{T}
     flux_flag::Vector{Bool};       flux_sta_index::Vector{Int64}
+    flux_calibrated::Bool          # true if CALSTAT="C" (calibrated source spectrum)
     # UV coverage (columns = uv points, rows = [u; v])
     uv::Matrix{T};                 uv_lam::Vector{T};    uv_dlam::Vector{T}
     uv_mjd::Vector{T};             uv_baseline::Vector{T}
@@ -280,7 +282,7 @@ end
 function Base.display(data::OIdata{T}) where T
     println("Mean MJD: $(data.mean_mjd)  [eltype: $T]")
     println("Wavelength range: $(minimum(data.uv_lam)) - $(maximum(data.uv_lam))")
-    println("nflux: $(data.nflux) | nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | " *
+    println("nflux: $(data.nflux)$(data.nflux > 0 ? (data.flux_calibrated ? " (calibrated)" : " (uncalibrated)") : "") | nuv: $(data.nuv) | nvisamp: $(data.nvisamp) | " *
             "nvisphi: $(data.nvisphi) | nv2: $(data.nv2) | nt3amp: $(data.nt3amp) | nt3phi: $(data.nt3phi)")
 end
 
@@ -704,6 +706,7 @@ function read_flux_tables(fluxtables, targetid_filter,
     flux_all = T[]; flux_err_all = T[]; flux_mjd_all = T[]
     flux_lam_all = T[]; flux_dlam_all = T[]; flux_flag_all = Bool[]
     flux_sta_index_all = Int64[]
+    flux_calibrated = false   # will be set true if any table has CALSTAT="C"
     flux_corr_idx_parts = Vector{Int64}[]
     seen_flux_names = String[]; flux_corr_offsets = Dict{String,Int}()
 
@@ -724,6 +727,9 @@ function read_flux_tables(fluxtables, targetid_filter,
 
         # Station index: zero for calibrated spectra, converted index for uncalibrated
         calstat = uppercase(strip(db.calstat))
+        if calstat == "C"
+            flux_calibrated = true
+        end
         if calstat == "U"
             iarray = findfirst(==(db.arrname), arraytableref)
             if !isnothing(iarray)
@@ -752,7 +758,7 @@ function read_flux_tables(fluxtables, targetid_filter,
     flux_corr     = _assemble_corr(seen_flux_names, correlt, T)
     return (; flux=flux_all, flux_err=flux_err_all, flux_mjd=flux_mjd_all,
               flux_lam=flux_lam_all, flux_dlam=flux_dlam_all, flux_flag=flux_flag_all,
-              flux_sta_index=flux_sta_index_all, flux_corr, flux_corr_idx)
+              flux_sta_index=flux_sta_index_all, flux_calibrated, flux_corr, flux_corr_idx)
 end
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +1018,7 @@ mutable struct BinData{T<:AbstractFloat}
     flux::Vector{T};           flux_err::Vector{T}
     flux_mjd::Vector{T};       flux_lam::Vector{T};   flux_dlam::Vector{T}
     flux_flag::Vector{Bool};   flux_sta_index::Vector{Int64};  nflux::Int64
+    flux_calibrated::Bool      # true if CALSTAT="C"
     # UV plane (2×nuv: row 1 = u/λ, row 2 = v/λ)
     uv::Matrix{T};             uv_lam::Vector{T};     uv_dlam::Vector{T}
     uv_mjd::Vector{T};         uv_baseline::Vector{T}
@@ -1114,10 +1121,12 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         flux_dlam = raw_flux.flux_dlam[bin_flux]; flux_flag = raw_flux.flux_flag[bin_flux]
         flux_sta_index = raw_flux.flux_sta_index[bin_flux]
         nflux     = length(flux)
+        flux_calibrated = raw_flux.flux_calibrated
         flux_corr_idx = isempty(raw_flux.flux_corr_idx) ? Int64[] : raw_flux.flux_corr_idx[bin_flux]
     else
         flux = T[]; flux_err = T[]; flux_mjd = T[]; flux_lam = T[]
         flux_dlam = T[]; flux_flag = Bool[]; flux_sta_index = Int64[]; nflux = 0
+        flux_calibrated = false
         flux_corr_idx = Int64[]
     end
     flux_corr = raw_flux.flux_corr
@@ -1145,7 +1154,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         t3amp, t3amp_err, t3phi, t3phi_err,
         t3_mjd, t3_lam, t3_dlam, t3_flag, t3_baseline, t3_maxbaseline, t3_sta_index,
         indx_t3_1, indx_t3_2, indx_t3_3, nt3amp, nt3phi,
-        flux, flux_err, flux_mjd, flux_lam, flux_dlam, flux_flag, flux_sta_index, nflux,
+        flux, flux_err, flux_mjd, flux_lam, flux_dlam, flux_flag, flux_sta_index, nflux, flux_calibrated,
         uv, uv_lam, uv_dlam, uv_mjd, uv_baseline, nuv, mean_mjd,
         v2_corr,     v2_corr_idx,
         t3amp_corr,  t3amp_corr_idx,
@@ -1284,7 +1293,7 @@ function make_oidata(bd::BinData{T}, station_info, filename::String) where T
         bd.t3_baseline, bd.t3_maxbaseline,
         bd.t3_mjd, bd.t3_lam, bd.t3_dlam, bd.t3_flag,
         bd.flux, bd.flux_err, bd.flux_mjd, bd.flux_lam, bd.flux_dlam, bd.flux_flag,
-        bd.flux_sta_index,
+        bd.flux_sta_index, bd.flux_calibrated,
         bd.uv, bd.uv_lam, bd.uv_dlam, bd.uv_mjd, bd.uv_baseline,
         bd.nflux, bd.nvisamp, bd.nvisphi, bd.nv2, bd.nt3amp, bd.nt3phi, bd.nuv,
         bd.indx_vis, bd.indx_v2, bd.indx_t3_1, bd.indx_t3_2, bd.indx_t3_3,
@@ -1432,7 +1441,7 @@ function readoifits(oifitsfile;
     _ec = spzeros(T, 0, 0)   # empty corr matrix sentinel
     raw_flux = use_flux ? read_flux_tables(fluxtables, targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
                (; flux=T[], flux_err=T[], flux_mjd=T[], flux_lam=T[], flux_dlam=T[], flux_flag=Bool[], flux_sta_index=Int64[],
-                  flux_corr=_ec, flux_corr_idx=Int64[])
+                  flux_calibrated=false, flux_corr=_ec, flux_corr_idx=Int64[])
     raw_vis  = use_vis  ? read_vis_tables(vistables,  targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
                (; visamp=T[], visamp_err=T[], visphi=T[], visphi_err=T[], vis_mjd=T[], vis_lam=T[], vis_dlam=T[], vis_flag=Bool[],
                   vis_uv=Matrix{T}(undef,0,2), vis_baseline=T[], vis_sta_index=Matrix{Int64}(undef,2,0),

@@ -808,7 +808,7 @@ function eval_model_grad(model::FlatModel,
     J_im = J_ri[nB+1:end, :]
     J    = complex.(J_re, J_im)
 
-    V = eval_model(model, x, uv; n)
+    V = eval_model(model, x, uv; wl, mjd, n)
     return V, J
 end
 

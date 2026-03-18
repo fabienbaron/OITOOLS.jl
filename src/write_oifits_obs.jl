@@ -367,3 +367,71 @@ function copy_oi_t3(fileout,hduin,arrays)
   fits_write_col(fileout, 13, 1, 1,  convert(Array{Int16},arrays[13]));
   fits_write_col(fileout, 14, 1, 1, convert(Array{Bool,2},arrays[14]));
  end
+
+# Copy OI_FLUX binary table from an existing OIFITS file (OIFITSv2 §7.1, Table 9).
+#
+# arrays layout (same as write_oi_flux):
+#   [1] TARGET_ID, [2] MJD, [3] INT_TIME,
+#   [4] FLUXDATA, [5] FLUXERR, [6] STA_INDEX, [7] FLAG
+#
+# CALSTAT is read from hduin to decide whether STA_INDEX/ARRNAME are written.
+function copy_oi_flux(fileout, hduin, arrays)
+  header = FITSIO.read_header(hduin)
+  nw = size(arrays[4])[1]
+
+  calstat = haskey(header, "CALSTAT") ? uppercase(strip(header["CALSTAT"])) : "C"
+
+  if calstat == "U"
+    ttype = ["TARGET_ID", "MJD", "INT_TIME",
+             "FLUXDATA", "FLUXERR", "STA_INDEX", "FLAG"]
+    tform = ["1I", "1D", "1D",
+             "$(nw)D", "$(nw)D", "1I", "$(nw)L"]
+    tunit = ["\0", "day", "s",
+             "\0", "\0", "\0", "\0"]
+  else
+    ttype = ["TARGET_ID", "MJD", "INT_TIME",
+             "FLUXDATA", "FLUXERR", "FLAG"]
+    tform = ["1I", "1D", "1D",
+             "$(nw)D", "$(nw)D", "$(nw)L"]
+    tunit = ["\0", "day", "s",
+             "\0", "\0", "\0"]
+  end
+
+  ncols = length(ttype)
+  coldefs = [(ttype[i], tform[i], tunit[i]) for i in 1:ncols]
+
+  extname = header["EXTNAME"]
+  extver  = haskey(header, "EXTVER") ? header["EXTVER"] : 1
+  revision = header["OI_REVN"]
+  date_obs = header["DATE-OBS"]
+  insname  = header["INSNAME"]
+
+  fits_create_binary_tbl(fileout, 0, coldefs, extname)
+  fits_write_key(fileout, "EXTNAME", extname, "name of the binary extension")
+  fits_write_key(fileout, "EXTEND", extver, "Extension version")
+  fits_write_key(fileout, "OI_REVN", revision, "Revision number of the table definition")
+  fits_write_key(fileout, "DATE-OBS", date_obs, "UTC start date of observations")
+  fits_write_key(fileout, "INSNAME", insname, "Identifies corresponding OI_WAVELENGTH")
+  if calstat == "U" && haskey(header, "ARRNAME")
+    fits_write_key(fileout, "ARRNAME", header["ARRNAME"], "Identifies corresponding OI_ARRAY")
+  end
+  fits_write_key(fileout, "CALSTAT", calstat, "C: calibrated, U: uncalibrated")
+  if haskey(header, "FOV")
+    fits_write_key(fileout, "FOV", header["FOV"], "Area on sky over which flux is integrated")
+  end
+  if haskey(header, "FOVTYPE")
+    fits_write_key(fileout, "FOVTYPE", header["FOVTYPE"], "Model for FOV: FWHM or RADIUS")
+  end
+
+  fits_write_col(fileout, 1, 1, 1, convert(Array{Int16}, arrays[1]))
+  fits_write_col(fileout, 2, 1, 1, convert(Array{Float64}, arrays[2]))
+  fits_write_col(fileout, 3, 1, 1, convert(Array{Float64}, arrays[3]))
+  fits_write_col(fileout, 4, 1, 1, convert(Array{Float64}, arrays[4]))
+  fits_write_col(fileout, 5, 1, 1, convert(Array{Float64}, arrays[5]))
+  if calstat == "U"
+    fits_write_col(fileout, 6, 1, 1, convert(Array{Int16}, arrays[6]))
+    fits_write_col(fileout, 7, 1, 1, convert(Array{Bool,2}, arrays[7]))
+  else
+    fits_write_col(fileout, 6, 1, 1, convert(Array{Bool,2}, arrays[7]))
+  end
+end

@@ -350,3 +350,70 @@ function write_oi_t3(fileout,arrays)
   fits_write_col(fileout, 14, 1, 1, convert(Array{Bool,2},arrays[14]));
 
 end
+
+# Write OI_FLUX binary table (OIFITSv2 §7.1, Table 9).
+#
+# arrays layout:
+#   [1] TARGET_ID  (Int16 vector, nobs)
+#   [2] MJD        (Float64 vector, nobs)
+#   [3] INT_TIME   (Float64 vector, nobs)
+#   [4] FLUXDATA   (Float64 matrix, nwave × nobs)
+#   [5] FLUXERR    (Float64 matrix, nwave × nobs)
+#   [6] STA_INDEX  (Int16 vector, nobs)   — ignored when calstat="C"
+#   [7] FLAG       (Bool matrix, nwave × nobs)
+#
+# When calstat="U", ARRNAME and STA_INDEX are written.
+# When calstat="C", they are omitted (calibrated source spectrum).
+function write_oi_flux(fileout, arrays;
+                       calstat::String="C",
+                       arrname::String="",
+                       insname::String="H_PRISM",
+                       date_obs::String=string(Dates.today()))
+  nw = size(arrays[4])[1]
+  calstat = uppercase(strip(calstat))
+
+  if calstat == "U"
+    ttype = ["TARGET_ID", "MJD", "INT_TIME",
+             "FLUXDATA", "FLUXERR", "STA_INDEX", "FLAG"]
+    tform = ["1I", "1D", "1D",
+             "$(nw)D", "$(nw)D", "1I", "$(nw)L"]
+    tunit = ["\0", "day", "s",
+             "\0", "\0", "\0", "\0"]
+  else
+    ttype = ["TARGET_ID", "MJD", "INT_TIME",
+             "FLUXDATA", "FLUXERR", "FLAG"]
+    tform = ["1I", "1D", "1D",
+             "$(nw)D", "$(nw)D", "$(nw)L"]
+    tunit = ["\0", "day", "s",
+             "\0", "\0", "\0"]
+  end
+
+  ncols = length(ttype)
+  coldefs = [(ttype[i], tform[i], tunit[i]) for i in 1:ncols]
+  extname = "OI_FLUX"
+  revision = 1
+  extver = 1
+
+  fits_create_binary_tbl(fileout, 0, coldefs, extname)
+  fits_write_key(fileout, "EXTNAME", extname, "name of the binary extension")
+  fits_write_key(fileout, "OI_REVN", revision, "Revision number of the table definition")
+  fits_write_key(fileout, "DATE-OBS", date_obs, "UTC start date of observations")
+  fits_write_key(fileout, "INSNAME", insname, "Identifies corresponding OI_WAVELENGTH")
+  if calstat == "U" && !isempty(arrname)
+    fits_write_key(fileout, "ARRNAME", arrname, "Identifies corresponding OI_ARRAY")
+  end
+  fits_write_key(fileout, "CALSTAT", calstat, "C: calibrated, U: uncalibrated")
+  fits_write_key(fileout, "EXTEND", extver, "Extension version")
+
+  fits_write_col(fileout, 1, 1, 1, convert(Array{Int16}, arrays[1]))
+  fits_write_col(fileout, 2, 1, 1, convert(Array{Float64}, arrays[2]))
+  fits_write_col(fileout, 3, 1, 1, convert(Array{Float64}, arrays[3]))
+  fits_write_col(fileout, 4, 1, 1, convert(Array{Float64}, arrays[4]))
+  fits_write_col(fileout, 5, 1, 1, convert(Array{Float64}, arrays[5]))
+  if calstat == "U"
+    fits_write_col(fileout, 6, 1, 1, convert(Array{Int16}, arrays[6]))
+    fits_write_col(fileout, 7, 1, 1, convert(Array{Bool,2}, arrays[7]))
+  else
+    fits_write_col(fileout, 6, 1, 1, convert(Array{Bool,2}, arrays[7]))
+  end
+end
