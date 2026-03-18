@@ -94,7 +94,7 @@ export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
 export night_observability, compute_delays, in_delay, best_pop
-export obs_plan, chara_plan, empty_night, print_pop_results
+export obs_plan, chara_plan, print_pop_results
 export moon_radec, moon_illumination, angular_separation
 
 # ── Writing OIFITS ───────────────────────────────────────────────────────────

@@ -507,7 +507,12 @@ function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
     return data
 end
 
-# remove_redundant_uv! for OIdata (post-load, operates on the final struct)
+"""
+    remove_redundant_uv!(data; uvtol=2e2)
+
+Merge redundant UV points in-place using a KD-tree with tolerance `uvtol` (cycles/rad).
+Remaps all observable indices accordingly.
+"""
 function remove_redundant_uv!(data::OIdata{T}; uvtol = 2e2) where T
     iconv, tokeep    = rm_redundance_kdtree(data.uv, uvtol)
     data.uv          = data.uv[:, tokeep];  data.uv_lam  = data.uv_lam[tokeep]

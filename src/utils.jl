@@ -24,6 +24,13 @@ function cdg(x) #2D array
     return [sum(xvals'*x) sum(x*xvals)]/sum(x)
 end
 
+"""
+    recenter(x; mask=[], max=false)
+
+Recenter an image by circular shifting so the centroid (or peak if `max=true`)
+is at the image center. Works on 1D (vectorized square image) or 2D arrays.
+If `mask` is provided, the centroid is computed from the mask instead.
+"""
 function recenter(x::Union{Array{Float64,1},Array{Float64,2}}; mask=[], max=false)
     if ndims(x)==1 # assume square array
         n=Int(sqrt(length(x)))

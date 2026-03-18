@@ -141,7 +141,26 @@ All take baseline spatial frequency arguments and return complex visibilities.
 | `reconstruct_multitemporal(x0, data, ft)` | Multi-epoch reconstruction |
 | `reconstruct_polychromatic(x0, data, ft)` | Polychromatic reconstruction |
 | `reconstruct_sparco_gray(x0, data, ft)` | SPARCO grey image reconstruction |
+| `reconstruct_sparco_multi(x0, params, nsources, data, ft)` | Multi-source SPARCO reconstruction |
+| `reconstruct_sparco_flat(x0, params, model, data, ft)` | SPARCO reconstruction using flat model |
+| `chi2_sparco_multi_f(x, params, nsources, ft, data)` | Multi-source SPARCO chi-squared (forward only) |
+| `chi2_sparco_flat_f(x, params, model, ft, data)` | Flat-model SPARCO chi-squared (forward only) |
+| `optimize_sparco_multi_parameters(params, nsources, x, ft, data)` | Optimize multi-source SPARCO parameters (image fixed) |
+| `optimize_sparco_flat_parameters(params, model, x, ft, data)` | Optimize flat-model SPARCO parameters (image fixed) |
 | `gaussian2d(nx, ny, sigma)` | Generate a 2D Gaussian starting image |
+| `recenter(x; mask, max)` | Recenter an image by circular shift to centroid or peak |
+
+### SPARCO
+
+```@docs
+reconstruct_sparco_gray
+reconstruct_sparco_multi
+reconstruct_sparco_flat
+chi2_sparco_multi_f
+chi2_sparco_flat_f
+optimize_sparco_multi_parameters
+optimize_sparco_flat_parameters
+```
 
 ### Maximum entropy (BSMEM)
 
@@ -149,6 +168,12 @@ All take baseline spatial frequency arguments and return complex visibilities.
 reconstruct_bsmem
 auto_pixsize
 gaussian_prior
+```
+
+### Utilities
+
+```@docs
+recenter
 ```
 
 ## Simulation
@@ -168,6 +193,7 @@ gaussian_prior
 | `opd_limits(facility, target, ha)` | Delay-line OPD limits |
 | `query_target_from_simbad(name)` | Query SIMBAD for target information |
 | `ra_dec_from_simbad(name)` | Get RA/Dec from SIMBAD |
+| `magnitudes_from_simbad(name)` | Query SIMBAD for photometric magnitudes (V, J, H, K, L, M, N) |
 
 | Type | Description |
 |------|-------------|
@@ -175,6 +201,21 @@ gaussian_prior
 | `TargetConfig` | Target configuration (coordinates, proper motion) |
 | `CombinerConfig` | Beam combiner configuration (throughput, noise, calibration) |
 | `WaveConfig` | Wavelength/spectral configuration |
+
+## Observation Planning
+
+```@docs
+night_observability
+best_pop
+print_pop_results
+obs_plan
+chara_plan
+compute_delays
+in_delay
+moon_illumination
+moon_radec
+angular_separation
+```
 
 ## Writing OIFITS
 

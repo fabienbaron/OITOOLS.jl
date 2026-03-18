@@ -1544,6 +1544,13 @@ function crit_sparco_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:
     return chi2 + reg_f
 end
 
+"""
+    reconstruct_sparco_gray(x_start, params_start, data, ft; kwargs...)
+
+SPARCO grey image reconstruction with a single chromatic point source.
+Jointly optimizes `[params; image_pixels]` via VMLMB.
+Returns `(params_final, x_final)`.
+"""
 function reconstruct_sparco_gray(x_start::AbstractMatrix{<:AbstractFloat}, params_start::AbstractVector{<:AbstractFloat},
         data::OIdata, ft; printcolor=:normal, verb=false, maxiter=100,
         regularizers=[], weights=[1.0,1.0,1.0], vonmises=false,
@@ -1639,6 +1646,12 @@ function _sparco_multi_model(params, nsources, x_img, ftplan, data)
               fluxenv, f_env_scalar, sum_fαV, sum_fα, imratio, λr, u, v)
 end
 
+"""
+    chi2_sparco_multi_f(x, params, nsources, ftplan, data; kwargs...)
+
+Compute chi-squared for the multi-source SPARCO model (forward only, no gradient).
+`params` layout: 5 per source `[flux, dindex, ra, dec, diam]` + 3 global `[f_bg, d_env, λ₀]`.
+"""
 function chi2_sparco_multi_f(x::AbstractMatrix{<:AbstractFloat}, params::AbstractVector{<:AbstractFloat},
         nsources::Int, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata;
         verb=true, weights=[1.0,1.0,1.0], vonmises=false)
@@ -1668,6 +1681,12 @@ function chi2_sparco_multi_f(x::AbstractMatrix{<:AbstractFloat}, params::Abstrac
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
+"""
+    optimize_sparco_multi_parameters(params_start, nsources, x, ft, data; kwargs...)
+
+Optimize multi-source SPARCO parameters with the image held fixed.
+Uses NelderMead (gradient-free). Returns `(minchi2, params_opt, ret)`.
+"""
 function optimize_sparco_multi_parameters(params_start, nsources::Int,
         x::AbstractMatrix{<:AbstractFloat}, ft, data;
         weights=[1.0,1.0,1.0], lb=nothing, ub=nothing)
@@ -1824,6 +1843,13 @@ function crit_sparco_multi_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVec
     return chi2 + reg_f
 end
 
+"""
+    reconstruct_sparco_multi(x_start, params_start, nsources, data, ft; kwargs...)
+
+Multi-source SPARCO image reconstruction with N chromatic point sources.
+Jointly optimizes `[params; image_pixels]` via VMLMB.
+Returns `(params_final, x_final)`.
+"""
 function reconstruct_sparco_multi(x_start::AbstractMatrix{<:AbstractFloat},
         params_start::AbstractVector{<:AbstractFloat}, nsources::Int,
         data::OIdata, ft; printcolor=:normal, verb=false, maxiter=100,
