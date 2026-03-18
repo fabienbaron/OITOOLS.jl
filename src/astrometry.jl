@@ -1,12 +1,10 @@
 using AstroTime
 
 function hours_to_date(obsdate, hours)
-    h= floor.(hours)
-    min = div.((hours-h)*3600.0, 60.0)
-    sec = rem.((hours-h)*3600.0, 60.0)
-    isec =  floor.(sec)
-    msec = round.((sec-floor.(sec))*1000)
-    return Dates.DateTime.(Dates.year(obsdate),Dates.month(obsdate),Dates.day(obsdate),h,min,isec,msec)
+    # Handle scalar or vector; roll over days for hours outside [0,24)
+    base = DateTime(Dates.year(obsdate), Dates.month(obsdate), Dates.day(obsdate))
+    ms = round.(Int64, hours .* 3_600_000.0)
+    return base .+ Dates.Millisecond.(ms)
 end
 
 
@@ -222,44 +220,105 @@ end
 
 
 # Aspro-type plot
-function gantt_onenight(targetname,obsdate, lst, lst_midnight, az, alt, good_alt, good_delay)
-# Gantt plot
-fig = figure(figsize=(20,10))
-ax = fig.add_subplot(111)
-ax.xaxis.set_major_locator(matplotlib.dates.HourLocator(interval=1))
-ax.xaxis.set_minor_locator(matplotlib.dates.MinuteLocator(interval=15))
-ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%H:%M"))
-offset = 4# 0 if we want to see delay during the day, 4 to keep mostly dark times
-xlim(hours_to_date(obsdate, lst_midnight[1]-12+offset), hours_to_date(obsdate+Dates.Day(1), lst_midnight[1]-12-offset) ); xlabel("LST")
-ylim(0, 10);
-df = DateFormat("h:m");
-title(string("Observing night: ", Date(obsdate), " - ", Date(obsdate+Dates.Day(1)), " -- Target: ", targetname))
-fig.autofmt_xdate(bottom=0.2,rotation=30,ha="right"); ax.xaxis_date(); grid()
-plt.axvline(x=hours_to_date(obsdate, lst_midnight[1]), color=:red) # nextday transition # add label?
-start_date = hours_to_date(obsdate,lst[1]+1.5)
-end_date   = hours_to_date(obsdate, lst[end]-1.5 )
-ax.barh(5, end_date - start_date, left=start_date, height=10, align="center", color=:lightgray, alpha = 0.75)
-start_date = hours_to_date(obsdate,lst[1]+2)
-end_date   = hours_to_date(obsdate, lst[end]-2 )
-ax.barh(5, end_date - start_date, left=start_date, height=10, align="center", color=:lightgray, alpha = 0.75)
-start_date = hours_to_date(obsdate,lst[1]+3)
-end_date   = hours_to_date(obsdate, lst[end]-3 )
-ax.barh(5, end_date - start_date, left=start_date, height=10, align="center", color=:gray, alpha = 0.75)
-start_date = hours_to_date(obsdate,lst[good_alt[1]])
-end_date   = hours_to_date(obsdate, lst[good_alt[end]])
-ax.barh(5, end_date - start_date, left=start_date, height=1.5, align="center", color=:orange, label="Altitude",zorder=3)
-start_date = hours_to_date(obsdate,lst[good_delay[1]])
-end_date   = hours_to_date(obsdate, lst[good_delay[end]])
-ax.barh(2, end_date - start_date, left=start_date, height=2, align="center", color=:blue, label="In Delay", zorder=3)
-text(start_date, 2, Dates.format(start_date, dateformat"H:M") , rotation=90,va="center", ha="right", color=:black)
-text(end_date, 2, Dates.format(end_date, dateformat"H:M"), rotation=90,va="center",ha="left",color=:black)
-text(start_date, 3.3, round(Int64,az[good_delay[1]]),va="top", ha="center", color=:black) # add label to show it's az ?
-text(start_date, 0.7, round(Int64,alt[good_delay[1]]),va="bottom",ha="center",color=:black)
-text(end_date, 3.3, round(Int64,az[good_delay[end]]),va="top", ha="right", color=:black)
-text(end_date, 0.7, round(Int64,alt[good_delay[end]]),va="bottom",ha="right",color=:black)
-yticks([2],[targetname])
-legend()
-tight_layout()
+function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, good_alt, good_delay;
+                        good_twilight::Vector{Int}=Int[],
+                        figsize=(10,5), savefile::AbstractString="", show_alt::Bool=true)
+    # Unwrap LST so it is monotonically increasing (handles 24→0 crossing)
+    lst = Float64.(lst_in)
+    for i in 2:length(lst)
+        while lst[i] < lst[i-1]
+            lst[i] += 24.0
+        end
+    end
+    # Unwrap lst_midnight to be consistent with the LST range
+    lst_mid = Float64(isa(lst_midnight_in, AbstractArray) ? lst_midnight_in[1] : lst_midnight_in)
+    if !isempty(lst) && lst_mid < lst[1]
+        lst_mid += 24.0
+    end
+
+    fig = figure(figsize=figsize)
+    ax = fig.add_subplot(111)
+    ax.xaxis.set_major_locator(matplotlib.dates.HourLocator(interval=1))
+    ax.xaxis.set_minor_locator(matplotlib.dates.MinuteLocator(interval=15))
+    ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%H:%M"))
+    offset = 4
+    xlim(hours_to_date(obsdate, lst_mid-12+offset),
+         hours_to_date(obsdate+Dates.Day(1), lst_mid-12-offset))
+    xlabel("LST")
+    ylim(0, 10)
+    title(string("Observing night: ", Date(obsdate), " - ", Date(obsdate+Dates.Day(1)),
+                 " -- Target: ", targetname))
+    fig.autofmt_xdate(bottom=0.2, rotation=30, ha="right")
+    ax.xaxis_date()
+    grid()
+    plt.axvline(x=hours_to_date(obsdate, lst_mid), color=:red)
+
+    # Twilight bands
+    start_date = hours_to_date(obsdate, lst[1]+1.5)
+    end_date   = hours_to_date(obsdate, lst[end]-1.5)
+    ax.barh(5, end_date - start_date, left=start_date, height=10, align="center",
+            color=:lightgray, alpha=0.75)
+    start_date = hours_to_date(obsdate, lst[1]+2)
+    end_date   = hours_to_date(obsdate, lst[end]-2)
+    ax.barh(5, end_date - start_date, left=start_date, height=10, align="center",
+            color=:lightgray, alpha=0.75)
+    start_date = hours_to_date(obsdate, lst[1]+3)
+    end_date   = hours_to_date(obsdate, lst[end]-3)
+    ax.barh(5, end_date - start_date, left=start_date, height=10, align="center",
+            color=:gray, alpha=0.75)
+
+    # Altitude bar (optional)
+    if show_alt && !isempty(good_alt)
+        start_date = hours_to_date(obsdate, lst[good_alt[1]])
+        end_date   = hours_to_date(obsdate, lst[good_alt[end]])
+        ax.barh(5, end_date - start_date, left=start_date, height=1.5, align="center",
+                color=:orange, label="Altitude", zorder=3)
+    end
+
+    # Delay bar — when Details is off, show only the intersection (observable AND in delay AND twilight)
+    if show_alt
+        show_indices = good_delay
+        bar_label = "In Delay"
+    else
+        show_indices = intersect(good_alt, good_delay)
+        if !isempty(good_twilight)
+            show_indices = intersect(show_indices, good_twilight)
+        end
+        bar_label = "Observable"
+    end
+    if !isempty(show_indices)
+        start_date = hours_to_date(obsdate, lst[show_indices[1]])
+        end_date   = hours_to_date(obsdate, lst[show_indices[end]])
+        ax.barh(2, end_date - start_date, left=start_date, height=2, align="center",
+                color=:blue, label=bar_label, zorder=3)
+        text(start_date, 2, Dates.format(start_date, dateformat"H:M"),
+             rotation=90, va="center", ha="right", color=:black)
+        text(end_date, 2, Dates.format(end_date, dateformat"H:M"),
+             rotation=90, va="center", ha="left", color=:black)
+        text(start_date, 3.3, round(Int64, az[show_indices[1]]),
+             va="top", ha="center", color=:black)
+        text(start_date, 0.7, round(Int64, alt[show_indices[1]]),
+             va="bottom", ha="center", color=:black)
+        text(end_date, 3.3, round(Int64, az[show_indices[end]]),
+             va="top", ha="right", color=:black)
+        text(end_date, 0.7, round(Int64, alt[show_indices[end]]),
+             va="bottom", ha="right", color=:black)
+    end
+
+    yticks([2], [targetname])
+    if show_alt
+        handles, labels = ax.get_legend_handles_labels()
+        if !isempty(handles)
+            legend()
+        end
+    end
+    tight_layout()
+
+    if !isempty(savefile)
+        savefig(savefile, dpi=100)
+        close(fig)
+    end
+    return fig
 end
 
 function get_baselines(facility; config = []) # similar to get_v2_baselines in simulate.jl, but here for planning

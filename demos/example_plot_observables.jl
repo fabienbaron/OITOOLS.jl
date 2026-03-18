@@ -1,7 +1,7 @@
 using OITOOLS
 
-# Read BC2026 = Fake GRAVITY K-band data
-oifitsfile = "./data/BC2026/OBJECT2_K.oifits"
+# Read BC2026 = Fake MATISSE LM-band data
+oifitsfile = "./data/BC2026/OBJECT1_LM.oifits"
 data = readoifits(oifitsfile)
 
 # ── UV coverage ──────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ plot_visphi(data, color="wav")
 plot_visphi(data, color="mjd")
 
 # ── Flux (if present) ────────────────────────────────────────────────────────
-plot_flux(data)                     # colour by station (default)
+plot_flux(data)                     # colour by wavelength
 plot_flux(data, color="mjd")
 
 # ── Multi-panel overview ───────────────────────────────────────────────────

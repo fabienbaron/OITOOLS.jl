@@ -21,6 +21,7 @@ Base.@kwdef mutable struct FacilityConfig
     tel_gain::Vector{Float64}   = Float64[]
     sta_index::Vector{Int}      = Int[]
     sta_xyz::Matrix{Float64}    = zeros(Float64, 0, 3)
+    delay_lengths::Vector{Float64} = Float64[]   # per-telescope delay line length (m), empty if unknown
 end
 
 Base.@kwdef mutable struct TargetConfig
@@ -114,6 +115,7 @@ function _read_facility_toml(path)
         tel_gain   = [Float64(get(t, "gain", 1.0))      for t in tels],
         sta_index  = [Int(get(t, "index", i))            for (i,t) in enumerate(tels)],
         sta_xyz    = xyz,
+        delay_lengths = [Float64(get(t, "delay_length", 0.0)) for t in tels],
     )
 end
 

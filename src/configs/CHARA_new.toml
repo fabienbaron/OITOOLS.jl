@@ -13,6 +13,7 @@ diameter = 1.0
 gain = 1.0
 index = 1
 xyz = [0.0, 0.0, 0.0]
+delay_length = 45.74
 
 [[telescope]]
 name = "S2"
@@ -21,6 +22,7 @@ diameter = 1.0
 gain = 1.0
 index = 2
 xyz = [33.585327515, -5.744414576, 0.634532856]
+delay_length = 45.77
 
 [[telescope]]
 name = "E1"
@@ -29,6 +31,7 @@ diameter = 1.0
 gain = 1.0
 index = 3
 xyz = [305.9284973, 125.3331333, -5.9190997]
+delay_length = 45.64
 
 [[telescope]]
 name = "E2"
@@ -37,6 +40,7 @@ diameter = 1.0
 gain = 1.0
 index = 4
 xyz = [269.7146871, 70.3891451, -2.8025644]
+delay_length = 45.66
 
 [[telescope]]
 name = "W1"
@@ -45,6 +49,7 @@ diameter = 1.0
 gain = 1.0
 index = 5
 xyz = [216.3272464, -175.0684101, -10.7975261]
+delay_length = 45.77
 
 [[telescope]]
 name = "W2"
@@ -53,6 +58,7 @@ diameter = 1.0
 gain = 1.0
 index = 6
 xyz = [199.3424346, -69.0845925, 0.4706086]
+delay_length = 45.66
 
 [[telescope]]
 name = "S3"
@@ -61,3 +67,4 @@ diameter = 1.0
 gain = 1.0
 index = 7
 xyz = [169.1970978, 44.9525223, 3.2910011]
+delay_length = 45.74

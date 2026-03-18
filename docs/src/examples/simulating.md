@@ -35,19 +35,28 @@ setup. These are read from TOML files shipped with OITOOLS in `src/configs/`.
 
 ### Configuration files
 
+The `.toml` extension is optional — OITOOLS resolves built-in config names
+automatically.
+
 **Facility** — array layout, telescope positions, atmospheric conditions:
 
 ```julia
-facility = read_facility_file("CHARA_new.toml")
+facility = read_facility_file("CHARA_new")
 ```
 
-Available facilities: `CHARA.toml`, `CHARA_new.toml`, `VLTI_UT.toml`,
-`VLTI_AT_small.toml`, `VLTI_AT_medium.toml`, `VLTI_AT_large.toml`.
+| Config name | Interferometer | Telescopes |
+|---|---|---|
+| `CHARA` | CHARA array | 6×1 m |
+| `CHARA_new` | CHARA array (updated) | 6×1 m |
+| `VLTI_UT` | VLTI Unit Telescopes | 4×8.2 m |
+| `VLTI_AT_small` | VLTI ATs — small config | 4×1.8 m |
+| `VLTI_AT_medium` | VLTI ATs — medium config | 4×1.8 m |
+| `VLTI_AT_large` | VLTI ATs — large config | 4×1.8 m |
 
 **Target** — celestial coordinates and proper motion:
 
 ```julia
-target = read_obs_file("default_obs.toml")
+target = read_obs_file("default_obs")
 ```
 
 You can also query SIMBAD directly:
@@ -60,19 +69,35 @@ target = TargetConfig(target="Vega", raep0=ra, decep0=dec)
 **Combiner** — beam combiner properties (throughput, read noise, calibration errors):
 
 ```julia
-combiner = read_comb_file("MIRCX.toml")
+combiner = read_comb_file("MIRCX")
 ```
 
-Available combiners: `MIRCX.toml`, `MIRCX_LOWH.toml`, `MIRCX_LOWJ.toml`,
-`MYSTIC.toml`, `MYSTIC_LOWK.toml`, `GRAVITY.toml`, `GRAVITY_LOWK.toml`,
-`MATISSE_LM.toml`, `MATISSE_N.toml`, `MATISSE_LOWL.toml`, `MATISSE_LOWN.toml`,
-`SPICA.toml`, `SPICA_LR.toml`, `MIRC.toml`, `MIRC_LOWH.toml`.
+| Config name | Instrument | Array | Band |
+|---|---|---|---|
+| `GRAVITY` | GRAVITY | VLTI | K |
+| `MATISSE_LM` | MATISSE | VLTI | L+M |
+| `MATISSE_N` | MATISSE | VLTI | N |
+| `MIRCX` | MIRC-X | CHARA | H |
+| `MYSTIC` | MYSTIC | CHARA | K |
+| `MIRC` | MIRC (legacy) | CHARA | H |
+| `SPICA` | SPICA | CHARA | V |
 
 **Wavelength** — spectral setup for a given combiner mode:
 
 ```julia
-wave = read_wave_file("MIRCX.toml")
+wave = read_wave_file("MIRCX_LOWH")
 ```
+
+| Config name | Combiner | Mode | Band |
+|---|---|---|---|
+| `GRAVITY_LOWK` | GRAVITY | Low spectral resolution | K |
+| `MATISSE_LOWL` | MATISSE_LM | Low spectral resolution | L |
+| `MATISSE_LOWN` | MATISSE_N | Low spectral resolution | N |
+| `MIRCX_LOWH` | MIRCX | Low spectral resolution | H |
+| `MIRCX_LOWJ` | MIRCX | Low spectral resolution | J |
+| `MYSTIC_LOWK` | MYSTIC | Low spectral resolution | K |
+| `MIRC_LOWH` | MIRC | H-band prism | H |
+| `SPICA_LR` | SPICA | Low resolution | V |
 
 ### Simulating from an image
 
@@ -82,10 +107,10 @@ using Dates
 # Observation times: every 15 minutes over a 5.5-hour window
 dates = collect(DateTime(2024,8,13,3,0,0):Minute(15):DateTime(2024,8,13,8,30,0))
 
-facility = read_facility_file("CHARA_new.toml")
-target   = read_obs_file("default_obs.toml")
-combiner = read_comb_file("MIRCX.toml")
-wave     = read_wave_file("MIRCX.toml")
+facility = read_facility_file("CHARA_new")
+target   = read_obs_file("default_obs")
+combiner = read_comb_file("MIRCX")
+wave     = read_wave_file("MIRCX")
 
 simulate(facility, target, combiner, wave, dates, "sim_image.oifits";
          image="data/2004true.fits", pixsize=0.101)

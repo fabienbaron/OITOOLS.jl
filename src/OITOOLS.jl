@@ -35,6 +35,7 @@ include("simulate.jl")
 include("oifitslib.jl")
 include("maximent.jl")
 include("oimem.jl")
+include("plan.jl")
 include("pmoired_compat.jl")
 
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
@@ -87,6 +88,11 @@ export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig
 export gantt_onenight
 export sunrise_sunset, alt_az, opd_limits
 export query_target_from_simbad, ra_dec_from_simbad
+
+# ── Observation planning (CHARA) ──────────────────────────────────────────────
+export night_observability, compute_delays, in_delay, best_pop
+export obs_plan, chara_plan, empty_night, print_pop_results
+export moon_radec, moon_illumination, angular_separation
 
 # ── Writing OIFITS ───────────────────────────────────────────────────────────
 export write_oi_header, write_oi_array, write_oi_target, write_oi_wavelength,

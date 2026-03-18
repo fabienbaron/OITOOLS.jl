@@ -757,39 +757,69 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
     is_diff = any(d.phityp == "differential" for d in dvec)
 
     if is_diff
-        # ── Differential phase layout: one subplot per baseline, wavelength on x-axis ──
+        # ── Differential phase layout: grid of subplots, one per baseline ──
+        # Compact: 8 rows × 2 cols (16 per page), Normal: 4 rows × 4 cols (16 per page)
         set_oiplot_defaults()
         baseline_list_vis = [get_baseline_names(dvec[n].sta_name, dvec[n].vis_sta_index) for n in eachindex(dvec)]
         baselines = sort(unique(vcat(baseline_list_vis...)))
         nbase = length(baselines)
-        fig, ax = plt.subplots(num=string(figtitle, "Differential phase data"),
-                               nrows=nbase, sharex=true, figsize=figsize, facecolor="White")
-        suptitle("Differential phase data")
-        subplots_adjust(hspace=0.0)
-        mx = matplotlib.ticker.MultipleLocator(20)
-        if nbase == 1
-            ax = [ax]
-        end
-        for i in 1:nbase
-            plt.axes(ax[i])
-            ax[i].set_title(baselines[i], x=0.9, y=0.75)
-            loc = [findall(baseline_list_vis[n] .== baselines[i]) for n in eachindex(dvec)]
-            wavcol  = vcat([dvec[n].vis_lam[loc[n]]*1e9 for n in eachindex(dvec)]...)
-            visphi  = vcat([dvec[n].visphi[loc[n]]       for n in eachindex(dvec)]...)
-            vp_err  = vcat([dvec[n].visphi_err[loc[n]]   for n in eachindex(dvec)]...)
-            errorbar(wavcol, visphi, yerr=vp_err, fmt="o", markersize=0.5,
-                     ecolor="Gainsboro", elinewidth=0.5)
-            ax[i].xaxis.set_minor_locator(mx)
-            if i == nbase
-                xlabel("Wavelength (nm)")
+
+        nrows = oiplot_compact ? 8 : 4
+        ncols = oiplot_compact ? 2 : 4
+        per_page = nrows * ncols
+        npages = ceil(Int, nbase / per_page)
+        fig_w = oiplot_compact ? 8 : 10
+        fig_h = oiplot_compact ? 10 : 8
+
+        for page in 1:npages
+            i_start = (page - 1) * per_page + 1
+            i_end   = min(page * per_page, nbase)
+            page_baselines = baselines[i_start:i_end]
+            npanels = length(page_baselines)
+            # Actual rows needed for this page
+            page_rows = ceil(Int, npanels / ncols)
+            page_label = npages > 1 ? " ($page/$npages)" : ""
+
+            fig, axes = plt.subplots(
+                num=string(figtitle, "Diff. phase", page_label),
+                nrows=page_rows, ncols=ncols, sharex=true, sharey=true,
+                figsize=(fig_w, fig_h * page_rows / nrows),
+                facecolor="White", squeeze=false)
+            if oiplot_show_title
+                fig.suptitle("Diff. phase" * page_label)
             end
-            ylabel("Δφ (°)")
-            ax[i].grid(true, which="both", color="Grey", linestyle=":")
+
+            for j in 1:npanels
+                ci = i_start + j - 1
+                row = div(j - 1, ncols) + 1
+                col = mod(j - 1, ncols) + 1
+                ax = axes[row, col]
+                loc = [findall(baseline_list_vis[n] .== page_baselines[j]) for n in eachindex(dvec)]
+                wav   = vcat([dvec[n].vis_lam[loc[n]]*1e6 for n in eachindex(dvec)]...)
+                dphi  = vcat([dvec[n].visphi[loc[n]]       for n in eachindex(dvec)]...)
+                dperr = vcat([dvec[n].visphi_err[loc[n]]   for n in eachindex(dvec)]...)
+                ax.errorbar(wav, dphi, yerr=dperr, fmt="o",
+                            markersize=oiplot_markersize, color=oiplot_colors[ci],
+                            markeredgecolor=oiplot_colors[ci],
+                            ecolor="Gainsboro", elinewidth=oiplot_elinewidth)
+                ax.set_title(page_baselines[j], fontsize=oiplot_legend_fontsize)
+                ax.grid(true, which="both", color="Grey", linestyle=":")
+                if col == 1
+                    ax.set_ylabel("Δφ (°)")
+                end
+                if row == page_rows
+                    ax.set_xlabel("λ (μm)")
+                end
+            end
+            # Hide unused subplots on the last page
+            for j in (npanels + 1):(page_rows * ncols)
+                row = div(j - 1, ncols) + 1
+                col = mod(j - 1, ncols) + 1
+                axes[row, col].set_visible(false)
+            end
+            tight_layout()
+            show(block=false)
         end
-        ax[nbase].tick_params(axis="x", which="major", length=10.0)
-        ax[nbase].tick_params(axis="x", which="minor", length=5.0)
-        tight_layout()
-        show(block=false)
     else
         # ── Absolute phase layout: delegate to generic engine ──
         plot_obs(data, OBS_PLOT_SPECS["VISPHI"]; color=color, figsize=figsize,
