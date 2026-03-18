@@ -7,12 +7,14 @@ using PyPlot
 using TclTk
 
 # ── CHARA combiner choices ────────────────────────────────────────────────────
-const CHARA_COMBINERS = ["MIRCX", "MYSTIC", "SPICA", "MIRC"]
+const CHARA_COMBINERS = ["MIRCX", "MYSTIC", "SPICA"]
 const CHARA_TEL_NAMES = ["S1", "S2", "E1", "E2", "W1", "W2"]
 const CHARA_REF_INDEX = 6  # W2 is the default reference
 
 # ── SIMBAD cache ──────────────────────────────────────────────────────────────
-const simbad_cache = Dict{String, Tuple{Float64, Float64}}()
+# Stores (ra, dec, mags_dict) per target
+const simbad_cache = Dict{String, Tuple{Float64, Float64, Dict{String,Float64}}}()
+const MAG_BANDS = ["V", "J", "H", "K", "L", "M", "N"]
 
 # ── Temp file for plot PNG ────────────────────────────────────────────────────
 const PLOT_FILE = joinpath(tempdir(), "chara_plan_gui.png")
@@ -62,6 +64,7 @@ function render_empty_night(interp)
         ion()
         update_plot_image!(interp)
         interp["pop_text"] = ""
+        interp["mag_text"] = ""
         set_status!(interp, "Night of $(Date(obsdate)) — enter a target and click Plan")
     catch e
         set_status!(interp, "Error: $(sprint(showerror, e))")
@@ -119,16 +122,21 @@ function run_plan(interp::TclInterp, args::TclObj)
         # Resolve target (cached)
         key = lowercase(targetname)
         if haskey(simbad_cache, key)
-            ra, dec = simbad_cache[key]
+            ra, dec, mags = simbad_cache[key]
         else
             set_status!(interp, "Querying SIMBAD for $(targetname)...")
             radec = ra_dec_from_simbad(targetname)
             ra  = radec[1]' * [1.0, 1/60.0, 1/3600.0]
             dec = radec[2]' * [1.0, 1/60.0, 1/3600.0]
-            simbad_cache[key] = (ra, dec)
+            mags = magnitudes_from_simbad(targetname)
+            simbad_cache[key] = (ra, dec, mags)
         end
         ra_h = ra / 15.0
         interp["radec_text"] = string("RA ", round(ra_h, digits=4), "h  Dec ", round(dec, digits=4), "°")
+        # Display magnitudes
+        mag_parts = [isnan(mags[b]) ? "" : "$(b)=$(round(mags[b], digits=1))"
+                     for b in MAG_BANDS]
+        interp["mag_text"] = join(filter(!isempty, mag_parts), "  ")
 
         set_status!(interp, "Computing observability...")
 
@@ -210,6 +218,15 @@ function chara_plan_gui()
     interp["radec_text"] = ""
     TtkLabel(frame, textvariable="radec_text", foreground="gray").grid(
         column=2, row=row, columnspan=3, sticky="w", padx=5, pady=3)
+
+    row += 1
+
+    # ── Magnitudes ─────────────────────────────────────────────────────────
+    TtkLabel(frame, text="Mags:").grid(column=0, row=row, sticky="e", padx=5, pady=1)
+    interp["mag_text"] = ""
+    TtkLabel(frame, textvariable="mag_text", foreground="gray",
+             font="TkSmallCaptionFont").grid(
+        column=1, row=row, columnspan=4, sticky="w", padx=5, pady=1)
 
     row += 1
 

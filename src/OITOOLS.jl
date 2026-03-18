@@ -87,7 +87,7 @@ export read_facility_file, read_obs_file, read_comb_file, read_wave_file
 export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig
 export gantt_onenight
 export sunrise_sunset, alt_az, opd_limits
-export query_target_from_simbad, ra_dec_from_simbad
+export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
 export night_observability, compute_delays, in_delay, best_pop

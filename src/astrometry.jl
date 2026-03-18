@@ -246,8 +246,6 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
          hours_to_date(obsdate+Dates.Day(1), lst_mid-12-offset))
     xlabel("LST")
     ylim(0, 10)
-    title(string("Observing night: ", Date(obsdate), " - ", Date(obsdate+Dates.Day(1)),
-                 " -- Target: ", targetname))
     fig.autofmt_xdate(bottom=0.2, rotation=30, ha="right")
     ax.xaxis_date()
     grid()

@@ -266,7 +266,7 @@ function reg_centering(x,g; verb = false) # takes a 1D array
     yy = [div(i-1,nx)+1 for i=1:nx*nx]
     g[:] = 2*(c[1]-(nx+1)/2)*xx + 2*(c[2]-(nx+1)/2)*yy
     if verb == true
-        print(" COG:", c, " REGC: ", f);
+        @printf(" COG: [%.2f, %.2f] REGC: %.2f", c[1], c[2], f);
     end
     return f
 end
@@ -322,7 +322,7 @@ function radial_variance(x,g; H=[], G=[], verb = false)
     f = norm(H*vec(x))^2
     g[:] .=  reshape(G*vec(x),nx,nx);
     if verb == true
-        print(" radialvar:", f);
+        @printf(" radialvar: %.3f", f);
     end
     return f
 end
@@ -338,7 +338,7 @@ function tvsq(x,tvsq_g; verb = false)
     tvsq_f = norm(y-rx)^2+norm(y-ry)^2
     tvsq_g[:] = 2*vec(4*y-lx-ly-rx-ry)
     if verb == true
-        print(" TVSQ:", tvsq_f);
+        @printf(" TVSQ: %.3f", tvsq_f);
     end
     return tvsq_f
 end
@@ -363,7 +363,7 @@ function tv(x,tv_g; verb = false, ϵ=1e-8)
     tv_g[:] = vec( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )
 
     if verb == true
-        print(" TV:", tv_f);
+        @printf(" TV: %.3f", tv_f);
     end
     return tv_f
 end
@@ -384,7 +384,7 @@ function l1l2(x, g; verb = false, ϵ=1e-8, α = 1e-4)
     f = α^2*sum(d1/α - log.(1.0 .+ d1/α ) .-ϵ)
     g[:] = α^2*vec( ( (2*y - xiplus1j - xijplus1)./d1 + (y-ximinus1j)./d2 + (y-xijminus1)./d3 )/α -(2*y - xiplus1j - xijplus1)./(d1.*(α .+ d1)) - (y-ximinus1j)./(d2.*(α .+ d2)) - (y-xijminus1)./(d3.*(α .+ d3)) )
     if verb == true
-        print(" ℓ1ℓ2:", f);
+        @printf(" ℓ1ℓ2: %.3f", f);
     end
     return f
 end
@@ -393,7 +393,7 @@ function l2sq(x,g; verb = false)
     f = sum(x.^2)
     g[:] =  2*x;
     if verb == true
-        print(" ℓ2^2:", f);
+        @printf(" ℓ2^2: %.3f", f);
     end
     return f
 end
@@ -403,7 +403,7 @@ function l1hyp(x,g; verb = false,ϵ=1e-9)
     f = sum(sqrt.(x.^2 .+ϵ^2).-ϵ)
     g[:] =  x./sqrt.(x.^2 .+ϵ^2);
     if verb == true
-        print(" ℓ1hyp:", f);
+        @printf(" ℓ1hyp: %.3f", f);
     end
     return f
 end
@@ -412,7 +412,7 @@ function l1l2w(x,g; verb = false)
     f = sum(x-log.(1.0 .+ x))
     g[:] =  1.0 .- 1.0./(1.0 .+x);
     if verb == true
-        print(" ℓ1ℓ2w:", f);
+        @printf(" ℓ1ℓ2w: %.3f", f);
     end
     return f
 end
@@ -421,7 +421,7 @@ function entropy(x,g; verb = false, ϵ=1e-12)
     f = sum(x.*log.(abs.(x).+ϵ) - x)
     g[:] =  log.(abs.(x).+ϵ);
     if verb == true
-        print(" MAXENT:", f);
+        @printf(" MAXENT: %.3f", f);
     end
     return f
 end
@@ -440,7 +440,7 @@ function compactness(x,g; verb = false, w = 20.0) # w is the size in pixels of t
         sum((x.^2)./soft_support)
     end
     if verb == true
-        print(" compactness:", f);
+        @printf(" compactness: %.3f", f);
     end
     return f
 end
@@ -453,7 +453,7 @@ function reg_support(x,g; prior=[], verb = false) # assumes prior is vec()
     f = sum(mask.*(x.^2))
     g[:] =  2*mask.*x;
     if verb == true
-        print(" support:", f);
+        @printf(" support: %.3f", f);
     end
     return f
 end
@@ -511,6 +511,9 @@ end
 
 function regularization(x, reg_g; printcolor = :black, regularizers=[], verb=true) # compound regularization
     reg_f = 0.0;
+    if verb == true && !isempty(regularizers)
+        print("\nReg:");
+    end
     for ireg in regularizers
             temp_g = zeros(eltype(x), size(x))
             reg_f += @match ireg[1] begin 

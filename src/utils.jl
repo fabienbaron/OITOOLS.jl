@@ -49,10 +49,48 @@ function query_target_from_simbad(targetname)
 end
 
 function ra_dec_from_simbad(targetname)
-res=query_target_from_simbad(targetname)
-ra = [parse(Float64, i) for i in split(get(get(res, "RA"),0))]
-dec = [parse(Float64, i) for i in split(get(get(res, "DEC"),0))]
-return ra, dec
+    res = query_target_from_simbad(targetname)
+    ra = [parse(Float64, i) for i in split(get(get(res, "RA"),0))]
+    dec = [parse(Float64, i) for i in split(get(get(res, "DEC"),0))]
+    return ra, dec
+end
+
+"""
+    magnitudes_from_simbad(targetname)
+
+Query SIMBAD for photometric magnitudes (V, J, H, K, L, M, N).
+Returns a Dict{String,Float64} with band names as keys.
+Missing magnitudes are set to NaN.
+"""
+function magnitudes_from_simbad(targetname)
+    Simbad = pyimport("astroquery.simbad").Simbad
+    bands = ["V", "J", "H", "K", "L", "M", "N"]
+    mags = Dict{String,Float64}(b => NaN for b in bands)
+    try
+        # Use TAP query to get all available fluxes for this object
+        query = """
+        SELECT f.filter, f.flux
+        FROM basic AS b
+        JOIN ident AS i ON i.oidref = b.oid
+        JOIN flux AS f ON f.oidref = b.oid
+        WHERE i.id = '$(replace(targetname, "'" => "''"))'
+        """
+        result = Simbad.query_tap(query)
+        if result !== nothing
+            nrows = length(get(result, "filter"))
+            for row in 0:(nrows-1)
+                filt = uppercase(strip(string(get(get(result, "filter"), row))))
+                for b in bands
+                    if filt == b
+                        try
+                            mags[b] = Float64(get(get(result, "flux"), row))
+                        catch; end
+                    end
+                end
+            end
+        end
+    catch; end
+    return mags
 end
 
 function meshgrid(xx::Union{Vector{Float32}, Vector{Float64}}) #example: meshgrid([-N/2:N/2-1;]*δ);
