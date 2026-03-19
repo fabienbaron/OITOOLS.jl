@@ -44,7 +44,7 @@ export OIdata
 export readoifits, readoifits_multiepochs, readoifits_multicolors, list_oifits_targets
 export readfits, writefits
 export oifits_prep, updatefits_aspro
-export remove_redundant_uv!, filter_data, set_data_filter
+export filter_data, set_data_filter
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,

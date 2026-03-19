@@ -20,7 +20,7 @@ set_data_filter
 | `writefits(data, file)` | Write a matrix to a FITS image |
 | `oifits_prep(data; kwargs...)` | Inflate error bars (additive/relative floors, multiplicative scaling) |
 | `updatefits_aspro(in, out, pixsize)` | Add ASPRO-compatible WCS headers to a FITS image |
-| `remove_redundant_uv!(data; uvtol)` | Merge redundant UV points in-place |
+
 
 ## Plotting
 
@@ -174,6 +174,7 @@ gaussian_prior
 
 ```@docs
 recenter
+magnitudes_from_simbad
 ```
 
 ## Simulation
