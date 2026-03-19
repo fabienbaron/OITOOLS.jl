@@ -287,16 +287,28 @@ end
 
 function Base.display(data::Array{<:OIdata})
     println("Original data file: $(data[1].filename)")
-    println("Number of wavelength bins: $(size(data,1))")
-    println("Number of time/epoch bins: $(size(data,2))")
+    nwav = size(data, 1)
+    nepo = size(data, 2)
+    println("Number of wavelength bins: $nwav")
+    println("Number of time/epoch bins: $nepo")
     printcolors = [196, 166, 208, 220, 148, 112, 28, 20, 92, 165]
     if size(data) == (1,1)
         display(data[1,1])
-    elseif (size(data,1) < 11) && (size(data,2) == 1)
-        for i in 1:size(data,1)
-            print(Crayon(foreground=printcolors[i], bold=true), "Wavelength: $i/$(size(data,1))\n")
+    elseif nwav < 11 && nepo == 1
+        for i in 1:nwav
+            print(Crayon(foreground=printcolors[i], bold=true), "Wavelength: $i/$nwav\n")
             display(data[i,1])
         end
+    else
+        # Aggregate summary across all bins
+        tot_nv2 = sum(d.nv2 for d in data)
+        tot_nt3amp = sum(d.nt3amp for d in data)
+        tot_nt3phi = sum(d.nt3phi for d in data)
+        tot_nvisamp = sum(d.nvisamp for d in data)
+        tot_nvisphi = sum(d.nvisphi for d in data)
+        tot_nflux = sum(d.nflux for d in data)
+        println("Totals: nv2=$tot_nv2  nt3amp=$tot_nt3amp  nt3phi=$tot_nt3phi" *
+                "  nvisamp=$tot_nvisamp  nvisphi=$tot_nvisphi  nflux=$tot_nflux")
     end
 end
 
@@ -575,7 +587,7 @@ end
 #   conversion_index[itable, old_idx] → new_idx             — sparse mapping
 #   station_index_offset                                     — 0 or 1 (OIFITSv1 compat)
 # ---------------------------------------------------------------------------
-function collect_station_info(arraytables, v2tables, t3tables, arraytableref; verb=true)
+function collect_station_info(arraytables, v2tables, t3tables, arraytableref; warn=true)
     array_ntables  = length(arraytables)
     station_name   = [arraytables[i].sta_name  for i in 1:array_ntables]
     telescope_name = [arraytables[i].tel_name  for i in 1:array_ntables]
@@ -584,7 +596,7 @@ function collect_station_info(arraytables, v2tables, t3tables, arraytableref; ve
     station_index_offset = 0
     if minimum(vcat(station_index...)) == 0
         revn_max = maximum(db.revn for db in arraytables)
-        if verb
+        if warn
             if revn_max == 2
                 @warn("This file does not follow OIFITSv2 standard — station indexing should start at 1, not 0.")
             else
@@ -1361,7 +1373,8 @@ data in a single bin.
   Default: `Float64`.
 
 ## Output
-- `verb` — print warnings about non-standard files. Default: `true`.
+- `warn` — print warnings about non-standard files. Default: `true`.
+- `verbose` — print summary of loaded tables. Default: `false`.
 
 # Example
 ```julia
@@ -1390,8 +1403,8 @@ function readoifits(oifitsfile;
         cutoff_minv2    = -1,   cutoff_maxv2    = 2.0,
         cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
         special_filter_diffvis = false,
-        verb = true,
-        verbose = false,
+        warn = true,
+        verbose = true,
         T::Type{<:AbstractFloat} = Float64)
 
     if !isfile(oifitsfile)
@@ -1420,7 +1433,7 @@ function readoifits(oifitsfile;
     tgt = ds.target
     all_target_ids   = [tgt[i].target_id for i in 1:length(tgt)]
     all_target_names = [tgt[i].target    for i in 1:length(tgt)]
-    if !isempty(all_target_ids) && minimum(all_target_ids) == 0 && verb
+    if !isempty(all_target_ids) && minimum(all_target_ids) == 0 && warn
         @warn("OI_TARGET does not follow OIFITSv2 standard — target indexing should start at 1, not 0.")
     end
     if targetname != ""
@@ -1436,8 +1449,20 @@ function readoifits(oifitsfile;
     v2tables   = ds.vis2;  use_v2   = use_v2   && !isempty(v2tables)
     t3tables   = ds.t3;    use_t3   = use_t3   && !isempty(t3tables)
 
+    # ---- Verbose: table summary ---------------------------------------------
+    if verbose
+        printstyled("File: $oifitsfile\n", color=:cyan)
+        printstyled("  OI_ARRAY:      $(length(arraytables)) table(s)\n", color=:cyan)
+        printstyled("  OI_WAVELENGTH: $(length(wavtables)) table(s)\n", color=:cyan)
+        use_flux && printstyled("  OI_FLUX:       $(length(fluxtables)) table(s)\n", color=:cyan)
+        use_vis  && printstyled("  OI_VIS:        $(length(vistables)) table(s)\n", color=:cyan)
+        use_v2   && printstyled("  OI_VIS2:       $(length(v2tables)) table(s)\n", color=:cyan)
+        use_t3   && printstyled("  OI_T3:         $(length(t3tables)) table(s)\n", color=:cyan)
+        !isempty(correlt) && printstyled("  OI_CORR:       $(length(correlt)) matrix/matrices\n", color=:cyan)
+    end
+
     # ---- Station indexing ---------------------------------------------------
-    station_info = collect_station_info(arraytables, v2tables, t3tables, arraytableref; verb)
+    station_info = collect_station_info(arraytables, v2tables, t3tables, arraytableref; warn)
     ci = station_info.conversion_index
     so = station_info.station_index_offset
 

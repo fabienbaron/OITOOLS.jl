@@ -121,8 +121,8 @@ all output, or `verbose=true` to additionally print OI_VIS amplitude/phase
 type information (AMPTYP/PHITYP):
 
 ```julia
-data = readoifits("mystar.oifits"; verbose=true)   # extra diagnostics
-data = readoifits("mystar.oifits"; verb=false)      # silent
+data = readoifits("mystar.oifits"; verbose=true)   # print table summary
+data = readoifits("mystar.oifits"; warn=false)      # suppress warnings
 ```
 
 ## UV deduplication

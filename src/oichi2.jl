@@ -811,7 +811,7 @@ end
 """
     image_to_chi2(x, ft, data; weights=[1,1,1], verb=false, vonmises=false)
 
-Alias for [`chi2_f`](@ref).  Compute the weighted chi-squared of an image
+Alias for `chi2_f`.  Compute the weighted chi-squared of an image
 against data, for consistency with the `image_to_vis` / `image_to_obs` family.
 """
 const image_to_chi2 = chi2_f
@@ -819,7 +819,7 @@ const image_to_chi2 = chi2_f
 """
     image_to_chi2_fg(x, g, ft, data; weights=[1,1,1], verb=false, vonmises=false)
 
-Alias for [`chi2_fg`](@ref).  Compute chi-squared and its gradient w.r.t. the
+Alias for `chi2_fg`.  Compute chi-squared and its gradient w.r.t. the
 image, for consistency with the `image_to_vis` / `image_to_obs` family.
 """
 const image_to_chi2_fg = chi2_fg

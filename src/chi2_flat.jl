@@ -982,7 +982,7 @@ end
 """
     model_to_chi2(model, x, data; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
 
-Alias for [`chi2_flat`](@ref).  Compute the weighted chi-squared of a parametric
+Alias for `chi2_flat`.  Compute the weighted chi-squared of a parametric
 model against data, for consistency with the `model_to_obs` / `model_to_vis` family.
 """
 const model_to_chi2 = chi2_flat
@@ -990,7 +990,7 @@ const model_to_chi2 = chi2_flat
 """
     model_to_chi2_fg(model, x, data; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
 
-Alias for [`chi2_flat_fg`](@ref).  Compute chi-squared and its gradient w.r.t. `x`,
+Alias for `chi2_flat_fg`.  Compute chi-squared and its gradient w.r.t. `x`,
 for consistency with the `model_to_obs` / `model_to_vis` family.
 """
 const model_to_chi2_fg = chi2_flat_fg
