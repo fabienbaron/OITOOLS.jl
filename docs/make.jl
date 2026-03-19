@@ -12,6 +12,7 @@ makedocs(;
     doctest = false,
     format = Documenter.HTML(;
         prettyurls = CI,
+        collapselevel = 2,
     ),
     authors = "Fabien Baron and contributors",
     pages = [
@@ -25,7 +26,13 @@ makedocs(;
             "examples/simulating.md",
             "examples/imaging.md",
         ],
-        "API Reference" => "api.md",
+        "API Reference" => [
+            "OIFITS Handling" => "api/oifits.md",
+            "Plotting"        => "api/plotting.md",
+            "Model Fitting"   => "api/modeling.md",
+            "Imaging"         => "api/imaging.md",
+            "Observation Planning" => "api/planning.md",
+        ],
     ],
 )
 
