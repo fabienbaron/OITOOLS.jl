@@ -346,7 +346,7 @@ end
 
 """
     plot_obs(data; obs=["V2","T3PHI","T3AMP"], color="baseline",
-                     figsize=nothing, figtitle="", markopt=false)
+                     logplot=false, figsize=nothing, figtitle="", markopt=false)
 
 Multi-panel figure with one subplot per observable, sharing the x-axis and a
 single legend. Panels are stacked vertically; only the bottom panel gets an
@@ -355,10 +355,13 @@ x-axis label.
 `obs` is a vector of spec keys from `OBS_PLOT_SPECS` (e.g. `"V2"`, `"T3PHI"`,
 `"T3AMP"`, `"VISAMP"`, `"VISPHI"`, `"FLUX"`). Panels whose data is empty are
 skipped automatically.
+
+When `logplot=true`, amplitude-like panels (V², T3amp, Visamp) use a log y-axis;
+phase panels are unaffected.
 """
 function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
                     obs::Vector{String}=["V2", "T3PHI", "T3AMP"],
-                    color::String="baseline", figsize=nothing,
+                    color::String="baseline", logplot::Bool=false, figsize=nothing,
                     figtitle::String="", markopt::Bool=false)
     set_oiplot_defaults()
     dvec = as_datavec(data)
@@ -389,7 +392,7 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
     last_sc = nothing
     for (i, key) in enumerate(active)
         spec = OBS_PLOT_SPECS[key]
-        _, sc = _plot_obs(data, spec; color=color, markopt=markopt, ax=axes[i])
+        _, sc = _plot_obs(data, spec; color=color, logplot=logplot, markopt=markopt, ax=axes[i])
         if !isnothing(sc)
             last_sc = sc
         end
@@ -671,7 +674,7 @@ function _plot_residual_panel(data, model_vec, spec;
     yerr    = getfield(data, spec.yerr)
     xvals   = getfield(data, spec.x) ./ 1e6
     npts    = length(ydata)
-    npts == 0 && return
+    npts == 0 && return nothing
 
     if spec.phase
         resid = mod360(model_vec .- ydata) ./ yerr
@@ -680,10 +683,25 @@ function _plot_residual_panel(data, model_vec, spec;
     end
 
     mk = _adaptive_marker(npts)
+    nc = length(oiplot_colors)
 
     cc = canonical_color(color)
 
+    # Fall back to baseline colouring when wav/mjd has no range
+    if cc == "wav"
+        wavvals = getfield(data, spec.lam)
+        if length(unique(wavvals)) <= 1
+            cc = "baseline"
+        end
+    elseif cc == "mjd"
+        mjdvals = getfield(data, spec.mjd)
+        if length(unique(mjdvals)) <= 1
+            cc = "baseline"
+        end
+    end
+
     # Colour arrays for wav/mjd modes
+    scatter_obj = nothing
     if cc == "wav"
         cvals = getfield(data, spec.lam) .* 1e6  # metres → μm
         cmap = "Spectral_r"
@@ -704,23 +722,24 @@ function _plot_residual_panel(data, model_vec, spec;
             groups = sort(unique(labels))
             for (i, g) in enumerate(groups)
                 idx = findall(labels .== g)
+                ci = mod1(i, nc)
                 ax_data.errorbar(xvals[idx], ydata[idx], yerr=yerr[idx], fmt="none",
-                    ecolor="Gainsboro", elinewidth=0.8, zorder=0)
+                    ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
                 ax_data.plot(xvals[idx], ydata[idx], linestyle="none", marker="o",
-                    color=oiplot_colors[i], markersize=mk.ms, alpha=mk.alpha, label=g, zorder=1)
+                    color=oiplot_colors[ci], markersize=mk.ms, alpha=mk.alpha, label=g, zorder=1)
                 ax_data.plot(xvals[idx], model_vec[idx], linestyle="none", marker="x",
-                    color=oiplot_colors[i], markersize=mk.ms+1, alpha=mk.alpha, zorder=2)
+                    color=oiplot_colors[ci], markersize=mk.ms+1, alpha=mk.alpha, zorder=2)
             end
         elseif !isnothing(cvals)
             ax_data.errorbar(xvals, ydata, yerr=yerr, fmt="none",
-                ecolor="Gainsboro", elinewidth=0.8, zorder=0)
-            ax_data.scatter(xvals, ydata, c=cvals, cmap=cmap,
+                ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
+            scatter_obj = ax_data.scatter(xvals, ydata, c=cvals, cmap=cmap,
                 s=mk.ms^2, alpha=mk.alpha, zorder=1)
             ax_data.scatter(xvals, model_vec, c=cvals, cmap=cmap,
                 s=(mk.ms+1)^2, alpha=mk.alpha, marker="x", zorder=2)
         else
             ax_data.errorbar(xvals, ydata, yerr=yerr, fmt="o",
-                color="Grey", ecolor="Gainsboro", markersize=mk.ms, alpha=mk.alpha, elinewidth=0.8)
+                color="Grey", ecolor="Gainsboro", markersize=mk.ms, alpha=mk.alpha, elinewidth=oiplot_elinewidth)
             ax_data.plot(xvals, model_vec, linestyle="none", marker="x",
                 color="Red", markersize=mk.ms+1, alpha=mk.alpha)
         end
@@ -741,8 +760,9 @@ function _plot_residual_panel(data, model_vec, spec;
             groups = sort(unique(labels))
             for (i, g) in enumerate(groups)
                 idx = findall(labels .== g)
+                ci = mod1(i, nc)
                 ax_res.plot(xvals[idx], resid[idx], linestyle="none", marker="o",
-                    color=oiplot_colors[i], markersize=mk.ms, alpha=mk.alpha, zorder=2)
+                    color=oiplot_colors[ci], markersize=mk.ms, alpha=mk.alpha, zorder=2)
             end
         elseif !isnothing(cvals)
             ax_res.scatter(xvals, resid, c=cvals, cmap=cmap,
@@ -757,6 +777,7 @@ function _plot_residual_panel(data, model_vec, spec;
         res_range != [] && ax_res.set_ylim(res_range)
         ax_res.grid(true, which="both", color="LightGrey", linestyle=":", linewidth=0.5)
     end
+    return scatter_obj
 end
 
 # ── Single-observable residual plots ─────────────────────────────────────────
@@ -764,29 +785,29 @@ end
 function _plot_single_residual(data, model_vec, spec;
         figsize=(12,7), logplot=false, y_range=[], res_range=[], color="baseline")
     set_oiplot_defaults()
-    fig, axes = subplots(2, 1; sharex=true, figsize=figsize,
+    fig = figure(spec.label * " residuals", figsize=figsize, facecolor="White")
+    fig.clear()
+    axes = fig.subplots(2, 1; sharex=true,
         gridspec_kw=Dict("height_ratios" => [3, 1], "hspace" => 0.05))
-    _plot_residual_panel(data, model_vec, spec;
+    sc = _plot_residual_panel(data, model_vec, spec;
         ax_data=axes[1], ax_res=axes[2], logplot=logplot,
         y_range=y_range, res_range=res_range, color=color)
     axes[1].tick_params(labelbottom=false)
     cc = canonical_color(color)
+    use_colorbar = (cc == "wav" || cc == "mjd") && !isnothing(sc)
+    use_legend = !use_colorbar
     npts = length(getfield(data, spec.y))
-    npts > 0 && npts < 200 && cc == "baseline" &&
-        axes[1].legend(fontsize=7, ncol=4, loc="best")
-    if cc == "wav" || cc == "mjd"
-        sc = nothing
-        for i in 2:-1:1
-            colls = axes[i].collections
-            length(colls) > 0 && (sc = colls[end]; break)
-        end
-        if !isnothing(sc)
-            ax_vec = [axes[1], axes[2]]
-            cc == "wav" ? setup_wav_colorbar(sc; fig, ax_list=ax_vec) :
-                          setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
-        end
+    if use_legend && npts > 0 && npts < 200 && cc == "baseline"
+        axes[1].legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
+            ncol=oiplot_legend_ncol, loc="best")
     end
-    tight_layout()
+    bot_pad = use_colorbar ? 0.10 : 0.0
+    tight_layout(rect=(0, bot_pad, 1, 1))
+    if use_colorbar
+        ax_vec = [axes[1], axes[2]]
+        cc == "wav" ? setup_wav_colorbar(sc; fig, ax_list=ax_vec) :
+                      setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
+    end
     show(block=false)
 end
 
@@ -872,45 +893,52 @@ function plot_residuals(data::OIdata, obs::NamedTuple;
     # Each observable gets a (data, residual) row pair
     nrows = 2 * npanels
     ratios = repeat([3, 1], npanels)
-    fig, axes = subplots(nrows, 1; figsize=figsize,
+    fig = figure("Residuals", figsize=figsize, facecolor="White")
+    fig.clear()
+    axes = fig.subplots(nrows, 1;
         gridspec_kw=Dict("height_ratios" => ratios, "hspace" => 0.08))
     if nrows == 2
         axes = [axes[1], axes[2]]  # ensure indexable
     end
 
     cc = canonical_color(color)
+    last_sc = nothing
     for (i, p) in enumerate(panels)
         ax_d = axes[2i - 1]
         ax_r = axes[2i]
-        _plot_residual_panel(data, p.model, p.spec;
+        sc = _plot_residual_panel(data, p.model, p.spec;
             ax_data=ax_d, ax_res=ax_r, logplot=logplot, color=color)
-        ax_d.tick_params(labelbottom=false)
-        npts = length(p.model)
-        npts > 0 && npts < 200 && cc == "baseline" &&
-            ax_d.legend(fontsize=6, ncol=5, loc="best")
-    end
-
-    # Shared colorbar for wav/mjd
-    if cc == "wav" || cc == "mjd"
-        sc = nothing
-        for i in nrows:-1:1
-            colls = axes[i].collections
-            if length(colls) > 0
-                sc = colls[end]
-                break
-            end
-        end
         if !isnothing(sc)
-            ax_vec = [axes[i] for i in 1:nrows]
-            if cc == "wav"
-                setup_wav_colorbar(sc; fig, ax_list=ax_vec)
-            else
-                setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
-            end
+            last_sc = sc
+        end
+        ax_d.tick_params(labelbottom=false)
+    end
+
+    use_colorbar = (cc == "wav" || cc == "mjd") && !isnothing(last_sc)
+    use_legend = !use_colorbar
+
+    # Baseline legend on panels with few points
+    if use_legend && cc == "baseline"
+        for (i, p) in enumerate(panels)
+            npts = length(p.model)
+            npts > 0 && npts < 200 &&
+                axes[2i - 1].legend(fontsize=oiplot_legend_fontsize, fancybox=true,
+                    shadow=true, ncol=oiplot_legend_ncol, loc="best")
         end
     end
 
-    tight_layout()
+    bot_pad = use_colorbar ? 0.07 : 0.0
+    tight_layout(rect=(0, bot_pad, 1, 1))
+
+    if use_colorbar
+        ax_vec = [axes[i] for i in 1:nrows]
+        if cc == "wav"
+            setup_wav_colorbar(last_sc; fig, ax_list=ax_vec)
+        else
+            setup_mjd_colorbar(last_sc; fig, ax_list=ax_vec)
+        end
+    end
+
     show(block=false)
 end
 
