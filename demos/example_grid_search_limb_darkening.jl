@@ -21,7 +21,7 @@ model = parse_model(param, fit_params)
 
 for i= 1:length(diameters)
     for j=1:length(ld)
-     chi2[i,j] = chi2_flat(model, [diameters[i], ld[j]], data, weights=[1.0,0,0])
+     chi2[i,j] = model_to_chi2(model, [diameters[i], ld[j]], data, weights=[1.0,0,0])
  end
 end
 res = findmin(chi2)

@@ -36,6 +36,6 @@ regularizers = [["centering", 1e2], ["l1l2", 2e8, 1e-4], ["support", 1.0, mask]]
 ft = setup_nfft(data, nx, pixsize);
 x = reconstruct(prior, data, ft, regularizers = regularizers, verb = true, maxiter=500, weights=weights);
 x = reconstruct(x.*mask, data, ft, regularizers = regularizers, verb = true, maxiter=500, weights=weights);
-chi2 = chi2_f(x, ft, data, weights=weights, verb=true);
+chi2 = image_to_chi2(x, ft, data, weights=weights, verb=true);
 imdisp(x, pixsize=pixsize, beamsize=0.5*1/maximum(data.uv_baseline)*180/pi*3600*1000);
 savefig("polaris_image.png")

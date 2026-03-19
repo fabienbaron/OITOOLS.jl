@@ -18,14 +18,18 @@ It covers the full data analysis workflow:
 
 Source code: [github.com/fabienbaron/OITOOLS.jl](https://github.com/fabienbaron/OITOOLS.jl)
 
+## Forward model pipeline
+
+Both image-based and parametric-model-based workflows follow the same pattern:
+
+| Operation | Image domain | Model domain |
+|-----------|-------------|-------------|
+| → complex visibilities | `image_to_vis(x, ft)` | `model_to_vis(model, x, uv)` |
+| → observables | `image_to_obs(x, ft, data)` | `model_to_obs(model, x, data)` |
+| → chi² | `image_to_chi2(x, ft, data)` | `model_to_chi2(model, x, data)` |
+| → chi² + gradient | `image_to_chi2_fg(x, g, ft, data)` | `model_to_chi2_fg(model, x, data)` |
+
 !!! note
 
     OITOOLS is under active development. Contributions to the code, documentation,
     and demos are welcome.
-
-## API index
-
-```@index
-Pages = ["api.md"]
-Modules = [OITOOLS]
-```

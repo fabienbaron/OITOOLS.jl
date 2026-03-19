@@ -57,10 +57,11 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
 export FlatModel, parse_model, eval_model, eval_model_grad, display_model
 export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
-export model_to_obs, model_to_image, model_to_sed, resample_data
+export model_to_vis, model_to_obs, model_to_chi2, model_to_chi2_fg,
+       model_to_image, model_to_sed, resample_data
 
 # ── Visibility functions ─────────────────────────────────────────────────────
-export bb, visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_alt,
+export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_alt,
        visibility_ldpow, visibility_ldsquareroot,
        visibility_annulus, visibility_ellipse_uniform, visibility_ellipse_quad,
        visibility_thin_ring, visibility_Gaussian_ring, visibility_Gaussian_ring_az,
@@ -69,8 +70,9 @@ export bb, visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad
 # ── Image reconstruction ─────────────────────────────────────────────────────
 export setup_dft, setup_dft_polychromatic,
        setup_nfft, setup_nfft_multiepochs, setup_nfft_polychromatic
-export image_to_vis_dft, image_to_vis,
-       image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs
+export image_to_vis,
+       image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs,
+       image_to_chi2, image_to_chi2_fg
 export vis_to_v2, vis_to_t3, observables
 export chi2_f, chi2_fg, chi2_polychromatic_f
 export crit_f, crit_fg, crit_polychromatic_fg, crit_multitemporal_fg

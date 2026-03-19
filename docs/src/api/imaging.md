@@ -15,8 +15,7 @@
 
 | Function | Description |
 |----------|-------------|
-| `image_to_vis_dft(x, dft)` | Image to complex visibilities via DFT |
-| `image_to_vis(x, plan)` | Image to complex visibilities via NFFT |
+| `image_to_vis(x, ft)` | Image to complex visibilities (DFT or NFFT) |
 | `image_to_v2(x, ft, data)` | Image to squared visibilities |
 | `image_to_t3phi(x, ft, data)` | Image to closure phases |
 | `image_to_t3amp(x, ft, data)` | Image to triple amplitudes |
@@ -29,13 +28,18 @@
 
 | Function | Description |
 |----------|-------------|
-| `chi2_f(x, ft, data)` | Image chi-squared (value only); `ft` can be a DFT matrix or NFFT plan |
-| `chi2_fg(x, g, ft, data)` | Image chi-squared with gradient; dispatches on `ft` type |
+| `image_to_chi2(x, ft, data)` | Image chi-squared (value only; alias: `chi2_f`) |
+| `image_to_chi2_fg(x, g, ft, data)` | Image chi-squared with gradient (alias: `chi2_fg`) |
 | `chi2_polychromatic_f(x, ft, data)` | Polychromatic chi-squared (value only) |
 | `crit_f(x, ft, data)` | Criterion = chi-squared + regularization (value only) |
 | `crit_fg(x, g, ft, data)` | Criterion + gradient (includes normalization correction) |
 | `crit_polychromatic_fg(x, g, ft, data)` | Polychromatic criterion + gradient |
 | `crit_multitemporal_fg(x, g, ft, data)` | Multi-temporal criterion + gradient |
+
+```@docs
+image_to_chi2
+image_to_chi2_fg
+```
 
 ## Reconstruction
 

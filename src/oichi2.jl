@@ -767,6 +767,22 @@ function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstrac
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
+"""
+    image_to_chi2(x, ft, data; weights=[1,1,1], verb=false, vonmises=false)
+
+Alias for [`chi2_f`](@ref).  Compute the weighted chi-squared of an image
+against data, for consistency with the `image_to_vis` / `image_to_obs` family.
+"""
+const image_to_chi2 = chi2_f
+
+"""
+    image_to_chi2_fg(x, g, ft, data; weights=[1,1,1], verb=false, vonmises=false)
+
+Alias for [`chi2_fg`](@ref).  Compute chi-squared and its gradient w.r.t. the
+image, for consistency with the `image_to_vis` / `image_to_obs` family.
+"""
+const image_to_chi2_fg = chi2_fg
+
 # ---------------------------------------------------------------------------
 # _polychromatic_vis_flux_chi2: shared helper for computing VIS and FLUX chi2
 # contributions in polychromatic mode (used by both chi2_polychromatic_f and

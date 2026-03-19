@@ -13,7 +13,7 @@ nx = 128 # width of image (number of pixels)
 ft = setup_nfft(data, nx, pixsize);
 #initial image is a simple Gaussian
 x_start = gaussian2d(nx,nx,nx/6);
-chi2_f(x_start, ft, data, verb=true); # Evaluate chi2
+image_to_chi2(x_start, ft, data, verb=true); # Evaluate chi2
 regularizers = [["centering", 1e4], ["l1l2", 1e9, 1e-3]];
 x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true, maxiter=500);
 imdisp(x,pixsize=pixsize)

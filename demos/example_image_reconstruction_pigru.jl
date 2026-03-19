@@ -28,7 +28,7 @@ println(result)
 
 x_start = model_to_image(result.model, result.x_opt, nx=nx, pixsize=pixsize)
 
-chi2_f(x_start, ft, data, verb=true); # Evaluate chi2
+image_to_chi2(x_start, ft, data, verb=true); # Evaluate chi2
 regularizers = [["centering", 1e4], ["l1l2", 7e7, 1e-3]];
 weights = [1.0, 0.0, 1.0]; # disable T3amp for VLTI/PIONIER
 x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true, maxiter=500, weights=weights);

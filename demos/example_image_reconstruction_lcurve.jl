@@ -23,7 +23,7 @@ for i=1:length(tv_weights)
       for t=1:3 # uncomment to make sure we converged
           x = reconstruct(x, data, fftplan, regularizers = regularizers, verb = false, maxiter=100);
      end
-   lcurve_chi2[i] = chi2_fg(x, g, fftplan, data);
+   lcurve_chi2[i] = image_to_chi2_fg(x, g, fftplan, data);
    lcurve_reg[i] = regularization(x,g, regularizers=regularizers)/tv_weights[i];
    #imdisp(x,pixscale=pixsize)
 end

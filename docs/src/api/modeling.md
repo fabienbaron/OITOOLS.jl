@@ -5,13 +5,15 @@
 | Function | Description |
 |----------|-------------|
 | `parse_model(dict, fit_params)` | Compile a flat parameter dict into a `FlatModel` |
-| `eval_model(model, x, uv)` | Evaluate complex visibilities for a model |
+| `model_to_vis(model, x, uv)` | Evaluate complex visibilities for a model (alias: `eval_model`) |
 | `eval_model_grad(model, x, uv)` | Evaluate visibilities + Jacobian |
 | `display_model(dict, fit_params)` | Pretty-print model parameters |
 | `fit_model(dict, fit_params, data)` | Fit model via gradient descent (NLopt) |
 | `fit_model_lsqfit(dict, fit_params, data)` | Fit model via Levenberg-Marquardt (LsqFit) |
 | `fit_model_ultranest(dict, fit_params, data)` | Fit model via nested sampling (UltraNest) |
 | `model_to_obs(model, x, data)` | Compute observables (V², T3amp, T3phi) from a model |
+| `model_to_chi2(model, x, data)` | Compute weighted chi² (alias: `chi2_flat`) |
+| `model_to_chi2_fg(model, x, data)` | Compute chi² + gradient (alias: `chi2_flat_fg`) |
 | `model_to_image(model, x; nx, pixsize)` | Synthesize a model image via inverse FFT |
 | `model_to_sed(model, x, wl_grid)` | Compute spectral energy distribution |
 | `resample_data(data)` | Bootstrap resample data (add Gaussian noise from error bars) |
@@ -19,6 +21,7 @@
 ```@docs
 FlatModel
 parse_model
+model_to_vis
 eval_model
 eval_model_grad
 display_model
@@ -26,6 +29,8 @@ fit_model
 fit_model_lsqfit
 fit_model_ultranest
 model_to_obs
+model_to_chi2
+model_to_chi2_fg
 model_to_image
 model_to_sed
 resample_data
@@ -58,4 +63,3 @@ All take baseline spatial frequency arguments and return complex visibilities.
 | `visibility_Gaussian_ring_az(...)` | Gaussian ring with azimuthal modulation |
 | `visibility_Lorentzian_ring(b, diam, fwhm)` | Lorentzian ring |
 | `visibility_GaussianLorentzian_ring_az(...)` | Gaussian-Lorentzian ring with azimuthal modulation |
-| `bb(T, wl)` | Planck function (black-body spectral radiance) |

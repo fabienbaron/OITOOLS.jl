@@ -759,6 +759,14 @@ function eval_model(model::FlatModel,
     return V
 end
 
+"""
+    model_to_vis(model, x, uv; wl=nothing, mjd=nothing, n=0)
+
+Alias for [`eval_model`](@ref).  Compute complex visibilities from a parametric
+model, for consistency with the `model_to_obs` / `model_to_chi2` family.
+"""
+const model_to_vis = eval_model
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # eval_model_grad  (Jacobian ∂V/∂x via ForwardDiff)

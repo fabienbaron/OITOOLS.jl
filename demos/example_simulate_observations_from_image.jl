@@ -36,5 +36,5 @@ uvplot(data, color="wav")
 x_true = readfits(image_file)
 x_true /= sum(x_true)
 ft = setup_nfft(data, size(x_true,1), pixsize);
-f_chi2 = chi2_f(x_true, ft, data, verb=true);
+f_chi2 = image_to_chi2(x_true, ft, data, verb=true);
 image_to_vis(x, ft)

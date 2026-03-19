@@ -8,7 +8,7 @@
 #   1. display_model — inspect model before fitting
 #   2. fit_model — NLopt with gradient (LD_LBFGS)
 #   3. fit_model — gradient-free (LN_NELDERMEAD)
-#   4. chi2_flat — compute chi2 at arbitrary parameter values
+#   4. model_to_chi2 — compute chi2 at arbitrary parameter values
 #   5. model_to_obs + plot_v2_residuals — compare model vs data
 #   6. model_to_image + imdisp — visualise the fitted model
 #   7. fit_model_ultranest — Bayesian nested sampling (optional, slow)
@@ -108,10 +108,10 @@ println("="^70)
 
 # Compile model and evaluate chi2 at published values
 model_ld = parse_model(param_ld, fit_params_ld)
-chi2_pub = chi2_flat(model_ld, [8.502, 0.1404], data; weights=[1.0, 0, 0])
+chi2_pub = model_to_chi2(model_ld, [8.502, 0.1404], data; weights=[1.0, 0, 0])
 @printf("  χ² at published values (8.502, 0.1404): %.2f\n", chi2_pub)
 
-chi2_fit = chi2_flat(model_ld, result_ld.x_opt, data; weights=[1.0, 0, 0])
+chi2_fit = model_to_chi2(model_ld, result_ld.x_opt, data; weights=[1.0, 0, 0])
 @printf("  χ² at best-fit values:                  %.2f\n", chi2_fit)
 
 

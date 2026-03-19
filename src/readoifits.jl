@@ -1,4 +1,3 @@
-# readoifits.jl — refactored
 #
 # Architecture:
 #   load_oifits(file)            → OIDataSet   (I/O only, try/catch for v1 files)

@@ -34,7 +34,7 @@ data = data[1,1]
 # Setup Fourier transform via DFT
 dft = setup_dft(data, nx, pixsize);
 # This computes the complete chi2
-f_chi2 = chi2_f(x_true, dft, data);
+f_chi2 = image_to_chi2(x_true, dft, data);
 # Compute |V|^2 observables and plot
 @time cvis_model = image_to_vis(x_true, dft);
 v2_model = vis_to_v2(cvis_model, data.indx_v2);
@@ -43,7 +43,7 @@ plot_v2_residuals(data, v2_model);
 # NFFT method
 ft = setup_nfft(data, nx, pixsize);
 # This computes the complete chi2
-f_chi2 = chi2_f(x_true, ft, data);
+f_chi2 = image_to_chi2(x_true, ft, data);
 # Compute |V|^2 observables and plot
 @time cvis_model = image_to_vis(x_true, ft);
 v2_model = vis_to_v2(cvis_model, data.indx_v2);
