@@ -143,4 +143,4 @@ pixsize = auto_pixsize(data; oversampling=3.0)
 
 See `example_image_reconstruction_oimem.jl` for a complete worked example.
 
-See the [API Reference](@ref) for full docstrings.
+See the [Imaging](@ref) API reference for full docstrings.

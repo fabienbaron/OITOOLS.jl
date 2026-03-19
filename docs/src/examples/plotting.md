@@ -125,4 +125,4 @@ facility = read_facility_file("CHARA_new.toml")
 plot_facility(facility)
 ```
 
-See the [API Reference](@ref) for full docstrings.
+See the [Plotting](@ref) API reference for full docstrings.

@@ -38,6 +38,16 @@ using OITOOLS
 See the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for
 Python dependencies (UltraNest, Astroquery) and PackageCompiler setup.
 
+## Quick start
+
+```julia
+using OITOOLS
+data = readoifits("mydata.oifits")
+uvplot(data)
+plot_v2(data)
+plot_t3phi(data)
+```
+
 ## Features
 
 ### Reading OIFITS data
@@ -118,8 +128,8 @@ including:
 - [Model fitting guide](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/modeling/)
 - [Image reconstruction](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/imaging/)
 - [Simulation and planning](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/simulating/)
-- [API reference](https://fabienbaron.github.io/OITOOLS.jl/dev/api/)
 - [Demo scripts](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/intro/)
+- API reference: [OIFITS](https://fabienbaron.github.io/OITOOLS.jl/dev/api/oifits/), [Plotting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/plotting/), [Model Fitting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/modeling/), [Imaging](https://fabienbaron.github.io/OITOOLS.jl/dev/api/imaging/), [Observation Planning](https://fabienbaron.github.io/OITOOLS.jl/dev/api/planning/)
 
 ## Speeding up load times with PackageCompiler
 
@@ -140,23 +150,13 @@ julia --sysimage oitools.so
 
 ```julia
 using Pkg
-# Python packages
+pkg"registry add General"
+pkg"registry add https://github.com/emmt/EmmtRegistry"
+Pkg.develop(url="https://github.com/fabienbaron/OITOOLS.jl.git")
+# Python dependencies (optional, for UltraNest and Astroquery)
 ENV["PYTHON"] = ""
-Pkg.add("Conda")
+Pkg.build("PyCall")
 using Conda
 Conda.add("ultranest", channel="conda-forge")
 Conda.add("astroquery", channel="astropy")
-# Julia packages
-pkg"registry add General"
-pkg"registry add https://github.com/emmt/EmmtRegistry"
-Pkg.add([
-    "AstroTime", "CFITSIO", "Crayons", "Dates", "DelimitedFiles",
-    "FFTW", "FITSIO", "Glob", "LaTeXStrings", "LinearAlgebra",
-    "LsqFit", "Match", "NFFT", "NLopt", "NearestNeighbors",
-    "Parameters", "PyCall", "PyPlot", "Random", "SparseArrays",
-    "SpecialFunctions", "Statistics", "UltraNest",
-    "ArrayTools", "LazyAlgebra", "OptimPackNextGen", "OIFITS",
-])
-Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
-using OITOOLS
 ```
