@@ -172,9 +172,15 @@ function cbar_label_right!(cbar, label::String)
 end
 
 # Set up MJD colorbar ticks
-function setup_mjd_colorbar(sc)
-    cbar = colorbar(sc, aspect=50, orientation="horizontal",
-                    pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
+# When fig and ax_list are provided, create a shared colorbar for a multi-panel figure.
+function setup_mjd_colorbar(sc; fig=nothing, ax_list=nothing)
+    if !isnothing(fig) && !isnothing(ax_list)
+        cbar = fig.colorbar(sc; ax=ax_list, aspect=50, orientation="horizontal",
+                            pad=0.08, fraction=0.04)
+    else
+        cbar = colorbar(sc, aspect=50, orientation="horizontal",
+                        pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
+    end
     cbar_label_right!(cbar, "MJD")
     mjdvals = sc.get_array()
     mjds = sort(unique(mjdvals))
@@ -188,9 +194,14 @@ function setup_mjd_colorbar(sc)
 end
 
 # Set up wavelength colorbar ticks
-function setup_wav_colorbar(sc)
-    cbar = colorbar(sc, aspect=50, orientation="horizontal",
-                    pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
+function setup_wav_colorbar(sc; fig=nothing, ax_list=nothing)
+    if !isnothing(fig) && !isnothing(ax_list)
+        cbar = fig.colorbar(sc; ax=ax_list, aspect=50, orientation="horizontal",
+                            pad=0.08, fraction=0.04)
+    else
+        cbar = colorbar(sc, aspect=50, orientation="horizontal",
+                        pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
+    end
     cbar_label_right!(cbar, "λ (μm)")
     wavvals = sc.get_array()
     cbar_range = floor.(collect(range(minimum(wavvals), maximum(wavvals), length=11))*100)/100
@@ -346,14 +357,32 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
     # Shared x-axis label on bottom panel only
     axes[npanels].set_xlabel(OBS_PLOT_SPECS[active[npanels]].xlabel)
 
-    # Shared legend from the first "baseline"/"station" panel (has labeled artists)
     cc = canonical_color(color)
     if cc == "baseline" || cc == "station"
+        # Shared legend from the first panel (has labeled artists)
         handles, labels = axes[1].get_legend_handles_labels()
         if length(handles) > 0
             fig.legend(handles, labels, fontsize=oiplot_legend_fontsize,
                        fancybox=true, shadow=true, ncol=oiplot_legend_ncol_below,
                        loc="lower center", bbox_to_anchor=(0.5, 0.0))
+        end
+    elseif cc == "wav" || cc == "mjd"
+        # Shared colorbar from the last panel's scatter collection
+        sc = nothing
+        for i in npanels:-1:1
+            colls = axes[i].collections
+            if length(colls) > 0
+                sc = colls[end]
+                break
+            end
+        end
+        if !isnothing(sc)
+            ax_vec = [axes[i] for i in 1:npanels]
+            if cc == "wav"
+                setup_wav_colorbar(sc; fig, ax_list=ax_vec)
+            else
+                setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
+            end
         end
     end
 
@@ -573,11 +602,11 @@ end
 
 # Residual plot spec: maps observable name to data/model fields and labels
 const _RES_SPECS = (
-    v2     = (y=:v2,     yerr=:v2_err,     x=:v2_baseline,     sta=:v2_sta_index, grp=:baseline, label="V²",     xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
-    t3amp  = (y=:t3amp,  yerr=:t3amp_err,  x=:t3_maxbaseline,  sta=:t3_sta_index, grp=:triplet,  label="T3amp",  xlabel=L"Max baseline (M$\lambda$)", phase=false, logplot_ok=true),
-    t3phi  = (y=:t3phi,  yerr=:t3phi_err,  x=:t3_maxbaseline,  sta=:t3_sta_index, grp=:triplet,  label="T3φ (°)", xlabel=L"Max baseline (M$\lambda$)", phase=true,  logplot_ok=false),
-    visamp = (y=:visamp, yerr=:visamp_err, x=:vis_baseline,    sta=:vis_sta_index,grp=:baseline, label="Visamp", xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
-    visphi = (y=:visphi, yerr=:visphi_err, x=:vis_baseline,    sta=:vis_sta_index,grp=:baseline, label="Visφ (°)", xlabel=L"Baseline (M$\lambda$)",   phase=true,  logplot_ok=false),
+    v2     = (y=:v2,     yerr=:v2_err,     x=:v2_baseline,     lam=:v2_lam,  mjd=:v2_mjd,  sta=:v2_sta_index, grp=:baseline, label="V²",      xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
+    t3amp  = (y=:t3amp,  yerr=:t3amp_err,  x=:t3_maxbaseline,  lam=:t3_lam,  mjd=:t3_mjd,  sta=:t3_sta_index, grp=:triplet,  label="T3amp",   xlabel=L"Max baseline (M$\lambda$)", phase=false, logplot_ok=true),
+    t3phi  = (y=:t3phi,  yerr=:t3phi_err,  x=:t3_maxbaseline,  lam=:t3_lam,  mjd=:t3_mjd,  sta=:t3_sta_index, grp=:triplet,  label="T3φ (°)", xlabel=L"Max baseline (M$\lambda$)", phase=true,  logplot_ok=false),
+    visamp = (y=:visamp, yerr=:visamp_err, x=:vis_baseline,    lam=:vis_lam, mjd=:vis_mjd, sta=:vis_sta_index,grp=:baseline, label="Visamp",  xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
+    visphi = (y=:visphi, yerr=:visphi_err, x=:vis_baseline,    lam=:vis_lam, mjd=:vis_mjd, sta=:vis_sta_index,grp=:baseline, label="Visφ (°)", xlabel=L"Baseline (M$\lambda$)",   phase=true,  logplot_ok=false),
 )
 
 function _adaptive_marker(npts)
@@ -612,11 +641,25 @@ function _plot_residual_panel(data, model_vec, spec;
 
     mk = _adaptive_marker(npts)
 
+    cc = canonical_color(color)
+
+    # Colour arrays for wav/mjd modes
+    if cc == "wav"
+        cvals = getfield(data, spec.lam) .* 1e6  # metres → μm
+        cmap = "Spectral_r"
+    elseif cc == "mjd"
+        cvals = getfield(data, spec.mjd)
+        cmap = "plasma"
+    else
+        cvals = nothing
+        cmap = ""
+    end
+
     # ── Top panel: data + model ──
     if !isnothing(ax_data)
         logplot && spec.logplot_ok && ax_data.set_yscale("log")
 
-        if color == "baseline"
+        if cc == "baseline"
             labels = _get_group_labels(data, spec)
             groups = sort(unique(labels))
             for (i, g) in enumerate(groups)
@@ -628,6 +671,13 @@ function _plot_residual_panel(data, model_vec, spec;
                 ax_data.plot(xvals[idx], model_vec[idx], linestyle="none", marker="x",
                     color=oiplot_colors[i], markersize=mk.ms+1, alpha=mk.alpha, zorder=2)
             end
+        elseif !isnothing(cvals)
+            ax_data.errorbar(xvals, ydata, yerr=yerr, fmt="none",
+                ecolor="Gainsboro", elinewidth=0.8, zorder=0)
+            ax_data.scatter(xvals, ydata, c=cvals, cmap=cmap,
+                s=mk.ms^2, alpha=mk.alpha, zorder=1)
+            ax_data.scatter(xvals, model_vec, c=cvals, cmap=cmap,
+                s=(mk.ms+1)^2, alpha=mk.alpha, marker="x", zorder=2)
         else
             ax_data.errorbar(xvals, ydata, yerr=yerr, fmt="o",
                 color="Grey", ecolor="Gainsboro", markersize=mk.ms, alpha=mk.alpha, elinewidth=0.8)
@@ -646,7 +696,7 @@ function _plot_residual_panel(data, model_vec, spec;
         ax_res.axhspan(-3, 3, color="#fff3cd", alpha=0.2, zorder=0)
         ax_res.axhline(0, color="Grey", linewidth=0.5, zorder=1)
 
-        if color == "baseline"
+        if cc == "baseline"
             labels = _get_group_labels(data, spec)
             groups = sort(unique(labels))
             for (i, g) in enumerate(groups)
@@ -654,6 +704,9 @@ function _plot_residual_panel(data, model_vec, spec;
                 ax_res.plot(xvals[idx], resid[idx], linestyle="none", marker="o",
                     color=oiplot_colors[i], markersize=mk.ms, alpha=mk.alpha, zorder=2)
             end
+        elseif !isnothing(cvals)
+            ax_res.scatter(xvals, resid, c=cvals, cmap=cmap,
+                s=mk.ms^2, alpha=mk.alpha, zorder=2)
         else
             ax_res.plot(xvals, resid, linestyle="none", marker="o",
                 color="Grey", markersize=mk.ms, alpha=mk.alpha, zorder=2)
@@ -677,9 +730,22 @@ function _plot_single_residual(data, model_vec, spec;
         ax_data=axes[1], ax_res=axes[2], logplot=logplot,
         y_range=y_range, res_range=res_range, color=color)
     axes[1].tick_params(labelbottom=false)
+    cc = canonical_color(color)
     npts = length(getfield(data, spec.y))
-    npts > 0 && npts < 200 && color == "baseline" &&
+    npts > 0 && npts < 200 && cc == "baseline" &&
         axes[1].legend(fontsize=7, ncol=4, loc="best")
+    if cc == "wav" || cc == "mjd"
+        sc = nothing
+        for i in 2:-1:1
+            colls = axes[i].collections
+            length(colls) > 0 && (sc = colls[end]; break)
+        end
+        if !isnothing(sc)
+            ax_vec = [axes[1], axes[2]]
+            cc == "wav" ? setup_wav_colorbar(sc; fig, ax_list=ax_vec) :
+                          setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
+        end
+    end
     tight_layout()
     show(block=false)
 end
@@ -772,6 +838,7 @@ function plot_residuals(data::OIdata, obs::NamedTuple;
         axes = [axes[1], axes[2]]  # ensure indexable
     end
 
+    cc = canonical_color(color)
     for (i, p) in enumerate(panels)
         ax_d = axes[2i - 1]
         ax_r = axes[2i]
@@ -779,9 +846,30 @@ function plot_residuals(data::OIdata, obs::NamedTuple;
             ax_data=ax_d, ax_res=ax_r, logplot=logplot, color=color)
         ax_d.tick_params(labelbottom=false)
         npts = length(p.model)
-        npts > 0 && npts < 200 && color == "baseline" &&
+        npts > 0 && npts < 200 && cc == "baseline" &&
             ax_d.legend(fontsize=6, ncol=5, loc="best")
     end
+
+    # Shared colorbar for wav/mjd
+    if cc == "wav" || cc == "mjd"
+        sc = nothing
+        for i in nrows:-1:1
+            colls = axes[i].collections
+            if length(colls) > 0
+                sc = colls[end]
+                break
+            end
+        end
+        if !isnothing(sc)
+            ax_vec = [axes[i] for i in 1:nrows]
+            if cc == "wav"
+                setup_wav_colorbar(sc; fig, ax_list=ax_vec)
+            else
+                setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
+            end
+        end
+    end
+
     tight_layout()
     show(block=false)
 end

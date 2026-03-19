@@ -69,8 +69,21 @@ Both image-based and parametric-model-based workflows follow the same pattern:
 
 ### Plotting
 
-All the classic plots: UV coverage, V², closure phases, triple amplitudes,
-differential phases, flux spectra. Colour by baseline, wavelength, or MJD.
+All plot functions accept `color="baseline"` (default), `color="wav"`, or
+`color="mjd"` to colour-code by baseline, wavelength, or timestamp.
+
+```julia
+plot_v2(data; logplot=true, color="wav")        # single observable
+plot_obs(data)                                   # multi-panel: V², T3φ, T3amp
+plot_obs(data; obs=["V2","T3PHI","VISAMP"], color="mjd")
+
+# After reconstruction or model fitting:
+obs = image_to_obs(x, ft, data)                 # or model_to_obs(model, x, data)
+plot_residuals(data, obs)                        # data vs model + residuals
+plot_residuals(x, ft, data)                      # convenience shortcut
+
+imdisp(image; pixsize=0.1)                       # display a reconstructed image
+```
 
 |    **UV coverage**                  | **V²**               |
 |:--------------------------------:|:--------------------------------:|
