@@ -448,8 +448,8 @@ fit_params = ["star,ud", "star,f", "ring,udout", "ring,f"]
 ```
 
 !!! note
-    Expression strings containing `\$` must use `raw"..."` in Julia to
-    prevent string interpolation. `pmoired_to_julia()` handles this
+    Expression strings containing `$` must use `raw"..."` or `\$` in Julia
+    to prevent string interpolation. `pmoired_to_julia()` handles this
     automatically.
 
 See `example_model_fitting_pmoired_conversion.jl` for more conversion
