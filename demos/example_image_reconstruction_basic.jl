@@ -7,7 +7,7 @@ data = readoifits(oifitsfile, warn=false)[1,1]
 
 display(data)
 plot_obs(data)
-plot_obs(data, color="wav")
+plot_obs(data, color="mjd")
 
 # ── Fourier transform setup ──────────────────────────────────────────────────
 pixsize = 0.2  # size of a pixel in milliarcseconds

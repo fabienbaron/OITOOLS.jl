@@ -31,17 +31,17 @@ function set_oiplot_defaults(; compact::Bool=oiplot_compact)
     rc["font.family"] = ["serif"]
     rc["legend.numpoints"] = [1]
     rc["legend.handletextpad"] = [0.3]
+    rc["lines.markeredgewidth"]  = [0]
     if compact
         rc["font.size"]              = [9]
         rc["xtick.major.size"]       = [3]
         rc["ytick.major.size"]       = [3]
-        rc["xtick.minor.size"]       = [3]
-        rc["ytick.minor.size"]       = [3]
+        rc["xtick.minor.size"]       = [1.5]
+        rc["ytick.minor.size"]       = [1.5]
         rc["xtick.major.width"]      = [0.5]
         rc["ytick.major.width"]      = [0.5]
-        rc["xtick.minor.width"]      = [0.5]
-        rc["ytick.minor.width"]      = [0.5]
-        rc["lines.markeredgewidth"]  = [0.5]
+        rc["xtick.minor.width"]      = [0.4]
+        rc["ytick.minor.width"]      = [0.4]
         global oiplot_markersize       = 1.5
         global oiplot_scatter_size     = 3.0
         global oiplot_elinewidth       = 0.5
@@ -53,16 +53,15 @@ function set_oiplot_defaults(; compact::Bool=oiplot_compact)
         global oiplot_show_title       = false
         global oiplot_figsize          = (8, 3)
     else
-        rc["font.size"]              = [14]
+        rc["font.size"]              = [12]
         rc["xtick.major.size"]       = [6]
         rc["ytick.major.size"]       = [6]
-        rc["xtick.minor.size"]       = [6]
-        rc["ytick.minor.size"]       = [6]
+        rc["xtick.minor.size"]       = [3]
+        rc["ytick.minor.size"]       = [3]
         rc["xtick.major.width"]      = [1]
         rc["ytick.major.width"]      = [1]
-        rc["xtick.minor.width"]      = [1]
-        rc["ytick.minor.width"]      = [1]
-        rc["lines.markeredgewidth"]  = [1]
+        rc["xtick.minor.width"]      = [0.6]
+        rc["ytick.minor.width"]      = [0.6]
         global oiplot_markersize       = 3.0
         global oiplot_scatter_size     = 6.0
         global oiplot_elinewidth       = 1.0
@@ -76,9 +75,29 @@ function set_oiplot_defaults(; compact::Bool=oiplot_compact)
     end
 end
 
-const global oiplot_colors=["black", "gold","chartreuse","blue","red", "pink","lightgray","darkorange","darkgreen","aqua",
-"fuchsia","saddlebrown","dimgray","darkslateblue","violet","indigo","blue","dodgerblue",
-"sienna","olive","purple","darkorchid","tomato","darkturquoise","steelblue","seagreen","darkgoldenrod","darkseagreen","salmon","slategray","lime","coral","maroon","mistyrose","sandybrown","tan","olivedrab"]
+# matplotlib tab20 palette — 20 distinct colours for categorical data
+const global oiplot_colors = [
+    "#1f77b4",  # blue
+    "#ff7f0e",  # orange
+    "#2ca02c",  # green
+    "#d62728",  # red
+    "#9467bd",  # purple
+    "#8c564b",  # brown
+    "#e377c2",  # pink
+    "#7f7f7f",  # grey
+    "#bcbd22",  # olive
+    "#17becf",  # cyan
+    "#aec7e8",  # light blue
+    "#ffbb78",  # light orange
+    "#98df8a",  # light green
+    "#ff9896",  # light red
+    "#c5b0d5",  # light purple
+    "#c49c94",  # light brown
+    "#f7b6d2",  # light pink
+    "#c7c7c7",  # light grey
+    "#dbdb8d",  # light olive
+    "#9edae5",  # light cyan
+]
 
 const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
 
@@ -175,8 +194,8 @@ end
 # When fig and ax_list are provided, create a shared colorbar for a multi-panel figure.
 function setup_mjd_colorbar(sc; fig=nothing, ax_list=nothing)
     if !isnothing(fig) && !isnothing(ax_list)
-        cbar = fig.colorbar(sc; ax=ax_list, aspect=50, orientation="horizontal",
-                            pad=0.08, fraction=0.04)
+        cax = fig.add_axes([0.15, 0.02, 0.7, 0.02])
+        cbar = fig.colorbar(sc; cax=cax, orientation="horizontal")
     else
         cbar = colorbar(sc, aspect=50, orientation="horizontal",
                         pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
@@ -185,26 +204,27 @@ function setup_mjd_colorbar(sc; fig=nothing, ax_list=nothing)
     mjdvals = sc.get_array()
     mjds = sort(unique(mjdvals))
     if length(mjds) < 5
-        cbar.set_ticks(round.(mjds*100)/100)
+        ticks = round.(mjds; digits=2)
     else
-        cbar_range = round.(collect(range(minimum(mjdvals), maximum(mjdvals), length=5))*100)/100
-        cbar.set_ticks(cbar_range)
+        ticks = round.(collect(range(minimum(mjdvals), maximum(mjdvals), length=5)); digits=2)
     end
+    cbar.set_ticks(ticks)
+    cbar.ax.set_xticklabels([string(Int(round(t))) for t in ticks])
     return cbar
 end
 
 # Set up wavelength colorbar ticks
 function setup_wav_colorbar(sc; fig=nothing, ax_list=nothing)
     if !isnothing(fig) && !isnothing(ax_list)
-        cbar = fig.colorbar(sc; ax=ax_list, aspect=50, orientation="horizontal",
-                            pad=0.08, fraction=0.04)
+        cax = fig.add_axes([0.15, 0.02, 0.7, 0.02])
+        cbar = fig.colorbar(sc; cax=cax, orientation="horizontal")
     else
         cbar = colorbar(sc, aspect=50, orientation="horizontal",
                         pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
     end
     cbar_label_right!(cbar, "λ (μm)")
     wavvals = sc.get_array()
-    cbar_range = floor.(collect(range(minimum(wavvals), maximum(wavvals), length=11))*100)/100
+    cbar_range = floor.(collect(range(minimum(wavvals), maximum(wavvals), length=7))*100)/100
     cbar.set_ticks(cbar_range)
     return cbar
 end
@@ -229,6 +249,22 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
 
     cc = canonical_color(color)
     xs = spec.x_scale
+    scatter_obj = nothing
+
+    # Fall back to baseline colouring when wav/mjd has no range
+    if cc == "wav"
+        wavvals = vcat([getfield(data[n], spec.lam_field) for n in eachindex(data)]...)
+        if length(unique(wavvals)) <= 1
+            @warn "Only one wavelength — falling back to color=\"baseline\""
+            cc = "baseline"
+        end
+    elseif cc == "mjd"
+        mjdvals = vcat([getfield(data[n], spec.mjd_field) for n in eachindex(data)]...)
+        if length(unique(mjdvals)) <= 1
+            @warn "Only one MJD — falling back to color=\"baseline\""
+            cc = "baseline"
+        end
+    end
 
     if cc == "baseline" || cc == "station"
         # Group by baseline/triplet/station name
@@ -246,12 +282,12 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
             yvals = vcat([getfield(data[n], spec.y_field)[loc[n]] for n in eachindex(data)]...)
             yerr  = vcat([getfield(data[n], spec.yerr_field)[loc[n]] for n in eachindex(data)]...)
             if markopt
-                ax.errorbar(xvals, yvals, yerr=yerr, fmt="o", marker=oiplot_markers[i],
+                ax.errorbar(xvals, yvals, yerr=yerr, fmt="o", marker=oiplot_markers[mod1(i, length(oiplot_markers))],
                          markeredgecolor="Black", markersize=oiplot_markersize, color="Black",
                          ecolor="Gainsboro", elinewidth=oiplot_elinewidth, label=groups[i])
             else
                 ax.errorbar(xvals, yvals, yerr=yerr, fmt="o",
-                         markeredgecolor=oiplot_colors[i], color=oiplot_colors[i],
+                         markeredgecolor="none", color=oiplot_colors[mod1(i, length(oiplot_colors))],
                          markersize=oiplot_markersize, ecolor="Gainsboro",
                          elinewidth=oiplot_elinewidth, label=groups[i])
             end
@@ -271,21 +307,21 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
         xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
-        sc = ax.scatter(xvals, yvals, c=wavcol, cmap="Spectral_r", alpha=1.0,
+        scatter_obj = ax.scatter(xvals, yvals, c=wavcol, cmap="Spectral_r", alpha=1.0,
                      s=oiplot_scatter_size, zorder=100)
         ax.errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
                  ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
-        standalone && setup_wav_colorbar(sc)
+        standalone && setup_wav_colorbar(scatter_obj)
     elseif cc == "mjd"
         mjdcol = vcat([getfield(data[n], spec.mjd_field) for n in eachindex(data)]...)
         xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
-        sc = ax.scatter(xvals, yvals, c=mjdcol, cmap="plasma", alpha=1.0,
+        scatter_obj = ax.scatter(xvals, yvals, c=mjdcol, cmap="plasma", alpha=1.0,
                      s=oiplot_scatter_size, zorder=100)
         ax.errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
                  ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
-        standalone && setup_mjd_colorbar(sc)
+        standalone && setup_mjd_colorbar(scatter_obj)
     else
         xvals = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
@@ -305,7 +341,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
         tight_layout()
         show(block=false)
     end
-    return ax
+    return (ax, scatter_obj)
 end
 
 """
@@ -337,61 +373,65 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
     npanels == 0 && (@warn("plot_obs: no data for requested observables"); return nothing)
 
     if isnothing(figsize)
-        h = oiplot_compact ? 2.0 : 3.0
-        figsize = (oiplot_figsize[1], h * npanels + 0.8)
+        h = oiplot_compact ? 2.0 : 2.2
+        w = oiplot_compact ? 6.0 : 8.0
+        figsize = (w, h * npanels + 0.6)
     end
 
-    fig, axes = plt.subplots(num=string(figtitle, "Multi-observable"),
-                             nrows=npanels, ncols=1, sharex=true,
-                             figsize=figsize, facecolor="White")
+    fig = figure(string(figtitle, "Multi-observable"), figsize=figsize, facecolor="White")
+    fig.clear()
+    axes = fig.subplots(nrows=npanels, ncols=1, sharex=true)
     # When npanels==1, axes is not an array
     if npanels == 1
         axes = [axes]
     end
 
+    last_sc = nothing
     for (i, key) in enumerate(active)
         spec = OBS_PLOT_SPECS[key]
-        _plot_obs(data, spec; color=color, markopt=markopt, ax=axes[i])
+        _, sc = _plot_obs(data, spec; color=color, markopt=markopt, ax=axes[i])
+        if !isnothing(sc)
+            last_sc = sc
+        end
     end
 
     # Shared x-axis label on bottom panel only
     axes[npanels].set_xlabel(OBS_PLOT_SPECS[active[npanels]].xlabel)
 
     cc = canonical_color(color)
-    if cc == "baseline" || cc == "station"
-        # Shared legend from the first panel (has labeled artists)
+    # If wav/mjd was requested but fell back to baseline (single value), show legend
+    use_colorbar = (cc == "wav" || cc == "mjd") && !isnothing(last_sc)
+    use_legend   = !use_colorbar
+
+    # Compute bottom padding for legend or colorbar
+    if use_colorbar
+        bot_pad = 0.07
+    elseif use_legend
+        bot_pad = 0.08 / npanels + 0.04
+    else
+        bot_pad = 0.0
+    end
+
+    subplots_adjust(hspace=0.05)
+    tight_layout(rect=(0, bot_pad, 1, 1))
+
+    # Add legend or colorbar after layout is computed
+    if use_colorbar
+        ax_vec = [axes[i] for i in 1:npanels]
+        if cc == "wav"
+            setup_wav_colorbar(last_sc; fig, ax_list=ax_vec)
+        else
+            setup_mjd_colorbar(last_sc; fig, ax_list=ax_vec)
+        end
+    elseif use_legend
         handles, labels = axes[1].get_legend_handles_labels()
         if length(handles) > 0
             fig.legend(handles, labels, fontsize=oiplot_legend_fontsize,
                        fancybox=true, shadow=true, ncol=oiplot_legend_ncol_below,
                        loc="lower center", bbox_to_anchor=(0.5, 0.0))
         end
-    elseif cc == "wav" || cc == "mjd"
-        # Shared colorbar from the last panel's scatter collection
-        sc = nothing
-        for i in npanels:-1:1
-            colls = axes[i].collections
-            if length(colls) > 0
-                sc = colls[end]
-                break
-            end
-        end
-        if !isnothing(sc)
-            ax_vec = [axes[i] for i in 1:npanels]
-            if cc == "wav"
-                setup_wav_colorbar(sc; fig, ax_list=ax_vec)
-            else
-                setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
-            end
-        end
     end
 
-    subplots_adjust(hspace=0.05)
-    tight_layout()
-    # Make room for the shared legend at the bottom
-    if cc == "baseline" || cc == "station"
-        subplots_adjust(bottom=0.12)
-    end
     show(block=false)
     return fig
 end
@@ -473,8 +513,8 @@ function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="base
             loc =  [vcat(indx_v2[n][findall(baseline_list_v2[n] .== baseline[i])], indx_t3[n][findall(baseline_list_t3[n] .== baseline[i])]) for n=1:length(data)]
             u = vcat([data[n].uv[1,loc[n]] for n=1:length(data)]...)/1e6;
             v = vcat([data[n].uv[2,loc[n]] for n=1:length(data)]...)/1e6;
-            scatter( u,  v, alpha=1.0, s=12.0, color=oiplot_colors[i],label=baseline[i]) #TBD: handle case where length(baseline)>length(oiplot_colors)
-            scatter(-u, -v, alpha=1.0, s=12.0, color=oiplot_colors[i])
+            scatter( u,  v, alpha=1.0, s=12.0, color=oiplot_colors[mod1(i, length(oiplot_colors))],label=baseline[i])
+            scatter(-u, -v, alpha=1.0, s=12.0, color=oiplot_colors[mod1(i, length(oiplot_colors))])
         end
                
         if legend_below == false
@@ -1002,8 +1042,8 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
                 dphi  = vcat([dvec[n].visphi[loc[n]]       for n in eachindex(dvec)]...)
                 dperr = vcat([dvec[n].visphi_err[loc[n]]   for n in eachindex(dvec)]...)
                 ax.errorbar(wav, dphi, yerr=dperr, fmt="o",
-                            markersize=oiplot_markersize, color=oiplot_colors[ci],
-                            markeredgecolor=oiplot_colors[ci],
+                            markersize=oiplot_markersize, color=oiplot_colors[mod1(ci, length(oiplot_colors))],
+                            markeredgecolor="none",
                             ecolor="Gainsboro", elinewidth=oiplot_elinewidth)
                 ax.set_title(page_baselines[j], fontsize=oiplot_legend_fontsize)
                 ax.grid(true, which="both", color="Grey", linestyle=":")
@@ -1132,7 +1172,7 @@ function plot_v2_multifile(data::AbstractVector{<:OIdata}; logplot = false, remo
         for j=1:length(unique(baseline_list))
             baseline=unique(baseline_list)[j]
             loc=findall(baseline_list->baseline_list==baseline,baseline_list)
-            errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[j], markeredgecolor=oiplot_colors[i],color=oiplot_colors[i],markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline)
+            errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[mod1(j, length(oiplot_markers))], markeredgecolor="none",color=oiplot_colors[mod1(i, length(oiplot_colors))],markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline)
             if axiscount==0
                 if (length(unique(baseline_list)))==15
                     ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
