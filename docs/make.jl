@@ -1,8 +1,6 @@
 using Pkg
 Pkg.activate(@__DIR__)
 CI = get(ENV, "CI", nothing) == "true"
-ENV["PYTHON"] = ""
-Pkg.build("PyCall")
 using Documenter, OITOOLS
 
 makedocs(;
@@ -18,14 +16,12 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Installation" => "install.md",
-        "Examples" => [
-            "examples/intro.md",
-            "examples/reading.md",
-            "examples/plotting.md",
-            "examples/modeling.md",
-            "examples/simulating.md",
-            "examples/imaging.md",
-        ],
+        "Demo Scripts" => "examples/intro.md",
+        "Reading OIFITS" => "examples/reading.md",
+        "Plotting" => "examples/plotting.md",
+        "Model Fitting" => "examples/modeling.md",
+        "Simulating" => "examples/simulating.md",
+        "Imaging" => "examples/imaging.md",
         "API Reference" => [
             "OIFITS Handling" => "api/oifits.md",
             "Plotting"        => "api/plotting.md",
