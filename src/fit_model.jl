@@ -668,6 +668,25 @@ function model_to_obs(model::FlatModel, x::AbstractVector, data::OIdata)
             visamp=visamp_model, visphi=visphi_model)
 end
 
+"""
+    model_to_residuals(model, x, data)
+
+Compute normalised residuals `(model - data) / error` for each observable type.
+Returns a NamedTuple with fields `v2`, `t3amp`, `t3phi`, `visamp`, `visphi`.
+Phase residuals (t3phi, visphi) are wrapped to [-180, 180] before dividing by error.
+"""
+function model_to_residuals(model::FlatModel, x::AbstractVector, data::OIdata)
+    obs = model_to_obs(model, x, data)
+
+    v2_res     = data.nv2 > 0 ? (obs.v2 .- data.v2) ./ data.v2_err : Float64[]
+    t3amp_res  = data.nt3amp > 0 ? (obs.t3amp .- data.t3amp) ./ data.t3amp_err : Float64[]
+    t3phi_res  = data.nt3phi > 0 ? _mod360(obs.t3phi .- data.t3phi) ./ data.t3phi_err : Float64[]
+    visamp_res = data.nvisamp > 0 ? (obs.visamp .- data.visamp) ./ data.visamp_err : Float64[]
+    visphi_res = data.nvisphi > 0 ? _mod360(obs.visphi .- data.visphi) ./ data.visphi_err : Float64[]
+
+    return (v2=v2_res, t3amp=t3amp_res, t3phi=t3phi_res,
+            visamp=visamp_res, visphi=visphi_res)
+end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # model_to_image — synthesise an image from a FlatModel via inverse FFT

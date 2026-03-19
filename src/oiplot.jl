@@ -198,18 +198,7 @@ function setup_wav_colorbar(sc)
     return cbar
 end
 
-"""
-    plot_obs(data, spec; color="baseline", logplot=false, figsize=oiplot_figsize,
-             figtitle="", markopt=false, legend_below=false, ax=nothing)
-
-Generic plotting engine for any interferometric observable described by an
-`ObsPlotSpec`. All public `plot_*` functions delegate here.
-
-When `ax` is provided (a matplotlib Axes object), plot into that axes instead of
-creating a new figure. In that mode, figure creation, `tight_layout`, `show`,
-legend, and colorbar are skipped (the caller manages those).
-"""
-function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSpec;
+function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSpec;
                   color::String="baseline", logplot::Bool=false, figsize=oiplot_figsize,
                   figtitle::String="", markopt::Bool=false, legend_below::Bool=false,
                   plot_title::String=spec.plot_title, ylabel_str::String=spec.ylabel,
@@ -309,8 +298,8 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSpe
 end
 
 """
-    plot_multi(data; obs=["V2","T3PHI","T3AMP"], color="baseline",
-               figsize=nothing, figtitle="", markopt=false)
+    plot_obs(data; obs=["V2","T3PHI","T3AMP"], color="baseline",
+                     figsize=nothing, figtitle="", markopt=false)
 
 Multi-panel figure with one subplot per observable, sharing the x-axis and a
 single legend. Panels are stacked vertically; only the bottom panel gets an
@@ -320,7 +309,7 @@ x-axis label.
 `"T3AMP"`, `"VISAMP"`, `"VISPHI"`, `"FLUX"`). Panels whose data is empty are
 skipped automatically.
 """
-function plot_multi(data::Union{OIdata, AbstractArray{<:OIdata}};
+function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
                     obs::Vector{String}=["V2", "T3PHI", "T3AMP"],
                     color::String="baseline", figsize=nothing,
                     figtitle::String="", markopt::Bool=false)
@@ -334,7 +323,7 @@ function plot_multi(data::Union{OIdata, AbstractArray{<:OIdata}};
     active = [k for k in obs if haskey(OBS_PLOT_SPECS, k) &&
               any(getfield(d, _count_field[k]) > 0 for d in dvec)]
     npanels = length(active)
-    npanels == 0 && (@warn("plot_multi: no data for requested observables"); return nothing)
+    npanels == 0 && (@warn("plot_obs: no data for requested observables"); return nothing)
 
     if isnothing(figsize)
         h = oiplot_compact ? 2.0 : 3.0
@@ -351,7 +340,7 @@ function plot_multi(data::Union{OIdata, AbstractArray{<:OIdata}};
 
     for (i, key) in enumerate(active)
         spec = OBS_PLOT_SPECS[key]
-        plot_obs(data, spec; color=color, markopt=markopt, ax=axes[i])
+        _plot_obs(data, spec; color=color, markopt=markopt, ax=axes[i])
     end
 
     # Shared x-axis label on bottom panel only
@@ -377,6 +366,7 @@ function plot_multi(data::Union{OIdata, AbstractArray{<:OIdata}};
     show(block=false)
     return fig
 end
+const plot_multi = plot_obs
 
 # Overloaded uvplot functions
 function uvplot(uv::Array{Float64,2})
@@ -551,7 +541,7 @@ vector, or 2-D array.
 function plot_v2(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
                  logplot=false, color::String="baseline", markopt=false,
                  legend_below=false, figtitle="")
-    plot_obs(data, OBS_PLOT_SPECS["V2"]; color=color, logplot=logplot,
+    _plot_obs(data, OBS_PLOT_SPECS["V2"]; color=color, logplot=logplot,
              figsize=figsize, figtitle=figtitle, markopt=markopt,
              legend_below=legend_below)
 end
@@ -575,112 +565,237 @@ function plot_t3phi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot
                     color::String="baseline", markopt=false, legend_below=false,
                     t3base="geom", figtitle="")
     spec = t3base == "max" ? OBS_PLOT_SPECS["T3PHI_MAX"] : OBS_PLOT_SPECS["T3PHI"]
-    plot_obs(data, spec; color=color, figsize=figsize, figtitle=figtitle,
+    _plot_obs(data, spec; color=color, figsize=figsize, figtitle=figtitle,
              markopt=markopt, legend_below=legend_below)
 end
 
-function plot_v2_residuals(x, data::OIdata, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
-    plot_v2_residuals(data, image_to_v2(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
+# ── Residual plot helper ──────────────────────────────────────────────────────
+
+# Residual plot spec: maps observable name to data/model fields and labels
+const _RES_SPECS = (
+    v2     = (y=:v2,     yerr=:v2_err,     x=:v2_baseline,     sta=:v2_sta_index, grp=:baseline, label="V²",     xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
+    t3amp  = (y=:t3amp,  yerr=:t3amp_err,  x=:t3_maxbaseline,  sta=:t3_sta_index, grp=:triplet,  label="T3amp",  xlabel=L"Max baseline (M$\lambda$)", phase=false, logplot_ok=true),
+    t3phi  = (y=:t3phi,  yerr=:t3phi_err,  x=:t3_maxbaseline,  sta=:t3_sta_index, grp=:triplet,  label="T3φ (°)", xlabel=L"Max baseline (M$\lambda$)", phase=true,  logplot_ok=false),
+    visamp = (y=:visamp, yerr=:visamp_err, x=:vis_baseline,    sta=:vis_sta_index,grp=:baseline, label="Visamp", xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
+    visphi = (y=:visphi, yerr=:visphi_err, x=:vis_baseline,    sta=:vis_sta_index,grp=:baseline, label="Visφ (°)", xlabel=L"Baseline (M$\lambda$)",   phase=true,  logplot_ok=false),
+)
+
+function _adaptive_marker(npts)
+    npts < 200  && return (ms=3.0, alpha=1.0)
+    npts < 1000 && return (ms=2.0, alpha=0.6)
+    npts < 5000 && return (ms=1.5, alpha=0.4)
+    return (ms=1.0, alpha=0.3)
 end
 
-function plot_t3phi_residuals(x, data::OIdata, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
-    plot_t3phi_residuals(data, image_to_t3phi(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
+function _get_group_labels(data, spec)
+    if spec.grp == :triplet
+        get_triplet_names(data.sta_name, getfield(data, spec.sta))
+    else
+        get_baseline_names(data.sta_name, getfield(data, spec.sta))
+    end
 end
 
-function plot_t3amp_residuals(x, data::OIdata, ft::Array{NFFT.NFFTPlan{Float64, 2, 1}, 1}; logplot = false, y_range=[], res_range=[])
-    plot_t3amp_residuals(data, image_to_t3amp(x, data, ft), logplot = logplot, y_range=y_range, res_range=res_range);
+function _plot_residual_panel(data, model_vec, spec;
+        ax_data=nothing, ax_res=nothing, logplot=false,
+        y_range=[], res_range=[], color="baseline")
+    ydata   = getfield(data, spec.y)
+    yerr    = getfield(data, spec.yerr)
+    xvals   = getfield(data, spec.x) ./ 1e6
+    npts    = length(ydata)
+    npts == 0 && return
+
+    if spec.phase
+        resid = mod360(model_vec .- ydata) ./ yerr
+    else
+        resid = (model_vec .- ydata) ./ yerr
+    end
+
+    mk = _adaptive_marker(npts)
+
+    # ── Top panel: data + model ──
+    if !isnothing(ax_data)
+        logplot && spec.logplot_ok && ax_data.set_yscale("log")
+
+        if color == "baseline"
+            labels = _get_group_labels(data, spec)
+            groups = sort(unique(labels))
+            for (i, g) in enumerate(groups)
+                idx = findall(labels .== g)
+                ax_data.errorbar(xvals[idx], ydata[idx], yerr=yerr[idx], fmt="none",
+                    ecolor="Gainsboro", elinewidth=0.8, zorder=0)
+                ax_data.plot(xvals[idx], ydata[idx], linestyle="none", marker="o",
+                    color=oiplot_colors[i], markersize=mk.ms, alpha=mk.alpha, label=g, zorder=1)
+                ax_data.plot(xvals[idx], model_vec[idx], linestyle="none", marker="x",
+                    color=oiplot_colors[i], markersize=mk.ms+1, alpha=mk.alpha, zorder=2)
+            end
+        else
+            ax_data.errorbar(xvals, ydata, yerr=yerr, fmt="o",
+                color="Grey", ecolor="Gainsboro", markersize=mk.ms, alpha=mk.alpha, elinewidth=0.8)
+            ax_data.plot(xvals, model_vec, linestyle="none", marker="x",
+                color="Red", markersize=mk.ms+1, alpha=mk.alpha)
+        end
+
+        ax_data.set_ylabel(spec.label)
+        y_range != [] && ax_data.set_ylim(y_range)
+        ax_data.grid(true, which="both", color="LightGrey", linestyle=":", linewidth=0.5)
+    end
+
+    # ── Bottom panel: residuals ──
+    if !isnothing(ax_res)
+        ax_res.axhspan(-1, 1, color="#d4edda", alpha=0.4, zorder=0)
+        ax_res.axhspan(-3, 3, color="#fff3cd", alpha=0.2, zorder=0)
+        ax_res.axhline(0, color="Grey", linewidth=0.5, zorder=1)
+
+        if color == "baseline"
+            labels = _get_group_labels(data, spec)
+            groups = sort(unique(labels))
+            for (i, g) in enumerate(groups)
+                idx = findall(labels .== g)
+                ax_res.plot(xvals[idx], resid[idx], linestyle="none", marker="o",
+                    color=oiplot_colors[i], markersize=mk.ms, alpha=mk.alpha, zorder=2)
+            end
+        else
+            ax_res.plot(xvals, resid, linestyle="none", marker="o",
+                color="Grey", markersize=mk.ms, alpha=mk.alpha, zorder=2)
+        end
+
+        ax_res.set_xlabel(spec.xlabel)
+        ax_res.set_ylabel("Residuals (σ)")
+        res_range != [] && ax_res.set_ylim(res_range)
+        ax_res.grid(true, which="both", color="LightGrey", linestyle=":", linewidth=0.5)
+    end
 end
 
+# ── Single-observable residual plots ─────────────────────────────────────────
 
-function plot_v2_residuals(data::OIdata, v2_model::Array{Float64,1}; figsize=(12,12), logplot = false, y_range=[], res_range=[]) #plots V2 data vs v2 model
+function _plot_single_residual(data, model_vec, spec;
+        figsize=(12,7), logplot=false, y_range=[], res_range=[], color="baseline")
     set_oiplot_defaults()
-
-    fig = figure("V2 plot - Model vs Data",figsize=figsize,facecolor="White");
-    fig.subplots(nrows=2, ncols=1, sharex=true)
-    ax = subplot(2, 1, 1)
-    if logplot==true
-        ax.set_yscale("log")
-    end
-    errorbar(data.v2_baseline/1e6,data.v2,yerr=data.v2_err,fmt="o", markersize=1, color="Grey", ecolor="Grey")
-    plot(data.v2_baseline/1e6, v2_model, color="Red", linestyle="none", marker="o", markersize=2)
-    title("Squared Visibility Amplitudes - Model vs data plot")
-    if y_range != []
-        ylim(y_range)
-    end
-    ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="Grey",linestyle=":");
-    ax = subplot(2, 1, 2)
-    ax.axhline(color="Grey")
-    plot(data.v2_baseline/1e6, (v2_model - data.v2)./data.v2_err, color="Grey", linestyle="none", marker="o", markersize=2)
-    xlabel(L"Baseline (M$\lambda$)")
-    ylabel("Residuals (number of sigma)")
-    if res_range !=[]
-        ylim(res_range)
-    end
-    ax.grid(true,which="both",color="Grey",linestyle=":")
+    fig, axes = subplots(2, 1; sharex=true, figsize=figsize,
+        gridspec_kw=Dict("height_ratios" => [3, 1], "hspace" => 0.05))
+    _plot_residual_panel(data, model_vec, spec;
+        ax_data=axes[1], ax_res=axes[2], logplot=logplot,
+        y_range=y_range, res_range=res_range, color=color)
+    axes[1].tick_params(labelbottom=false)
+    npts = length(getfield(data, spec.y))
+    npts > 0 && npts < 200 && color == "baseline" &&
+        axes[1].legend(fontsize=7, ncol=4, loc="best")
     tight_layout()
     show(block=false)
 end
 
-function plot_t3phi_residuals(data::OIdata, t3phi_model::Array{Float64,1}; figsize=(12,12), logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
+function plot_v2_residuals(data::OIdata, v2_model::AbstractVector; kwargs...)
+    _plot_single_residual(data, v2_model, _RES_SPECS.v2; kwargs...)
+end
+function plot_t3amp_residuals(data::OIdata, t3amp_model::AbstractVector; kwargs...)
+    _plot_single_residual(data, t3amp_model, _RES_SPECS.t3amp; kwargs...)
+end
+function plot_t3phi_residuals(data::OIdata, t3phi_model::AbstractVector; kwargs...)
+    _plot_single_residual(data, t3phi_model, _RES_SPECS.t3phi; kwargs...)
+end
+function plot_visamp_residuals(data::OIdata, visamp_model::AbstractVector; kwargs...)
+    _plot_single_residual(data, visamp_model, _RES_SPECS.visamp; kwargs...)
+end
+function plot_visphi_residuals(data::OIdata, visphi_model::AbstractVector; kwargs...)
+    _plot_single_residual(data, visphi_model, _RES_SPECS.visphi; kwargs...)
+end
+
+# ── Convenience: image-domain overloads ──────────────────────────────────────
+
+function plot_v2_residuals(x, data::OIdata, ft; kwargs...)
+    plot_v2_residuals(data, vis_to_v2(image_to_vis(x, ft), data.indx_v2); kwargs...)
+end
+function plot_t3amp_residuals(x, data::OIdata, ft; kwargs...)
+    _, t3amp, _ = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+    plot_t3amp_residuals(data, t3amp; kwargs...)
+end
+function plot_t3phi_residuals(x, data::OIdata, ft; kwargs...)
+    _, _, t3phi = vis_to_t3(image_to_vis(x, ft), data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+    plot_t3phi_residuals(data, t3phi; kwargs...)
+end
+
+# ── Convenience: model-domain overloads ──────────────────────────────────────
+
+function plot_v2_residuals(model::FlatModel, x::AbstractVector, data::OIdata; kwargs...)
+    obs = model_to_obs(model, x, data)
+    plot_v2_residuals(data, obs.v2; kwargs...)
+end
+function plot_t3amp_residuals(model::FlatModel, x::AbstractVector, data::OIdata; kwargs...)
+    obs = model_to_obs(model, x, data)
+    plot_t3amp_residuals(data, obs.t3amp; kwargs...)
+end
+function plot_t3phi_residuals(model::FlatModel, x::AbstractVector, data::OIdata; kwargs...)
+    obs = model_to_obs(model, x, data)
+    plot_t3phi_residuals(data, obs.t3phi; kwargs...)
+end
+function plot_visamp_residuals(model::FlatModel, x::AbstractVector, data::OIdata; kwargs...)
+    obs = model_to_obs(model, x, data)
+    plot_visamp_residuals(data, obs.visamp; kwargs...)
+end
+function plot_visphi_residuals(model::FlatModel, x::AbstractVector, data::OIdata; kwargs...)
+    obs = model_to_obs(model, x, data)
+    plot_visphi_residuals(data, obs.visphi; kwargs...)
+end
+
+# ── Combined residual plot ───────────────────────────────────────────────────
+
+"""
+    plot_residuals(data, obs; color="baseline", figsize=(14,10))
+
+Plot data vs model and normalised residuals for all observable types present
+in `data`. `obs` is a NamedTuple from `image_to_obs` or `model_to_obs`.
+
+Also accepts image-domain `plot_residuals(x, ft, data)` or model-domain
+`plot_residuals(model, x, data)` signatures.
+"""
+function plot_residuals(data::OIdata, obs::NamedTuple;
+        figsize=(14,10), color="baseline", logplot=false)
     set_oiplot_defaults()
 
-    fig = figure("Closure phase plot - Model vs Data",figsize=figsize,facecolor="White");
-    fig.subplots(nrows=2, ncols=1, sharex=true)
-    ax = subplot(2, 1, 1)
-    if logplot==true
-        ax.set_yscale("log")
+    # Determine which observables have data
+    panels = NamedTuple[]
+    data.nv2     > 0 && length(obs.v2)     > 0 && push!(panels, (spec=_RES_SPECS.v2,     model=obs.v2))
+    data.nt3amp  > 0 && length(obs.t3amp)  > 0 && push!(panels, (spec=_RES_SPECS.t3amp,  model=obs.t3amp))
+    data.nt3phi  > 0 && length(obs.t3phi)  > 0 && push!(panels, (spec=_RES_SPECS.t3phi,  model=obs.t3phi))
+    data.nvisamp > 0 && length(obs.visamp) > 0 && push!(panels, (spec=_RES_SPECS.visamp, model=obs.visamp))
+    data.nvisphi > 0 && length(obs.visphi) > 0 && push!(panels, (spec=_RES_SPECS.visphi, model=obs.visphi))
+
+    npanels = length(panels)
+    npanels == 0 && return
+
+    # Each observable gets a (data, residual) row pair
+    nrows = 2 * npanels
+    ratios = repeat([3, 1], npanels)
+    fig, axes = subplots(nrows, 1; figsize=figsize,
+        gridspec_kw=Dict("height_ratios" => ratios, "hspace" => 0.08))
+    if nrows == 2
+        axes = [axes[1], axes[2]]  # ensure indexable
     end
-    errorbar(data.t3_maxbaseline/1e6,data.t3phi,yerr=data.t3phi_err,fmt="o", markersize=1, color="Grey", ecolor="Grey")
-    plot(data.t3_maxbaseline/1e6, t3phi_model, color="Red", linestyle="none", marker="o", markersize=2)
-    title("Closure phases - Model vs data plot")
-    if y_range != []
-        ylim(y_range)
+
+    for (i, p) in enumerate(panels)
+        ax_d = axes[2i - 1]
+        ax_r = axes[2i]
+        _plot_residual_panel(data, p.model, p.spec;
+            ax_data=ax_d, ax_res=ax_r, logplot=logplot, color=color)
+        ax_d.tick_params(labelbottom=false)
+        npts = length(p.model)
+        npts > 0 && npts < 200 && color == "baseline" &&
+            ax_d.legend(fontsize=6, ncol=5, loc="best")
     end
-    ylabel("Closure phases (degrees)")
-    ax.grid(true,which="both",color="Grey",linestyle=":");
-    ax = subplot(2, 1, 2)
-    ax.axhline(color="Grey")
-    plot(data.t3_maxbaseline/1e6, mod360(t3phi_model - data.t3phi)./data.t3phi_err,color="Grey", linestyle="none", marker="o", markersize=1)
-    if res_range !=[]
-        ylim(res_range)
-    end
-    xlabel(L"Max Baseline (M$\lambda$)")
-    ylabel("Residuals (number of sigma)")
-    ax.grid(true,which="both",color="Grey",linestyle=":")
     tight_layout()
     show(block=false)
 end
 
-function plot_t3amp_residuals(data::OIdata, t3amp_model::Array{Float64,1}; figsize=(12,12), logplot = false, y_range=[],  res_range=[]) #plots V2 data vs v2 model
-    set_oiplot_defaults()
+# Image-domain convenience
+function plot_residuals(x, ft, data::OIdata; kwargs...)
+    obs = image_to_obs(x, ft, data)
+    plot_residuals(data, obs; kwargs...)
+end
 
-    fig = figure("Triple amplitudes plot - Model vs Data",figsize=figsize,facecolor="White");
-    fig.subplots(nrows=2, ncols=1, sharex=true)
-    ax = subplot(2, 1, 1)
-    if logplot==true
-        ax.set_yscale("log")
-    end
-    errorbar(data.t3_maxbaseline/1e6,data.t3amp,yerr=data.t3amp_err,fmt="o", markersize=1, color="Grey", ecolor="Grey")
-    plot(data.t3_maxbaseline/1e6, t3amp_model, color="Red", linestyle="none", marker="o", markersize=2)
-    title("Triple amplitudes - Model vs data plot")
-    if y_range != []
-        ylim(y_range)
-    end
-    ylabel("Triple amplitudes")
-    ax.grid(true,which="both",color="Grey",linestyle=":");
-    ax = subplot(2, 1, 2)
-    ax.axhline(color="Grey")
-    plot(data.t3_maxbaseline/1e6, (t3amp_model - data.t3amp)./data.t3amp_err,color="Grey", linestyle="none", marker="o", markersize=2)
-    if res_range !=[]
-        ylim(res_range)
-    end
-    xlabel(L"Max Baseline (M$\lambda$)")
-    ylabel("Residuals (number of sigma)")
-    ax = gca();
-    ax.grid(true,which="both",color="Grey",linestyle=":")
-    tight_layout()
-    show(block=false)
+# Model-domain convenience
+function plot_residuals(model::FlatModel, x::AbstractVector, data::OIdata; kwargs...)
+    obs = model_to_obs(model, x, data)
+    plot_residuals(data, obs; kwargs...)
 end
 
 
@@ -703,7 +818,7 @@ function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot
                     color::String="baseline", markopt=false, legend_below=false,
                     t3base="geom", logplot=false, figtitle="")
     spec = t3base == "max" ? OBS_PLOT_SPECS["T3AMP_MAX"] : OBS_PLOT_SPECS["T3AMP"]
-    plot_obs(data, spec; color=color, logplot=logplot, figsize=figsize,
+    _plot_obs(data, spec; color=color, logplot=logplot, figsize=figsize,
              figtitle=figtitle, markopt=markopt, legend_below=legend_below)
 end
 
@@ -726,7 +841,7 @@ Plot flux spectra vs wavelength (μm). Accepts a single `OIdata`, vector, or 2-D
 """
 function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
                    color::String="wav", markopt=false, legend_below=false, figtitle="")
-    plot_obs(data, OBS_PLOT_SPECS["FLUX"]; color=color, figsize=figsize,
+    _plot_obs(data, OBS_PLOT_SPECS["FLUX"]; color=color, figsize=figsize,
              figtitle=figtitle, markopt=markopt, legend_below=legend_below)
 end
 
@@ -822,7 +937,7 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
         end
     else
         # ── Absolute phase layout: delegate to generic engine ──
-        plot_obs(data, OBS_PLOT_SPECS["VISPHI"]; color=color, figsize=figsize,
+        _plot_obs(data, OBS_PLOT_SPECS["VISPHI"]; color=color, figsize=figsize,
                  figtitle=figtitle, markopt=markopt, legend_below=legend_below)
     end
 end
@@ -857,7 +972,7 @@ function plot_visamp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
         amp_title  = "Visamp"
         amp_ylabel = "Visamp"
     end
-    plot_obs(data, OBS_PLOT_SPECS["VISAMP"]; color=color, logplot=logplot,
+    _plot_obs(data, OBS_PLOT_SPECS["VISAMP"]; color=color, logplot=logplot,
              figsize=figsize, figtitle=figtitle, markopt=markopt,
              legend_below=legend_below, plot_title=amp_title, ylabel_str=amp_ylabel)
 end

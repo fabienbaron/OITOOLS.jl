@@ -56,6 +56,7 @@ Both image-based and parametric-model-based workflows follow the same pattern:
 |-----------|-------------|-------------|
 | → complex visibilities | `image_to_vis(x, ft)` | `model_to_vis(model, x, uv)` |
 | → observables | `image_to_obs(x, ft, data)` | `model_to_obs(model, x, data)` |
+| → residuals | `image_to_residuals(x, ft, data)` | `model_to_residuals(model, x, data)` |
 | → chi² | `image_to_chi2(x, ft, data)` | `model_to_chi2(model, x, data)` |
 | → chi² + gradient | `image_to_chi2_fg(x, g, ft, data)` | `model_to_chi2_fg(model, x, data)` |
 

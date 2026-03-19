@@ -12,6 +12,7 @@
 | `fit_model_lsqfit(dict, fit_params, data)` | Fit model via Levenberg-Marquardt (LsqFit) |
 | `fit_model_ultranest(dict, fit_params, data)` | Fit model via nested sampling (UltraNest) |
 | `model_to_obs(model, x, data)` | Compute observables (V², T3amp, T3phi) from a model |
+| `model_to_residuals(model, x, data)` | Compute normalised residuals (model - data) / error |
 | `model_to_chi2(model, x, data)` | Compute weighted chi² (alias: `chi2_flat`) |
 | `model_to_chi2_fg(model, x, data)` | Compute chi² + gradient (alias: `chi2_flat_fg`) |
 | `model_to_image(model, x; nx, pixsize)` | Synthesize a model image via inverse FFT |
@@ -29,6 +30,7 @@ fit_model
 fit_model_lsqfit
 fit_model_ultranest
 model_to_obs
+model_to_residuals
 model_to_chi2
 model_to_chi2_fg
 model_to_image

@@ -106,11 +106,11 @@ imdisp_multi(image_cube; labels=["Epoch $i" for i in 1:n], pixsize=0.5) # multi-
 Stack several observables in a single figure with shared x-axis and legend:
 
 ```julia
-plot_multi(data)                                          # default: V², T3φ, T3amp
-plot_multi(data; obs=["V2", "T3PHI", "VISAMP", "VISPHI"]) # custom selection
-plot_multi(data; color="wav")                              # colour by wavelength
+plot_obs(data)                                          # default: V², T3φ, T3amp
+plot_obs(data; obs=["V2", "T3PHI", "VISAMP", "VISPHI"]) # custom selection
+plot_obs(data; color="wav")                              # colour by wavelength
 set_oiplot_defaults(compact=true)
-plot_multi(data)                                           # compact panels
+plot_obs(data)                                           # compact panels
 set_oiplot_defaults(compact=false)
 ```
 

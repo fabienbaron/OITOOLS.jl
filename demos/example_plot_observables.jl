@@ -41,12 +41,12 @@ plot_flux(data)                     # colour by wavelength
 plot_flux(data, color="mjd")
 
 # ── Multi-panel overview ───────────────────────────────────────────────────
-plot_multi(data)                                             # default: V², T3φ, T3amp
-plot_multi(data, obs=["V2", "T3PHI", "VISAMP"])    # custom selection
-plot_multi(data, color="wav")                                # colour by wavelength
+plot_obs(data)                                             # default: V², T3φ, T3amp
+plot_obs(data, obs=["V2", "T3PHI", "VISAMP"])    # custom selection
+plot_obs(data, color="wav")                                # colour by wavelength
 
 # ── Compact multi-panel ───────────────────────────────────────────────────
 set_oiplot_defaults(compact=true)
-plot_multi(data)
-plot_multi(data, obs=["V2", "T3PHI", "T3AMP", "VISAMP", "VISPHI"])
+plot_obs(data)
+plot_obs(data, obs=["V2", "T3PHI", "T3AMP", "VISAMP", "VISPHI"])
 set_oiplot_defaults(compact=false)

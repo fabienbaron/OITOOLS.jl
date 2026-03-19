@@ -20,6 +20,7 @@
 | `image_to_t3phi(x, ft, data)` | Image to closure phases |
 | `image_to_t3amp(x, ft, data)` | Image to triple amplitudes |
 | `image_to_obs(x, ft, data)` | Image to all observables (V², T3phi, T3amp) |
+| `image_to_residuals(x, ft, data)` | Image to normalised residuals (model - data) / error |
 | `vis_to_v2(cvis, indx)` | Complex visibilities to squared visibilities |
 | `vis_to_t3(cvis, i1, i2, i3)` | Complex visibilities to triple product, T3amp, T3phi |
 | `observables(cvis, data)` | Complex visibilities to (V², T3phi, T3amp) |
@@ -37,6 +38,7 @@
 | `crit_multitemporal_fg(x, g, ft, data)` | Multi-temporal criterion + gradient |
 
 ```@docs
+image_to_residuals
 image_to_chi2
 image_to_chi2_fg
 ```

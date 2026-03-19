@@ -14,9 +14,9 @@ ft = setup_nfft(data, nx, pixsize);
 x_start = gaussian2d(nx,nx,nx/6);
 #x_start = vec(x_start)/sum(x_start)
 image_to_chi2(x_start, ft, data, verb=true); # Evaluate chi2
-regularizers = [["centering", 1e4], ["l1l2", 7e6, 1e-3]];
+regularizers = [["centering", 1e4], ["l1l2", 7e7, 1e-3]];
 #crit_f(x_start, ft, data, regularizers=regularizers, verb=true); # Evaluate log-posterior
-x = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true, maxiter=500);
+xx = reconstruct(x_start, data, ft, regularizers = regularizers, verb = true, maxiter=500);
 imdisp(x,pixsize=pixsize)
 # Uncomment if you want to write the result
 #writefits(x,"reconstruction.fits")

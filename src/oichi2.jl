@@ -140,10 +140,51 @@ return image_to_obs(x, ft, data)
 end
 
 function image_to_obs(x, ft, data)
-    cvis_model = image_to_vis(x, ft);
-    v2_model = vis_to_v2(cvis_model, data.indx_v2);
-    _, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2 ,data.indx_t3_3);
-    return v2_model, t3amp_model, t3phi_model
+    cvis_model = image_to_vis(x, ft)
+
+    # V²
+    v2_model = data.nv2 > 0 ? vis_to_v2(cvis_model, data.indx_v2) : Float64[]
+
+    # Triple products
+    if data.nt3amp > 0 || data.nt3phi > 0
+        _, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+    else
+        t3amp_model = Float64[]
+        t3phi_model = Float64[]
+    end
+
+    # Visibility amplitude & phase
+    if data.nvisamp > 0 || data.nvisphi > 0
+        Vvis = cvis_model[data.indx_vis]
+        visamp_model = abs.(Vvis)
+        visphi_model = angle.(Vvis) .* (180.0 / π)
+    else
+        visamp_model = Float64[]
+        visphi_model = Float64[]
+    end
+
+    return (v2=v2_model, t3amp=t3amp_model, t3phi=t3phi_model,
+            visamp=visamp_model, visphi=visphi_model)
+end
+
+"""
+    image_to_residuals(x, ft, data)
+
+Compute normalised residuals `(model - data) / error` for each observable type.
+Returns a NamedTuple with fields `v2`, `t3amp`, `t3phi`, `visamp`, `visphi`.
+Phase residuals (t3phi, visphi) are wrapped to [-180, 180] before dividing by error.
+"""
+function image_to_residuals(x, ft, data)
+    obs = image_to_obs(x, ft, data)
+
+    v2_res     = data.nv2 > 0 ? (obs.v2 .- data.v2) ./ data.v2_err : Float64[]
+    t3amp_res  = data.nt3amp > 0 ? (obs.t3amp .- data.t3amp) ./ data.t3amp_err : Float64[]
+    t3phi_res  = data.nt3phi > 0 ? mod360(obs.t3phi .- data.t3phi) ./ data.t3phi_err : Float64[]
+    visamp_res = data.nvisamp > 0 ? (obs.visamp .- data.visamp) ./ data.visamp_err : Float64[]
+    visphi_res = data.nvisphi > 0 ? mod360(obs.visphi .- data.visphi) ./ data.visphi_err : Float64[]
+
+    return (v2=v2_res, t3amp=t3amp_res, t3phi=t3phi_res,
+            visamp=visamp_res, visphi=visphi_res)
 end
 
 # image_to_vis: generic overloads.

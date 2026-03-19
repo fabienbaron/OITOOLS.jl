@@ -48,8 +48,9 @@ export filter_data, set_data_filter
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
-       plot_visamp, plot_visphi, plot_diffphi, plot_flux, plot_multi,
+       plot_visamp, plot_visphi, plot_diffphi, plot_flux, plot_obs, plot_multi,
        plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
+       plot_visamp_residuals, plot_visphi_residuals, plot_residuals,
        plot_v2_multifile,
        imdisp, imdisp_multi, plot_facility
 
@@ -57,7 +58,7 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
 export FlatModel, parse_model, eval_model, eval_model_grad, display_model
 export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
-export model_to_vis, model_to_obs, model_to_chi2, model_to_chi2_fg,
+export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
        model_to_image, model_to_sed, resample_data
 
 # ── Visibility functions ─────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ export setup_dft, setup_dft_polychromatic,
        setup_nfft, setup_nfft_multiepochs, setup_nfft_polychromatic
 export image_to_vis,
        image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs,
-       image_to_chi2, image_to_chi2_fg
+       image_to_residuals, image_to_chi2, image_to_chi2_fg
 export vis_to_v2, vis_to_t3, observables
 export chi2_f, chi2_fg, chi2_polychromatic_f
 export crit_f, crit_fg, crit_polychromatic_fg, crit_multitemporal_fg
