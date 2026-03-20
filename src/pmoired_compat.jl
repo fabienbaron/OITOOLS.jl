@@ -10,7 +10,7 @@ Transformation rules applied:
   'key': value      ->  "key" => value         (outside string literals)
   :                 ->  =>                      (outside string literals, single colon only)
   'plain string'    ->  "plain string"
-  'expr with \$ref' ->  raw"expr with \$ref"   (raw string prevents interpolation)
+  `'expr with \$ref'` ->  `raw"expr with \$ref"`   (raw string prevents interpolation)
   True / False      ->  true / false
   None              ->  nothing
 

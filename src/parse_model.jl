@@ -648,8 +648,8 @@ Arguments
 model : FlatModel from parse_model
 x     : current free-parameter values, length = length(model.list_free_params)
 uv    : 2×N matrix of (u,v) spatial frequencies in cycles/rad
-wl    : wavelength per UV point (metres), length N  — enables \$WL in expressions
-mjd   : MJD per UV point, length N  — enables \$MJD in expressions
+wl    : wavelength per UV point (metres), length N  — enables `\$WL` in expressions
+mjd   : MJD per UV point, length N  — enables `\$MJD` in expressions
 n     : Bessel order for Hankel components (default 0)
 
 Returns
