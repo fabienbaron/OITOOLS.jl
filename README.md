@@ -22,6 +22,8 @@ the full workflow for data from arrays such as CHARA, VLTI, and NPOI:
 reading, plotting, model fitting, image reconstruction, and observation
 simulation.
 
+### **[:book: Full Documentation](https://fabienbaron.github.io/OITOOLS.jl/dev)**
+
 > **Note:** Despite having the same name as [JMMC's oitools](https://github.com/JMMC-OpenDev/oitools),
 > the two packages are completely unrelated and were developed independently.
 
