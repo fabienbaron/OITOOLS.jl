@@ -25,13 +25,14 @@ The result contains the best-fit values (`result.x_opt`) and the compiled
 |--------|------|-------------|---------------|
 | `model_dict` | `Dict{String,Any}` | Full model specification: all parameters, formulas, flags | `display_model`, `fit_model`, `fit_model_lsqfit`, `fit_model_ultranest` |
 | `list_free_params` | `Vector{String}` | Names of parameters to optimize (must be numeric in `model_dict`) | same as above |
-| `model` | `FlatModel` | Compiled model returned by `parse_model` or `result.model` | `model_to_obs`, `model_to_image`, `model_to_chi2`, `model_to_sed`, `eval_model` |
+| `model` | `FlatModel` | Compiled model returned by `parse_model` or `result.model` | `model_to_obs`, `model_to_image`, `model_to_chi2`, `model_to_sed`, `eval_model`, `fit_model` |
 
 !!! tip
     You rarely need to call `parse_model` yourself — the fitting functions
-    do it internally. Use it only when you want to evaluate a model without
-    fitting (e.g. to compute observables or render an image at known parameter
-    values).
+    do it internally. However, all three fitting functions also accept a
+    pre-compiled `FlatModel` directly (e.g. `fit_model(model, x0, data)`),
+    which is useful for bootstrap or grid-search workflows where you want
+    to compile once and fit many times.
 
 ## Defining a model dictionary
 

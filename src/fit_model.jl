@@ -223,6 +223,20 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helper: convert Dict or Vector bounds to a Vector aligned with list_free_params
+# ─────────────────────────────────────────────────────────────────────────────
+
+function _bounds_vec(b, list_free_params, default)
+    if b isa AbstractVector
+        length(b) == length(list_free_params) || error("Bounds vector length ($(length(b))) must match list_free_params length ($(length(list_free_params)))")
+        return Float64.(b)
+    else
+        return Float64[get(b, p, default) for p in list_free_params]
+    end
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # fit_model — main entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -321,6 +335,82 @@ function fit_model(model_dict   ::Dict{String},
     end
 
     # ── 8. Return result ─────────────────────────────────────────────────────
+    ndof = _ndof(data, weights)
+    return FitResult(minx, list_free_params, minf, minf / ndof, ndof, n_evals[], ret, fm)
+end
+
+"""
+    fit_model(model::FlatModel, x0, data; kwargs...) -> FitResult
+
+Fit a pre-compiled `FlatModel` starting from parameter vector `x0`.
+
+This method skips the `parse_model` step, which is useful when fitting the
+same model multiple times (e.g. bootstrap, grid search).
+
+Bounds `lb` and `ub` can be `Dict{String,Float64}` (keyed by parameter name)
+or `Vector{Float64}` (ordered to match `model.list_free_params`).
+"""
+function fit_model(model        ::FlatModel,
+                   x0           ::AbstractVector{<:Real},
+                   data         ::OIdata;
+    lb           = Dict{String,Float64}(),
+    ub           = Dict{String,Float64}(),
+    weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    priors       = [],
+    method       = :LD_LBFGS,
+    maxeval      = 2000,
+    ftol_rel     = 1e-8,
+    xtol_rel     = 1e-6,
+    vonmises     = false,
+    verb         = false,
+)
+    list_free_params = model.list_free_params
+    fm = model
+
+    # ── Prior support ────────────────────────────────────────────────────────
+    # When priors are used, we would need to augment and recompile the model.
+    # For now, only the Dict method supports priors.
+    !isempty(priors) && error("Priors are only supported with the Dict form of fit_model; pass model_dict instead of FlatModel")
+
+    # ── Detect gradient need ─────────────────────────────────────────────────
+    use_grad = startswith(string(method), "LD_")
+
+    # ── Build objective ──────────────────────────────────────────────────────
+    n_evals = Ref(0)
+    function objective(x, g)
+        n_evals[] += 1
+        if use_grad
+            chi2, grad = chi2_flat_fg(fm, x, data; weights, vonmises, verb)
+            g .= grad
+        else
+            chi2 = chi2_flat(fm, x, data; weights, vonmises, verb)
+        end
+        return chi2
+    end
+
+    # ── Configure NLopt ──────────────────────────────────────────────────────
+    opt = Opt(method, length(list_free_params))
+    min_objective!(opt, objective)
+    ftol_rel!(opt, ftol_rel)
+    xtol_rel!(opt, xtol_rel)
+    maxeval!(opt, maxeval)
+    lower_bounds!(opt, _bounds_vec(lb, list_free_params, -Inf))
+    upper_bounds!(opt, _bounds_vec(ub, list_free_params,  Inf))
+
+    # ── Run ──────────────────────────────────────────────────────────────────
+    local minf, minx, ret
+    try
+        minf, minx, ret = optimize(opt, Float64.(x0))
+    catch e
+        if e isa NLopt.ForcedStop
+            minf = objective(opt.last_optimum_value isa Vector ? opt.last_optimum_value : Float64.(x0), Float64[])
+            minx = opt.last_optimum_value isa Vector ? opt.last_optimum_value : Float64.(x0)
+            ret  = :MAXEVAL_REACHED
+        else
+            rethrow(e)
+        end
+    end
+
     ndof = _ndof(data, weights)
     return FitResult(minx, list_free_params, minf, minf / ndof, ndof, n_evals[], ret, fm)
 end
@@ -503,6 +593,120 @@ function fit_model_ultranest(model_dict   ::Dict{String},
     )
 end
 
+"""
+    fit_model_ultranest(model::FlatModel, data; kwargs...) -> UltraNestResult
+
+Bayesian nested sampling on a pre-compiled `FlatModel`.
+Starting values are not needed (UltraNest samples the full prior volume).
+Bounds `lb` and `ub` are required and can be Dicts or Vectors.
+"""
+function fit_model_ultranest(model        ::FlatModel,
+                             data         ::OIdata;
+    lb                       = Dict{String,Float64}(),
+    ub                       = Dict{String,Float64}(),
+    weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    vonmises                 = false,
+    min_num_live_points      = 400,
+    cluster_num_live_points  = 100,
+    num_bootstraps           = 30,
+    use_stepsampler          = false,
+    nsteps                   = 400,
+    frac_remain              = 0.001,
+    log_interval             = 100,
+    verb                     = true,
+    cornerplot               = true,
+)
+    list_free_params = model.list_free_params
+    fm = model
+
+    # ── Validate bounds ─────────────────────────────────────────────────────
+    lbounds = _bounds_vec(lb, list_free_params, NaN)
+    ubounds = _bounds_vec(ub, list_free_params, NaN)
+    for (i, p) in enumerate(list_free_params)
+        isnan(lbounds[i]) && error("Lower bound required for '$p' (UltraNest needs finite bounds)")
+        isnan(ubounds[i]) && error("Upper bound required for '$p' (UltraNest needs finite bounds)")
+    end
+
+    # ── Prior transform: uniform [0,1]^n → [lb, ub] ────────────────────────
+    Δx = ubounds .- lbounds
+    function prior_transform(u::AbstractVector{<:Real})
+        u .* Δx .+ lbounds
+    end
+
+    prior_transform_vectorized = let trafo = prior_transform
+        (U::AbstractMatrix{<:Real}) -> reduce(vcat, (u -> trafo(u)').(eachrow(U)))
+    end
+
+    # ── Log-likelihood: -0.5 * chi2 ─────────────────────────────────────────
+    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises
+        param::AbstractVector{<:Real} -> -0.5 * chi2_flat(fm, param, data;
+                                                           weights, vonmises)
+    end
+
+    loglikelihood_vectorized = let loglikelihood = loglikelihood
+        (X::AbstractMatrix{<:Real}) -> loglikelihood.(eachrow(X))
+    end
+
+    # ── Run UltraNest ────────────────────────────────────────────────────────
+    ultranest = pyimport("ultranest")
+
+    if !verb
+        log_interval = 1_000_000
+    end
+
+    smplr = ultranest.ReactiveNestedSampler(
+        list_free_params, loglikelihood_vectorized;
+        transform       = prior_transform_vectorized,
+        num_bootstraps  = num_bootstraps,
+        vectorized      = true,
+    )
+
+    if use_stepsampler
+        stepsampler_mod = pyimport("ultranest.stepsampler")
+        smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
+            nsteps         = nsteps,
+            adaptive_nsteps = "move-distance",
+        )
+    end
+
+    result = smplr.run(;
+        min_num_live_points     = min_num_live_points,
+        cluster_num_live_points = cluster_num_live_points,
+        log_interval            = log_interval,
+        frac_remain             = frac_remain,
+    )
+
+    # ── Extract results ──────────────────────────────────────────────────────
+    minx = Float64.(result["maximum_likelihood"]["point"])
+    minf = chi2_flat(fm, minx, data; weights, vonmises)
+
+    if verb
+        @printf("Best-fit χ² = %.4f\n", minf)
+        smplr.print_results()
+    end
+
+    if cornerplot
+        PyDict(pyimport("matplotlib")."rcParams")["font.size"] = [8]
+        histogram_color = "black"
+        contour_colors = py"{'colors': ['#0072B2','#56B4E9','#009E73','#F0E442'], 'linestyles': ['-', '-', '-', '-']}"
+        pyimport("ultranest.plot").cornerplot(result;
+            contour_kwargs = contour_colors,
+            color          = histogram_color,
+        )
+    end
+
+    samples_py = result["samples"]
+    posterior  = convert(Matrix{Float64}, samples_py)
+    logz    = Float64(result["logz"])
+    logzerr = Float64(result["logzerr"])
+    ndof    = _ndof(data, weights)
+
+    return UltraNestResult(
+        minx, list_free_params, minf, minf / ndof, ndof,
+        logz, logzerr, posterior, result, fm,
+    )
+end
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LsqFit result
@@ -608,6 +812,65 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
 
     # Covariance matrix from LsqFit (may fail if Jacobian is singular,
     # e.g. when parameters hit bounds)
+    cov, σ = try
+        vcov(fit), stderror(fit)
+    catch
+        @warn "Covariance estimation failed (singular Jacobian — parameters may be at bounds)"
+        fill(NaN, nparams, nparams), fill(NaN, nparams)
+    end
+
+    if verb
+        chi2_flat(fm, minx, data; weights, verb=true, vonmises)
+    end
+
+    return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
+                         cov, σ, fit.converged, fm, fit)
+end
+
+"""
+    fit_model_lsqfit(model::FlatModel, x0, data; kwargs...) -> LsqFitResult
+
+Levenberg-Marquardt fit on a pre-compiled `FlatModel` starting from `x0`.
+Bounds `lb` and `ub` can be Dicts or Vectors.
+"""
+function fit_model_lsqfit(model        ::FlatModel,
+                          x0           ::AbstractVector{<:Real},
+                          data         ::OIdata;
+    lb           = Dict{String,Float64}(),
+    ub           = Dict{String,Float64}(),
+    weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    vonmises     = false,
+    maxIter      = 200,
+    verb         = false,
+)
+    list_free_params = model.list_free_params
+    fm = model
+    nparams = length(list_free_params)
+
+    function model_fn(_, p)
+        residuals_flat(fm, p, data; weights, vonmises)
+    end
+
+    function jacobian_fn(_, p)
+        _, J = residuals_flat_jac(fm, p, data; weights, vonmises)
+        return J
+    end
+
+    xdata = [1]
+    ydata = zeros(length(model_fn(xdata, Float64.(x0))))
+
+    lb_vec = _bounds_vec(lb, list_free_params, -Inf)
+    ub_vec = _bounds_vec(ub, list_free_params,  Inf)
+
+    fit = curve_fit(model_fn, jacobian_fn, xdata, ydata, Float64.(x0);
+                    lower=lb_vec, upper=ub_vec,
+                    maxIter=maxIter, inplace=false)
+
+    minx = fit.param
+    r_final = fit.resid
+    chi2_val = dot(r_final, r_final)
+    ndof = _ndof(data, weights)
+
     cov, σ = try
         vcov(fit), stderror(fit)
     catch
