@@ -32,6 +32,6 @@ simulate(facility, target, combiner, wavelength, dates, out_file, flat_model=mod
 
 #Check simulated data
 data = (readoifits(out_file))[1,1]; # data can be split by wavelength, time, etc.
-uvplot(data)
-uvplot(data, color="wav")
-uvplot(data, color="mjd")
+# uvplot(data)
+# uvplot(data, color="wav")
+# uvplot(data, color="mjd")

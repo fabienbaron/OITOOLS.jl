@@ -75,7 +75,7 @@ function copy_oi_array(fileout,hduin,arrays)
   tfields = 5;
   ttype= ["TEL_NAME", "STA_NAME", "STA_INDEX", "DIAMETER", "STAXYZ","FOV", "FOVTYPE"];
   tform = ["16A", "16A", "I", "E", "3D", "D", "16A"];
-  tunit = ["\0", "\0", "\0", "m", "m", "arcsec", ""];
+  tunit = ["", "", "", "m", "m", "arcsec", ""];
   extname = header["EXTNAME"];
   extver = header["EXTVER"]
   revision = header["OI_REVN"]; #1 or 2 depending on which format XYZ
@@ -163,10 +163,10 @@ function copy_oi_target(fileout,hduin,arrays)
                    "D", "D", "D", "8A",
                    "8A", "D", "D", "D", "D",
                    "E", "E", "16A"];
-  tunit = ["\0", "\0", "deg", "deg", "yr",
-                   "deg", "deg", "m/s", "\0",
-                   "\0", "deg/yr", "deg/yr", "deg/yr", "deg/yr",
-                   "deg", "deg", "\0"];
+  tunit = ["", "", "deg", "deg", "yr",
+                   "deg", "deg", "m/s", "",
+                   "", "deg/yr", "deg/yr", "deg/yr", "deg/yr",
+                   "deg", "deg", ""];
   extname = header["EXTNAME"];
   revision =header["OI_REVN"] ;
   coldefs =[(ttype[1],tform[1],tunit[1]),(ttype[2],tform[2],tunit[2]),(ttype[3],tform[3],tunit[3]),
@@ -264,9 +264,9 @@ function copy_oi_vis2(fileout,hduin,arrays)
     tform = ["1I", "1D", "1D", "1D",
              "$(nw)D", "$(nw)D", "1D", "1D",
              "2I", "$(nw)L"];
-  tunit = ["\0", "s", "day", "s",
-            "\0", "\0", "m", "m",
-            "\0", "\0"];
+  tunit = ["", "s", "day", "s",
+            "", "", "m", "m",
+            "", ""];
   date_obs  = string(Dates.today())
   date_obs = header["DATE-OBS"]
   arrname = header["ARRNAME"]
@@ -326,10 +326,10 @@ function copy_oi_t3(fileout,hduin,arrays)
     tform = ["1I", "1D", "1D", "1D",
             "$(nw)D", "$(nw)D", "$(nw)D", "$(nw)D",
             "1D","1D","1D","1D","3I", "$(nw)L"];
-  tunit = ["\0", "s", "day", "s",
-           "\0", "\0", "deg", "deg",
+  tunit = ["", "s", "day", "s",
+           "", "", "deg", "deg",
            "m", "m", "m", "m",
-           "\0", "\0"];
+           "", ""];
 
   date_obs = header["DATE-OBS"]
   arrname = header["ARRNAME"]
@@ -386,15 +386,15 @@ function copy_oi_flux(fileout, hduin, arrays)
              "FLUXDATA", "FLUXERR", "STA_INDEX", "FLAG"]
     tform = ["1I", "1D", "1D",
              "$(nw)D", "$(nw)D", "1I", "$(nw)L"]
-    tunit = ["\0", "day", "s",
-             "\0", "\0", "\0", "\0"]
+    tunit = ["", "day", "s",
+             "", "", "", ""]
   else
     ttype = ["TARGET_ID", "MJD", "INT_TIME",
              "FLUXDATA", "FLUXERR", "FLAG"]
     tform = ["1I", "1D", "1D",
              "$(nw)D", "$(nw)D", "$(nw)L"]
-    tunit = ["\0", "day", "s",
-             "\0", "\0", "\0"]
+    tunit = ["", "day", "s",
+             "", "", ""]
   end
 
   ncols = length(ttype)

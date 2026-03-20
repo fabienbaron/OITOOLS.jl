@@ -1,9 +1,9 @@
 using OITOOLS
 oifitsfile = "./data/2004-data1.oifits"
-pixsize  = 0.1   # mas/pixel; set to 0 to use auto_pixsize
+pixsize  = 0.101   # mas/pixel; set to 0 to use auto_pixsize
 #oifitsfile = "./data/betlyr6t.oifits"
 #pixsize = 0.05
-nx       = 128
+nx       = 256
 flux_err = 1e-5   # tight flux constraint
 data = readoifits(oifitsfile)[1,1];
 ft = setup_nfft(data, nx, pixsize);

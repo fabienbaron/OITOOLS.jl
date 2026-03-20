@@ -10,8 +10,8 @@ plot_obs(data)
 plot_obs(data, color="mjd")
 
 # ── Fourier transform setup ──────────────────────────────────────────────────
-pixsize = 0.2  # size of a pixel in milliarcseconds
-nx = 64        # width of image (number of pixels)
+pixsize = 0.101  # size of a pixel in milliarcseconds
+nx = 256        # width of image (number of pixels)
 ft = setup_nfft(data, nx, pixsize)
 # One could also use the DFT instead of NFFT, but NFFT is much faster for larger images
 # dft = setup_dft(data, nx, pixsize)
