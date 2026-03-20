@@ -8,7 +8,7 @@
 #   3. Symbolic    — Symbolics.jl, CAS-based, enables analytic gradients
 #
 # Interface:
-#   resolver = build_resolver(param_dict, fit_params)
+#   resolver = build_resolver(model_dict, list_free_params)
 #   all_vals = resolver(x::Vector{Float64}) -> Dict{String,Float64}
 
 using RuntimeGeneratedFunctions
@@ -72,20 +72,21 @@ function topo_sort(derived::Dict{String,String})::Vector{String}
 end
 
 """
-    partition_dict(param_dict, fit_params) -> (free, fixed, derived)
+    partition_dict(model_dict, list_free_params) -> (free, fixed, derived)
 
 Split a flat parameter dictionary into:
   free    — Dict of parameters that will be optimised
   fixed   — Dict of numeric parameters that are held constant
   derived — Dict of string expressions (to be evaluated in topo order)
 """
-function partition_dict(param_dict::Dict{String}, fit_params)
-    fit_set = Set(fit_params)
+function partition_dict(model_dict::Dict{String}, list_free_params)
+    fit_set = Set(list_free_params)
     free    = Dict{String,Float64}()
     fixed   = Dict{String,Float64}()
     derived = Dict{String,String}()
-    for (k, v) in param_dict
+    for (k, v) in model_dict
         if k in fit_set
+            v isa String && error("Parameter '$k' is in list_free_params but has a formula value (\"$v\"); derived parameters cannot be optimized — remove it from list_free_params or give it a numeric starting value")
             free[k] = Float64(v)
         elseif v isa Number
             fixed[k] = Float64(v)
@@ -201,18 +202,18 @@ struct Resolver
     compiled    ::Vector{Expr_}
 end
 
-function build_resolver(param_dict::Dict{String}, fit_params::Vector{String})
-    free, fixed, derived = partition_dict(param_dict, fit_params)
+function build_resolver(model_dict::Dict{String}, list_free_params::Vector{String})
+    free, fixed, derived = partition_dict(model_dict, list_free_params)
     sorted = topo_sort(derived)
 
     # Create a stable global indexing for this model
-    all_names = [fit_params; collect(keys(fixed)); sorted]
+    all_names = [list_free_params; collect(keys(fixed)); sorted]
     name_to_idx = Dict(name => i for (i, name) in enumerate(all_names))
 
     fixed_names = collect(keys(fixed))
     f_idxs = [name_to_idx[n] for n in fixed_names]
     f_vals = [fixed[n] for n in fixed_names]
-    free_idxs = [name_to_idx[n] for n in fit_params]
+    free_idxs = [name_to_idx[n] for n in list_free_params]
     d_idxs = [name_to_idx[n] for n in sorted]
 
     instr = [parse_to_idx(Meta.parse(preprocess(derived[n])), name_to_idx) for n in sorted]
@@ -262,12 +263,12 @@ struct Resolver
     fn        ::Function
 end
 
-function build_resolver(param_dict::Dict{String}, fit_params::Vector{String})
-    free, fixed, derived = partition_dict(param_dict, fit_params)
+function build_resolver(model_dict::Dict{String}, list_free_params::Vector{String})
+    free, fixed, derived = partition_dict(model_dict, list_free_params)
     sorted = topo_sort(derived)
 
     # 1. Define the names that will be returned in the output vector
-    all_names = [fit_params; collect(keys(fixed)); sorted]
+    all_names = [list_free_params; collect(keys(fixed)); sorted]
 
     # 2. Check whether any derived expression references WL or MJD.
     #    If so, the resolver is "chromatic" and all derived expressions
@@ -290,7 +291,7 @@ function build_resolver(param_dict::Dict{String}, fit_params::Vector{String})
 
     body = quote
         # Extract free parameters from the input vector x
-        $([:($(Symbol(mangle(fit_params[i]))) = x[$i]) for i in eachindex(fit_params)]...)
+        $([:($(Symbol(mangle(list_free_params[i]))) = x[$i]) for i in eachindex(list_free_params)]...)
 
         # Embed fixed parameters as local constants
         $([:($(Symbol(mangle(name))) = $val) for (name, val) in fixed]...)
@@ -353,19 +354,19 @@ struct Resolver
     fn        ::Function
 end
 
-function build_resolver(param_dict::Dict{String}, fit_params::Vector{String})
+function build_resolver(model_dict::Dict{String}, list_free_params::Vector{String})
     _load_symbolics() || error("Symbolics.jl required for Symbolic resolver")
 
-    free, fixed, derived = partition_dict(param_dict, fit_params)
+    free, fixed, derived = partition_dict(model_dict, list_free_params)
     sorted = topo_sort(derived)
 
     # 1. Create symbolic variables for the free parameters only
-    sym_fit = [Symbolics.variable(Symbol(mangle(n))) for n in fit_params]
+    sym_fit = [Symbolics.variable(Symbol(mangle(n))) for n in list_free_params]
 
     # 2. Build environment: name -> symbolic var OR numeric constant
     # By putting 'fixed' values here as numbers, they are folded into the expressions.
     env = Dict{String, Any}()
-    for (i, name) in enumerate(fit_params)
+    for (i, name) in enumerate(list_free_params)
         env[name] = sym_fit[i]
     end
     for (name, val) in fixed
@@ -385,7 +386,7 @@ function build_resolver(param_dict::Dict{String}, fit_params::Vector{String})
     end
 
     # 4. Define the output vector (everything the resolver returns)
-    all_names = [fit_params; collect(keys(fixed)); sorted]
+    all_names = [list_free_params; collect(keys(fixed)); sorted]
     all_exprs = [env[n] for n in all_names]
 
     # 5. Compile to a native function: f(x) -> Vector{Float64}

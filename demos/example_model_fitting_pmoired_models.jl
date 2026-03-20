@@ -21,12 +21,13 @@ using PyPlot, Printf
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    show_model(param_dict; fov=1.5, nx=128, title="", ax=nothing, kwargs...)
+    show_model(model; fov=1.5, nx=128, title="", ax=nothing, kwargs...)
 
-Synthesise and display a model image, mimicking PMOIRED's `showModel`.
+Synthesise and display a model image, similar to PMOIRED's `showModel`.
+This is our main debugging tool to check if we're compatible!
 `fov` is the full field-of-view in mas (axes go from -fov/2 to fov/2). `nx` is the grid size (default 128, matching PMOIRED).
 """
-function show_model(param_dict::Dict{String,Any};
+function show_model(model_dict::Dict{String,Any};
                     fov::Real     = 3.0,
                     nx::Int       = 128,
                     title_str::String = "",
@@ -39,8 +40,8 @@ function show_model(param_dict::Dict{String,Any};
     half_fov = fov / 2        # fov is full width (PMOIRED convention)
     pixsize = fov / nx        # derive pixel size from FOV and grid size
 
-    # Separate fit_params = [] since we just want to display
-    model = parse_model(param_dict, String[])
+    # Separate list_free_params = [] since we just want to display
+    model = parse_model(model_dict, String[])
     img   = model_to_image(model, Float64[]; nx, pixsize, wl)
 
     # Apply power scaling for display (like PMOIRED's imPow)
@@ -63,8 +64,8 @@ function show_model(param_dict::Dict{String,Any};
     # Overlay parameter text
     if show_legend
         lines = String[]
-        for k in sort(collect(keys(param_dict)))
-            v = param_dict[k]
+        for k in sort(collect(keys(model_dict)))
+            v = model_dict[k]
             if v isa Number
                 push!(lines, @sprintf("%-20s = %.3g", k, v))
             elseif v isa String
@@ -108,9 +109,9 @@ models_basic = [
 
 fig, axes = subplots(2, 3; figsize=(14, 9))
 fig.suptitle("1. Basic models", fontsize=14, fontweight="bold")
-for (i, (param, name)) in enumerate(models_basic)
+for (i, (model_dict, name)) in enumerate(models_basic)
     ax = axes[i]
-    show_model(param; fov=1.5, ax, title_str=name)
+    show_model(model_dict; fov=1.5, ax, title_str=name)
 end
 tight_layout()
 savefig("pmoired_1_basic_models.png", dpi=150)
@@ -146,9 +147,9 @@ models_transform = [
 
 fig, axes = subplots(2, 3; figsize=(14, 9))
 fig.suptitle("2. Geometric transformations", fontsize=14, fontweight="bold")
-for (i, (param, name)) in enumerate(models_transform)
+for (i, (model_dict, name)) in enumerate(models_transform)
     ax = axes[i]
-    show_model(param; fov=1.5, ax, title_str=name)
+    show_model(model_dict; fov=1.5, ax, title_str=name)
 end
 tight_layout()
 savefig("pmoired_2_transforms.png", dpi=150)
@@ -168,42 +169,42 @@ fig.suptitle("2b. Azimuthal variations", fontsize=14, fontweight="bold")
 
 # Row 1: no az + individual harmonics 1, 2, 3
 for (col, i) in enumerate([0; Is])
-    param = Dict{String,Any}(
+    model_dict = Dict{String,Any}(
         "disk,diamin" => 1.0, "disk,diamout" => 3.0,
         "disk,profile" => "1",
         "disk,projang" => -20.0, "disk,incl" => 60.0, "disk,f" => 1.0,
     )
     if i > 0
-        param["disk,az amp$i"]     = 1.0 / length(Is)
-        param["disk,az projang$i"] = Float64(i * 30)
+        model_dict["disk,az amp$i"]     = 1.0 / length(Is)
+        model_dict["disk,az projang$i"] = Float64(i * 30)
     end
     row = col <= 3 ? 1 : 2
     c   = col <= 3 ? col : col - 3
-    show_model(param; fov=3.5, ax=axes[row, c],
+    show_model(model_dict; fov=3.5, ax=axes[row, c],
                title_str= i == 0 ? "No variation" : "az order $i")
 end
 
 # Row 2, col 2: all harmonics combined
-param_all = Dict{String,Any}(
+model_dict_all = Dict{String,Any}(
     "disk,diamin" => 1.0, "disk,diamout" => 3.0,
     "disk,profile" => "1",
     "disk,projang" => -20.0, "disk,incl" => 60.0, "disk,f" => 1.0,
 )
 for i in Is
-    param_all["disk,az amp$i"]     = 1.0 / length(Is)
-    param_all["disk,az projang$i"] = Float64(i * 30)
+    model_dict_all["disk,az amp$i"]     = 1.0 / length(Is)
+    model_dict_all["disk,az projang$i"] = Float64(i * 30)
 end
-show_model(param_all; fov=3.5, ax=axes[2, 2], title_str="All harmonics combined")
+show_model(model_dict_all; fov=3.5, ax=axes[2, 2], title_str="All harmonics combined")
 
 # Row 2, col 3: ring + profile + az (Cell 8)
-param_az_prof = Dict{String,Any}(
+model_dict_az_prof = Dict{String,Any}(
     "disk,diamin" => 0.5, "disk,diamout" => 1.0,
     "disk,profile" => "\$R^(-2)",
     "disk,az amp1" => 0.8, "disk,az projang1" => 60.0,
     "disk,projang" => 45.0, "disk,incl" => -30.0,
     "disk,x" => -0.2, "disk,y" => 0.1, "disk,f" => 1.0,
 )
-show_model(param_az_prof; fov=1.5, ax=axes[2, 3], title_str="Ring + profile + az amp1")
+show_model(model_dict_az_prof; fov=1.5, ax=axes[2, 3], title_str="Ring + profile + az amp1")
 
 tight_layout()
 savefig("pmoired_2b_azimuthal.png", dpi=150)
@@ -214,19 +215,19 @@ println("Saved pmoired_2b_azimuthal.png")
 # 3. Spatial kernel
 # ═══════════════════════════════════════════════════════════════════════════════
 
-param_nokernel = Dict{String,Any}(
+model_dict_nokernel = Dict{String,Any}(
     "cr,crin" => 0.5, "cr,crout" => 1.0,
     "cr,croff" => 0.8, "cr,crprojang" => 120.0,
     "cr,incl" => 45.0, "cr,projang" => 30.0,
     "cr,f" => 1.0)
 
-param_kernel = copy(param_nokernel)
-param_kernel["spatial_kernel"] = 0.2
+model_dict_kernel = copy(model_dict_nokernel)
+model_dict_kernel["spatial_kernel"] = 0.2
 
 fig, axes = subplots(1, 2; figsize=(10, 5))
 fig.suptitle("3. Spatial kernel (Gaussian smoothing)", fontsize=14, fontweight="bold")
-show_model(param_nokernel; fov=1.5, ax=axes[1], title_str="Without kernel")
-show_model(param_kernel;   fov=1.5, ax=axes[2], title_str="With spatial_kernel=0.2")
+show_model(model_dict_nokernel; fov=1.5, ax=axes[1], title_str="Without kernel")
+show_model(model_dict_kernel;   fov=1.5, ax=axes[2], title_str="With spatial_kernel=0.2")
 tight_layout()
 savefig("pmoired_3_spatial_kernel.png", dpi=150)
 println("Saved pmoired_3_spatial_kernel.png")
@@ -237,7 +238,7 @@ println("Saved pmoired_3_spatial_kernel.png")
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Star + inclined disk with profile and az variation (PMOIRED Cell 12)
-param_multi = Dict{String,Any}(
+model_dict_multi = Dict{String,Any}(
     "star,fwhm"          => 0.1,
     "star,spectrum"       => "\$WL^(-3)",
     "disk,diamin"        => 0.5,
@@ -259,18 +260,18 @@ fig = figure(figsize=(14, 5))
 fig.suptitle("4. Combining components", fontsize=14, fontweight="bold")
 
 ax1 = fig.add_subplot(1, 3, 1)
-show_model(param_multi; fov=1.5, ax=ax1,
+show_model(model_dict_multi; fov=1.5, ax=ax1,
            title_str=@sprintf("λ = %.1f µm", first(WL_range)),
            power=0.5, wl=first(WL_range))
 
 ax2 = fig.add_subplot(1, 3, 2)
-show_model(param_multi; fov=1.5, ax=ax2,
+show_model(model_dict_multi; fov=1.5, ax=ax2,
            title_str=@sprintf("λ = %.1f µm", last(WL_range)),
            power=0.5, wl=last(WL_range))
 
 # SED panel: computed from model via model_to_sed
 ax3 = fig.add_subplot(1, 3, 3)
-model_multi = parse_model(param_multi, String[])
+model_multi = parse_model(model_dict_multi, String[])
 wl_sed = collect(range(first(WL_range), last(WL_range); length=200))
 f_total, f_comps = model_to_sed(model_multi, Float64[], wl_sed)
 ax3.plot(wl_sed, f_total, label="total", linewidth=2, color="black")
@@ -294,7 +295,7 @@ println("Saved pmoired_4_combining.png")
 
 WL_expr = range(1.0, 2.0; length=10)
 
-param_expr = Dict{String,Any}(
+model_dict_expr = Dict{String,Any}(
     "PA"                  => 60.0,
     "INC"                 => 45.0,
     "inner,fwhm"          => 1.0,
@@ -317,16 +318,16 @@ fig = figure(figsize=(14, 5))
 fig.suptitle("5. Parameter expressions", fontsize=14, fontweight="bold")
 
 ax1 = fig.add_subplot(1, 3, 1)
-show_model(param_expr; fov=9.0, ax=ax1, power=0.5,
+show_model(model_dict_expr; fov=9.0, ax=ax1, power=0.5,
            title_str="λ = $(first(WL_expr)) µm", wl=first(WL_expr))
 
 ax2 = fig.add_subplot(1, 3, 2)
-show_model(param_expr; fov=9.0, ax=ax2, power=0.5,
+show_model(model_dict_expr; fov=9.0, ax=ax2, power=0.5,
            title_str="λ = $(last(WL_expr)) µm", wl=last(WL_expr))
 
 # SED
 ax3 = fig.add_subplot(1, 3, 3)
-model_expr = parse_model(param_expr, String[])
+model_expr = parse_model(model_dict_expr, String[])
 wl_sed_e = collect(range(first(WL_expr), last(WL_expr); length=200))
 f_total_e, f_comps_e = model_to_sed(model_expr, Float64[], wl_sed_e)
 ax3.plot(wl_sed_e, f_total_e, label="total", linewidth=2, color="black")
@@ -348,7 +349,7 @@ println("Saved pmoired_5_expressions.png")
 
 # Build N concentric rings whose az projang1 rotates with radius → spiral
 N_rings = 5
-param_spiral = Dict{String,Any}(
+model_dict_spiral = Dict{String,Any}(
     "Din"     => 1.0,
     "Dout"    => 7.0,
     "INCL"    => 45.0,
@@ -358,24 +359,24 @@ param_spiral = Dict{String,Any}(
 )
 for i in 0:(N_rings-1)
     k = "ring$i"
-    param_spiral["$k,diamin"]       = "\$Din + $i/$N_rings * (\$Dout - \$Din)"
-    param_spiral["$k,diamout"]      = "\$Din + $(i+1)/$N_rings * (\$Dout - \$Din)"
-    param_spiral["$k,profile"]      = "1"
-    param_spiral["$k,az amp1"]      = 1.0
-    param_spiral["$k,az projang1"]  = "\$PAin + \$pitch * \$$k,diamin"
-    param_spiral["$k,incl"]         = "\$INCL"
-    param_spiral["$k,projang"]      = "\$PROJANG"
+    model_dict_spiral["$k,diamin"]       = "\$Din + $i/$N_rings * (\$Dout - \$Din)"
+    model_dict_spiral["$k,diamout"]      = "\$Din + $(i+1)/$N_rings * (\$Dout - \$Din)"
+    model_dict_spiral["$k,profile"]      = "1"
+    model_dict_spiral["$k,az amp1"]      = 1.0
+    model_dict_spiral["$k,az projang1"]  = "\$PAin + \$pitch * \$$k,diamin"
+    model_dict_spiral["$k,incl"]         = "\$INCL"
+    model_dict_spiral["$k,projang"]      = "\$PROJANG"
 end
 
 fig, axes = subplots(1, 2; figsize=(10, 5))
 fig.suptitle("5b. Spiral from azimuthal variations", fontsize=14, fontweight="bold")
 
-show_model(param_spiral; fov=8.0, ax=axes[1], title_str="Without kernel", show_legend=false)
+show_model(model_dict_spiral; fov=8.0, ax=axes[1], title_str="Without kernel", show_legend=false)
 
 # Add spatial kernel for smoothing
-param_spiral_k = copy(param_spiral)
-param_spiral_k["spatial_kernel"] = "0.5 * (\$Dout - \$Din) / $N_rings"
-show_model(param_spiral_k; fov=8.0, ax=axes[2], title_str="With spatial kernel", show_legend=false)
+model_dict_spiral_k = copy(model_dict_spiral)
+model_dict_spiral_k["spatial_kernel"] = "0.5 * (\$Dout - \$Din) / $N_rings"
+show_model(model_dict_spiral_k; fov=8.0, ax=axes[2], title_str="With spatial kernel", show_legend=false)
 
 tight_layout()
 savefig("pmoired_5b_spiral.png", dpi=150)
@@ -401,15 +402,15 @@ fig, axes = subplots(length(shapes), length(incls); figsize=(4*length(incls), 4*
 fig.suptitle("6. All shapes at various inclinations (PA=45)", fontsize=14, fontweight="bold")
 
 for (j, incl) in enumerate(incls)
-    for (i, (name, base_param)) in enumerate(shapes)
-        param = copy(base_param)
+    for (i, (name, base_model_dict)) in enumerate(shapes)
+        model_dict = copy(base_model_dict)
         if incl > 0
-            param["s,incl"]    = incl
-            param["s,projang"] = 45.0
+            model_dict["s,incl"]    = incl
+            model_dict["s,projang"] = 45.0
         end
         ax = axes[i, j]
         label = j == 1 ? "$name, i=$(Int(incl))" : "i=$(Int(incl))"
-        show_model(param; fov=1.5, ax, title_str=label)
+        show_model(model_dict; fov=1.5, ax, title_str=label)
         if j > 1
             ax.set_ylabel("")
         end
@@ -427,9 +428,9 @@ println("Saved pmoired_6_gallery.png")
 fig, axes = subplots(1, 4; figsize=(16, 4))
 fig.suptitle("7. diam + thick ring sugar", fontsize=14, fontweight="bold")
 for (i, thick) in enumerate([0.05, 0.3, 0.6, 1.0])
-    param = Dict{String,Any}("r,diam" => 2.0, "r,thick" => thick, "r,f" => 1.0)
+    model_dict = Dict{String,Any}("r,diam" => 2.0, "r,thick" => thick, "r,f" => 1.0)
     ax = axes[i]
-    show_model(param; fov=3.0, ax, title_str=@sprintf("thick=%.2f", thick))
+    show_model(model_dict; fov=3.0, ax, title_str=@sprintf("thick=%.2f", thick))
 end
 tight_layout()
 savefig("pmoired_7_thick.png", dpi=150)

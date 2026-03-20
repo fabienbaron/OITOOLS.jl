@@ -6,16 +6,16 @@ data = (readoifits(filename, targetname=targetname, filter_bad_data = true, filt
 v2plot(data)
 
 # Fit a power-law limb-darkened disk
-param = Dict{String,Any}(
+model = Dict{String,Any}(
     "star,ldpow" => 1.0,
     "star,alpha" => 0.2,
     "star,f"     => 1.0,
 )
-fit_params = ["star,ldpow", "star,alpha"]
+free_params = ["star,ldpow", "star,alpha"]
 lb = Dict("star,ldpow" => 0.1, "star,alpha" => 0.0)
 ub = Dict("star,ldpow" => 40.0, "star,alpha" => 1.0)
 
-result = fit_model(param, fit_params, data;
+result = fit_model(model, free_params, data;
     lb=lb, ub=ub, weights=[1.0, 0, 0])
 println(result)
 

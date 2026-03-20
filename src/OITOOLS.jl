@@ -103,6 +103,6 @@ export moon_radec, moon_illumination, angular_separation
 export oifits_check, oifits_merge, oifits_filter
 
 # ── PMOIRED compatibility ────────────────────────────────────────────────────
-export pmoired_to_julia, pmoired_to_julia_file
+export pmoired_to_julia, pmoired_to_julia_file, pmoired_to_dict
 
 end

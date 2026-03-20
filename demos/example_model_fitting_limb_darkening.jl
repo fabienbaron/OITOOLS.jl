@@ -33,19 +33,19 @@ println("\n" * "="^70)
 println("  1. Uniform disc fit")
 println("="^70)
 
-param_ud = Dict{String,Any}(
+model_dict_ud = Dict{String,Any}(
     "star,ud" => 8.0,    # starting diameter (mas)
     "star,f"  => 1.0,    # flux fraction (fixed)
 )
-fit_params_ud = ["star,ud"]
+list_free_params_ud = ["star,ud"]
 lb_ud = Dict("star,ud" => 5.0)
 ub_ud = Dict("star,ud" => 12.0)
 
 # Inspect the model setup
-display_model(param_ud, fit_params_ud; lb=lb_ud, ub=ub_ud)
+display_model(model_dict_ud, list_free_params_ud; lb=lb_ud, ub=ub_ud)
 
 # Fit with gradient-based optimizer (V² only)
-result_ud = fit_model(param_ud, fit_params_ud, data;
+result_ud = fit_model(model_dict_ud, list_free_params_ud, data;
     lb=lb_ud, ub=ub_ud, weights=[1.0, 0, 0])
 
 println(result_ud)
@@ -61,18 +61,18 @@ println("\n" * "="^70)
 println("  2. Power-law LD fit (LD_LBFGS)")
 println("="^70)
 
-param_ld = Dict{String,Any}(
+model_dict_ld = Dict{String,Any}(
     "star,ldpow" => result_ud.x_opt[1],  # seed from UD fit
     "star,alpha" => 0.15,                 # LD exponent
     "star,f"     => 1.0,
 )
-fit_params_ld = ["star,ldpow", "star,alpha"]
+list_free_params_ld = ["star,ldpow", "star,alpha"]
 lb_ld = Dict("star,ldpow" => 5.0,  "star,alpha" => 0.0)
 ub_ld = Dict("star,ldpow" => 12.0, "star,alpha" => 0.5)
 
-display_model(param_ld, fit_params_ld; lb=lb_ld, ub=ub_ld)
+display_model(model_dict_ld, list_free_params_ld; lb=lb_ld, ub=ub_ld)
 
-result_ld = fit_model(param_ld, fit_params_ld, data;
+result_ld = fit_model(model_dict_ld, list_free_params_ld, data;
     lb=lb_ld, ub=ub_ld, weights=[1.0, 0, 0])
 
 println(result_ld)
@@ -89,7 +89,7 @@ println("\n" * "="^70)
 println("  3. Power-law LD fit (LN_NELDERMEAD)")
 println("="^70)
 
-result_nm = fit_model(param_ld, fit_params_ld, data;
+result_nm = fit_model(model_dict_ld, list_free_params_ld, data;
     lb=lb_ld, ub=ub_ld, weights=[1.0, 0, 0],
     method=:LN_NELDERMEAD, maxeval=5000)
 
@@ -107,7 +107,7 @@ println("  4. Manual χ² evaluation")
 println("="^70)
 
 # Compile model and evaluate chi2 at published values
-model_ld = parse_model(param_ld, fit_params_ld)
+model_ld = parse_model(model_dict_ld, list_free_params_ld)
 chi2_pub = model_to_chi2(model_ld, [8.502, 0.1404], data; weights=[1.0, 0, 0])
 @printf("  χ² at published values (8.502, 0.1404): %.2f\n", chi2_pub)
 
@@ -155,16 +155,16 @@ println("\n" * "="^70)
 println("  7. Linear LD fit")
 println("="^70)
 
-param_ldlin = Dict{String,Any}(
+model_dict_ldlin = Dict{String,Any}(
     "star,ldlin" => result_ud.x_opt[1],
     "star,u"     => 0.3,    # linear LD coefficient
     "star,f"     => 1.0,
 )
-fit_params_ldlin = ["star,ldlin", "star,u"]
+list_free_params_ldlin = ["star,ldlin", "star,u"]
 lb_ldlin = Dict("star,ldlin" => 5.0, "star,u" => 0.0)
 ub_ldlin = Dict("star,ldlin" => 12.0, "star,u" => 1.0)
 
-result_ldlin = fit_model(param_ldlin, fit_params_ldlin, data;
+result_ldlin = fit_model(model_dict_ldlin, list_free_params_ldlin, data;
     lb=lb_ldlin, ub=ub_ldlin, weights=[1.0, 0, 0])
 
 println(result_ldlin)
@@ -180,7 +180,7 @@ println("\n" * "="^70)
 println("  8. UltraNest nested sampling")
 println("="^70)
 
-result_un = fit_model_ultranest(param_ld, fit_params_ld, data;
+result_un = fit_model_ultranest(model_dict_ld, list_free_params_ld, data;
     lb=lb_ld, ub=ub_ld, weights=[1.0, 0, 0],
     min_num_live_points=200, verb=true, cornerplot=true)
 

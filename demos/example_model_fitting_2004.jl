@@ -5,7 +5,7 @@ using OITOOLS
 data = readoifits("./data/2004-data1.oifits")[1,1];
 
 # Setup model: unresolved star + Gaussian ring
-param = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,ud"       => 0.0,     # unresolved star (fixed at 0 diameter)
     "star,f"        => 0.5,     # star flux fraction (free)
     "ring,gaussian_ring" => 1.0, # ring radius (free)
@@ -15,15 +15,15 @@ param = Dict{String,Any}(
     "ring,f"        => "1.0 - \$star,f", # ring flux = complement of star flux
 )
 
-fit_params = ["star,f", "ring,gaussian_ring", "ring,fwhm"]
+list_free_params = ["star,f", "ring,gaussian_ring", "ring,fwhm"]
 
 lb = Dict("star,f" => 0.0, "ring,gaussian_ring" => 0.1, "ring,fwhm" => 0.01)
 ub = Dict("star,f" => 1.0, "ring,gaussian_ring" => 10.0, "ring,fwhm" => 5.0)
 
-display_model(param, fit_params; lb=lb, ub=ub)
+display_model(model_dict, list_free_params; lb=lb, ub=ub)
 
 # UltraNest nested sampling for robust posterior exploration
-result = fit_model_ultranest(param, fit_params, data;
+result = fit_model_ultranest(model_dict, list_free_params, data;
     lb=lb, ub=ub,
     min_num_live_points=400, cluster_num_live_points=200)
 

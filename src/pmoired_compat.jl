@@ -143,6 +143,23 @@ end
 
 
 """
+    pmoired_to_dict(s) -> Dict{String,Any}
+
+Convert a PMOIRED Python dict literal string directly to a Julia `Dict`.
+This is a convenience wrapper around `pmoired_to_julia` that evaluates the
+resulting Julia string, so users don't need `eval(Meta.parse(...))`.
+
+```julia
+model_dict = pmoired_to_dict("{'star,ud': 3.2, 'ring,f': '1 - \\\$star,f'}")
+```
+"""
+function pmoired_to_dict(s::AbstractString)::Dict{String,Any}
+    julia_str = pmoired_to_julia(s)
+    return eval(Meta.parse(julia_str))
+end
+
+
+"""
     pmoired_to_julia_file(infile, outfile)
 
 Read a Python/PMOIRED notebook snippet from `infile`, convert it, write to `outfile`.

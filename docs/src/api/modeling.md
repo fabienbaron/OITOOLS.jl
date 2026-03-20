@@ -4,13 +4,13 @@
 
 | Function | Description |
 |----------|-------------|
-| `parse_model(dict, fit_params)` | Compile a flat parameter dict into a `FlatModel` |
+| `parse_model(model_dict, list_free_params)` | Compile a flat parameter dict into a `FlatModel` |
 | `model_to_vis(model, x, uv)` | Evaluate complex visibilities for a model (alias: `eval_model`) |
 | `eval_model_grad(model, x, uv)` | Evaluate visibilities + Jacobian |
-| `display_model(dict, fit_params)` | Pretty-print model parameters |
-| `fit_model(dict, fit_params, data)` | Fit model via gradient descent (NLopt) |
-| `fit_model_lsqfit(dict, fit_params, data)` | Fit model via Levenberg-Marquardt (LsqFit) |
-| `fit_model_ultranest(dict, fit_params, data)` | Fit model via nested sampling (UltraNest) |
+| `display_model(model_dict, list_free_params)` | Pretty-print model parameters |
+| `fit_model(model_dict, list_free_params, data)` | Fit model via gradient descent (NLopt) |
+| `fit_model_lsqfit(model_dict, list_free_params, data)` | Fit model via Levenberg-Marquardt (LsqFit) |
+| `fit_model_ultranest(model_dict, list_free_params, data)` | Fit model via nested sampling (UltraNest) |
 | `model_to_obs(model, x, data)` | Compute observables (V², T3amp, T3phi) from a model |
 | `model_to_residuals(model, x, data)` | Compute normalised residuals (model - data) / error |
 | `model_to_chi2(model, x, data)` | Compute weighted chi² (alias: `chi2_flat`) |

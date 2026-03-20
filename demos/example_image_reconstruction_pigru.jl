@@ -11,18 +11,18 @@ ft = setup_nfft(data, nx, pixsize);
 
 #initial image from model fitting
 weights=[1.0,0.0,0.0]
-param = Dict{String,Any}(
+model = Dict{String,Any}(
     "disc,ldquad" => 10.0,
     "disc,u1"     => 0.2,
     "disc,u2"     => 0.2,
     "disc,f"      => 1.0,
 )
-fit_params = ["disc,ldquad", "disc,u1", "disc,u2"]
+free_params = ["disc,ldquad", "disc,u1", "disc,u2"]
 lb = Dict("disc,ldquad" => 5.0, "disc,u1" => -1.0, "disc,u2" => -1.0)
 ub = Dict("disc,ldquad" => 30.0, "disc,u1" => 2.0, "disc,u2" => 1.0)
 
 # Global minimization
-result = fit_model_ultranest(param, fit_params, data;
+result = fit_model_ultranest(model, free_params, data;
     lb=lb, ub=ub, weights=weights)
 println(result)
 

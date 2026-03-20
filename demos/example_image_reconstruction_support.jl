@@ -10,19 +10,19 @@ data = readoifits(oifitsfile)[1,1];
 
 # Let's find an adequate mask by fitting a UD to the data
 weights=[1.0,1.0,0.0]
-param = Dict{String,Any}(
+model = Dict{String,Any}(
     "disc,ud" => 2.0,
     "disc,f"  => 1.0,
 )
-fit_params = ["disc,ud"]
+free_params = ["disc,ud"]
 lb = Dict("disc,ud" => 1.0)
 ub = Dict("disc,ud" => 5.0)
 
 # Global minimization via UltraNest
-result_un = fit_model_ultranest(param, fit_params, data;
+result_un = fit_model_ultranest(model, free_params, data;
     lb=lb, ub=ub, weights=weights)
 # Local refinement
-result = fit_model(param, fit_params, data;
+result = fit_model(model, free_params, data;
     lb=lb, ub=ub, weights=weights)
 println(result)
 

@@ -14,7 +14,7 @@
 #
 # Interface
 # ---------
-#   fit_model(param_dict, fit_params, data; lb, ub, weights, priors, method, ...)
+#   fit_model(model_dict, list_free_params, data; lb, ub, weights, priors, method, ...)
 #       → FitResult
 
 using NLopt, LsqFit, ForwardDiff, Printf, PyCall, FFTW
@@ -25,7 +25,7 @@ using NLopt, LsqFit, ForwardDiff, Printf, PyCall, FFTW
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    display_model(param_dict, fit_params; lb, ub)
+    display_model(model_dict, list_free_params; lb, ub)
 
 Print a human-readable summary of the model setup, grouped by component.
 Shows each parameter's value (or expression), whether it is free or fixed,
@@ -34,16 +34,16 @@ bounds, flux fractions that don't sum to 1).
 
 Call this *before* `fit_model` / `fit_model_ultranest` to verify your setup.
 """
-function display_model(param_dict  ::Dict{String},
-                       fit_params  ::Vector{String};
+function display_model(model_dict  ::Dict{String},
+                       list_free_params  ::Vector{String};
                        lb = Dict{String,Float64}(),
                        ub = Dict{String,Float64}())
 
-    fit_set = Set(fit_params)
+    fit_set = Set(list_free_params)
 
     # ── Discover components ─────────────────────────────────────────────────
     comp_params = Dict{String, Vector{String}}()   # comp_name → [keys...]
-    for k in sort(collect(keys(param_dict)))
+    for k in sort(collect(keys(model_dict)))
         idx = findfirst(',', k)
         if isnothing(idx)
             cn = "__global__"
@@ -84,7 +84,7 @@ function display_model(param_dict  ::Dict{String},
 
         for k in params
             suffix = occursin(',', k) ? k[findfirst(',', k)+1:end] : k
-            val    = param_dict[k]
+            val    = model_dict[k]
             free   = k in fit_set
 
             # Format value column
@@ -135,15 +135,15 @@ function display_model(param_dict  ::Dict{String},
 
     # ── Summary ─────────────────────────────────────────────────────────────
     println("\n" * "─"^78)
-    n_free = length(fit_params)
-    n_total = length(param_dict)
+    n_free = length(list_free_params)
+    n_total = length(model_dict)
     println("Total: $n_total parameters, $n_free free")
-    println("Free:  $(join(fit_params, ", "))")
+    println("Free:  $(join(list_free_params, ", "))")
 
     # Check flux sum at reference values
-    flux_keys = [k for k in keys(param_dict) if endswith(k, ",f")]
-    numeric_fluxes = [(k, param_dict[k]) for k in flux_keys if param_dict[k] isa Number]
-    expr_fluxes    = [(k, param_dict[k]) for k in flux_keys if param_dict[k] isa String]
+    flux_keys = [k for k in keys(model_dict) if endswith(k, ",f")]
+    numeric_fluxes = [(k, model_dict[k]) for k in flux_keys if model_dict[k] isa Number]
+    expr_fluxes    = [(k, model_dict[k]) for k in flux_keys if model_dict[k] isa String]
     if !isempty(numeric_fluxes) && isempty(expr_fluxes)
         fsum = sum(v for (_, v) in numeric_fluxes)
         if abs(fsum - 1.0) > 0.01
@@ -170,7 +170,7 @@ end
 
 struct FitResult
     x_opt      ::Vector{Float64}   # best-fit parameter values
-    fit_params ::Vector{String}    # parameter names, same order as x_opt
+    list_free_params ::Vector{String}    # parameter names, same order as x_opt
     chi2       ::Float64           # raw weighted chi2 at x_opt
     chi2r      ::Float64           # chi2 / ndof
     ndof       ::Int               # number of data points (weighted)
@@ -182,7 +182,7 @@ end
 function Base.show(io::IO, r::FitResult)
     @printf(io, "FitResult: χ²r = %.4f  (chi2=%.2f, ndof=%d, evals=%d, ret=%s)\n",
             r.chi2r, r.chi2, r.ndof, r.n_evals, r.ret)
-    for (i, p) in enumerate(r.fit_params)
+    for (i, p) in enumerate(r.list_free_params)
         @printf(io, "  %-20s = %10.4f\n", p, r.x_opt[i])
     end
 end
@@ -227,13 +227,13 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    fit_model(param_dict, fit_params, data; kwargs...) -> FitResult
+    fit_model(model_dict, list_free_params, data; kwargs...) -> FitResult
 
 Fit a parametric model to interferometric data using NLopt.
 
 # Arguments
-- `param_dict::Dict{String}` — flat parameter dictionary (values are numbers or expression strings)
-- `fit_params::Vector{String}` — names of the free parameters to optimize
+- `model_dict::Dict{String}` — flat parameter dictionary (values are numbers or expression strings)
+- `list_free_params::Vector{String}` — names of the free parameters to optimize
 - `data::OIdata` — interferometric data
 
 # Keywords
@@ -247,8 +247,8 @@ Fit a parametric model to interferometric data using NLopt.
 - `nB_workspace` — Hankel workspace size (default: nuv from data)
 - `verb` — print per-evaluation chi2 breakdown
 """
-function fit_model(param_dict   ::Dict{String},
-                   fit_params   ::Vector{String},
+function fit_model(model_dict   ::Dict{String},
+                   list_free_params   ::Vector{String},
                    data         ::OIdata;
     lb           = Dict{String,Float64}(),
     ub           = Dict{String,Float64}(),
@@ -262,8 +262,8 @@ function fit_model(param_dict   ::Dict{String},
     nB_workspace = nothing,
     verb         = false,
 )
-    # ── 1. Augment param_dict with prior expressions ─────────────────────────
-    augmented = copy(param_dict)
+    # ── 1. Augment model_dict with prior expressions ─────────────────────────
+    augmented = copy(model_dict)
     prior_keys = String[]
     for (i, (expr, _, _)) in enumerate(priors)
         key = "__prior_$(i)__"
@@ -273,10 +273,10 @@ function fit_model(param_dict   ::Dict{String},
 
     # ── 2. Compile the model (once) ──────────────────────────────────────────
     nB = something(nB_workspace, size(data.uv, 2))
-    model = parse_model(augmented, fit_params; nB_workspace=nB)
+    fm = parse_model(augmented, list_free_params; nB_workspace=nB)
 
     # ── 3. Resolve prior indices ─────────────────────────────────────────────
-    prior_idx = [findfirst(==(k), model.all_names) for k in prior_keys]
+    prior_idx = [findfirst(==(k), fm.all_names) for k in prior_keys]
 
     # ── 4. Detect gradient need ──────────────────────────────────────────────
     use_grad = startswith(string(method), "LD_")
@@ -286,27 +286,27 @@ function fit_model(param_dict   ::Dict{String},
     function objective(x, g)
         n_evals[] += 1
         if use_grad
-            chi2, grad = chi2_flat_fg(model, x, data; weights, vonmises, verb)
-            chi2 += prior_penalty_and_grad!(grad, x, priors, model, prior_idx)
+            chi2, grad = chi2_flat_fg(fm, x, data; weights, vonmises, verb)
+            chi2 += prior_penalty_and_grad!(grad, x, priors, fm, prior_idx)
             g .= grad
         else
-            chi2 = chi2_flat(model, x, data; weights, vonmises, verb)
-            chi2 += prior_penalty(x, priors, model, prior_idx)
+            chi2 = chi2_flat(fm, x, data; weights, vonmises, verb)
+            chi2 += prior_penalty(x, priors, fm, prior_idx)
         end
         return chi2
     end
 
     # ── 6. Configure NLopt ───────────────────────────────────────────────────
-    opt = Opt(method, length(fit_params))
+    opt = Opt(method, length(list_free_params))
     min_objective!(opt, objective)
     ftol_rel!(opt, ftol_rel)
     xtol_rel!(opt, xtol_rel)
     maxeval!(opt, maxeval)
-    lower_bounds!(opt, [get(lb, p, -Inf) for p in fit_params])
-    upper_bounds!(opt, [get(ub, p,  Inf) for p in fit_params])
+    lower_bounds!(opt, [get(lb, p, -Inf) for p in list_free_params])
+    upper_bounds!(opt, [get(ub, p,  Inf) for p in list_free_params])
 
     # ── 7. Run ───────────────────────────────────────────────────────────────
-    x0 = Float64[param_dict[p] for p in fit_params]
+    x0 = Float64[model_dict[p] for p in list_free_params]
     local minf, minx, ret
     try
         minf, minx, ret = optimize(opt, x0)
@@ -322,7 +322,7 @@ function fit_model(param_dict   ::Dict{String},
 
     # ── 8. Return result ─────────────────────────────────────────────────────
     ndof = _ndof(data, weights)
-    return FitResult(minx, fit_params, minf, minf / ndof, ndof, n_evals[], ret, model)
+    return FitResult(minx, list_free_params, minf, minf / ndof, ndof, n_evals[], ret, fm)
 end
 
 
@@ -332,7 +332,7 @@ end
 
 struct UltraNestResult
     x_opt       ::Vector{Float64}   # maximum-likelihood parameter values
-    fit_params  ::Vector{String}    # parameter names, same order as x_opt
+    list_free_params  ::Vector{String}    # parameter names, same order as x_opt
     chi2        ::Float64           # chi2 at x_opt
     chi2r       ::Float64           # chi2 / ndof
     ndof        ::Int
@@ -347,7 +347,7 @@ function Base.show(io::IO, r::UltraNestResult)
     @printf(io, "UltraNestResult: χ²r = %.4f  (chi2=%.2f, ndof=%d)\n",
             r.chi2r, r.chi2, r.ndof)
     @printf(io, "  log(Z) = %.2f ± %.2f\n", r.logz, r.logzerr)
-    for (i, p) in enumerate(r.fit_params)
+    for (i, p) in enumerate(r.list_free_params)
         samples = r.posterior[:, i]
         med  = sort(samples)[length(samples) ÷ 2]
         lo   = sort(samples)[max(1, round(Int, 0.16 * length(samples)))]
@@ -362,19 +362,19 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    fit_model_ultranest(param_dict, fit_params, data; kwargs...) -> UltraNestResult
+    fit_model_ultranest(model_dict, list_free_params, data; kwargs...) -> UltraNestResult
 
 Fit a parametric model to interferometric data using UltraNest nested sampling.
 
 Requires PyCall and the Python `ultranest` package.
 
 # Arguments
-- `param_dict::Dict{String}` — flat parameter dictionary
-- `fit_params::Vector{String}` — names of the free parameters
+- `model_dict::Dict{String}` — flat parameter dictionary
+- `list_free_params::Vector{String}` — names of the free parameters
 - `data::OIdata` — interferometric data
 
 # Keywords
-- `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds (REQUIRED for all fit_params)
+- `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds (REQUIRED for all list_free_params)
 - `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
 - `vonmises` — use von Mises statistic for T3phi
 - `nB_workspace` — Hankel workspace size
@@ -388,8 +388,8 @@ Requires PyCall and the Python `ultranest` package.
 - `verb` — print progress (default true)
 - `cornerplot` — show corner plot (default true)
 """
-function fit_model_ultranest(param_dict   ::Dict{String},
-                             fit_params   ::Vector{String},
+function fit_model_ultranest(model_dict   ::Dict{String},
+                             list_free_params   ::Vector{String},
                              data         ::OIdata;
     lb                       = Dict{String,Float64}(),
     ub                       = Dict{String,Float64}(),
@@ -407,16 +407,16 @@ function fit_model_ultranest(param_dict   ::Dict{String},
     cornerplot               = true,
 )
     # ── 1. Validate bounds ──────────────────────────────────────────────────
-    for p in fit_params
+    for p in list_free_params
         haskey(lb, p) || error("Lower bound required for '$p' (UltraNest needs finite bounds)")
         haskey(ub, p) || error("Upper bound required for '$p' (UltraNest needs finite bounds)")
     end
-    lbounds = Float64[lb[p] for p in fit_params]
-    ubounds = Float64[ub[p] for p in fit_params]
+    lbounds = Float64[lb[p] for p in list_free_params]
+    ubounds = Float64[ub[p] for p in list_free_params]
 
     # ── 2. Compile the model (once) ─────────────────────────────────────────
     nB = something(nB_workspace, size(data.uv, 2))
-    model = parse_model(param_dict, fit_params; nB_workspace=nB)
+    fm = parse_model(model_dict, list_free_params; nB_workspace=nB)
 
     # ── 3. Prior transform: uniform [0,1]^n → [lb, ub] ─────────────────────
     Δx = ubounds .- lbounds
@@ -429,8 +429,8 @@ function fit_model_ultranest(param_dict   ::Dict{String},
     end
 
     # ── 4. Log-likelihood: -0.5 * chi2 ─────────────────────────────────────
-    loglikelihood = let model=model, data=data, weights=weights, vonmises=vonmises
-        param::AbstractVector{<:Real} -> -0.5 * chi2_flat(model, param, data;
+    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises
+        param::AbstractVector{<:Real} -> -0.5 * chi2_flat(fm, param, data;
                                                            weights, vonmises)
     end
 
@@ -441,7 +441,7 @@ function fit_model_ultranest(param_dict   ::Dict{String},
     # ── 5. Run UltraNest ───────────────────────────────────────────────────
     ultranest = pyimport("ultranest")
 
-    param_names = fit_params  # UltraNest wants a list of strings
+    param_names = list_free_params  # UltraNest wants a list of strings
 
     if !verb
         log_interval = 1_000_000
@@ -471,7 +471,7 @@ function fit_model_ultranest(param_dict   ::Dict{String},
 
     # ── 6. Extract results ─────────────────────────────────────────────────
     minx = Float64.(result["maximum_likelihood"]["point"])
-    minf = chi2_flat(model, minx, data; weights, vonmises)
+    minf = chi2_flat(fm, minx, data; weights, vonmises)
 
     if verb
         @printf("Best-fit χ² = %.4f\n", minf)
@@ -498,8 +498,8 @@ function fit_model_ultranest(param_dict   ::Dict{String},
     ndof    = _ndof(data, weights)
 
     return UltraNestResult(
-        minx, fit_params, minf, minf / ndof, ndof,
-        logz, logzerr, posterior, result, model,
+        minx, list_free_params, minf, minf / ndof, ndof,
+        logz, logzerr, posterior, result, fm,
     )
 end
 
@@ -510,7 +510,7 @@ end
 
 struct LsqFitResult
     x_opt       ::Vector{Float64}       # best-fit parameter values
-    fit_params  ::Vector{String}        # parameter names, same order as x_opt
+    list_free_params  ::Vector{String}        # parameter names, same order as x_opt
     chi2        ::Float64               # raw chi2 at x_opt
     chi2r       ::Float64               # chi2 / ndof
     ndof        ::Int
@@ -524,7 +524,7 @@ end
 function Base.show(io::IO, r::LsqFitResult)
     @printf(io, "LsqFitResult: χ²r = %.4f  (chi2=%.2f, ndof=%d, converged=%s)\n",
             r.chi2r, r.chi2, r.ndof, r.converged)
-    for (i, p) in enumerate(r.fit_params)
+    for (i, p) in enumerate(r.list_free_params)
         @printf(io, "  %-20s = %10.4f ± %.4f\n", p, r.x_opt[i], r.stderror[i])
     end
 end
@@ -535,7 +535,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    fit_model_lsqfit(param_dict, fit_params, data; kwargs...) -> LsqFitResult
+    fit_model_lsqfit(model_dict, list_free_params, data; kwargs...) -> LsqFitResult
 
 Fit a parametric model to interferometric data using Levenberg-Marquardt
 (LsqFit.jl).  Returns parameter covariance and 1σ uncertainties.
@@ -544,8 +544,8 @@ Uses the analytic Jacobian from `residuals_flat_jac` (Wirtinger chain rule
 through the complex visibility Jacobian), so no finite-difference overhead.
 
 # Arguments
-- `param_dict::Dict{String}` — flat parameter dictionary
-- `fit_params::Vector{String}` — names of the free parameters to optimize
+- `model_dict::Dict{String}` — flat parameter dictionary
+- `list_free_params::Vector{String}` — names of the free parameters to optimize
 - `data::OIdata` — interferometric data
 
 # Keywords
@@ -556,8 +556,8 @@ through the complex visibility Jacobian), so no finite-difference overhead.
 - `maxIter` — maximum iterations (default 200)
 - `verb` — print per-evaluation chi2 breakdown
 """
-function fit_model_lsqfit(param_dict   ::Dict{String},
-                          fit_params   ::Vector{String},
+function fit_model_lsqfit(model_dict   ::Dict{String},
+                          list_free_params   ::Vector{String},
                           data         ::OIdata;
     lb           = Dict{String,Float64}(),
     ub           = Dict{String,Float64}(),
@@ -569,8 +569,8 @@ function fit_model_lsqfit(param_dict   ::Dict{String},
 )
     # ── 1. Compile the model (once) ──────────────────────────────────────────
     nB = something(nB_workspace, size(data.uv, 2))
-    model = parse_model(param_dict, fit_params; nB_workspace=nB)
-    nparams = length(fit_params)
+    fm = parse_model(model_dict, list_free_params; nB_workspace=nB)
+    nparams = length(list_free_params)
 
     # ── 2. Build the model function and Jacobian for LsqFit ─────────────────
     # LsqFit convention: model_fn(xdata, p) -> predicted ydata
@@ -578,22 +578,22 @@ function fit_model_lsqfit(param_dict   ::Dict{String},
     # The "ydata" is zeros (we want residuals = predicted - 0 = residuals).
 
     function model_fn(_, p)
-        residuals_flat(model, p, data; weights, vonmises)
+        residuals_flat(fm, p, data; weights, vonmises)
     end
 
     function jacobian_fn(_, p)
-        _, J = residuals_flat_jac(model, p, data; weights, vonmises)
+        _, J = residuals_flat_jac(fm, p, data; weights, vonmises)
         return J
     end
 
     # ── 3. Initial parameter vector and bounds ───────────────────────────────
-    x0 = Float64[param_dict[p] for p in fit_params]
+    x0 = Float64[model_dict[p] for p in list_free_params]
     xdata = [1]  # dummy
     ydata = zeros(length(model_fn(xdata, x0)))  # target = 0 (residuals)
 
     # Build lower/upper bound vectors
-    lb_vec = Float64[get(lb, p, -Inf) for p in fit_params]
-    ub_vec = Float64[get(ub, p,  Inf) for p in fit_params]
+    lb_vec = Float64[get(lb, p, -Inf) for p in list_free_params]
+    ub_vec = Float64[get(ub, p,  Inf) for p in list_free_params]
 
     # ── 4. Run LsqFit ───────────────────────────────────────────────────────
     fit = curve_fit(model_fn, jacobian_fn, xdata, ydata, x0;
@@ -616,11 +616,11 @@ function fit_model_lsqfit(param_dict   ::Dict{String},
     end
 
     if verb
-        chi2_flat(model, minx, data; weights, verb=true, vonmises)
+        chi2_flat(fm, minx, data; weights, verb=true, vonmises)
     end
 
-    return LsqFitResult(minx, fit_params, chi2_val, chi2_val / ndof, ndof,
-                         cov, σ, fit.converged, model, fit)
+    return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
+                         cov, σ, fit.converged, fm, fit)
 end
 
 

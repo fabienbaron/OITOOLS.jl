@@ -66,8 +66,8 @@ println("Julia output:")
 println(julia_str)
 
 # Parse into an actual Julia Dict
-param = eval(Meta.parse(julia_str))
+model_dict = pmoired_to_dict(pmoired_model)
 println("Parsed Dict:")
-for (k, v) in sort(collect(param))
+for (k, v) in sort(collect(model_dict))
     println("  \"$k\" => $v")
 end

@@ -281,7 +281,7 @@ struct FlatModel
     resolver   ::Any                           # RGF.Resolver
     components ::Vector{AbstractComponentSpec}
     all_names  ::Vector{String}                # resolver output names (for debug)
-    fit_params ::Vector{String}
+    list_free_params ::Vector{String}
     kernel_idx ::Int                           # spatial_kernel FWHM index (0 = none)
 end
 
@@ -291,9 +291,9 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """Extract unique component name prefixes from a flat param dict."""
-function _component_names(param_dict::Dict{String})
+function _component_names(model_dict::Dict{String})
     names = String[]
-    for k in keys(param_dict)
+    for k in keys(model_dict)
         idx = findfirst(',', k)
         isnothing(idx) && continue
         push!(names, k[1:idx-1])
@@ -302,16 +302,16 @@ function _component_names(param_dict::Dict{String})
 end
 
 """Identify the component kind from which geometry key is present."""
-function _identify_kind(comp_name::String, param_dict::Dict{String})::Symbol
+function _identify_kind(comp_name::String, model_dict::Dict{String})::Symbol
     for gk in _GEOMETRY_KEYS
-        haskey(param_dict, "$comp_name,$gk") && return get(
+        haskey(model_dict, "$comp_name,$gk") && return get(
             Dict("profile"=>:hankel, "diamin"=>:ring, "fwhmin"=>:gaussian_ring,
                  "crin"=>:crescent, "ud"=>:ud, "fwhm"=>:gaussian,
                  "ldlin"=>:ldlin, "ldquad"=>:ldquad, "ldpow"=>:ldpow,
                  "resolved"=>:resolved), gk, :unknown)
     end
     # No geometry key — must have f, treat as unresolved point
-    haskey(param_dict, "$comp_name,f") && return :point
+    haskey(model_dict, "$comp_name,f") && return :point
     error("Cannot identify component type for '$comp_name': " *
           "no recognized geometry key (ud, fwhm, profile, ldlin, ldquad, ldpow)")
 end
@@ -325,15 +325,15 @@ function _name_to_idx(all_names::Vector{String})::Dict{String,Int}
 end
 
 """
-Recursively resolve a param_dict value to a numeric Float64.
+Recursively resolve a model_dict value to a numeric Float64.
 If it's already a Number, return it. If it's a string expression containing
 \$-references, substitute them recursively and evaluate.
 Used at parse time for grid parameters (diamin, diamout, etc.) that may be expressions.
 """
-function _resolve_numeric(key::AbstractString, param_dict::Dict{String}, visited::Set{String}=Set{String}())::Float64
+function _resolve_numeric(key::AbstractString, model_dict::Dict{String}, visited::Set{String}=Set{String}())::Float64
     k = String(key)
-    haskey(param_dict, k) || error("Key '$k' not found in param_dict")
-    v = param_dict[k]
+    haskey(model_dict, k) || error("Key '$k' not found in model_dict")
+    v = model_dict[k]
     v isa Number && return Float64(v)
     v isa AbstractString || error("Key '$k' has unsupported type $(typeof(v))")
     k in visited && error("Circular reference detected for '$k'")
@@ -342,7 +342,7 @@ function _resolve_numeric(key::AbstractString, param_dict::Dict{String}, visited
     # Replace $ref with resolved numeric values
     resolved = replace(expr, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => function(m)
         ref = m[2:end]  # strip leading $
-        string(_resolve_numeric(ref, param_dict, visited))
+        string(_resolve_numeric(ref, model_dict, visited))
     end)
     result = try
         eval(Meta.parse(resolved))
@@ -357,19 +357,19 @@ Determine the r grid outer boundary for a Hankel component.
 Priority: "udout" key (outer diameter/2), then "r_max" key.
 Errors if neither is present.
 """
-function _hankel_r_max(comp_name::String, param_dict::Dict{String})::Float64
+function _hankel_r_max(comp_name::String, model_dict::Dict{String})::Float64
     udout_key   = "$comp_name,udout"
     diam_key    = "$comp_name,diam"
     diamout_key = "$comp_name,diamout"
     r_max_key   = "$comp_name,r_max"
-    if haskey(param_dict, udout_key)
-        return _resolve_numeric(udout_key, param_dict) / 2.0
-    elseif haskey(param_dict, diamout_key)
-        return _resolve_numeric(diamout_key, param_dict) / 2.0
-    elseif haskey(param_dict, diam_key)
-        return _resolve_numeric(diam_key, param_dict) / 2.0
-    elseif haskey(param_dict, r_max_key)
-        return _resolve_numeric(r_max_key, param_dict)
+    if haskey(model_dict, udout_key)
+        return _resolve_numeric(udout_key, model_dict) / 2.0
+    elseif haskey(model_dict, diamout_key)
+        return _resolve_numeric(diamout_key, model_dict) / 2.0
+    elseif haskey(model_dict, diam_key)
+        return _resolve_numeric(diam_key, model_dict) / 2.0
+    elseif haskey(model_dict, r_max_key)
+        return _resolve_numeric(r_max_key, model_dict)
     else
         error("Hankel component '$comp_name' requires '$udout_key', '$diam_key', " *
               "'$diamout_key', or '$r_max_key' to define the r grid.")
@@ -377,16 +377,16 @@ function _hankel_r_max(comp_name::String, param_dict::Dict{String})::Float64
 end
 
 """Determine Nr for a Hankel component's r grid (default 100)."""
-function _hankel_Nr(comp_name::String, param_dict::Dict{String})::Int
+function _hankel_Nr(comp_name::String, model_dict::Dict{String})::Int
     k = "$comp_name,nr"
-    haskey(param_dict, k) ? Int(param_dict[k]) : 100
+    haskey(model_dict, k) ? Int(model_dict[k]) : 100
 end
 
 """Determine r_min for a Hankel component's r grid (0 by default, diamin/2 for rings)."""
-function _hankel_r_min(comp_name::String, param_dict::Dict{String})::Float64
+function _hankel_r_min(comp_name::String, model_dict::Dict{String})::Float64
     diamin_key = "$comp_name,diamin"
-    if haskey(param_dict, diamin_key)
-        return _resolve_numeric(diamin_key, param_dict) / 2.0
+    if haskey(model_dict, diamin_key)
+        return _resolve_numeric(diamin_key, model_dict) / 2.0
     end
     return 0.0
 end
@@ -398,7 +398,7 @@ not runtime params.
 """
 const _HANKEL_META_SUFFIXES = ["profile", "r_max", "nr"]
 
-function _resolver_dict(param_dict::Dict{String}, comp_names::Vector{String})
+function _resolver_dict(model_dict::Dict{String}, comp_names::Vector{String})
     # Exclude profile strings, Hankel grid-config keys, and resolved markers
     # from the resolver.  udout IS kept — it may be a fit param.
     exclude = Set{String}()
@@ -408,7 +408,7 @@ function _resolver_dict(param_dict::Dict{String}, comp_names::Vector{String})
         push!(exclude, "$cn,nr")
         push!(exclude, "$cn,resolved")
     end
-    return Dict{String,Any}(k => v for (k, v) in param_dict if k ∉ exclude)
+    return Dict{String,Any}(k => v for (k, v) in model_dict if k ∉ exclude)
 end
 
 
@@ -417,13 +417,13 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    _preprocess_sugar(param_dict, comp_names) -> Dict{String,Any}
+    _preprocess_sugar(model_dict, comp_names) -> Dict{String,Any}
 
 Expand shorthand notations to canonical keys:
 - `diam + thick` → `diamin + diamout`  (when no `profile` present)
 """
-function _preprocess_sugar(param_dict::Dict{String}, comp_names::Vector{String})
-    d = copy(param_dict)
+function _preprocess_sugar(model_dict::Dict{String}, comp_names::Vector{String})
+    d = copy(model_dict)
     for cn in comp_names
         diam_key  = "$cn,diam"
         thick_key = "$cn,thick"
@@ -462,16 +462,16 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    parse_model(param_dict, fit_params; nB_workspace=100) -> FlatModel
+    parse_model(model_dict, list_free_params; nB_workspace=100) -> FlatModel
 
 Compile a flat parameter dict into a `FlatModel` ready for evaluation.
 
 Arguments
 ---------
-param_dict   : Dict{String,Any} with "component,param" keys.
+model_dict   : Dict{String,Any} with "component,param" keys.
                Values may be Float64 (fixed or free) or String (expression).
                Special string key "component,profile" triggers the Hankel pathway.
-fit_params   : Vector{String} of keys to optimize (must be numeric in param_dict).
+list_free_params  : Vector{String} of keys to optimize (must be numeric in model_dict).
 nB_workspace : Pre-allocated baseline grid size for HankelWorkspace buffers.
                Should be ≥ the number of baselines you will evaluate at.
 
@@ -482,7 +482,7 @@ with zero Dict allocation.
 
 Example
 -------
-    param = Dict(
+    model_dict = Dict(
         "star,ud"      => 0.8,
         "star,f"       => 0.6,
         "ring,profile" => "exp(-(\\\$R / \\\$scale)^2 / 2)",
@@ -490,23 +490,23 @@ Example
         "ring,udout"   => 12.0,
         "ring,f"       => "1 - \\\$star,f",
     )
-    fit_params = ["star,ud", "star,f", "ring,scale"]
-    model = parse_model(param, fit_params)
+    list_free_params = ["star,ud", "star,f", "ring,scale"]
+    model = parse_model(model_dict, list_free_params)
 """
-function parse_model(param_dict::Dict{String},
-                     fit_params::Vector{String};
+function parse_model(model_dict::Dict{String},
+                     list_free_params::Vector{String};
                      nB_workspace::Int = 100)::FlatModel
 
-    comp_names = _component_names(param_dict)
+    comp_names = _component_names(model_dict)
 
     # ── Expand sugar (diam+thick → diamin+diamout) ───────────────────────────
-    pd = _preprocess_sugar(param_dict, comp_names)
+    pd = _preprocess_sugar(model_dict, comp_names)
 
     # ── Build resolver dict (numeric params only) ────────────────────────────
     res_dict = _resolver_dict(pd, comp_names)
 
     # ── Build RGF resolver ───────────────────────────────────────────────────
-    resolver = RGF.build_resolver(res_dict, fit_params)
+    resolver = RGF.build_resolver(res_dict, list_free_params)
     n2i      = _name_to_idx(resolver.all_names)
 
     # ── Spatial kernel ───────────────────────────────────────────────────────
@@ -559,7 +559,7 @@ function parse_model(param_dict::Dict{String},
             prof_idx = map(prof_param_names) do k
                 haskey(n2i, k) ||
                     error("Profile param '$k' not found in resolver. " *
-                          "It must be a numeric param in param_dict.")
+                          "It must be a numeric param in model_dict.")
                 n2i[k]
             end
 
@@ -630,7 +630,7 @@ function parse_model(param_dict::Dict{String},
         end
     end
 
-    return FlatModel(resolver, components, resolver.all_names, fit_params, kernel_idx)
+    return FlatModel(resolver, components, resolver.all_names, list_free_params, kernel_idx)
 end
 
 
@@ -646,7 +646,7 @@ Evaluate the model visibility at the given parameter vector `x` and baselines `u
 Arguments
 ---------
 model : FlatModel from parse_model
-x     : current free-parameter values, length = length(model.fit_params)
+x     : current free-parameter values, length = length(model.list_free_params)
 uv    : 2×N matrix of (u,v) spatial frequencies in cycles/rad
 wl    : wavelength per UV point (metres), length N  — enables \$WL in expressions
 mjd   : MJD per UV point, length N  — enables \$MJD in expressions
@@ -853,6 +853,6 @@ function Base.show(io::IO, model::FlatModel)
     if model.kernel_idx != 0
         println(io, "  spatial_kernel: idx=$(model.kernel_idx)")
     end
-    println(io, "  fit_params: $(model.fit_params)")
+    println(io, "  list_free_params: $(model.list_free_params)")
     println(io, "  all_names:  $(model.all_names)")
 end

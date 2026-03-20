@@ -36,10 +36,12 @@ set_data_filter
 
 | Function | Description |
 |----------|-------------|
-| `pmoired_to_julia(s)` | Convert a PMOIRED model string to OITOOLS Julia code |
+| `pmoired_to_dict(s)` | Convert a PMOIRED model string directly to a Julia `Dict` |
+| `pmoired_to_julia(s)` | Convert a PMOIRED model string to Julia source code (returns `String`) |
 | `pmoired_to_julia_file(infile, outfile)` | Convert a PMOIRED notebook snippet file |
 
 ```@docs
+pmoired_to_dict
 pmoired_to_julia
 pmoired_to_julia_file
 ```

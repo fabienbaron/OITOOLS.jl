@@ -2,11 +2,38 @@
 
 OITOOLS supports parametric model fitting using a flat-dictionary interface
 compatible with [PMOIRED](https://github.com/amerand/PMOIRED).
-Models are assembled from named components, each described by key-value pairs
-in a `Dict{String,Any}`. Expression strings with `\$`-references let parameters
-depend on each other (e.g. `"1 - \$star,f"`).
 
-## Defining a model
+## Workflow overview
+
+Model fitting in OITOOLS follows three steps:
+
+1. **Define a model dictionary** (`model_dict`) — a `Dict{String,Any}` listing
+   all parameters for every component. Values are either numbers (free or fixed)
+   or expression strings with `\$`-references for derived quantities.
+2. **Choose which parameters to fit** (`list_free_params`) — a `Vector{String}`
+   naming the subset of keys in `model_dict` that the optimizer is allowed to vary.
+   Optionally define lower/upper bounds (`lb`, `ub`) for each.
+3. **Fit** — calling `fit_model` (or `fit_model_lsqfit`, `fit_model_ultranest`)
+   compiles the dictionary into an efficient `FlatModel` internally, then
+   optimizes the free parameters against the data.
+
+The result contains the best-fit values (`result.x_opt`) and the compiled
+`FlatModel` (`result.model`), which you can pass to `model_to_obs`,
+`model_to_image`, etc.
+
+| Object | Type | Description | Key functions |
+|--------|------|-------------|---------------|
+| `model_dict` | `Dict{String,Any}` | Full model specification: all parameters, formulas, flags | `display_model`, `fit_model`, `fit_model_lsqfit`, `fit_model_ultranest` |
+| `list_free_params` | `Vector{String}` | Names of parameters to optimize (must be numeric in `model_dict`) | same as above |
+| `model` | `FlatModel` | Compiled model returned by `parse_model` or `result.model` | `model_to_obs`, `model_to_image`, `model_to_chi2`, `model_to_sed`, `eval_model` |
+
+!!! tip
+    You rarely need to call `parse_model` yourself — the fitting functions
+    do it internally. Use it only when you want to evaluate a model without
+    fitting (e.g. to compute observables or render an image at known parameter
+    values).
+
+## Defining a model dictionary
 
 Parameters use flat keys of the form `"component,parameter"`:
 
@@ -14,13 +41,13 @@ Parameters use flat keys of the form `"component,parameter"`:
 using OITOOLS
 data = readoifits("data/AlphaCenA.oifits")[1,1]
 
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,ud"  => 8.0,    # uniform disk diameter (mas)
     "star,f"   => 1.0,    # flux fraction
 )
-fit_params = ["star,ud"]  # parameters to optimize
+list_free_params = ["star,ud"]  # parameters to optimize
 
-display_model(params, fit_params)
+display_model(model_dict, list_free_params)
 ```
 
 The component name (e.g. `"star"`, `"disk"`, `"ring"`) is arbitrary — you
@@ -34,7 +61,7 @@ geometry key is present.
 A single key `ud` sets the diameter in mas:
 
 ```julia
-params = Dict{String,Any}("star,ud" => 1.0, "star,f" => 1.0)
+model_dict = Dict{String,Any}("star,ud" => 1.0, "star,f" => 1.0)
 ```
 
 ### Gaussian
@@ -42,7 +69,7 @@ params = Dict{String,Any}("star,ud" => 1.0, "star,f" => 1.0)
 A single key `fwhm` sets the full-width at half-maximum in mas:
 
 ```julia
-params = Dict{String,Any}("g,fwhm" => 0.5, "g,f" => 1.0)
+model_dict = Dict{String,Any}("g,fwhm" => 0.5, "g,f" => 1.0)
 ```
 
 ### Limb-darkened disks
@@ -52,13 +79,13 @@ diameter in mas:
 
 ```julia
 # Linear: I(μ) = 1 - u(1-μ)
-params = Dict{String,Any}("star,ldlin" => 1.0, "star,u" => 0.3, "star,f" => 1.0)
+model_dict = Dict{String,Any}("star,ldlin" => 1.0, "star,u" => 0.3, "star,f" => 1.0)
 
 # Quadratic: I(μ) = 1 - u(1-μ) - w(1-μ)²
-params = Dict{String,Any}("star,ldquad" => 1.0, "star,u" => 0.2, "star,w" => 0.1, "star,f" => 1.0)
+model_dict = Dict{String,Any}("star,ldquad" => 1.0, "star,u" => 0.2, "star,w" => 0.1, "star,f" => 1.0)
 
 # Power-law: I(μ) = μ^α
-params = Dict{String,Any}("star,ldpow" => 1.0, "star,alpha" => 0.5, "star,f" => 1.0)
+model_dict = Dict{String,Any}("star,ldpow" => 1.0, "star,alpha" => 0.5, "star,f" => 1.0)
 ```
 
 ### Uniform ring
@@ -66,7 +93,7 @@ params = Dict{String,Any}("star,ldpow" => 1.0, "star,alpha" => 0.5, "star,f" => 
 Defined by inner and outer diameters in mas:
 
 ```julia
-params = Dict{String,Any}("ring,diamin" => 0.6, "ring,diamout" => 1.0, "ring,f" => 1.0)
+model_dict = Dict{String,Any}("ring,diamin" => 0.6, "ring,diamout" => 1.0, "ring,f" => 1.0)
 ```
 
 A convenience sugar is available using `diam` (outer diameter) and `thick`
@@ -74,7 +101,7 @@ A convenience sugar is available using `diam` (outer diameter) and `thick`
 
 ```julia
 # Equivalent to diamin = 2.0*(1-0.3) = 1.4, diamout = 2.0
-params = Dict{String,Any}("ring,diam" => 2.0, "ring,thick" => 0.3, "ring,f" => 1.0)
+model_dict = Dict{String,Any}("ring,diam" => 2.0, "ring,thick" => 0.3, "ring,f" => 1.0)
 ```
 
 ### Gaussian ring
@@ -82,7 +109,7 @@ params = Dict{String,Any}("ring,diam" => 2.0, "ring,thick" => 0.3, "ring,f" => 1
 A bi-Gaussian ring defined by inner and outer FWHM in mas:
 
 ```julia
-params = Dict{String,Any}("gr,fwhmin" => 0.2, "gr,fwhmout" => 0.5, "gr,f" => 1.0)
+model_dict = Dict{String,Any}("gr,fwhmin" => 0.2, "gr,fwhmout" => 0.5, "gr,f" => 1.0)
 ```
 
 ### Crescent
@@ -90,7 +117,7 @@ params = Dict{String,Any}("gr,fwhmin" => 0.2, "gr,fwhmout" => 0.5, "gr,f" => 1.0
 Two offset uniform disks producing a crescent shape:
 
 ```julia
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "cr,crin"      => 0.8,    # inner disk diameter (mas)
     "cr,crout"     => 1.0,    # outer disk diameter (mas)
     "cr,croff"     => 0.8,    # offset factor (0 = concentric ring, 1 = max offset)
@@ -104,7 +131,7 @@ params = Dict{String,Any}(
 A component with only `f` (no geometry key) is an unresolved point source:
 
 ```julia
-params = Dict{String,Any}("companion,f" => 0.05, "companion,x" => 2.0, "companion,y" => -1.0)
+model_dict = Dict{String,Any}("companion,f" => 0.05, "companion,x" => 2.0, "companion,y" => -1.0)
 ```
 
 ### Fully resolved background
@@ -112,7 +139,7 @@ params = Dict{String,Any}("companion,f" => 0.05, "companion,x" => 2.0, "companio
 Sets V = 0 at all non-zero baselines (fully resolved flux):
 
 ```julia
-params = Dict{String,Any}("bg,resolved" => true, "bg,f" => 0.1)
+model_dict = Dict{String,Any}("bg,resolved" => true, "bg,f" => 0.1)
 ```
 
 ### Summary table
@@ -151,7 +178,7 @@ Inclination and position angle project the component on sky:
 
 ```julia
 # Inclined uniform disk
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,ud"      => 1.0,
     "star,incl"    => 60.0,    # degrees from face-on
     "star,projang" => 30.0,    # PA in degrees
@@ -159,7 +186,7 @@ params = Dict{String,Any}(
 )
 
 # Offset companion
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,ud" => 1.0, "star,f" => 0.9,
     "comp,f"  => 0.1, "comp,x" => 3.0, "comp,y" => -1.5,
 )
@@ -172,7 +199,7 @@ References are resolved in topological order, so forward and backward
 references both work:
 
 ```julia
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,ud"      => 3.0,
     "star,f"       => 0.7,
     "disk,f"       => "1 - \$star,f",            # complement of star flux
@@ -194,7 +221,7 @@ Three implicit variables are available in expressions:
 These enable chromatic and time-variable models:
 
 ```julia
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,f"        => 1.0,
     "star,spectrum"  => "(\$WL/2.2e-6)^(-4)",    # Rayleigh–Jeans spectrum
     "disk,f"        => 0.3,
@@ -210,7 +237,7 @@ Bare keys (without a `component,` prefix) act as global variables that
 multiple components can reference:
 
 ```julia
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "PA"              => 60.0,        # global position angle
     "INC"             => 45.0,        # global inclination
     "inner,fwhm"      => 1.0,
@@ -231,7 +258,7 @@ different name prefix. The total model visibility is the flux-weighted
 sum of all component visibilities:
 
 ```julia
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     # Compact star
     "star,fwhm"      => 0.1,
     "star,spectrum"   => "\$WL^(-3)",
@@ -252,12 +279,12 @@ params = Dict{String,Any}(
 Visualise the model image and SED:
 
 ```julia
-model = parse_model(params, String[])
-img = model_to_image(model, Float64[]; nx=128, pixsize=0.02, wl=1.65e-6)
+params = parse_model(model_dict, String[])
+img = model_to_image(params, Float64[]; nx=128, pixsize=0.02, wl=1.65e-6)
 imdisp(img; pixsize=0.02)
 
 wl_grid = collect(range(1.0e-6, 2.5e-6; length=200))
-f_total, f_comps = model_to_sed(model, Float64[], wl_grid)
+f_total, f_comps = model_to_sed(params, Float64[], wl_grid)
 ```
 
 See `example_model_fitting_pmoired_models.jl` for a full gallery of all
@@ -277,21 +304,21 @@ Define a profile expression string using `\$R` (radius in mas) and `\$MU`
 
 ```julia
 # Disk with intensity ∝ μ^0.5 (limb-darkening)
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,diam"    => 1.0,
     "star,profile" => "\$MU^0.5",
     "star,f"       => 1.0,
 )
 
 # Ring with power-law profile
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "ring,udout"   => 1.0,
     "ring,profile" => "(\$R > 0.25) * \$R^(-0.5)",
     "ring,f"       => 1.0,
 )
 
 # Parabolic ring profile (YSO disk)
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "disk,profile"  => "max(0, 1 - (2*(\$R - \$Rmid)/\$width)^2)",
     "disk,diamout"  => 10.0,     # outer diameter (mas) — sets the r-grid extent
     "disk,nr"       => 200,      # radial grid points (default: 100)
@@ -320,7 +347,7 @@ Azimuthal variations are added with harmonic coefficients `az ampN` and
 `az projangN` for harmonic order N = 1, 2, 3, ...:
 
 ```julia
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "disk,diamin"       => 1.0,
     "disk,diamout"      => 3.0,
     "disk,profile"      => "1",
@@ -362,7 +389,7 @@ visibility space) to the model. This is useful for softening sharp
 edges:
 
 ```julia
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "cr,crin" => 0.5, "cr,crout" => 1.0,
     "cr,croff" => 0.8, "cr,crprojang" => 120.0,
     "cr,incl" => 45.0, "cr,projang" => 30.0,
@@ -379,13 +406,15 @@ can be ported to OITOOLS with minimal changes.
 
 ### Converting Python dicts to Julia
 
-`pmoired_to_julia()` converts PMOIRED Python dict literal strings to
-Julia `Dict` literal strings:
+`pmoired_to_dict()` converts a PMOIRED Python dict literal string directly
+to a Julia `Dict`:
 
 ```julia
-julia_str = pmoired_to_julia("{'star,ud': 3.2, 'ring,f': '1 - \$star,f'}")
-params = eval(Meta.parse(julia_str))
+model_dict = pmoired_to_dict("{'star,ud': 3.2, 'ring,f': '1 - \$star,f'}")
 ```
+
+The lower-level `pmoired_to_julia()` returns the Julia source string instead,
+if you need to inspect or edit it before evaluation.
 
 It handles:
 
@@ -429,22 +458,21 @@ Convert and use in Julia:
 using OITOOLS
 
 # Option 1: inline conversion
-julia_str = pmoired_to_julia("{'star,ud': 3.2, 'star,f': 0.7, 'ring,udout': '\$star,ud * 8', 'ring,f': '1 - \$star,f', 'ring,incl': 30.0}")
-params = eval(Meta.parse(julia_str))
+model_dict = pmoired_to_dict("{'star,ud': 3.2, 'star,f': 0.7, 'ring,udout': '\$star,ud * 8', 'ring,f': '1 - \$star,f', 'ring,incl': 30.0}")
 
 # Option 2: file conversion
 pmoired_to_julia_file("pmoired_model.py", "julia_model.jl")
 include("julia_model.jl")
 
 # Option 3: write it directly in Julia (recommended)
-params = Dict{String,Any}(
+model_dict = Dict{String,Any}(
     "star,ud"    => 3.2,
     "star,f"     => 0.7,
     "ring,udout" => raw"$star,ud * 8",
     "ring,f"     => raw"1 - $star,f",
     "ring,incl"  => 30.0,
 )
-fit_params = ["star,ud", "star,f", "ring,udout", "ring,f"]
+list_free_params = ["star,ud", "star,f", "ring,incl"]
 ```
 
 !!! note
@@ -463,7 +491,7 @@ of all PMOIRED model types reproduced in OITOOLS.
 methods like `:LN_NELDERMEAD` are available for non-smooth profiles.
 
 ```julia
-result = fit_model(params, fit_params, data;
+result = fit_model(model_dict, list_free_params, data;
     weights = [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],  # V² + T3φ
     method  = :LD_LBFGS,
     maxeval = 500,
@@ -485,7 +513,7 @@ ub = Dict("star,ud" => 20.0)  # upper bounds
 # Gaussian priors: Dict of (mean, sigma)
 priors = Dict("star,ud" => (8.5, 0.5))
 
-result = fit_model(params, fit_params, data; lb, ub, priors)
+result = fit_model(model_dict, list_free_params, data; lb, ub, priors)
 ```
 
 ## Fitting with LsqFit (Levenberg-Marquardt)
@@ -494,7 +522,7 @@ result = fit_model(params, fit_params, data; lb, ub, priors)
 It provides **parameter covariance** and **1σ error bars** from the Jacobian:
 
 ```julia
-result = fit_model_lsqfit(params, fit_params, data;
+result = fit_model_lsqfit(model_dict, list_free_params, data;
     weights = [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     lb = Dict("star,ud" => 0.1),
     ub = Dict("star,ud" => 20.0),
@@ -518,9 +546,9 @@ are needed.
 through PyCall). It returns the Bayesian log-evidence for model comparison:
 
 ```julia
-result = fit_model_ultranest(params, fit_params, data;
+result = fit_model_ultranest(model_dict, list_free_params, data;
     lb = Dict("star,ud" => 0.1),
-    ub = Dict("star,ud" => 20.0),    # bounds required for all fit params
+    ub = Dict("star,ud" => 20.0),    # bounds required for all list_free_params
     min_num_live_points = 100,
     cornerplot = true)                # produce corner plot
 
@@ -562,7 +590,7 @@ re-fit to estimate parameter uncertainties:
 
 ```julia
 nboot = 200
-results = [fit_model(params, fit_params, resample_data(data);
+results = [fit_model(model_dict, list_free_params, resample_data(data);
     lb=lb, ub=ub, maxeval=200).x_opt for _ in 1:nboot]
 ```
 
