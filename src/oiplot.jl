@@ -727,21 +727,21 @@ function _plot_residual_panel(data, model_vec, spec;
                     ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
                 ax_data.plot(xvals[idx], ydata[idx], linestyle="none", marker="o",
                     color=oiplot_colors[ci], markersize=mk.ms, alpha=mk.alpha, label=g, zorder=1)
-                ax_data.plot(xvals[idx], model_vec[idx], linestyle="none", marker="x",
-                    color=oiplot_colors[ci], markersize=mk.ms+1, alpha=mk.alpha, zorder=2)
             end
+            ax_data.plot(xvals, model_vec, linestyle="none", marker="+",
+                color="Red", markersize=mk.ms+3, markeredgewidth=0.8, alpha=0.5, zorder=3, label="model")
         elseif !isnothing(cvals)
             ax_data.errorbar(xvals, ydata, yerr=yerr, fmt="none",
                 ecolor="Gainsboro", elinewidth=oiplot_elinewidth, zorder=0)
             scatter_obj = ax_data.scatter(xvals, ydata, c=cvals, cmap=cmap,
                 s=mk.ms^2, alpha=mk.alpha, zorder=1)
-            ax_data.scatter(xvals, model_vec, c=cvals, cmap=cmap,
-                s=(mk.ms+1)^2, alpha=mk.alpha, marker="x", zorder=2)
+            ax_data.plot(xvals, model_vec, linestyle="none", marker="+",
+                color="Red", markersize=mk.ms+3, markeredgewidth=0.8, alpha=0.5, zorder=3)
         else
             ax_data.errorbar(xvals, ydata, yerr=yerr, fmt="o",
                 color="Grey", ecolor="Gainsboro", markersize=mk.ms, alpha=mk.alpha, elinewidth=oiplot_elinewidth)
-            ax_data.plot(xvals, model_vec, linestyle="none", marker="x",
-                color="Red", markersize=mk.ms+1, alpha=mk.alpha)
+            ax_data.plot(xvals, model_vec, linestyle="none", marker="+",
+                color="Red", markersize=mk.ms+3, markeredgewidth=0.8, alpha=0.5, zorder=3)
         end
 
         ax_data.set_ylabel(spec.label)
