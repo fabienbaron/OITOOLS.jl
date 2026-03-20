@@ -24,8 +24,7 @@ include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
 include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
 include("fit_model.jl")          # fit_model (NLopt), fit_model_ultranest, display_model
 
-include("write_oifits_ha.jl")
-include("write_oifits_obs.jl")
+
 include("utils.jl")
 include("oichi2.jl")
 include("sparco_flat.jl")
@@ -101,8 +100,6 @@ export obs_plan, chara_plan, print_pop_results
 export moon_radec, moon_illumination, angular_separation
 
 # ── Writing OIFITS ───────────────────────────────────────────────────────────
-export write_oi_header, write_oi_array, write_oi_target, write_oi_wavelength,
-       write_oi_vis2, write_oi_t3
 export oifits_check, oifits_merge, oifits_filter
 
 # ── PMOIRED compatibility ────────────────────────────────────────────────────

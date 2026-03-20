@@ -1,4 +1,5 @@
 using AstroTime
+using Dates
 
 function hours_to_date(obsdate, hours)
     # Handle scalar or vector; roll over days for hours outside [0,24)
