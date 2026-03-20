@@ -416,8 +416,8 @@ Given a PMOIRED model:
 param = {
     'star,ud':    3.2,
     'star,f':     0.7,
-    'ring,udout': '$star,ud * 8',
-    'ring,f':     '1 - $star,f',
+    'ring,udout': '\$star,ud * 8',
+    'ring,f':     '1 - \$star,f',
     'ring,incl':  30.0,
 }
 fitOnly = ['star,ud', 'star,f', 'ring,udout', 'ring,f']

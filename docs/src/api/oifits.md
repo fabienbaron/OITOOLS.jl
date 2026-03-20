@@ -28,12 +28,6 @@ set_data_filter
 
 | Function | Description |
 |----------|-------------|
-| `write_oi_header(file)` | Write OIFITS primary header |
-| `write_oi_array(file, facility)` | Write OI\_ARRAY table |
-| `write_oi_target(file, target)` | Write OI\_TARGET table |
-| `write_oi_wavelength(file, wave)` | Write OI\_WAVELENGTH table |
-| `write_oi_vis2(file, data)` | Write OI\_VIS2 table |
-| `write_oi_t3(file, data)` | Write OI\_T3 table |
 | `oifits_check(file)` | Validate an OIFITS file |
 | `oifits_merge(files, outfile)` | Merge multiple OIFITS files |
 | `oifits_filter(infile, outfile)` | Filter an OIFITS file |
