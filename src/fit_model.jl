@@ -344,7 +344,7 @@ end
 
 Fit a pre-compiled `FlatModel` starting from parameter vector `x0`.
 
-This method skips the `parse_model` step, which is useful when fitting the
+This method skips the `dict_to_model` step, which is useful when fitting the
 same model multiple times (e.g. bootstrap, grid search).
 
 Bounds `lb` and `ub` can be `Dict{String,Float64}` (keyed by parameter name)
@@ -966,7 +966,7 @@ Per-component fluxes are obtained by resolving the `f` / `spectrum`
 parameters at each wavelength.
 
 # Arguments
-- `model::FlatModel` — compiled model from `parse_model`
+- `model::FlatModel` — compiled model from `dict_to_model`
 - `x::AbstractVector` — current free-parameter values
 - `wl_grid` — wavelength array in microns
 
@@ -1018,7 +1018,7 @@ the Hermitian symmetry V(-u,-v) = conj(V(u,v)) to halve the number of
 visibility evaluations.
 
 # Arguments
-- `model::FlatModel` — compiled model from `parse_model`
+- `model::FlatModel` — compiled model from `dict_to_model`
 - `x::AbstractVector` — current free-parameter values
 
 # Keywords

@@ -10,7 +10,7 @@ param = Dict{String,Any}(
     "star,u"     => 0.15,
     "star,f"     => 1.0,
 )
-model = parse_model(param, String[])
+model = dict_to_model(param, String[])
 params = Float64[]
 
 # Target info

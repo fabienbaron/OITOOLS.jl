@@ -251,7 +251,7 @@ end
 """
 Hankel component: arbitrary radial profile.
 
-The profile is compiled to an AD-transparent closure at parse_model time.
+The profile is compiled to an AD-transparent closure at dict_to_model time.
 The r grid and HankelWorkspace are fixed; only the profile param values
 change between chi2 evaluations.
 """
@@ -458,11 +458,11 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# parse_model
+# dict_to_model
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    parse_model(model_dict, list_free_params; nB_workspace=100) -> FlatModel
+    dict_to_model(model_dict, list_free_params; nB_workspace=100) -> FlatModel
 
 Compile a flat parameter dict into a `FlatModel` ready for evaluation.
 
@@ -491,11 +491,11 @@ Example
         "ring,f"       => "1 - \\\$star,f",
     )
     list_free_params = ["star,ud", "star,f", "ring,scale"]
-    model = parse_model(model_dict, list_free_params)
+    model = dict_to_model(model_dict, list_free_params)
 """
-function parse_model(model_dict::Dict{String},
-                     list_free_params::Vector{String};
-                     nB_workspace::Int = 100)::FlatModel
+function dict_to_model(model_dict::Dict{String},
+                      list_free_params::Vector{String};
+                      nB_workspace::Int = 100)::FlatModel
 
     comp_names = _component_names(model_dict)
 
@@ -633,6 +633,9 @@ function parse_model(model_dict::Dict{String},
     return FlatModel(resolver, components, resolver.all_names, list_free_params, kernel_idx)
 end
 
+"""Backward-compatible alias for [`dict_to_model`](@ref)."""
+const parse_model = dict_to_model
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # eval_model  (forward pass, no gradient)
@@ -645,7 +648,7 @@ Evaluate the model visibility at the given parameter vector `x` and baselines `u
 
 Arguments
 ---------
-model : FlatModel from parse_model
+model : FlatModel from dict_to_model
 x     : current free-parameter values, length = length(model.list_free_params)
 uv    : 2×N matrix of (u,v) spatial frequencies in cycles/rad
 wl    : wavelength per UV point (metres), length N  — enables `\$WL` in expressions

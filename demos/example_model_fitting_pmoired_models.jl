@@ -41,7 +41,7 @@ function show_model(model_dict::Dict{String,Any};
     pixsize = fov / nx        # derive pixel size from FOV and grid size
 
     # Separate list_free_params = [] since we just want to display
-    model = parse_model(model_dict, String[])
+    model = dict_to_model(model_dict, String[])
     img   = model_to_image(model, Float64[]; nx, pixsize, wl)
 
     # Apply power scaling for display (like PMOIRED's imPow)
@@ -271,7 +271,7 @@ show_model(model_dict_multi; fov=1.5, ax=ax2,
 
 # SED panel: computed from model via model_to_sed
 ax3 = fig.add_subplot(1, 3, 3)
-model_multi = parse_model(model_dict_multi, String[])
+model_multi = dict_to_model(model_dict_multi, String[])
 wl_sed = collect(range(first(WL_range), last(WL_range); length=200))
 f_total, f_comps = model_to_sed(model_multi, Float64[], wl_sed)
 ax3.plot(wl_sed, f_total, label="total", linewidth=2, color="black")
@@ -327,7 +327,7 @@ show_model(model_dict_expr; fov=9.0, ax=ax2, power=0.5,
 
 # SED
 ax3 = fig.add_subplot(1, 3, 3)
-model_expr = parse_model(model_dict_expr, String[])
+model_expr = dict_to_model(model_dict_expr, String[])
 wl_sed_e = collect(range(first(WL_expr), last(WL_expr); length=200))
 f_total_e, f_comps_e = model_to_sed(model_expr, Float64[], wl_sed_e)
 ax3.plot(wl_sed_e, f_total_e, label="total", linewidth=2, color="black")

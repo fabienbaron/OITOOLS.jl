@@ -4,16 +4,13 @@
 
 | Function | Description |
 |----------|-------------|
-| `parse_model(model_dict, list_free_params)` | Compile a flat parameter dict into a `FlatModel` |
+| `dict_to_model(model_dict, list_free_params)` | Compile a flat parameter dict into a `FlatModel` |
 | `model_to_vis(model, x, uv)` | Evaluate complex visibilities for a model (alias: `eval_model`) |
 | `eval_model_grad(model, x, uv)` | Evaluate visibilities + Jacobian |
 | `display_model(model_dict, list_free_params)` | Pretty-print model parameters |
-| `fit_model(model_dict, list_free_params, data)` | Fit model via NLopt (compiles model internally) |
-| `fit_model(model, x0, data)` | Fit a pre-compiled `FlatModel` via NLopt |
-| `fit_model_lsqfit(model_dict, list_free_params, data)` | Fit via Levenberg-Marquardt (compiles internally) |
-| `fit_model_lsqfit(model, x0, data)` | Fit a pre-compiled `FlatModel` via LM |
-| `fit_model_ultranest(model_dict, list_free_params, data)` | Nested sampling (compiles internally) |
-| `fit_model_ultranest(model, data; lb, ub)` | Nested sampling on a pre-compiled `FlatModel` |
+| `fit_model(model, x0, data)` | Fit a `FlatModel` via NLopt |
+| `fit_model_lsqfit(model, x0, data)` | Fit a `FlatModel` via Levenberg-Marquardt |
+| `fit_model_ultranest(model, data; lb, ub)` | Fit a `FlatModel` via nested sampling (UltraNest) |
 | `model_to_obs(model, x, data)` | Compute observables (V², T3amp, T3phi) from a model |
 | `model_to_residuals(model, x, data)` | Compute normalised residuals (model - data) / error |
 | `model_to_chi2(model, x, data)` | Compute weighted chi² (alias: `chi2_flat`) |
@@ -24,6 +21,7 @@
 
 ```@docs
 FlatModel
+dict_to_model
 parse_model
 model_to_vis
 eval_model

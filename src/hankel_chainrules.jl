@@ -45,7 +45,7 @@
 # Workspace struct during a fit.
 #
 # The _fwd! / pullback! pair is intended for the gradient-based chi2 loop:
-#   1. Allocate workspace once (HankelWorkspace) at parse_model time.
+#   1. Allocate workspace once (HankelWorkspace) at dict_to_model time.
 #   2. Call hankel_vis_fwd! to fill workspace.V and workspace.K, get N.
 #   3. Obtain ∂I/∂p via ForwardDiff on the compiled profile closure.
 #   4. Call hankel_vis_pullback! to get ∂L/∂I from upstream ȳ.
@@ -79,7 +79,7 @@ end
 
 Pre-allocated buffers for a single Hankel component.
 
-Allocate once at `parse_model` time:
+Allocate once at `dict_to_model` time:
     ws = HankelWorkspace(Nr, nB)
 
 Then in the chi2 loop:

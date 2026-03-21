@@ -17,7 +17,7 @@ model = Dict{String,Any}(
     "star,f"     => 1.0,
 )
 free_params = ["star,ldlin", "star,u"]
-params = parse_model(model, free_params)
+params = dict_to_model(model, free_params)
 
 for i= 1:length(diameters)
     for j=1:length(ld)

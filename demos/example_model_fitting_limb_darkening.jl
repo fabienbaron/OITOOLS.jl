@@ -107,7 +107,7 @@ println("  4. Manual χ² evaluation")
 println("="^70)
 
 # Compile model and evaluate chi2 at published values
-model_ld = parse_model(model_dict_ld, list_free_params_ld)
+model_ld = dict_to_model(model_dict_ld, list_free_params_ld)
 chi2_pub = model_to_chi2(model_ld, [8.502, 0.1404], data; weights=[1.0, 0, 0])
 @printf("  χ² at published values (8.502, 0.1404): %.2f\n", chi2_pub)
 

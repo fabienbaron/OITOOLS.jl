@@ -94,7 +94,7 @@ function partition_dict(model_dict::Dict{String}, list_free_params)
             derived[k] = v
         else
             # Non-string, non-numeric (e.g. Bool markers like "resolved" => true)
-            # Skip — these are handled by parse_model, not the resolver
+            # Skip — these are handled by dict_to_model, not the resolver
         end
     end
     return free, fixed, derived

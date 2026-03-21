@@ -19,7 +19,7 @@ A flat-dict parametric model can be used instead of an image:
 
 ```julia
 params = Dict("star,ud" => 3.0, "star,f" => 1.0)
-model = parse_model(params, String[])
+model = dict_to_model(params, String[])
 
 simulate_from_oifits("data/2004-data1.oifits", "data/sim.oifits";
                      flat_model=model, flat_params=Float64[])
@@ -126,7 +126,7 @@ params = Dict(
     "disk,diamout" => 10.0,
     "disk,profile" => "exp(-(\$R/3.0)^2)",
 )
-model = parse_model(params, String[])
+model = dict_to_model(params, String[])
 
 simulate(facility, target, combiner, wave, dates, "sim_model.oifits";
          flat_model=model, flat_params=Float64[])

@@ -23,16 +23,18 @@ The result contains the best-fit values (`result.x_opt`) and the compiled
 
 | Object | Type | Description | Key functions |
 |--------|------|-------------|---------------|
-| `model_dict` | `Dict{String,Any}` | Full model specification: all parameters, formulas, flags | `display_model`, `fit_model`, `fit_model_lsqfit`, `fit_model_ultranest` |
-| `list_free_params` | `Vector{String}` | Names of parameters to optimize (must be numeric in `model_dict`) | same as above |
-| `model` | `FlatModel` | Compiled model returned by `parse_model` or `result.model` | `model_to_obs`, `model_to_image`, `model_to_chi2`, `model_to_sed`, `eval_model`, `fit_model` |
+| `model_dict` | `Dict{String,Any}` | Full model specification: all parameters, formulas, flags | `display_model` |
+| `list_free_params` | `Vector{String}` | Names of parameters to optimize (must be numeric in `model_dict`) | `display_model` |
+| `model` | `FlatModel` | Compiled model from `dict_to_model(model_dict, list_free_params)` or `result.model` | `fit_model`, `fit_model_lsqfit`, `fit_model_ultranest`, `model_to_obs`, `model_to_image`, `model_to_chi2`, `model_to_sed`, `eval_model` |
 
-!!! tip
-    You rarely need to call `parse_model` yourself — the fitting functions
-    do it internally. However, all three fitting functions also accept a
-    pre-compiled `FlatModel` directly (e.g. `fit_model(model, x0, data)`),
-    which is useful for bootstrap or grid-search workflows where you want
-    to compile once and fit many times.
+To compile a model dictionary into a `FlatModel`:
+
+```julia
+model = dict_to_model(model_dict, list_free_params)
+x0 = Float64[model_dict[p] for p in list_free_params]
+```
+
+Then pass `model` and `x0` to fitting and evaluation functions.
 
 ## Defining a model dictionary
 
@@ -280,7 +282,7 @@ model_dict = Dict{String,Any}(
 Visualise the model image and SED:
 
 ```julia
-params = parse_model(model_dict, String[])
+params = dict_to_model(model_dict, String[])
 img = model_to_image(params, Float64[]; nx=128, pixsize=0.02, wl=1.65e-6)
 imdisp(img; pixsize=0.02)
 

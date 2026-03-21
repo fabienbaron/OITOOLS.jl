@@ -54,7 +54,7 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
        imdisp, imdisp_multi, plot_facility
 
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
-export FlatModel, parse_model, eval_model, eval_model_grad, display_model
+export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model
 export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
