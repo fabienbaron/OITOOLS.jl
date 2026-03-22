@@ -6,15 +6,15 @@ oifitsfile = "./data/2004-data1.oifits"
 data = readoifits(oifitsfile)
 
 # ── Starting image ───────────────────────────────────────────────────────────
-nx = 128
-pixsize = 0.101
+nx = 64
+pixsize = 0.2
 ft = setup_ft(data, nx, pixsize)  # nx=256, pixsize=0.101 mas
 
 x_start = gaussian2d(nx, nx, nx/6)
 image_to_chi2(x_start, ft, data; verb=true)
 
 # ── Reconstruction ───────────────────────────────────────────────────────────
-regularizers = [["centering", 1e3], ["l1l2", 100.0, 1e-3]]
+regularizers = [["centering", 1e5], ["l1l2", 1e7, 1e-3]]
 x = reconstruct(x_start, data, ft; regularizers, verb=true, maxiter=500)
 imdisp(x; pixsize)
 
