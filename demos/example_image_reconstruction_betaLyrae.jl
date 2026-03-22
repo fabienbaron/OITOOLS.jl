@@ -5,11 +5,9 @@ using OITOOLS
 oifitsfile = "./data/betlyr6t.oifits"
 pixsize = .05 # size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
-data = readoifits(oifitsfile)[1,1];
+data = readoifits(oifitsfile);
 # Fourier transform setup
-ft = setup_nfft(data, nx, pixsize);
-# Once could also use the DFT instead of NFFT, but NFFT is much faster for larger images 
-#dft = setup_dft(data, nx, pixsize);
+ft = setup_ft(data, nx, pixsize);
 
 #initial image is a simple Gaussian
 x_start = gaussian2d(nx,nx,nx/6);

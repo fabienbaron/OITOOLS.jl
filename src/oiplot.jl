@@ -948,6 +948,10 @@ function plot_residuals(x, ft, data::OIdata; kwargs...)
     plot_residuals(data, obs; kwargs...)
 end
 
+function plot_residuals(x::AbstractMatrix, ft::AbstractMatrix, data::AbstractMatrix{<:OIdata}; kwargs...)
+    plot_residuals(x, ft[1], data[1]; kwargs...)
+end
+
 # Model-domain convenience
 function plot_residuals(model::FlatModel, x::AbstractVector, data::OIdata; kwargs...)
     obs = model_to_obs(model, x, data)

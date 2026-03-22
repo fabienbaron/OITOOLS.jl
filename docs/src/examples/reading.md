@@ -8,7 +8,7 @@
 ```julia
 using OITOOLS
 data = readoifits("mystar.oifits")        # returns Array{OIdata{Float64}, 2}
-data[1,1]                                 # the single bin
+data[1]                                   # the single OIdata bin
 ```
 
 Use `T=Float32` to halve memory usage for large datasets:
@@ -33,7 +33,7 @@ Each `OIdata{T}` bin holds flat vectors for every observable:
 | `mean_mjd` | Mean MJD of the bin (always `Float64`) |
 | `nv2`, `nt3phi`, `nt3amp`, `nvisamp`, `nvisphi`, `nflux`, `nuv` | Counts |
 
-Call `display(data)` or `display(data[1,1])` to print a compact summary.
+Call `display(data)` or `display(data[1])` to print a compact summary.
 
 ## Correlated data (OI_CORR)
 
@@ -141,27 +141,27 @@ After loading, use `set_data_filter` + `filter_data` to apply additional cuts
 without re-reading the file:
 
 ```julia
-idx = set_data_filter(data[1,1];
+idx = set_data_filter(data[1];
     filter_bad_data      = true,
     baseline_range       = [10.0e6, 300.0e6],
     wav_range            = [1.6e-6, 1.8e-6])
-data_filtered = filter_data(data[1,1], idx)
+data_filtered = filter_data(data[1], idx)
 ```
 
 ## Reading multiple files
 
-**Multi-epoch** — each file is one epoch; returns `(nepochs, tepochs, data)`:
+**Multi-epoch** — each file is one epoch; returns a `Matrix{OIdata}`:
 
 ```julia
 files = ["epoch1.oifits", "epoch2.oifits", "epoch3.oifits"]
-nepochs, tepochs, data = readoifits_multiepochs(files)
+data = readoifits_multiepochs(files)   # 1×3 Matrix{OIdata}
 ```
 
-**Multi-colour** — each file is a different waveband; returns a vector of `OIdata`:
+**Multi-colour** — each file is a different waveband; use `readoifits_multiepochs` with one file per band:
 
 ```julia
 files = ["H_band.oifits", "K_band.oifits"]
-data = readoifits_multicolors(files)
+data = readoifits_multiepochs(files)   # 1×2 Matrix — one column per file
 ```
 
 ## Error inflation
@@ -170,7 +170,7 @@ data = readoifits_multicolors(files)
 underestimated uncertainties from dominating the fit:
 
 ```julia
-oifits_prep(data[1,1];
+oifits_prep(data[1];
     min_v2_err_add   = 0.01,    # additive floor for V² errors
     min_v2_err_rel   = 0.02,    # relative floor (2% of |V²|)
     v2_err_mult      = 1.0,     # multiplicative scaling

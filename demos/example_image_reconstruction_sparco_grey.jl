@@ -4,9 +4,9 @@
 using OITOOLS
 oifitsfile = "./data/MWC275_T4a.oifits"
 pixsize = 0.075
-data = readoifits(oifitsfile, filter_bad_data=true)[1,1];
+data = readoifits(oifitsfile, filter_bad_data=true);
 nx = 128
-ft = setup_nfft(data, nx, pixsize);
+ft = setup_ft(data, nx, pixsize);
 # Parameters
 # 1: flux fraction of star at λ0
 # 2: flux fraction of background at λ0
@@ -16,13 +16,13 @@ ft = setup_nfft(data, nx, pixsize);
 params_start=[0.46, 0., 0., 0., 1.6e-6] #V2:12.36 T3A: 4.14 T3P: 1.61
 x_start = gaussian2d(nx,nx,nx/6);
 regularizers = [["l1l2", 2e8, 1e-6]];
-params, x = reconstruct_sparco_gray(x_start, params_start, data, ft, regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
+params, x = reconstruct_sparco_gray(x_start, params_start, data[1], ft[1], regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
 imdisp(x, pixsize = pixsize)
-minchi2, params,ret = optimize_sparco_parameters(params, x, ft, data; weights = [1.0,1.0,1.0] )
-params, x = reconstruct_sparco_gray(x, params, data, ft, regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
+minchi2, params,ret = optimize_sparco_parameters(params, x, ft[1], data[1]; weights = [1.0,1.0,1.0] )
+params, x = reconstruct_sparco_gray(x, params, data[1], ft[1], regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
 imdisp(x, pixsize = pixsize)
-minchi2, params,ret = optimize_sparco_parameters(params, x, ft, data; weights = [1.0,1.0,1.0] )
-params, x = reconstruct_sparco_gray(x, params, data, ft, regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
+minchi2, params,ret = optimize_sparco_parameters(params, x, ft[1], data[1]; weights = [1.0,1.0,1.0] )
+params, x = reconstruct_sparco_gray(x, params, data[1], ft[1], regularizers=regularizers, weights=[1.0, 0.0, 1.0], verb=true, maxiter=200); #grey environment
 imdisp(x, pixsize = pixsize)
 
 

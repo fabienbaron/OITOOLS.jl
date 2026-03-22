@@ -5,9 +5,9 @@ using OITOOLS
 oifitsfile = "./data/pigru.oifits"
 pixsize = .5 # size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
-data = readoifits(oifitsfile)[1,1];
+data = readoifits(oifitsfile);
 # Fourier transform setup
-ft = setup_nfft(data, nx, pixsize);
+ft = setup_ft(data, nx, pixsize);
 
 #initial image from model fitting
 weights=[1.0,0.0,0.0]
@@ -22,7 +22,7 @@ lb = Dict("disc,ldquad" => 5.0, "disc,u1" => -1.0, "disc,u2" => -1.0)
 ub = Dict("disc,ldquad" => 30.0, "disc,u1" => 2.0, "disc,u2" => 1.0)
 
 # Global minimization
-result = fit_model_ultranest(model, free_params, data;
+result = fit_model_ultranest(model, free_params, data[1];
     lb=lb, ub=ub, weights=weights)
 println(result)
 

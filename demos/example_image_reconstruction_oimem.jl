@@ -3,16 +3,16 @@ oifitsfile = "./data/2004-data1.oifits"
 pixsize  = 0.101   # mas/pixel; set to 0 to use auto_pixsize
 #oifitsfile = "./data/betlyr6t.oifits"
 #pixsize = 0.05
-nx       = 256
+nx       = 128
 flux_err = 1e-5   # tight flux constraint
-data = readoifits(oifitsfile)[1,1];
-ft = setup_nfft(data, nx, pixsize);
+data = readoifits(oifitsfile);
+ft = setup_ft(data, nx, pixsize);
 
 # Prior: Gaussian centred on the image, FWHM = 1/5 of FoV
 prior_fwhm = nx * pixsize / 5.0
 prior = gaussian_prior(nx, pixsize; fwhm_mas = prior_fwhm);
 
-x = reconstruct_bsmem(prior, data, ft;
+x = reconstruct_bsmem(prior, data[1], ft[1];
                        regularizers = [["mem", prior]],
                        method       = [4, 1, 1, 2],
                        maxiter      = 100,

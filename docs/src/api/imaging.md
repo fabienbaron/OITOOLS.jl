@@ -4,12 +4,14 @@
 
 | Function | Description |
 |----------|-------------|
-| `setup_dft(data, nx, pixsize)` | Build a DFT matrix for exact Fourier imaging |
-| `setup_dft_polychromatic(data, nx, pixsize)` | DFT setup for polychromatic data |
-| `setup_nfft(data, nx, pixsize)` | Build an NFFT plan for fast Fourier imaging |
-| `setup_nfft_multiepochs(data, nx, pixsize)` | NFFT setup for multi-epoch data |
-| `setup_nfft_polychromatic(data, nx, pixsize)` | NFFT setup for polychromatic data |
+| `setup_ft(data, nx, pixsize; mode="nfft")` | Set up Fourier transform plans (NFFT or DFT) for any `Matrix{OIdata}` |
+| `setup_dft(data, nx, pixsize)` | Build a DFT matrix for a single `OIdata` |
+| `setup_nfft(data, nx, pixsize)` | Build an NFFT plan for a single `OIdata` |
 | `gaussian2d(nx, ny, sigma)` | Generate a 2D Gaussian starting image |
+
+```@docs
+setup_ft
+```
 
 ## Forward model
 
@@ -29,29 +31,34 @@
 
 | Function | Description |
 |----------|-------------|
-| `image_to_chi2(x, ft, data)` | Image chi-squared (value only; alias: `chi2_f`) |
-| `image_to_chi2_fg(x, g, ft, data)` | Image chi-squared with gradient (alias: `chi2_fg`) |
-| `chi2_polychromatic_f(x, ft, data)` | Polychromatic chi-squared (value only) |
-| `crit_f(x, ft, data)` | Criterion = chi-squared + regularization (value only) |
-| `crit_fg(x, g, ft, data)` | Criterion + gradient (includes normalization correction) |
-| `crit_polychromatic_fg(x, g, ft, data)` | Polychromatic criterion + gradient |
-| `crit_multitemporal_fg(x, g, ft, data)` | Multi-temporal criterion + gradient |
+| `image_to_chi2(x, ft, data)` | Image chi-squared (value only). Accepts 2D or 4D images, `OIdata` or `Matrix{OIdata}` |
+| `image_to_chi2_fg(x, g, ft, data)` | Image chi-squared with gradient. Same dispatch flexibility |
+| `crit_f(x, ft, data)` / `image_to_crit(x, ft, data)` | Criterion (χ² + regularization)/ndof (forward only, no gradient) |
+| `crit_fg(x, g, ft, data)` | Criterion (χ² + regularization)/ndof + gradient |
 
 ```@docs
 image_to_residuals
 image_to_chi2
 image_to_chi2_fg
+crit_fg(::AbstractArray{<:AbstractFloat,4}, ::AbstractArray{<:AbstractFloat,4}, ::AbstractMatrix, ::AbstractMatrix{<:OITOOLS.OIdata})
+crit_f(::AbstractArray{<:AbstractFloat,4}, ::AbstractMatrix, ::AbstractMatrix{<:OITOOLS.OIdata})
 ```
 
 ## Reconstruction
 
 | Function | Description |
 |----------|-------------|
-| `reconstruct(x0, data, ft)` | Monochromatic image reconstruction (VMLMB) |
-| `reconstruct_multitemporal(x0, data, ft)` | Multi-epoch reconstruction |
-| `reconstruct_polychromatic(x0, data, ft)` | Polychromatic reconstruction |
+| `reconstruct(x0_4d, data, ft)` | Unified image reconstruction (mono/poly/temporal, VMLMB) |
+| `reconstruct(x0_2d, data, ft)` | Monochromatic convenience wrapper |
+
+```@docs
+reconstruct(::AbstractArray{<:AbstractFloat,4}, ::AbstractMatrix{<:OITOOLS.OIdata}, ::AbstractMatrix)
+reconstruct(::AbstractMatrix{<:AbstractFloat}, ::OITOOLS.OIdata, ::Any)
+```
 
 ## SPARCO
+
+SPARCO functions work with a single `OIdata` — use `data[1]` and `ft[1]`.
 
 | Function | Description |
 |----------|-------------|
@@ -75,6 +82,8 @@ optimize_sparco_flat_parameters
 
 ## Maximum entropy (BSMEM)
 
+BSMEM works with a single `OIdata` — use `data[1]` and `ft[1]`.
+
 | Function | Description |
 |----------|-------------|
 | `reconstruct_bsmem(x0, data, ft)` | BSMEM image reconstruction |
@@ -86,3 +95,20 @@ reconstruct_bsmem
 auto_pixsize
 gaussian_prior
 ```
+
+## Deprecated
+
+These functions still work but emit deprecation warnings. Use the unified API instead.
+
+| Deprecated | Replacement |
+|------------|-------------|
+| `setup_nfft_polychromatic` | `setup_ft` |
+| `setup_dft_polychromatic` | `setup_ft(data, nx, pixsize; mode="dft")` |
+| `setup_nfft_multiepochs` | `setup_ft` |
+| `chi2_f` | `image_to_chi2` |
+| `chi2_fg` | `image_to_chi2_fg` |
+| `chi2_polychromatic_f` | `image_to_chi2` with 4D image + `Matrix{OIdata}` |
+| `crit_polychromatic_fg` | `crit_fg` with 4D image + `Matrix{OIdata}` |
+| `crit_multitemporal_fg` | `crit_fg` with 4D image + `Matrix{OIdata}` |
+| `reconstruct_polychromatic` | `reconstruct` with 4D image + `Matrix{OIdata}` |
+| `reconstruct_multitemporal` | `reconstruct` with 4D image + `Matrix{OIdata}` |

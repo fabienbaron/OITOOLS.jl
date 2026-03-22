@@ -6,7 +6,6 @@
 |----------|-------------|
 | `readoifits(file)` | Read an OIFITS file into an `OIdata` struct |
 | `readoifits_multiepochs(file)` | Read multi-epoch OIFITS data |
-| `readoifits_multicolors(file)` | Read multi-wavelength OIFITS data |
 | `list_oifits_targets(file)` | List all target names in an OIFITS file |
 | `filter_data(data; kwargs...)` | Filter data by baseline, wavelength, etc. |
 | `set_data_filter(data; kwargs...)` | Set persistent data filters |
@@ -19,7 +18,6 @@
 OIdata
 readoifits
 readoifits_multiepochs
-readoifits_multicolors
 filter_data
 set_data_filter
 ```

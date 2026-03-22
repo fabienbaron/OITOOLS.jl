@@ -8,11 +8,11 @@ forward model uses the NFFT for speed or the exact DFT for accuracy.
 
 ```julia
 using OITOOLS
-data = readoifits("data/2004-data1.oifits")[1,1]
+data = readoifits("data/2004-data1.oifits")
 
 nx      = 64       # image size (pixels per side)
 pixsize = 0.1      # pixel scale (mas)
-ft      = setup_nfft(data, nx, pixsize)
+ft      = setup_ft(data, nx, pixsize)
 
 x0 = gaussian2d(nx, nx, nx/6)   # Gaussian starting image
 regularizers = [["centering", 1e4], ["l1l2", 7e6, 1e-3]]
@@ -47,13 +47,15 @@ to compare regularization strategies side by side.
 ## Polychromatic reconstruction
 
 When the data span multiple spectral channels, pass `polychromatic=true` to
-`readoifits` to get one bin per channel, then use the polychromatic setup:
+`readoifits` to get one bin per channel:
 
 ```julia
-data = vec(readoifits("data/MWC480.oifits"; polychromatic=true))
-ft   = setup_nfft_polychromatic(data, nx, pixsize)
-x    = reconstruct_polychromatic(x0_cube, data, ft; regularizers)
-imdisp_multi(x; labels=string.(wavs), pixsize)
+data = readoifits("data/MWC480.oifits"; polychromatic=true)  # N×1 Matrix{OIdata}
+ft   = setup_ft(data, nx, pixsize)
+nwav = size(data, 1)
+x0   = reshape(repeat(x0_gray, 1, 1, nwav), nx, nx, nwav, 1)  # 4D image cube
+x    = reconstruct(x0, data, ft; regularizers, transspectral_regularizers)
+imdisp_multi(x[:,:,:,1]; pixsize)
 ```
 
 See `example_image_reconstruction_polychromatic_MWC480.jl`.
@@ -64,20 +66,22 @@ For a sequence of epochs loaded with `readoifits_multiepochs`, use temporal
 regularization to link successive frames:
 
 ```julia
-nepochs, tepochs, data = readoifits_multiepochs(files)
-ft = setup_nfft_multiepochs(data, nx, pixsize)
-x  = reconstruct_multitemporal(x0_cube, data, ft; regularizers)
-imdisp_multi(x; labels=["Epoch $i" for i in 1:nepochs], pixsize)
+data = readoifits_multiepochs(files)   # 1×M Matrix{OIdata}
+ft   = setup_ft(data, nx, pixsize)
+nepochs = size(data, 2)
+x0   = reshape(repeat(x0_gray, 1, 1, nepochs), nx, nx, 1, nepochs)  # 4D
+x    = reconstruct(x0, data, ft; regularizers, temporal_regularizers)
+imdisp_multi(x[:,:,1,:]; labels=["Epoch $i" for i in 1:nepochs], pixsize)
 ```
 
 ## SPARCO grey reconstruction
 
 For targets with a spectrally-variable environment (e.g. T Tauri discs), the
 SPARCO framework separates a grey circumstellar component from an unresolved
-stellar point source:
+stellar point source. SPARCO functions work with a single `OIdata`:
 
 ```julia
-x = reconstruct_sparco_gray(x0, data, ft; regularizers)
+x = reconstruct_sparco_gray(x0, data[1], ft[1]; regularizers)
 ```
 
 See `example_image_reconstruction_sparco_grey.jl`.
@@ -93,10 +97,10 @@ OITOOLS integration).
 
 ```julia
 using OITOOLS
-data    = readoifits("data/2004-data1.oifits")[1,1]
+data    = readoifits("data/2004-data1.oifits")
 nx      = 128
 pixsize = 0.05   # mas/pixel
-ft      = setup_nfft(data, nx, pixsize)
+ft      = setup_ft(data, nx, pixsize)
 
 prior = gaussian_prior(nx, pixsize; fwhm_mas = nx * pixsize / 5)
 x = reconstruct_bsmem(prior, data, ft;

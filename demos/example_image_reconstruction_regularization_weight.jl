@@ -5,8 +5,8 @@ using OITOOLS,PyPlot
 oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.101 # size of a pixel in milliarcseconds
 nx = 128 # width of image (number of pixels)
-data = readoifits(oifitsfile)[1,1];
-ft = setup_nfft(data, nx, pixsize);
+data = readoifits(oifitsfile);
+ft = setup_ft(data, nx, pixsize);
 #initial image is a simple Gaussian
 x_start = gaussian2d(nx,nx,nx/6);
 x_start = vec(x_start)/sum(x_start);

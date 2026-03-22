@@ -2,10 +2,45 @@ using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, Match, Pri
 
 
 
+function _ft_cell_info(cell)
+    if cell isa AbstractVector{<:NFFTPlan}
+        plan = cell[1]  # fftplan_uv has all UV points
+        nx = plan.N[1]
+        nuv = size(plan.k, 2)
+        return "NFFT", nx, nuv
+    elseif cell isa AbstractMatrix{<:Complex}
+        nuv = size(cell, 1)
+        nx = round(Int, sqrt(size(cell, 2)))
+        return "DFT", nx, nuv
+    else
+        return nothing, 0, 0
+    end
+end
+
 function Base.display(ft::Vector{<:AbstractArray{<:NFFTPlan}})
     nmulti = length(ft)
     println("OITOOLS NFFT transform for $nmulti channels");
-    println("Access e.g. ft[1] if wanting to check an individual channel NFFT");
+    for i in 1:nmulti
+        _, nx, nuv = _ft_cell_info(ft[i])
+        println("  Channel $i: $(nx)×$(nx) image, $nuv UV points")
+    end
+end
+
+function Base.display(ft::AbstractMatrix)
+    nwav, nepoch = size(ft)
+    info = _ft_cell_info(ft[1])
+    info[1] === nothing && (invoke(Base.display, Tuple{Any}, ft); return)
+    mode, nx, nuv = info
+    ncells = nwav * nepoch
+    # Collect all UV counts
+    nuv_all = [_ft_cell_info(ft[w, t])[3] for w in 1:nwav, t in 1:nepoch]
+    println("OITOOLS $mode Fourier transform plans: $nwav wavelength(s) × $nepoch epoch(s)")
+    println("  Image size: $(nx)×$(nx) pixels")
+    if ncells == 1
+        println("  UV points: $nuv")
+    else
+        println("  UV points: $(minimum(nuv_all))–$(maximum(nuv_all)) (total $(sum(nuv_all)))")
+    end
 end
 
 # setup_dft: generic in the floating-point type T of the uv coordinates.
@@ -83,6 +118,7 @@ end
 # end
 
 function setup_nfft_multiepochs(data::AbstractVector{<:OIdata}, nx, pixsize)
+    Base.depwarn("`setup_nfft_multiepochs` is deprecated, use `setup_ft(data, nx, pixsize)` instead.", :setup_nfft_multiepochs)
     nepochs = length(data)
     fftplan_multi = Vector{Vector{NFFTPlan}}(undef, nepochs)
     for i in 1:nepochs
@@ -92,6 +128,7 @@ function setup_nfft_multiepochs(data::AbstractVector{<:OIdata}, nx, pixsize)
 end
 
 function setup_nfft_polychromatic(data::AbstractVecOrMat{<:OIdata}, nx, pixsize)
+    Base.depwarn("`setup_nfft_polychromatic` is deprecated, use `setup_ft(data, nx, pixsize)` instead.", :setup_nfft_polychromatic)
     nwavs = size(data, 1)
     fftplan_multi = Vector{Vector{NFFTPlan}}(undef, nwavs)
     for i in 1:nwavs
@@ -101,6 +138,7 @@ function setup_nfft_polychromatic(data::AbstractVecOrMat{<:OIdata}, nx, pixsize)
 end
 
 function setup_dft_polychromatic(data::AbstractVecOrMat{<:OIdata{T}}, nx, pixsize) where T
+    Base.depwarn("`setup_dft_polychromatic` is deprecated, use `setup_ft(data, nx, pixsize; mode=\"dft\")` instead.", :setup_dft_polychromatic)
     nwavs = size(data, 1)
     fftplan_multi = Vector{Matrix{Complex{T}}}(undef, nwavs)
     for i in 1:nwavs
@@ -110,15 +148,27 @@ function setup_dft_polychromatic(data::AbstractVecOrMat{<:OIdata{T}}, nx, pixsiz
 end
 
 
-# function setup_nfft_polychromatic(uv::Array{Float64,3}, indx_vis, indx_v2, indx_t3_1, indx_t3_2,indx_t3_3, nx, pixsize)
-#     nwavs = size(data,1);
-#     scale_rad = pixsize * (pi / 180.0) / 3600000.0;
-#     fftplan_multi = Array{Array{NFFT.NFFTPlan{Float64, 2, 1}}}(undef, nwavs);
-#     for i=1:nwavs
-#         fftplan_multi[i]=setup_nfft(uv[:,:,i], nx, pixsize);
-#     end
-#     return fftplan_multi
-# end
+"""
+    setup_ft(data, nx, pixsize; mode="nfft")
+
+Set up Fourier transform plans for the given data matrix.
+
+`data` is a `Matrix{OIdata}` of size `(nwav, nepoch)` (as returned by `readoifits`
+or `readoifits_multiepochs`). Returns a matching matrix of FT plans.
+
+# Keywords
+- `mode="nfft"` — use `"nfft"` for Non-uniform FFT (fast) or `"dft"` for direct DFT (exact)
+"""
+function setup_ft(data::AbstractMatrix{<:OIdata}, nx, pixsize; mode::String="nfft")
+    nwav, nepoch = size(data)
+    if mode == "nfft"
+        return [setup_nfft(data[w,t], nx, pixsize) for w in 1:nwav, t in 1:nepoch]
+    elseif mode == "dft"
+        return [setup_dft(data[w,t], nx, pixsize) for w in 1:nwav, t in 1:nepoch]
+    else
+        error("Unknown mode \"$mode\" — use \"nfft\" or \"dft\"")
+    end
+end
 
 function mod360(x)
     mod.(mod.(x.+180.0,360.0).+360.0, 360.0) .- 180.0
@@ -633,6 +683,7 @@ end
 
 # DFT version
 function chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:normal, verb=true, vonmises=false)
+    Base.depwarn("`chi2_f` is deprecated, use `image_to_chi2` instead.", :chi2_f)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -669,6 +720,7 @@ end
 
 # NFFT version
 function chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
+    Base.depwarn("`chi2_f` is deprecated, use `image_to_chi2` instead.", :chi2_f)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan[1]);
     if length(cvis)>0
@@ -706,6 +758,7 @@ end
 
 # DFT version
 function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:normal, verb=true, vonmises=false)
+    Base.depwarn("`chi2_fg` is deprecated, use `image_to_chi2_fg` instead.", :chi2_fg)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -756,6 +809,7 @@ end
 
 #NFFT version
 function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
+    Base.depwarn("`chi2_fg` is deprecated, use `image_to_chi2_fg` instead.", :chi2_fg)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan[1]);
     if length(cvis)>0
@@ -808,21 +862,261 @@ function chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstrac
     return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
 end
 
-"""
-    image_to_chi2(x, ft, data; weights=[1,1,1], verb=false, vonmises=false)
-
-Alias for `chi2_f`.  Compute the weighted chi-squared of an image
-against data, for consistency with the `image_to_vis` / `image_to_obs` family.
-"""
-const image_to_chi2 = chi2_f
+# ===========================================================================
+# image_to_chi2 — unified chi2 (no regularization, no ndof normalization)
+# ===========================================================================
 
 """
-    image_to_chi2_fg(x, g, ft, data; weights=[1,1,1], verb=false, vonmises=false)
+    image_to_chi2(x::AbstractArray{T,4}, ft::AbstractMatrix, data::AbstractMatrix{<:OIdata}; ...)
 
-Alias for `chi2_fg`.  Compute chi-squared and its gradient w.r.t. the
-image, for consistency with the `image_to_vis` / `image_to_obs` family.
+Compute the weighted chi-squared of a 4-D image cube `x[px, py, wav, epoch]`
+against a `Matrix{OIdata}` of size `(nwav, nepoch)`.
+
+Returns the **raw** chi-squared (not divided by ndof).  For `nwav > 1`,
+cross-channel observables (differential phases, visibility amplitudes,
+OI_FLUX) are included automatically based on data metadata.
+
+See also: [`image_to_chi2_fg`](@ref), `image_to_obs`.
 """
-const image_to_chi2_fg = chi2_fg
+function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
+                       ft::AbstractMatrix,
+                       data::AbstractMatrix{<:OIdata};
+                       weights = [1.0, 1.0, 1.0],
+                       use_diffphases = false,
+                       verb = false,
+                       vonmises = false)
+    nwav, nepoch = size(data)
+    npix = size(x, 1)
+    chi2_total = 0.0
+
+    for t in 1:nepoch
+        # Per-channel chi2
+        nwav_t = nwav
+        amptyp = data[1,t].amptyp
+        phityp = data[1,t].phityp
+        udp = use_diffphases || phityp == "differential"
+        udva = amptyp == "differential"
+        uava = amptyp == "absolute"
+
+        cvis = fill(ComplexF64[], nwav_t)
+        need_cvis = udp || udva || uava
+        if need_cvis
+            for i in 1:nwav_t
+                cvis[i] = Vector{ComplexF64}(undef, length(data[i,t].indx_vis))
+            end
+        end
+
+        for w in 1:nwav_t
+            verb && nepoch > 1 && printstyled("Epoch $t ", color=:normal)
+            verb && nwav_t > 1 && printstyled("Channel $w ", color=:normal)
+            if need_cvis
+                chi2_total += chi2_f(x[:,:,w,t], ft[w,t], data[w,t];
+                    cvis=cvis[w], verb=verb, weights=weights, vonmises=vonmises)
+            else
+                chi2_total += chi2_f(x[:,:,w,t], ft[w,t], data[w,t];
+                    verb=verb, weights=weights, vonmises=vonmises)
+            end
+            # Per-channel absolute VISAMP (handled inside chi2_polychromatic_f but not in chi2_f)
+            if uava && !udva && !isempty(cvis[w])
+                va_model = abs.(cvis[w])
+                chi2_va = norm((va_model - data[w,t].visamp) ./ data[w,t].visamp_err)^2
+                chi2_total += chi2_va
+                verb && printstyled(@sprintf("VA: %.2f ", chi2_va/data[w,t].nvisamp), color=:magenta)
+            end
+            verb && print("\n")
+        end
+
+        # Cross-channel terms for this epoch (nwav > 1 only)
+        if nwav_t > 1
+            data_epoch = @view data[:, t]
+            vis_flux = _polychromatic_vis_flux_chi2(
+                (@view x[:,:,:,t]), data_epoch, cvis, nwav_t;
+                use_diffphases=udp, use_diffvisamp=udva,
+                use_abs_visamp=false, verb=verb)
+            chi2_total += vis_flux.chi2
+        end
+    end
+
+    return chi2_total
+end
+
+"""
+    image_to_chi2(x::AbstractMatrix, ft, data::OIdata; ...)
+
+Mono convenience: compute chi-squared for a single 2-D image against a single `OIdata`.
+"""
+function image_to_chi2(x::AbstractMatrix{<:AbstractFloat}, ft, data::OIdata;
+                       weights = [1.0, 1.0, 1.0], verb = false, vonmises = false)
+    return chi2_f(x, ft, data; weights=weights, verb=verb, vonmises=vonmises)
+end
+
+# ===========================================================================
+# image_to_chi2_fg — unified chi2 + gradient (with flux correction)
+# ===========================================================================
+
+"""
+    image_to_chi2_fg(x::AbstractArray{T,4}, g::AbstractArray{T,4},
+                     ft::AbstractMatrix, data::AbstractMatrix{<:OIdata}; ...)
+
+Compute chi-squared and its gradient w.r.t. the raw (unnormalised) image pixels.
+
+The gradient includes the flux-normalisation chain-rule correction:
+for each `(w,t)` cell, `g[:,:,w,t]` is corrected so that
+`g = (g_raw .- ⟨y, g_raw⟩) / S` where `y = x/S` and `S = sum(x)`.
+
+Returns the **raw** chi-squared (not divided by ndof).
+"""
+function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
+                          g::AbstractArray{<:AbstractFloat,4},
+                          ft::AbstractMatrix,
+                          data::AbstractMatrix{<:OIdata};
+                          weights = [1.0, 1.0, 1.0],
+                          use_diffphases = false,
+                          verb = false,
+                          vonmises = false)
+    nwav, nepoch = size(data)
+    npix = size(x, 1)
+    g .= 0
+    chi2_total = 0.0
+
+    for t in 1:nepoch
+        nwav_t = nwav
+        amptyp = data[1,t].amptyp
+        phityp = data[1,t].phityp
+        udp = use_diffphases || phityp == "differential"
+        udva = amptyp == "differential"
+        uava = amptyp == "absolute"
+
+        cvis = fill(ComplexF64[], nwav_t)
+        need_cvis = udp || udva || uava
+        if need_cvis
+            for i in 1:nwav_t
+                cvis[i] = Vector{ComplexF64}(undef, length(data[i,t].indx_vis))
+            end
+        end
+
+        # Per-channel chi2 + gradient (raw adjoint, no flux correction)
+        for w in 1:nwav_t
+            subg = zeros(eltype(x), npix, npix)
+            verb && nepoch > 1 && printstyled("Epoch $t ", color=:normal)
+            verb && nwav_t > 1 && printstyled("Channel $w ", color=:normal)
+            if need_cvis
+                chi2_total += chi2_fg(x[:,:,w,t], subg, ft[w,t], data[w,t];
+                    cvis=cvis[w], verb=verb, weights=weights, vonmises=vonmises)
+            else
+                chi2_total += chi2_fg(x[:,:,w,t], subg, ft[w,t], data[w,t];
+                    verb=verb, weights=weights, vonmises=vonmises)
+            end
+            g[:,:,w,t] = subg
+            verb && print("\n")
+        end
+
+        # Cross-channel gradient for this epoch (nwav > 1 only)
+        if nwav_t > 1
+            data_epoch = @view data[:, t]
+            g_epoch = @view g[:,:,:,t]
+
+            # Build vis_adjoint closure based on plan type
+            ft_epoch = @view ft[:, t]
+            if ft_epoch[1] isa AbstractVector{<:NFFTPlan}
+                vis_adjoint = (rhs, i) -> vec(adjoint(ft_epoch[i][2]) * rhs)
+            else
+                vis_adjoint = (rhs, i) -> vec(conj.(transpose(ft_epoch[i][data_epoch[i].indx_vis, :]) * conj.(rhs)))
+            end
+
+            chi2_total += _polychromatic_vis_gradient!(
+                (@view x[:,:,:,t]), g_epoch, data_epoch, cvis, nwav_t, npix, vis_adjoint;
+                use_diffphases=udp, use_diffvisamp=udva,
+                use_abs_visamp=uava, verb=verb)
+        end
+
+        # Apply per-cell flux correction
+        for w in 1:nwav_t
+            x_wt = @view x[:,:,w,t]
+            g_wt = @view g[:,:,w,t]
+            flux = sum(x_wt)
+            g_wt .= (g_wt .- sum(x_wt .* g_wt) / flux) ./ flux
+        end
+    end
+
+    return chi2_total
+end
+
+"""
+    image_to_chi2_fg(x::AbstractMatrix, g::AbstractMatrix, ft, data::OIdata; ...)
+
+Mono convenience: compute chi-squared and flux-corrected gradient for a single
+2-D image against a single `OIdata`.
+"""
+function image_to_chi2_fg(x::AbstractMatrix{<:AbstractFloat},
+                          g::AbstractMatrix{<:AbstractFloat},
+                          ft, data::OIdata;
+                          weights = [1.0, 1.0, 1.0], verb = false, vonmises = false)
+    chi2 = chi2_fg(x, g, ft, data; weights=weights, verb=verb, vonmises=vonmises)
+    flux = sum(x)
+    g .= (g .- sum(x .* g) / flux) ./ flux
+    return chi2
+end
+
+# ===========================================================================
+# Auto-detection convenience: accept Matrix{OIdata} + 2D image directly.
+# For 1×1 data (mono), extracts the single element.
+# For multi-channel data, wraps 2D image in 4D and calls unified method.
+# ===========================================================================
+
+function image_to_chi2(x::AbstractMatrix{<:AbstractFloat}, ft::AbstractMatrix,
+                       data::AbstractMatrix{<:OIdata}; kwargs...)
+    nwav, nepoch = size(data)
+    if nwav == 1 && nepoch == 1
+        return image_to_chi2(x, ft[1], data[1]; kwargs...)
+    else
+        nx = size(x, 1)
+        return image_to_chi2(reshape(x, nx, nx, 1, 1),
+            reshape([ft[1]], 1, 1), reshape([data[1]], 1, 1); kwargs...)
+    end
+end
+
+function image_to_chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat},
+                          ft::AbstractMatrix, data::AbstractMatrix{<:OIdata}; kwargs...)
+    nwav, nepoch = size(data)
+    if nwav == 1 && nepoch == 1
+        return image_to_chi2_fg(x, g, ft[1], data[1]; kwargs...)
+    else
+        nx = size(x, 1)
+        return image_to_chi2_fg(reshape(x, nx, nx, 1, 1), reshape(g, nx, nx, 1, 1),
+            reshape([ft[1]], 1, 1), reshape([data[1]], 1, 1); kwargs...)
+    end
+end
+
+function image_to_obs(x::AbstractMatrix, ft::AbstractMatrix, data::AbstractMatrix{<:OIdata})
+    return image_to_obs(x, ft[1], data[1])
+end
+
+function image_to_residuals(x::AbstractMatrix, ft::AbstractMatrix, data::AbstractMatrix{<:OIdata})
+    return image_to_residuals(x, ft[1], data[1])
+end
+
+function reconstruct(x_start::AbstractMatrix{<:AbstractFloat},
+                     data::AbstractMatrix{<:OIdata}, ft::AbstractMatrix; kwargs...)
+    npix = size(x_start, 1)
+    x4 = reshape(x_start, npix, npix, 1, 1)
+    x_sol = reconstruct(x4, data, ft; kwargs...)
+    return x_sol[:,:,1,1]
+end
+
+function crit_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat},
+                 ft::AbstractMatrix, data::AbstractMatrix{<:OIdata}; kwargs...)
+    nx = size(x, 1)
+    g4 = reshape(g, nx, nx, 1, 1)
+    f = crit_fg(reshape(x, nx, nx, 1, 1), g4, ft, data; kwargs...)
+    return f
+end
+
+function crit_f(x::AbstractMatrix{<:AbstractFloat}, ft::AbstractMatrix,
+                data::AbstractMatrix{<:OIdata}; kwargs...)
+    nx = size(x, 1)
+    return crit_f(reshape(x, nx, nx, 1, 1), ft, data; kwargs...)
+end
 
 # ---------------------------------------------------------------------------
 # _polychromatic_vis_flux_chi2: shared helper for computing VIS and FLUX chi2
@@ -939,6 +1233,7 @@ end
 # chi2_polychromatic_f — NFFT version
 # ===========================================================================
 function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractVector{<:NFFTPlan}}, data::AbstractVector{<:OIdata};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
+    Base.depwarn("`chi2_polychromatic_f` is deprecated, use `image_to_chi2` with 4D images and Matrix{OIdata} instead.", :chi2_polychromatic_f)
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
@@ -1007,6 +1302,7 @@ end
 # chi2_polychromatic_f — DFT version
 # ===========================================================================
 function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractMatrix{<:Complex}}, data::AbstractVector{<:OIdata};weights = [1.0,1.0,1.0], printcolor= [], use_diffphases = false, verb = false)
+    Base.depwarn("`chi2_polychromatic_f` is deprecated, use `image_to_chi2` with 4D images and Matrix{OIdata} instead.", :chi2_polychromatic_f)
     nwavs = length(ft);
     npix = size(x,1);
     if printcolor == []
@@ -1084,7 +1380,301 @@ function crit_f(x::AbstractMatrix{<:AbstractFloat}, fftplan::AbstractVector{<:NF
     return chi2 + reg;
 end
 
+# ===========================================================================
+# Regularization helpers for unified crit_fg / crit_f
+# ===========================================================================
+
+# Expand regularizers to per-channel form.
+# Input can be:
+#   []                          → empty per-channel
+#   [["tv",μ], ...]             → same regs for all channels
+#   [[["tv",μ]], [["l1",μ]]]   → per-channel lists (length == nwav)
+function _per_channel_regs(regularizers, nwav)
+    isempty(regularizers) && return fill([], nwav)
+    # If first element is a String, it's a single reg spec like ["tv", 1e-3]
+    # i.e. regularizers is a flat list of reg tuples
+    if regularizers[1] isa AbstractString || (regularizers[1] isa AbstractVector && regularizers[1][1] isa AbstractString)
+        # Check if it's a single tuple ["tv", 1e-3] vs list of tuples [["tv", 1e-3], ...]
+        if regularizers[1] isa AbstractString
+            # Single reg spec like ["tv", 1e-3] — wrap in list
+            return fill([regularizers], nwav)
+        else
+            # List of reg specs like [["tv", 1e-3], ["l1l2", 1e-3, 0.01]]
+            return fill(regularizers, nwav)
+        end
+    elseif regularizers[1] isa AbstractVector
+        # Per-channel lists
+        length(regularizers) >= nwav || error("Per-channel regularizers must have length ≥ nwav ($nwav)")
+        return regularizers
+    else
+        return fill(regularizers, nwav)
+    end
+end
+
+# 2-D (spatial) regularization: applied to each (wav, epoch) cell independently
+function _spatial_reg!(x3d, g3d, nwav, regularizers; verb=false)
+    isempty(regularizers) && return 0.0
+    T = eltype(x3d); npix = size(x3d, 1)
+    cell_regs = _per_channel_regs(regularizers, nwav)
+    f = 0.0
+    for w in 1:nwav
+        isempty(cell_regs[w]) && continue
+        g_reg = zeros(T, npix, npix)
+        f += regularization((@view x3d[:,:,w]), g_reg;
+            regularizers=cell_regs[w], verb=verb)
+        g3d[:,:,w] .+= g_reg
+    end
+    return f
+end
+
+# Transspectral regularization: cross-wavelength penalty per epoch
+function _transspectral_reg!(x3d, g3d, nwav, transspectral_regularizers, ndof;
+        verb=false, data=nothing)
+    (nwav > 1 && !isempty(transspectral_regularizers)) || return 0.0
+    npix = size(x3d, 1)
+    regs = vcat(fill([], nwav), [transspectral_regularizers])
+    # _polychromatic_transspectral_reg! takes accumulated f, returns f + Δf
+    return _polychromatic_transspectral_reg!(x3d, g3d, 0.0, ndof, npix, nwav, regs;
+        verb=verb, data=data)
+end
+
+# Temporal regularization: cross-epoch penalty
+function _temporal_reg!(x4, g4, temporal_regularizers; verb=false)
+    isempty(temporal_regularizers) && return 0.0
+    nepoch = size(x4, 4)
+    nepoch > 1 || return 0.0
+    T = eltype(x4)
+    npixall = size(x4,1) * size(x4,2) * size(x4,3)
+    y = reshape(x4, npixall, nepoch)
+    f = 0.0
+    for treg in temporal_regularizers
+        rname, μ = treg[1], treg[2]
+        if rname == "temporal_tvsq"
+            temporalf = sum((y[:,2:end] .- y[:,1:end-1]).^2)
+            tv_g = zeros(T, npixall, nepoch)
+            if nepoch > 2
+                tv_g[:,1]       .= 2 .* (y[:,1] .- y[:,2])
+                tv_g[:,2:end-1] .= 4 .* y[:,2:end-1] .- 2 .* (y[:,1:end-2] .+ y[:,3:end])
+                tv_g[:,end]     .= 2 .* (y[:,end] .- y[:,end-1])
+            else
+                tv_g[:,1] .= 2 .* (y[:,1] .- y[:,2])
+                tv_g[:,2] .= 2 .* (y[:,2] .- y[:,1])
+            end
+            f += μ * temporalf
+            g4[:] .+= μ .* vec(tv_g)
+            verb && printstyled(@sprintf("Temporal TV²: %.3f\n", μ * temporalf), color=:yellow)
+        end
+    end
+    return f
+end
+
+# ===========================================================================
+# Unified crit_fg and crit_f
+# ===========================================================================
+
+"""
+    crit_fg(x::AbstractArray{T,4}, g::AbstractArray{T,4},
+            ft::AbstractMatrix, data::AbstractMatrix{<:OIdata}; ...)
+
+Unified criterion: `(χ² + regularization) / ndof`, with gradient.
+
+The flux-normalisation chain-rule correction is applied to the combined
+(χ² + regularization) gradient per cell, matching the original behaviour.
+
+Returns the criterion value.  `g` is modified in place.
+
+# Regularization structure
+
+Three categories of regularizers, each a list of `["name", μ, ...]` tuples:
+
+- **2-D / spatial** (`regularizers`): applied independently to each `(wavelength, epoch)`
+  cell, e.g. `[["tv", 1e-3], ["l1l2", 1e-3, 0.01]]`
+- **Transspectral** (`transspectral_regularizers`): cross-wavelength penalties applied
+  per epoch when `nwav > 1`, e.g. `[["transspectral_tv", 0.1]]`
+- **Temporal** (`temporal_regularizers`): cross-epoch penalties applied when
+  `nepoch > 1`, e.g. `[["temporal_tvsq", 0.01]]`
+
+# Keywords
+- `weights = [1.0, 1.0, 1.0]`: relative weights for (V², T3amp, T3phi)
+- `regularizers = []`: 2-D per-cell regularizers
+- `transspectral_regularizers = []`: cross-wavelength regularizers
+- `temporal_regularizers = []`: cross-epoch regularizers
+- `epochs_weights = []`: per-epoch scaling (default: uniform)
+- `use_diffphases = false`: force differential-phase fitting
+- `verb = false`: verbose output
+- `vonmises = false`: von Mises loss for closure phases
+"""
+function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
+                 g4::AbstractArray{<:AbstractFloat,4},
+                 ft::AbstractMatrix,
+                 data::AbstractMatrix{<:OIdata};
+                 weights = [1.0, 1.0, 1.0],
+                 regularizers = [],
+                 transspectral_regularizers = [],
+                 temporal_regularizers = [],
+                 epochs_weights = [],
+                 use_diffphases = false,
+                 verb = false,
+                 vonmises = false)
+    nwav, nepoch = size(data)
+    npix = size(x4, 1)
+    T = eltype(x4)
+
+    if isempty(epochs_weights)
+        epochs_weights = ones(T, nepoch)
+    end
+
+    # Total degrees of freedom
+    ndof = 0.0
+    for t in 1:nepoch, w in 1:nwav
+        d = data[w,t]
+        ndof += weights[1]*d.nv2 + weights[2]*d.nt3amp + weights[3]*d.nt3phi
+    end
+    ndof = max(ndof, 1.0)
+
+    f = 0.0
+    g4 .= zero(T)
+
+    for t in 1:nepoch
+        g_epoch = zeros(T, npix, npix, nwav)
+
+        verb && nepoch > 1 && printstyled("Epoch $t ", color=:cyan)
+
+        # Chi2 gradient (raw adjoint, no flux correction yet)
+        f_epoch = 0.0
+        for w in 1:nwav
+            subg = zeros(T, npix, npix)
+            verb && nwav > 1 && printstyled("Channel $w ", color=:normal)
+            f_epoch += chi2_fg((@view x4[:,:,w,t]), subg, ft[w,t], data[w,t];
+                verb=verb, weights=weights, vonmises=vonmises)
+            g_epoch[:,:,w] .= subg
+            verb && print("\n")
+        end
+
+        # 2-D regularization (per cell)
+        f_epoch += _spatial_reg!((@view x4[:,:,:,t]), g_epoch, nwav, regularizers; verb=verb)
+
+        # Transspectral regularization (cross-wavelength)
+        f_epoch += _transspectral_reg!((@view x4[:,:,:,t]), g_epoch, nwav,
+            transspectral_regularizers, ndof; verb=verb, data=(@view data[:,t]))
+
+        # Apply flux correction to combined (chi2 + reg) gradient per cell
+        for w in 1:nwav
+            x_wt = @view x4[:,:,w,t]
+            g_wt = @view g_epoch[:,:,w]
+            flux = sum(x_wt)
+            g_wt .= (g_wt .- sum(x_wt .* g_wt) / flux) ./ flux
+        end
+
+        # Apply epoch weight and accumulate
+        f += epochs_weights[t] * f_epoch
+        g4[:,:,:,t] .+= epochs_weights[t] .* g_epoch
+    end
+
+    # Temporal regularization (cross-epoch)
+    f += _temporal_reg!(x4, g4, temporal_regularizers; verb=verb)
+
+    # ndof normalization
+    f /= ndof
+    g4 ./= ndof
+    verb && printstyled(@sprintf("Crit/dof: %.4f\n", f), color=:blue)
+    return f
+end
+
+"""
+    crit_f(x::AbstractArray{T,4}, ft::AbstractMatrix,
+           data::AbstractMatrix{<:OIdata}; ...)
+
+Unified criterion: `(χ² + regularization) / ndof`, forward-only (no gradient).
+
+Skips adjoint/gradient computation for speed.  Accepts the same keywords as
+`crit_fg` (minus `g`).
+"""
+function crit_f(x4::AbstractArray{<:AbstractFloat,4},
+                ft::AbstractMatrix,
+                data::AbstractMatrix{<:OIdata};
+                weights = [1.0, 1.0, 1.0],
+                regularizers = [],
+                transspectral_regularizers = [],
+                temporal_regularizers = [],
+                epochs_weights = [],
+                use_diffphases = false,
+                verb = false,
+                vonmises = false)
+    nwav, nepoch = size(data)
+    npix = size(x4, 1)
+    T = eltype(x4)
+
+    if isempty(epochs_weights)
+        epochs_weights = ones(T, nepoch)
+    end
+
+    ndof = 0.0
+    for t in 1:nepoch, w in 1:nwav
+        d = data[w,t]
+        ndof += weights[1]*d.nv2 + weights[2]*d.nt3amp + weights[3]*d.nt3phi
+    end
+    ndof = max(ndof, 1.0)
+
+    cell_regs = _per_channel_regs(regularizers, nwav)
+
+    f = 0.0
+    for t in 1:nepoch
+        x_t = reshape((@view x4[:,:,:,t]), npix, npix, nwav, 1)
+        ft_t = reshape((@view ft[:,t]), nwav, 1)
+        data_t = reshape((@view data[:,t]), nwav, 1)
+
+        verb && nepoch > 1 && printstyled("Epoch $t ", color=:cyan)
+
+        # Chi2 forward-only (no gradient, no adjoint FFT)
+        f_epoch = image_to_chi2(x_t, ft_t, data_t;
+            weights=weights, use_diffphases=use_diffphases,
+            verb=verb, vonmises=vonmises)
+
+        # 2-D regularization (forward-only, gradient discarded)
+        for w in 1:nwav
+            if !isempty(cell_regs[w])
+                g_dummy = zeros(T, npix, npix)
+                f_epoch += regularization((@view x4[:,:,w,t]), g_dummy;
+                    regularizers=cell_regs[w], verb=verb)
+            end
+        end
+
+        # Transspectral regularization (forward-only, gradient discarded)
+        if nwav > 1 && !isempty(transspectral_regularizers)
+            g_dummy_3d = zeros(T, npix, npix, nwav)
+            regs = vcat(fill([], nwav), [transspectral_regularizers])
+            f_epoch = _polychromatic_transspectral_reg!(
+                (@view x4[:,:,:,t]), g_dummy_3d,
+                f_epoch, ndof, npix, nwav, regs;
+                verb=verb, data=(@view data[:,t]))
+        end
+
+        f += epochs_weights[t] * f_epoch
+    end
+
+    # Temporal regularization (forward-only)
+    if nepoch > 1 && !isempty(temporal_regularizers)
+        npixall = npix * npix * nwav
+        y = reshape(x4, npixall, nepoch)
+        for treg in temporal_regularizers
+            rname, μ = treg[1], treg[2]
+            if rname == "temporal_tvsq"
+                f += μ * sum((y[:,2:end] .- y[:,1:end-1]).^2)
+                verb && printstyled(@sprintf("Temporal TV²: %.3f\n", μ * sum((y[:,2:end] .- y[:,1:end-1]).^2)), color=:yellow)
+            end
+        end
+    end
+
+    f /= ndof
+    verb && printstyled(@sprintf("Crit/dof: %.4f\n", f), color=:blue)
+    return f
+end
+
+const image_to_crit = crit_f
+
 function crit_multitemporal_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractVector{<:NFFT.NFFTPlan}}, data::Array{OIdata,1};weights = [1.0,1.0,1.0], printcolor= [], epochs_weights=[],regularizers=[], verb = false)
+    Base.depwarn("`crit_multitemporal_fg` is deprecated, use `crit_fg` with 4D images and Matrix{OIdata} instead.", :crit_multitemporal_fg)
     nepochs = length(ft);
     if epochs_weights == []
         epochs_weights=ones(eltype(x_start), nepochs);
@@ -1296,6 +1886,7 @@ end
 # crit_polychromatic_fg — NFFT version
 # ===========================================================================
 function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractVector{<:NFFTPlan}}, data::AbstractVector{<:OIdata};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
+    Base.depwarn("`crit_polychromatic_fg` is deprecated, use `crit_fg` with 4D images and Matrix{OIdata} instead.", :crit_polychromatic_fg)
     nwavs = length(ft); npix = size(x,1)
     printcolor == [] && (printcolor = [:normal for i=1:nwavs])
     regularizers == [] && (regularizers = fill([], nwavs))
@@ -1335,6 +1926,7 @@ end
 # crit_polychromatic_fg — DFT version
 # ===========================================================================
 function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractArray{<:AbstractFloat,3}, ft::AbstractVector{<:AbstractMatrix{<:Complex}}, data::AbstractVector{<:OIdata};weights = [1.0,1.0,1.0], printcolor= [], regularizers=[], use_diffphases = false, verb = false)
+    Base.depwarn("`crit_polychromatic_fg` is deprecated, use `crit_fg` with 4D images and Matrix{OIdata} instead.", :crit_polychromatic_fg)
     nwavs = length(ft); npix = size(x,1)
     printcolor == [] && (printcolor = [:normal for i=1:nwavs])
     regularizers == [] && (regularizers = fill([], nwavs))
@@ -1382,13 +1974,88 @@ function image_to_vis(x::AbstractArray{<:AbstractFloat,3}, ft::Union{AbstractVec
 end
 
 using OptimPackNextGen
-function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft; weights = [1.0,1.0,1.0], printcolor = :normal, verb = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
-    crit = (x,g)->crit_fg(x, g, ft, data, regularizers=regularizers, verb = verb , weights = weights)
-    x_sol = OptimPackNextGen.vmlmb(crit, x_start, verb=verb, lower=0, maxiter=maxiter, blmvm=false, xtol = xtol, ftol = ftol, gtol=gtol);
+
+"""
+    reconstruct(x_start::AbstractArray{T,4}, data::AbstractMatrix{<:OIdata},
+                ft::AbstractMatrix; ...)
+
+Unified image reconstruction from optical interferometric data using VMLMB.
+
+`x_start` is the initial image of shape `(nx, nx, nwav, nepoch)`.
+`data` is a `Matrix{OIdata}` of size `(nwav, nepoch)` (from `readoifits` or
+`readoifits_multiepochs`).  `ft` is the matching `Matrix` of FT plans from
+`setup_ft`.
+
+The criterion minimised is `(χ² + regularization) / ndof`.  The flux-normalisation
+chain-rule correction is applied to the combined (χ² + regularization) gradient
+per cell.
+
+# Keywords
+- `weights = [1.0, 1.0, 1.0]`: relative weights for (V², T3amp, T3phi)
+- `regularizers = []`: per-cell regularizers — a list of `["name", μ, ...]` tuples
+  applied identically to every `(wavelength, epoch)` cell
+- `transspectral_regularizers = []`: cross-wavelength regularizers (per epoch),
+  e.g. `[["transspectral_tv", 0.1]]`
+- `temporal_regularizers = []`: cross-epoch regularizers,
+  e.g. `[["temporal_tvsq", 0.01]]`
+- `epochs_weights = []`: per-epoch scaling (default: uniform)
+- `use_diffphases = false`: force differential-phase fitting
+- `verb = false`: verbose output
+- `maxiter = 100`: maximum VMLMB iterations
+- `vonmises = false`: von Mises loss for closure phases
+- `ftol = (0, 1e-8)`, `xtol = (0, 1e-8)`, `gtol = (0, 1e-8)`: VMLMB tolerances
+"""
+function reconstruct(x_start::AbstractArray{<:AbstractFloat,4},
+                     data::AbstractMatrix{<:OIdata},
+                     ft::AbstractMatrix;
+                     weights = [1.0, 1.0, 1.0],
+                     regularizers = [],
+                     transspectral_regularizers = [],
+                     temporal_regularizers = [],
+                     epochs_weights = [],
+                     use_diffphases = false,
+                     verb = false,
+                     maxiter = 100,
+                     vonmises = false,
+                     ftol = (0, 1e-8),
+                     xtol = (0, 1e-8),
+                     gtol = (0, 1e-8))
+    _crit = (x4, g4) -> crit_fg(x4, g4, ft, data;
+        weights=weights, regularizers=regularizers,
+        transspectral_regularizers=transspectral_regularizers,
+        temporal_regularizers=temporal_regularizers,
+        epochs_weights=epochs_weights,
+        use_diffphases=use_diffphases,
+        verb=verb, vonmises=vonmises)
+    x_sol = OptimPackNextGen.vmlmb(_crit, x_start, verb=verb, lower=0,
+        maxiter=maxiter, blmvm=false, xtol=xtol, ftol=ftol, gtol=gtol)
     return x_sol
 end
 
+"""
+    reconstruct(x_start::AbstractMatrix, data::OIdata, ft; ...)
+
+Monochromatic convenience wrapper — delegates to the unified 4-D method.
+See the 4-D method for the full keyword list.
+"""
+function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft;
+                     weights = [1.0, 1.0, 1.0], printcolor = :normal,
+                     verb = false, maxiter = 100,
+                     regularizers = [], vonmises = false,
+                     ftol = (0, 1e-8), xtol = (0, 1e-8), gtol = (0, 1e-8))
+    npix = size(x_start, 1)
+    x4 = reshape(x_start, npix, npix, 1, 1)
+    data_m = reshape([data], 1, 1)
+    ft_m = reshape([ft], 1, 1)
+    x_sol = reconstruct(x4, data_m, ft_m;
+        weights=weights, regularizers=regularizers,
+        verb=verb, maxiter=maxiter, vonmises=vonmises,
+        ftol=ftol, xtol=xtol, gtol=gtol)
+    return x_sol[:,:,1,1]
+end
+
 function reconstruct_multitemporal(x_start::AbstractArray{<:AbstractFloat,3}, data::AbstractVector{<:OIdata}, ft; weights = [1.0,1.0,1.0], epochs_weights =[], printcolor= [], verb = true, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
+    Base.depwarn("`reconstruct_multitemporal` is deprecated, use `reconstruct` with 4D images and Matrix{OIdata} instead.", :reconstruct_multitemporal)
     x_sol = []
     if eltype(eltype(ft)) <: NFFTPlan
         crit = (x,g)->crit_multitemporal_fg(x, g, ft, data, printcolor=printcolor, weights = weights, epochs_weights=epochs_weights, regularizers=regularizers, verb = verb)
@@ -1400,6 +2067,7 @@ function reconstruct_multitemporal(x_start::AbstractArray{<:AbstractFloat,3}, da
 end
 
 function reconstruct_polychromatic(x_start::AbstractArray{<:AbstractFloat,3}, data::AbstractVector{<:OIdata}, ft; weights = [1.0,1.0,1.0], printcolor= [], verb = true, use_diffphases = false, maxiter = 100, regularizers =[], ftol= (0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
+    Base.depwarn("`reconstruct_polychromatic` is deprecated, use `reconstruct` with 4D images and Matrix{OIdata} instead.", :reconstruct_polychromatic)
     x_sol = []
     if regularizers == []
         regularizers = fill([],length(data))

@@ -13,6 +13,8 @@
 
 module OITOOLS
 
+version() = println("OITOOLS v$(pkgversion(OITOOLS))")
+
 include("readoifits.jl")
 include("vis_functions.jl")
 include("model_chainrules.jl")
@@ -40,7 +42,7 @@ include("pmoired_compat.jl")
 
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
-export readoifits, readoifits_multiepochs, readoifits_multicolors, list_oifits_targets
+export readoifits, readoifits_multiepochs, list_oifits_targets
 export readfits, writefits
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
@@ -68,19 +70,25 @@ export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_alt
        visibility_Lorentzian_ring, visibility_GaussianLorentzian_ring_az
 
 # ── Image reconstruction ─────────────────────────────────────────────────────
-export setup_dft, setup_dft_polychromatic,
-       setup_nfft, setup_nfft_multiepochs, setup_nfft_polychromatic
+export setup_ft, setup_dft, setup_nfft
 export image_to_vis,
        image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs,
        image_to_residuals, image_to_chi2, image_to_chi2_fg
 export vis_to_v2, vis_to_t3, observables
-export chi2_f, chi2_fg, chi2_polychromatic_f
-export crit_f, crit_fg, crit_polychromatic_fg, crit_multitemporal_fg
-export reconstruct, reconstruct_multitemporal, reconstruct_polychromatic
+export crit_f, crit_fg, image_to_crit
+export reconstruct
+export gaussian2d, recenter
+
+# ── SPARCO ──────────────────────────────────────────────────────────────────
 export reconstruct_sparco_gray, reconstruct_sparco_multi
 export chi2_sparco_multi_f, optimize_sparco_multi_parameters
 export reconstruct_sparco_flat, chi2_sparco_flat_f, optimize_sparco_flat_parameters
-export gaussian2d, recenter
+
+# ── Deprecated (still exported for backward compatibility) ──────────────────
+export setup_dft_polychromatic, setup_nfft_multiepochs, setup_nfft_polychromatic
+export chi2_f, chi2_fg, chi2_polychromatic_f
+export crit_polychromatic_fg, crit_multitemporal_fg
+export reconstruct_multitemporal, reconstruct_polychromatic
 
 # ── Maximum entropy (BSMEM) ──────────────────────────────────────────────────
 export reconstruct_bsmem

@@ -1606,43 +1606,32 @@ end
 # ===========================================================================
 
 """
-    readoifits_multiepochs(oifitsfiles; kwargs...) -> (nepochs, tepochs, data)
+    readoifits_multiepochs(oifitsfiles; polychromatic=false, kwargs...) -> Matrix{OIdata{T}}
 
-Read a list of OIFITS files, one per epoch, and return:
-- `nepochs` — number of files
-- `tepochs::Vector{Float64}` — mean MJD of each epoch
-- `data::Vector{OIdata{T}}` — one `OIdata` per epoch (single spectral bin each)
+Read a list of OIFITS files, one per epoch, and return a `Matrix{OIdata{T}}`
+of size `(nwav, nepochs)`.
 
-Prints a summary line per file. Passes `filter_bad_data` and `force_full_t3` through
-to `readoifits`.
+- Without `polychromatic`: each file yields a single spectral bin → `1 × nepochs`
+- With `polychromatic=true`: each file is split into wavelength channels → `nwav × nepochs`
+
+Mean MJD per epoch is available via `data[1,i].mean_mjd`.
+
+Prints a summary line per file. Passes `filter_bad_data`, `force_full_t3`, and
+`polychromatic` through to `readoifits`.
 """
 function readoifits_multiepochs(oifitsfiles; filter_bad_data=true, force_full_t3=false,
+                                polychromatic=false,
                                 T::Type{<:AbstractFloat}=Float64)
-    data    = [readoifits(f; filter_bad_data, force_full_t3, T)[1,1] for f in oifitsfiles]
-    tepochs = [d.mean_mjd for d in data]
+    per_file = [readoifits(f; filter_bad_data, force_full_t3, polychromatic, T) for f in oifitsfiles]
+    data = hcat(per_file...)   # each is nwav×1, result is nwav×nepochs
     for i in eachindex(oifitsfiles)
-        println(oifitsfiles[i], "\t MJD: ", tepochs[i],
-                "\t nV2 = ", data[i].nv2, "\t nT3amp = ", data[i].nt3amp,
-                "\t nT3phi = ", data[i].nt3phi)
-    end
-    return length(oifitsfiles), tepochs, data
-end
-
-"""
-    readoifits_multicolors(oifitsfiles; kwargs...) -> Vector{OIdata{T}}
-
-Read a list of OIFITS files, one per waveband, and return a `Vector{OIdata{T}}`
-(one element per file, single spectral bin each). Prints a summary line per file.
-"""
-function readoifits_multicolors(oifitsfiles; filter_bad_data=false, force_full_t3=false,
-                                T::Type{<:AbstractFloat}=Float64)
-    data = [readoifits(f; filter_bad_data, force_full_t3, T)[1,1] for f in oifitsfiles]
-    for i in eachindex(oifitsfiles)
-        println(oifitsfiles[i], "\t nV2 = ", data[i].nv2,
-                "\t nT3amp = ", data[i].nt3amp, "\t nT3phi = ", data[i].nt3phi)
+        println(oifitsfiles[i], "\t MJD: ", data[1,i].mean_mjd,
+                "\t nV2 = ", data[1,i].nv2, "\t nT3amp = ", data[1,i].nt3amp,
+                "\t nT3phi = ", data[1,i].nt3phi)
     end
     return data
 end
+
 
 # ===========================================================================
 # FITS file utilities

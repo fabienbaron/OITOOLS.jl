@@ -42,7 +42,7 @@ Parameters use flat keys of the form `"component,parameter"`:
 
 ```julia
 using OITOOLS
-data = readoifits("data/AlphaCenA.oifits")[1,1]
+data = readoifits("data/AlphaCenA.oifits")[1]
 
 model_dict = Dict{String,Any}(
     "star,ud"  => 8.0,    # uniform disk diameter (mas)

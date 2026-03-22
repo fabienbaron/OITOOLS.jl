@@ -794,7 +794,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[])
 
     # Read input OIFITS data for UV coordinates and errors
-    data = (readoifits(in_oifits, filter_bad_data=false))[1,1]
+    data = readoifits(in_oifits, filter_bad_data=false)[1]
 
     # Compute complex visibilities from truth image or model
     if (((typeof(image) == String) && (image != "")) || ((typeof(image) != String) && (image != "")))
@@ -820,7 +820,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         t3phi_model_err = copy(data.t3phi_err)
     elseif mode == "copy_snr"
         v2_model_err = abs.(v2_model ./ data.v2 .* data.v2_err)
-        gooddata = (readoifits(in_oifits, filter_bad_data=true))[1,1]
+        gooddata = readoifits(in_oifits, filter_bad_data=true)[1]
         t3amp_model_err = abs.(t3amp_model ./ (data.t3amp ./ data.t3amp_err))
         t3phi_model_err = max.(abs.(t3phi_model ./ (data.t3phi ./ data.t3phi_err)), minimum(gooddata.t3phi_err))
     elseif mode == "noise_model"

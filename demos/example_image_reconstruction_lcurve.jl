@@ -5,8 +5,8 @@ using OITOOLS, PyPlot
 oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.2
 nx = 64
-data = readoifits(oifitsfile)[1,1];
-fftplan = setup_nfft(data, nx, pixsize);
+data = readoifits(oifitsfile);
+fftplan = setup_ft(data, nx, pixsize);
 #initial image is a simple Gaussian
 x_start = gaussian2d(nx,nx,nx/6);
 
