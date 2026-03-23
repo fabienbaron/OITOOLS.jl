@@ -90,6 +90,8 @@ export reconstruct_sparco_flat, chi2_sparco_flat_f, optimize_sparco_flat_paramet
 export reconstruct_bsdmm
 export prox_tv, prox_l2smooth, prox_centering!
 export tv_norm, l2smooth_norm
+export prox_group_sparsity, group_sparsity_norm
+export prox_grouptv, grouptv_norm
 
 # ── Deprecated (still exported for backward compatibility) ──────────────────
 export setup_dft_polychromatic, setup_nfft_multiepochs, setup_nfft_polychromatic

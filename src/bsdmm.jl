@@ -9,8 +9,8 @@
 # (VMLMB bounds + chain rule), NOT as separate ADMM blocks. Only truly
 # non-smooth regularizers (TV, L2smooth, centering) go into proximal blocks.
 #
-# Currently all L_i = I (identity). Future: transspectral operators for
-# polychromatic (N images coupled across wavelength channels).
+# All L_i = I (identity). Polychromatic mode couples N wavelength
+# channels via group sparsity or group TV transspectral regularizers.
 #
 # Per-block penalty ρ_i adapted via three strategies:
 #   :spectral  — AADMM adaptive BB + predictive dual + cross-block balancing
@@ -198,6 +198,58 @@ function make_prox_centering(nx, mu)
     end
 end
 
+# ─── Polychromatic proximal operator factories ───────────────────────────────
+
+function make_prox_group_sparsity(nx, nwav, mu)
+    return function(z, v, rho)
+        v_3d = reshape(v, nx, nx, nwav)
+        z .= vec(prox_group_sparsity(v_3d, mu / rho))
+    end
+end
+
+function make_prox_grouptv(nx, nwav, mu; niter=50)
+    return function(z, v, rho)
+        v_3d = reshape(v, nx, nx, nwav)
+        z .= vec(prox_grouptv(v_3d, mu / rho; niter=niter))
+    end
+end
+
+function make_prox_tv_poly(nx, nwav, mu; niter=50)
+    npix = nx * nx
+    return function(z, v, rho)
+        for w in 1:nwav
+            idx = (w-1)*npix+1 : w*npix
+            v_2d = reshape(@view(v[idx]), nx, nx)
+            @view(z[idx]) .= vec(prox_tv(v_2d, mu / rho; niter=niter))
+        end
+    end
+end
+
+function make_prox_l2smooth_poly(nx, nwav, mu)
+    npix = nx * nx
+    return function(z, v, rho)
+        for w in 1:nwav
+            idx = (w-1)*npix+1 : w*npix
+            v_2d = reshape(@view(v[idx]), nx, nx)
+            @view(z[idx]) .= vec(prox_l2smooth(v_2d, mu / rho))
+        end
+    end
+end
+
+function make_prox_centering_poly(nx, nwav, mu)
+    npix = nx * nx
+    center = (nx + 1) / 2.0
+    p = Float64[mod(i - 1, nx) + 1 - center for i in 1:npix]
+    q = Float64[div(i - 1, nx) + 1 - center for i in 1:npix]
+    AtA = [dot(p, p) dot(p, q); dot(q, p) dot(q, q)]
+    return function(z, v, rho)
+        for w in 1:nwav
+            idx = (w-1)*npix+1 : w*npix
+            prox_centering!(@view(z[idx]), @view(v[idx]), mu / rho, p, q, AtA)
+        end
+    end
+end
+
 # ─── Main BSDMM reconstruction ──────────────────────────────────────────────
 
 """
@@ -220,17 +272,27 @@ Positivity is enforced via VMLMB lower bounds. Flux normalization uses the
 chain-rule gradient `∇_x χ²(H(x/sum(x)))` inside the x-update, plus explicit
 re-normalization after each step.
 
-Currently supports monochromatic (1×1) data only.
+Supports monochromatic (`nx × nx` image, `(1,1)` data) and polychromatic
+(`nx × nx × nwav × 1` image, `(nwav,1)` data) modes.
 
 # Arguments
-- `x_init`: starting image (`nx × nx` matrix)
-- `data`: interferometric data (`Matrix{OIdata}`, size `(1,1)`)
+- `x_init`: starting image (`nx × nx` for mono, `nx × nx × nwav × 1` for poly)
+- `data`: interferometric data (`Matrix{OIdata}`)
 - `ft`: Fourier transform plans from `setup_ft`
 
-# Keyword arguments
+# Keyword arguments (monochromatic)
 - `mu_reg=0.0`: regularization weight (0 = no regularization)
 - `mu_cen=0.0`: centering weight (0 = no centering)
 - `reg_type=:tv`: regularization type (`:tv` or `:l2smooth`)
+
+# Keyword arguments (polychromatic)
+- `mu_tv=0.0`: per-channel spatial TV/L2smooth weight
+- `mu_group=0.0`: transspectral coupling weight (group sparsity or group TV)
+- `mu_cen=0.0`: per-channel centering weight
+- `reg_type=:tv`: spatial regularizer (`:tv` or `:l2smooth`)
+- `group_type=:sparsity`: transspectral regularizer (`:sparsity` or `:tv`)
+
+# Common keyword arguments
 - `tv_niter=50`: Chambolle iterations for TV proximal operator
 - `rho_init=10.0`: initial ADMM penalty parameter for all blocks
 - `rho_min=1e-3`: minimum penalty (for adaptive update)
@@ -249,7 +311,7 @@ Currently supports monochromatic (1×1) data only.
   with fields `chi2`, `obj`, `r_norm`, `s_norm`, `rho` (Dict), `gamma`
 
 # Returns
-- `nx × nx` image (positive, unit flux) with best objective value
+- Image with best objective value (same shape as `x_init`)
 - If `history=true`: `(image, hist)` tuple
 
 # References
@@ -257,13 +319,26 @@ Currently supports monochromatic (1×1) data only.
 - Xu, Taylor & Goldstein — ARADMM / AMADMM adaptive penalty
 - Chambolle (2004) — TV proximal operator
 
-See also: [`reconstruct`](@ref), [`prox_tv`](@ref), [`prox_l2smooth`](@ref)
+See also: [`reconstruct`](@ref), [`prox_tv`](@ref), [`prox_l2smooth`](@ref),
+[`prox_group_sparsity`](@ref), [`prox_grouptv`](@ref)
 """
 function reconstruct_bsdmm(x_init::AbstractMatrix{<:AbstractFloat},
                            data::AbstractMatrix{<:OIdata},
                            ft::AbstractMatrix; kwargs...)
-    @assert size(data) == (1, 1) "reconstruct_bsdmm currently supports mono (1,1) data only"
+    @assert size(data) == (1, 1) "reconstruct_bsdmm with 2D image requires (1,1) data"
     return reconstruct_bsdmm(x_init, data[1, 1], ft, data; kwargs...)
+end
+
+# ─── Polychromatic dispatch (4D image) ───────────────────────────────────────
+
+function reconstruct_bsdmm(x_init::AbstractArray{<:AbstractFloat,4},
+                           data::AbstractMatrix{<:OIdata},
+                           ft::AbstractMatrix; kwargs...)
+    nwav, nepoch = size(data)
+    @assert nepoch == 1 "reconstruct_bsdmm: temporal not supported yet"
+    @assert size(x_init, 3) == nwav "x_init 3rd dim ($(size(x_init,3))) must match nwav=$nwav"
+    @assert size(x_init, 4) == 1 "x_init 4th dim must be 1"
+    return _reconstruct_bsdmm_poly(x_init, data, ft; kwargs...)
 end
 
 function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
@@ -472,5 +547,235 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
 
     @printf("Best objective: %.2f\n", best_obj)
     result = reshape(best_x, nx, nx)
+    return history ? (result, hist) : result
+end
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Polychromatic BSDMM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+function _reconstruct_bsdmm_poly(x_init, data, ft;
+                                  mu_tv=0.0, mu_group=0.0, mu_cen=0.0,
+                                  reg_type=:tv, group_type=:sparsity,
+                                  tv_niter=50,
+                                  rho_init=10.0, rho_min=1e-3, rho_max=1e4,
+                                  adaptive=false, adp_freq=2, adp_start=1,
+                                  maxit=300, x_maxiter=50, verb=true,
+                                  history=false)
+    nx = size(x_init, 1)
+    nwav = size(x_init, 3)
+    npix = nx * nx
+    npix_total = npix * nwav
+
+    # Normalize adaptive keyword
+    adp_mode = if adaptive === true || adaptive == :spectral
+        :spectral
+    elseif adaptive === false
+        :none
+    elseif adaptive == :balanced
+        :balanced
+    elseif adaptive == :aradmm
+        :aradmm
+    else
+        error("Unknown adaptive mode: $adaptive")
+    end
+
+    # Initialize: positive, per-channel unit flux
+    x = copy(vec(x_init[:,:,:,1]))
+    x .= max.(0, x)
+    for w in 1:nwav
+        idx = (w-1)*npix+1 : w*npix
+        s = sum(@view(x[idx]))
+        if s > 0; @view(x[idx]) ./= s; end
+    end
+
+    # ── Build blocks ──
+    blocks = BSDMMBlock[]
+
+    use_tv = mu_tv > 0
+    if use_tv
+        if reg_type == :tv
+            push!(blocks, BSDMMBlock(:tv, npix_total,
+                  make_prox_tv_poly(nx, nwav, mu_tv; niter=tv_niter);
+                  rho=rho_init, rho_min=rho_min, rho_max=rho_max))
+        elseif reg_type == :l2smooth
+            push!(blocks, BSDMMBlock(:tv, npix_total,
+                  make_prox_l2smooth_poly(nx, nwav, mu_tv);
+                  rho=rho_init, rho_min=rho_min, rho_max=rho_max))
+        end
+    end
+
+    use_group = mu_group > 0
+    if use_group
+        if group_type == :sparsity
+            push!(blocks, BSDMMBlock(:group, npix_total,
+                  make_prox_group_sparsity(nx, nwav, mu_group);
+                  rho=rho_init, rho_min=rho_min, rho_max=rho_max))
+        elseif group_type == :tv
+            push!(blocks, BSDMMBlock(:group, npix_total,
+                  make_prox_grouptv(nx, nwav, mu_group; niter=tv_niter);
+                  rho=rho_init, rho_min=rho_min, rho_max=rho_max))
+        end
+    end
+
+    use_cen = mu_cen > 0
+    if use_cen
+        push!(blocks, BSDMMBlock(:cen, npix_total,
+              make_prox_centering_poly(nx, nwav, mu_cen);
+              rho=rho_init, rho_min=rho_min, rho_max=rho_max))
+    end
+
+    # Initialize z and adaptive storage from x
+    for blk in blocks
+        blk.z .= x
+        blk.z_prev .= x
+        blk.z_adp .= x
+        blk.lambda_adp .= blk.rho .* blk.u
+        blk.lhat_adp .= blk.rho .* blk.u
+    end
+
+    # ── Adaptive state ──
+    gamma = 1.0
+    x_adp = copy(x)
+
+    # ── History tracking ──
+    if history
+        hist = (chi2=Float64[], obj=Float64[], r_norm=Float64[], s_norm=Float64[],
+                rho=Dict(blk.name => Float64[] for blk in blocks), gamma=Float64[])
+    end
+
+    # ── Tracking ──
+    best_obj = Inf
+    best_x = copy(x)
+
+    for k in 1:maxit
+        # ── z-updates ──
+        for blk in blocks
+            blk.z_prev .= blk.z
+            blk.u_prev .= blk.u
+            if adp_mode == :aradmm && gamma > 1.0 + 1e-10
+                v = gamma .* x .+ (1.0 - gamma) .* blk.z_prev .+ blk.u
+            else
+                v = x .+ blk.u
+            end
+            blk.prox!(blk.z, v, blk.rho)
+        end
+
+        # ── x-update ──
+        rho_sum = sum(blk.rho for blk in blocks)
+        target = zeros(npix_total)
+        for blk in blocks
+            target .+= blk.rho .* (blk.z .- blk.u)
+        end
+        if rho_sum > 0
+            target ./= rho_sum
+        end
+
+        function crit_bsdmm_poly(x_val, g_val)
+            x_4d = reshape(x_val, nx, nx, nwav, 1)
+            g_4d = reshape(g_val, nx, nx, nwav, 1)
+            fval = image_to_chi2_fg(x_4d, g_4d, ft, data; verb=false)
+            if rho_sum > 0
+                r = x_val .- target
+                fval += (rho_sum / 2) * dot(r, r)
+                g_val .+= rho_sum .* r
+            end
+            return fval
+        end
+
+        x .= OptimPackNextGen.vmlmb(crit_bsdmm_poly, x, verb=false,
+                                     maxiter=x_maxiter, lower=0, blmvm=false)
+
+        # Per-channel flux renormalization
+        for w in 1:nwav
+            idx = (w-1)*npix+1 : w*npix
+            sx = sum(@view(x[idx]))
+            if sx > 0; @view(x[idx]) ./= sx; end
+        end
+
+        # ── Dual updates ──
+        for blk in blocks
+            if adp_mode == :aradmm && gamma > 1.0 + 1e-10
+                blk.u .+= gamma .* x .+ (1.0 - gamma) .* blk.z_prev .- blk.z
+            else
+                blk.u .+= x .- blk.z
+            end
+        end
+
+        # ── Adaptive penalty update ──
+        if adp_mode != :none && k >= adp_start && mod(k, adp_freq) == 0
+            if adp_mode == :spectral || adp_mode == :aradmm
+                cg = adp_mode == :aradmm
+                estimates = [spectral_update!(blk, x, x_adp; compute_gamma=cg) for blk in blocks]
+                rho_ests = [e[1] for e in estimates]
+                good = filter(!isnothing, rho_ests)
+                if !isempty(good) && any(isnothing, rho_ests)
+                    fb = maximum(good)
+                    for (i, blk) in enumerate(blocks)
+                        if isnothing(rho_ests[i])
+                            spectral_update!(blk, x, x_adp; compute_gamma=cg, fallback_rho=fb)
+                        end
+                    end
+                end
+                if adp_mode == :aradmm
+                    gammas = [e[2] for e in estimates]
+                    gamma = clamp(sum(gammas) / length(gammas), 1.0, 1.9)
+                end
+            elseif adp_mode == :balanced
+                for blk in blocks
+                    balanced_update!(blk, x)
+                end
+            end
+            x_adp .= x
+        end
+
+        # ── Convergence monitoring ──
+        r_norm_sq = 0.0
+        for blk in blocks
+            r_norm_sq += sum((x .- blk.z).^2)
+        end
+        s_norm_sq = 0.0
+        for blk in blocks
+            s_norm_sq += blk.rho^2 * sum((blk.z .- blk.z_prev).^2)
+        end
+        r_norm = sqrt(r_norm_sq)
+        s_norm = sqrt(s_norm_sq)
+
+        # Track best objective
+        x_3d = reshape(x, nx, nx, nwav)
+        chi2_x = image_to_chi2(reshape(x, nx, nx, nwav, 1), ft, data; verb=false)
+        tv_val = use_tv ? sum(tv_norm(@view(x_3d[:,:,w])) for w in 1:nwav) : 0.0
+        group_val = use_group ? (group_type == :sparsity ? group_sparsity_norm(x_3d) : grouptv_norm(x_3d)) : 0.0
+        obj_x = chi2_x + mu_tv * tv_val + mu_group * group_val
+        if obj_x < best_obj
+            best_obj = obj_x
+            best_x .= vec(x)
+        end
+
+        # ── History tracking ──
+        if history
+            push!(hist.chi2, chi2_x)
+            push!(hist.obj, obj_x)
+            push!(hist.r_norm, r_norm)
+            push!(hist.s_norm, s_norm)
+            for blk in blocks
+                push!(hist.rho[blk.name], blk.rho)
+            end
+            push!(hist.gamma, gamma)
+        end
+
+        # ── Display ──
+        if verb && (mod(k, 10) == 0 || k <= 5)
+            @printf("Iter %3d | ", k)
+            image_to_chi2(reshape(x, nx, nx, nwav, 1), ft, data; verb=true)
+            rho_str = join([@sprintf("%s=%.1e", blk.name, blk.rho) for blk in blocks], " ")
+            gamma_str = adp_mode == :aradmm ? @sprintf("  γ=%.3f", gamma) : ""
+            @printf("  obj=%.2f  |r|=%.2e |s|=%.2e  tv=%.4f  grp=%.4f  ρ: %s%s\n",
+                    obj_x, r_norm, s_norm, tv_val, group_val, rho_str, gamma_str)
+        end
+    end
+
+    @printf("Best objective: %.2f\n", best_obj)
+    result = reshape(best_x, nx, nx, nwav, 1)
     return history ? (result, hist) : result
 end

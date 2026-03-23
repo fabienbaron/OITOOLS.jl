@@ -135,6 +135,35 @@ diagnosing convergence and comparing strategies.
 
 See `test_adaptive_strategies.jl` for a complete comparison script.
 
+## Polychromatic reconstruction
+
+BSDMM supports polychromatic data with two transspectral regularizer options
+controlled by `group_type`:
+
+| `group_type` | Regularizer | Effect |
+|---|---|---|
+| `:sparsity` (default) | Group sparsity (L2,1 on pixels) | Shared support across channels |
+| `:tv` | Group TV (vectorial TV) | Shared edges across channels |
+
+```julia
+data = readoifits("data/v1295aql.oifits"; polychromatic=true)
+nwav = size(data, 1)
+ft   = setup_ft(data, nx, pixsize)
+x0   = reshape(repeat(x_gray, 1, 1, nwav), nx, nx, nwav, 1)
+
+x = reconstruct_bsdmm(x0, data, ft;
+                       mu_tv=1e5, mu_group=1e4, mu_cen=1e2,
+                       group_type=:sparsity,  # or :tv
+                       rho_init=1e4, maxit=500, x_maxiter=5)
+```
+
+where `data` is a `(nwav, 1)` Matrix{OIdata} and `x0` is an
+`(nx, nx, nwav, 1)` initial image cube.
+
+Set `mu_group=0` for independent per-channel TV (no spectral coupling).
+
+See `example_image_reconstruction_bsdmm_polychromatic_v1295aql.jl`.
+
 ## API reference
 
 See the [Imaging](@ref) API reference for full docstrings of

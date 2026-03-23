@@ -123,3 +123,118 @@ function prox_centering!(x::AbstractVector, y::AbstractVector, lambda,
     @. x = y - 2lambda * (s[1] * p + s[2] * q)
     return x
 end
+
+# ── Group sparsity proximal (L2,1 on pixel values across channels) ────────────
+
+"""
+    prox_group_sparsity(y, lambda)
+
+Proximal operator for group sparsity (L2,1 mixed norm) on a 3D cube `(nx, ny, nwav)`.
+Block soft-thresholding: at each spatial pixel, the across-channel vector is
+shrunk toward zero, promoting shared support across wavelength channels.
+
+Solves `argmin_x (1/2)||x - y||² + λ Σ_{i,j} ||x[i,j,:]||₂`.
+"""
+function prox_group_sparsity(y::AbstractArray{<:AbstractFloat,3}, lambda)
+    nx, ny, nwav = size(y)
+    x = copy(y)
+    for i in 1:nx, j in 1:ny
+        nrm = 0.0
+        for w in 1:nwav
+            nrm += y[i,j,w]^2
+        end
+        nrm = sqrt(nrm)
+        if nrm > 0
+            scale = max(0.0, 1.0 - lambda / nrm)
+            for w in 1:nwav
+                x[i,j,w] = scale * y[i,j,w]
+            end
+        end
+    end
+    return x
+end
+
+"""
+    group_sparsity_norm(x_cube)
+
+L2,1 mixed norm of a 3D image cube: `Σ_{i,j} ||x[i,j,:]||₂`.
+"""
+function group_sparsity_norm(x_cube::AbstractArray{<:AbstractFloat,3})
+    nx, ny, nwav = size(x_cube)
+    f = 0.0
+    for i in 1:nx, j in 1:ny
+        s = 0.0
+        for w in 1:nwav
+            s += x_cube[i,j,w]^2
+        end
+        f += sqrt(s)
+    end
+    return f
+end
+
+# ── Group TV proximal (L2,1 on spatial gradients across channels) ─────────────
+
+"""
+    prox_grouptv(y, lambda; niter=100, tau=1/8)
+
+Proximal operator for group (vectorial) total variation on a 3D cube `(nx, ny, nwav)`.
+Encourages shared edge locations across all wavelength channels via Chambolle dual
+projection with coupled L2,1 norm across the spectral dimension.
+
+Solves `argmin_x (1/2)||x - y||² + λ GroupTV(x)`.
+"""
+function prox_grouptv(y::AbstractArray{<:AbstractFloat,3}, lambda;
+                      niter=100, tau=1.0/8.0)
+    nx, ny, nwav = size(y)
+    p_h = zeros(nx, ny, nwav)
+    p_v = zeros(nx, ny, nwav)
+    d   = zeros(nx, ny, nwav)
+    g_h = zeros(nx, ny, nwav)
+    g_v = zeros(nx, ny, nwav)
+    nrm = zeros(nx, ny)
+
+    for n in 1:niter
+        for w in 1:nwav
+            div_op!(@view(d[:,:,w]), @view(p_h[:,:,w]), @view(p_v[:,:,w]))
+        end
+        d .-= y ./ lambda
+        for w in 1:nwav
+            grad_op!(@view(g_h[:,:,w]), @view(g_v[:,:,w]), @view(d[:,:,w]))
+        end
+        p_h .+= tau .* g_h
+        p_v .+= tau .* g_v
+        # Coupled projection: L2,1 norm across wavelengths
+        nrm .= 0.0
+        for w in 1:nwav
+            @. nrm += @view(p_h[:,:,w])^2 + @view(p_v[:,:,w])^2
+        end
+        @. nrm = max(1.0, sqrt(nrm))
+        for w in 1:nwav
+            @view(p_h[:,:,w]) ./= nrm
+            @view(p_v[:,:,w]) ./= nrm
+        end
+    end
+
+    for w in 1:nwav
+        div_op!(@view(d[:,:,w]), @view(p_h[:,:,w]), @view(p_v[:,:,w]))
+    end
+    return y .- lambda .* d
+end
+
+"""
+    grouptv_norm(x_cube)
+
+Group (vectorial) total variation of a 3D image cube:
+`Σ_{i,j} √( Σ_λ [|∇_h x_{i,j,λ}|² + |∇_v x_{i,j,λ}|²] )`.
+"""
+function grouptv_norm(x_cube::AbstractArray{<:AbstractFloat,3})
+    nx, ny, nwav = size(x_cube)
+    g_h = zeros(nx, ny)
+    g_v = zeros(nx, ny)
+    S = zeros(nx, ny)
+    for w in 1:nwav
+        grad_op!(g_h, g_v, @view(x_cube[:,:,w]))
+        S .+= g_h.^2 .+ g_v.^2
+    end
+    return sum(sqrt.(S))
+end

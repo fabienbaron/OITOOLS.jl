@@ -50,6 +50,40 @@ function _find_wav(db, wavtables, wavtableref)
     return wavtables[idx]
 end
 
+"""
+    merge_wav_tables(wavtables; T=Float64, verbose=true)
+
+Check whether multiple OI_WAVELENGTH tables share compatible spectral channels
+(i.e. their bandpass intervals overlap channel-by-channel) and return a single
+deduplicated wavelength vector.
+
+Returns `eff_wave_merged::Vector{T}` — the sorted effective wavelengths from the
+first table (used as reference).
+
+Throws an error if the tables have different channel counts or if any channel
+pair has no bandpass overlap.
+"""
+function merge_wav_tables(wavtables; T::Type{<:AbstractFloat}=Float64, verbose=true)
+    ref = wavtables[1]
+    ref_lo = T.(ref.eff_wave) .- T.(ref.eff_band) ./ 2
+    ref_hi = T.(ref.eff_wave) .+ T.(ref.eff_band) ./ 2
+    for k in 2:length(wavtables)
+        wt = wavtables[k]
+        if length(wt.eff_wave) != length(ref.eff_wave)
+            error("merge_oi_wavelength: OI_WAVELENGTH table $k has $(length(wt.eff_wave)) channels vs $(length(ref.eff_wave)) in table 1 — tables are incompatible.")
+        end
+        wt_lo = T.(wt.eff_wave) .- T.(wt.eff_band) ./ 2
+        wt_hi = T.(wt.eff_wave) .+ T.(wt.eff_band) ./ 2
+        for j in eachindex(ref_lo)
+            if wt_lo[j] >= ref_hi[j] || wt_hi[j] <= ref_lo[j]
+                error("merge_oi_wavelength: channel $j has no bandpass overlap between table 1 ($(ref_lo[j])–$(ref_hi[j]) m) and table $k ($(wt_lo[j])–$(wt_hi[j]) m) — tables are incompatible.")
+            end
+        end
+    end
+    verbose && printstyled("  merge_oi_wavelength: $(length(wavtables)) tables share $(length(ref.eff_wave)) compatible channels — merged.\n", color=:green)
+    return sort(T.(ref.eff_wave))
+end
+
 # Convert per-baseline (u, v) coordinates to spatial frequencies u/λ, v/λ.
 # coords: vector of length nbaselines, each element a scalar coordinate in metres
 # lam:    wavelength vector of length nwave (metres)
@@ -291,10 +325,16 @@ function Base.display(data::Array{<:OIdata})
     nepo = size(data, 2)
     println("Number of wavelength bins: $nwav")
     println("Number of time/epoch bins: $nepo")
-    printcolors = [196, 166, 208, 220, 148, 112, 28, 20, 92, 165]
+    # Blue-to-red palette (short λ → long λ), interpolated for any nwav
+    _palette = [20, 28, 112, 148, 220, 208, 166, 196]
+    if nwav == 1
+        printcolors = [_palette[end]]
+    else
+        printcolors = [_palette[1 + round(Int, (i-1)/(nwav-1) * (length(_palette)-1))] for i in 1:nwav]
+    end
     if size(data) == (1,1)
         display(data[1,1])
-    elseif nwav < 11 && nepo == 1
+    elseif nepo == 1
         for i in 1:nwav
             print(Crayon(foreground=printcolors[i], bold=true), "Wavelength: $i/$nwav\n")
             display(data[i,1])
@@ -1348,6 +1388,10 @@ data in a single bin.
   spanning all epochs.
 - `polychromatic` — if `true`, derive one spectral bin per instrument channel using
   midpoints between adjacent channel centres as boundaries. Overrides `spectralbin`.
+- `merge_oi_wavelength` — if `true` and `polychromatic=true`, check whether all
+  OI_WAVELENGTH tables share the same spectral channels (matching `eff_band` overlap)
+  and, if so, deduplicate them to avoid redundant bins. Errors if tables are incompatible.
+  Ignored when `spectralbin` is explicitly provided. Default: `false`.
 - `splitting` — force multi-bin mode even when bin vectors equal `[[]]`.
 - `get_specbin_file` — auto-derive spectral bins from the file. Default: `true`.
 - `get_timebin_file` — auto-derive temporal bins from the file. Default: `true`.
@@ -1380,6 +1424,7 @@ data in a single bin.
 ```julia
 data = readoifits("mystar.oifits")                         # all data, single bin
 data = readoifits("mystar.oifits"; polychromatic=true)     # one bin per channel
+data = readoifits("multi.oifits"; polychromatic=true, merge_oi_wavelength=true) # merge compatible tables
 data = readoifits("mystar.oifits"; T=Float32)              # half memory
 data = readoifits("multi.oifits"; targetname="Betelgeuse") # one target
 ```
@@ -1390,6 +1435,7 @@ function readoifits(oifitsfile;
         temporalbin       = [[]],
         splitting         = false,
         polychromatic     = false,
+        merge_oi_wavelength = false,
         get_specbin_file  = true,
         get_timebin_file  = true,
         redundance_remove = true,
@@ -1515,12 +1561,16 @@ function readoifits(oifitsfile;
     end
 
     if polychromatic && get_specbin_file
-        length(wavtables) > 1 &&
-            @warn("Multiple OI_WAVELENGTH tables — please specify spectralbin to select channels.")
+        if length(wavtables) > 1 && merge_oi_wavelength
+            eff_wave_all = merge_wav_tables(wavtables; T, verbose)
+        else
+            length(wavtables) > 1 &&
+                @warn("Multiple OI_WAVELENGTH tables — set merge_oi_wavelength=true to auto-merge if channels match, or specify spectralbin manually.")
+            eff_wave_all = sort(vcat([T.(db.eff_wave) for db in wavtables]...))
+        end
         # Use midpoints between adjacent channel centers as bin boundaries.
         # This guarantees each stored lam value (= eff_wave[k]) falls in exactly one bin,
         # regardless of eff_band (which can be larger than the channel spacing).
-        eff_wave_all = sort(vcat([T.(db.eff_wave) for db in wavtables]...))
         nch = length(eff_wave_all)
         if nch == 1
             hw = T(wavtables[1].eff_band[1]) / 2
