@@ -124,6 +124,24 @@ auto_pixsize
 gaussian_prior
 ```
 
+## L-curve and regularizer scaling
+
+| Function | Description |
+|----------|-------------|
+| `lcurve(x_start, data, ft, reg_name, mu_range)` | Sweep regularizer weight and return L-curve data |
+| `lcurve_elbow(chi2_vals, reg_vals)` | Find L-curve corner (maximum discrete curvature) |
+| `lcurve_normalize(chi2_vals, reg_vals)` | Normalize L-curve axes by elbow-point values |
+| `scale_regularizers(regularizers, pixsize)` | Rescale regularizer weights for pixel-size independence |
+| `scale_tv_epsilon(pixsize)` | Scale TV relaxation parameter ε for pixel-size independence |
+
+```@docs
+lcurve
+lcurve_elbow
+lcurve_normalize
+scale_regularizers
+scale_tv_epsilon
+```
+
 ## Deprecated
 
 These functions still work but emit deprecation warnings. Use the unified API instead.
