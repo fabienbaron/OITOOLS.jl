@@ -17,6 +17,43 @@ Use `T=Float32` to halve memory usage for large datasets:
 data = readoifits("mystar.oifits"; T=Float32)
 ```
 
+## Keyword reference
+
+| Keyword | Default | Description |
+|---------|---------|-------------|
+| **Target selection** | | |
+| `targetname` | `""` | Select a single target by name (all targets if empty) |
+| **Spectral / temporal binning** | | |
+| `spectralbin` | `[[]]` | Vector of `[λ_min, λ_max]` windows (metres) |
+| `temporalbin` | `[[]]` | Vector of `[mjd_min, mjd_max]` windows |
+| `polychromatic` | `false` | One spectral bin per channel (overrides `spectralbin`) |
+| `merge_oi_wavelength` | `false` | Deduplicate compatible OI\_WAVELENGTH tables (polychromatic mode) |
+| `splitting` | `false` | Force multi-bin mode even with default bin vectors |
+| `get_specbin_file` | `true` | Auto-derive spectral bins from the file |
+| `get_timebin_file` | `true` | Auto-derive temporal bins from the file |
+| **Observable selection** | | |
+| `use_vis` | `true` | Load complex visibilities |
+| `use_v2` | `true` | Load squared visibilities |
+| `use_t3` | `true` | Load triple products |
+| `use_flux` | `true` | Load flux spectra |
+| **Quality filtering** | | |
+| `filter_bad_data` | `true` | Apply quality cuts (flags, NaN, SNR, range) on load |
+| `force_full_vis` | `false` | Require both visamp and visphi to be valid |
+| `force_full_t3` | `false` | Require both t3amp and t3phi to be valid |
+| `cutoff_minv2` | `-1` | Minimum V² (points below are discarded) |
+| `cutoff_maxv2` | `2.0` | Maximum V² |
+| `cutoff_mint3amp` | `-1.0` | Minimum T3 amplitude |
+| `cutoff_maxt3amp` | `1.5` | Maximum T3 amplitude |
+| `filter_v2_snr_threshold` | `0.01` | Minimum \|V²/σ\| to keep |
+| `special_filter_diffvis` | `false` | Keep only vis points common across all spectral bins |
+| **UV deduplication** | | |
+| `redundance_remove` | `true` | Merge UV points closer than `uvtol` |
+| `uvtol` | `200.0` | Merge radius in cycles/rad (B/λ) |
+| **Output** | | |
+| `warn` | `true` | Print warnings about non-standard files |
+| `verbose` | `true` | Print summary of loaded tables |
+| `T` | `Float64` | Element type for all numeric arrays |
+
 ## The OIdata struct
 
 Each `OIdata{T}` bin holds flat vectors for every observable:
