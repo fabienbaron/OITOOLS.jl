@@ -13,6 +13,8 @@
 
 module OITOOLS
 
+using PrecompileTools
+
 version() = println("OITOOLS v$(pkgversion(OITOOLS))")
 
 include("readoifits.jl")
@@ -121,5 +123,8 @@ export oifits_check, oifits_merge, oifits_filter
 
 # ── PMOIRED compatibility ────────────────────────────────────────────────────
 export pmoired_to_julia, pmoired_to_julia_file, pmoired_to_dict
+
+# ── Precompilation workload ──────────────────────────────────────────────────
+include("precompile.jl")
 
 end
