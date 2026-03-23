@@ -38,7 +38,7 @@ include("oifitslib.jl")
 include("maximent.jl")
 include("oimem.jl")
 include("proximal_operators.jl")
-include("admm.jl")
+include("bsdmm.jl")
 include("plan.jl")
 include("pmoired_compat.jl")
 
@@ -86,10 +86,10 @@ export reconstruct_sparco_gray, reconstruct_sparco_multi
 export chi2_sparco_multi_f, optimize_sparco_multi_parameters
 export reconstruct_sparco_flat, chi2_sparco_flat_f, optimize_sparco_flat_parameters
 
-# ── ADMM reconstruction ─────────────────────────────────────────────────────
-export reconstruct_admm
-export prox_v2, prox_t3phi, prox_tv, prox_l2smooth
-export tv_norm, l2smooth_norm, chi2_v2_at, chi2_t3phi_at
+# ── BSDMM reconstruction ──────────────────────────────────────────────────
+export reconstruct_bsdmm
+export prox_tv, prox_l2smooth, prox_centering!
+export tv_norm, l2smooth_norm
 
 # ── Deprecated (still exported for backward compatibility) ──────────────────
 export setup_dft_polychromatic, setup_nfft_multiepochs, setup_nfft_polychromatic

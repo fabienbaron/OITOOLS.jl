@@ -147,4 +147,17 @@ pixsize = auto_pixsize(data; oversampling=3.0)
 
 See `example_image_reconstruction_oimem.jl` for a complete worked example.
 
+## BSDMM (proximal TV)
+
+For exact (non-smooth) total variation regularization via proximal operators,
+see the dedicated [BSDMM page](bsdmm.md).
+
+```julia
+x = reconstruct_bsdmm(x0, data, ft;
+                       mu_reg=1e5, mu_cen=1e2, reg_type=:tv,
+                       rho_init=1e4, maxit=500, x_maxiter=5)
+```
+
+See `example_image_reconstruction_bsdmm.jl`.
+
 See the [Imaging](@ref) API reference for full docstrings.

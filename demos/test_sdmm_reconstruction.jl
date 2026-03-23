@@ -17,9 +17,10 @@ using LinearAlgebra, Printf, FFTW
 # ═══════════════════════════════════════════════════════════════════════════════
 # Proximal operators
 # ═══════════════════════════════════════════════════════════════════════════════
-function realcuberoot(xx::Real)
-    sign(xx) * abs(xx)^(1/3)
-end
+ function realcuberoot(xx::Real)
+     sign(xx) * abs(xx)^(1//3)
+ end
+
 
 function paintercubicroots(c::Real, d::Real)
     q = c / 3.0
@@ -438,13 +439,13 @@ imdisp(x_tv, pixsize=pixsize, figtitle="ADMM reconstruction")
 savefig("admm_result.png", dpi=150, bbox_inches="tight")
 println("Saved admm_result.png")
 
-# Reference: OITOOLS reconstruct with TV + centering
-println("\n=== OITOOLS reconstruct (baseline) ===")
-x_ref = reconstruct(copy(x_start), data, ft_nfft;
-                     regularizers=[["centering", 1e5], ["tv", 3e2]],
-                     verb=true, maxiter=500)
-println("Reference:")
-image_to_chi2(x_ref, ft_nfft, data; verb=true)
-imdisp(x_ref, pixsize=pixsize, figtitle="OITOOLS reference")
-savefig("oitools_ref.png", dpi=150, bbox_inches="tight")
-println("Saved oitools_ref.png")
+# # Reference: OITOOLS reconstruct with TV + centering
+# println("\n=== OITOOLS reconstruct (baseline) ===")
+# x_ref = reconstruct(copy(x_start), data, ft_nfft;
+#                      regularizers=[["centering", 1e5], ["tv", 3e2]],
+#                      verb=true, maxiter=500)
+# println("Reference:")
+# image_to_chi2(x_ref, ft_nfft, data; verb=true)
+# imdisp(x_ref, pixsize=pixsize, figtitle="OITOOLS reference")
+# savefig("oitools_ref.png", dpi=150, bbox_inches="tight")
+# println("Saved oitools_ref.png")

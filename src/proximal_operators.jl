@@ -1,105 +1,8 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Proximal operators for ADMM image reconstruction
+# Proximal operators for BSDMM image reconstruction
 # ═══════════════════════════════════════════════════════════════════════════════
 
-using FFTW
-
-# ── V2 proximal (PAINTER cubic roots) ────────────────────────────────────────
-
-function realcuberoot(xx::Real)
-    sign(xx) * abs(xx)^(1/3)
-end
-
-function paintercubicroots(c::Real, d::Real)
-    q = c / 3.0
-    r = d / 2.0
-    discriminant = q^3 + r^2
-    if discriminant >= 0
-        s = realcuberoot(r + sqrt(discriminant))
-        t = realcuberoot(r - sqrt(discriminant))
-        root = [s + t]
-    else
-        rho = sqrt(r^2 - discriminant)
-        cubeRootrho = realcuberoot(rho)
-        thetaOn3 = acos(r / rho) / 3
-        crRhoCosThetaOn3 = cubeRootrho * cos(thetaOn3)
-        crRhoSinThetaOn3 = cubeRootrho * sin(thetaOn3)
-        root = zeros(3)
-        root[1] = 2 * crRhoCosThetaOn3
-        root[2] = -crRhoCosThetaOn3 - sqrt(3) * crRhoSinThetaOn3
-        root[3] = -crRhoCosThetaOn3 + sqrt(3) * crRhoSinThetaOn3
-    end
-    return root
-end
-
-"""
-    prox_v2(z0, v2_data, v2_err, indx_v2, rho)
-
-Proximal operator for squared visibility using PAINTER cubic roots.
-Modifies visibility amplitudes at `indx_v2` to balance V2 data fit
-against proximity to input `z0`, with penalty weight `rho`.
-"""
-function prox_v2(z0, v2_data, v2_err, indx_v2, rho_v2)
-    z = copy(z0)
-    for n in eachindex(v2_data)
-        idx = indx_v2[n]
-        v0 = abs(z[idx])
-        ang = angle(z[idx])
-        sig2 = v2_err[n]^2
-        tmp1 = sig2 * rho_v2 / 4.0
-        c = tmp1 - v2_data[n]
-        d = tmp1 * v0
-        sol = max.(0.0, paintercubicroots(c, d))
-        cst = (1.0 / sig2) .* (sol.^2 .- v2_data[n]).^2 .+
-              (rho_v2 / 2.0) .* (sol .- v0).^2
-        _, b = findmin(cst)
-        z[idx] = sol[b] * cis(ang)
-    end
-    return z
-end
-
-# ── T3phi proximal (Haniff least-squares via VMLMB on phases) ────────────────
-
-function mod2pi_wrap(x)
-    mod.(mod.(x .+ pi, 2pi) .+ 2pi, 2pi) .- pi
-end
-
-function crit_t3phi_haniff(g, phi, phi0, V0, rho, t3phi_rad, t3phi_err_rad,
-                            indx_t3, indx_t3_1, indx_t3_2, indx_t3_3)
-    Vopt = max.(0, V0 .* cos.(phi .- phi0))
-    res = mod2pi_wrap((phi[indx_t3_1] .+ phi[indx_t3_2] .+ phi[indx_t3_3]) .- t3phi_rad) ./ t3phi_err_rad
-    f = sum(res.^2) + 0.5 * rho * norm(Vopt .* cis.(phi .- phi0) .- V0)^2
-    g .= 0
-    g[indx_t3] .= rho .* Vopt[indx_t3] .* V0[indx_t3] .* sin.(phi[indx_t3] .- phi0[indx_t3])
-    dres = 2 .* res ./ t3phi_err_rad
-    g[indx_t3_1] .+= dres
-    g[indx_t3_2] .+= dres
-    g[indx_t3_3] .+= dres
-    return f
-end
-
-"""
-    prox_t3phi(z0, t3phi_deg, t3phi_err_deg, indx_t3, indx_t3_1, indx_t3_2, indx_t3_3, rho)
-
-Proximal operator for closure phase using Haniff least-squares (VMLMB).
-Optimizes phases of complex visibilities `z0` to fit closure phase data
-while staying close to input, with penalty weight `rho`.
-"""
-function prox_t3phi(z0, t3phi_deg, t3phi_err_deg,
-                     indx_t3, indx_t3_1, indx_t3_2, indx_t3_3, rho_t3phi)
-    z = copy(z0)
-    V0 = abs.(z)
-    phi0 = angle.(z)
-    t3phi_rad = t3phi_deg .* (pi / 180.0)
-    t3phi_err_rad = t3phi_err_deg .* (pi / 180.0)
-    crit = (phi, g) -> crit_t3phi_haniff(g, phi, phi0, V0, rho_t3phi,
-                            t3phi_rad, t3phi_err_rad,
-                            indx_t3, indx_t3_1, indx_t3_2, indx_t3_3)
-    phi_opt = OptimPackNextGen.vmlmb(crit, copy(phi0), verb=false, maxiter=200, blmvm=false)
-    z[indx_t3] .= max.(0, V0[indx_t3] .* cos.(phi_opt[indx_t3] .- phi0[indx_t3])) .*
-                  cis.(phi_opt[indx_t3])
-    return z
-end
+import FFTW: fft, ifft
 
 # ── TV operators and proximal (Chambolle 2004) ───────────────────────────────
 
@@ -200,26 +103,23 @@ function l2smooth_norm(x_img)
     return 0.5 * sum(g_h.^2 .+ g_v.^2)
 end
 
-# ── Chi-squared at visibility vector ─────────────────────────────────────────
+# ── Centering proximal (Woodbury) ─────────────────────────────────────────────
 
 """
-    chi2_v2_at(z, v2_data, v2_err, indx_v2)
+    prox_centering!(x, y, lambda, p, q, AtA)
 
-V2 chi-squared evaluated at a complex visibility vector.
+Proximal operator for centering: `argmin_x (1/2)||x-y||² + λ[(p'x)² + (q'x)²]`.
+Uses Woodbury formula with `p` = centered column indices, `q` = centered row indices,
+`AtA` = pre-computed `[p'p p'q; q'p q'q]` (2×2 matrix).
+Result stored in `x`.
 """
-function chi2_v2_at(z, v2_data, v2_err, indx_v2)
-    v2_model = abs2.(z[indx_v2])
-    return sum(((v2_model .- v2_data) ./ v2_err).^2)
-end
-
-"""
-    chi2_t3phi_at(z, t3phi_data, t3phi_err, indx_t3_1, indx_t3_2, indx_t3_3)
-
-Closure phase chi-squared evaluated at a complex visibility vector.
-"""
-function chi2_t3phi_at(z, t3phi_data, t3phi_err, indx_t3_1, indx_t3_2, indx_t3_3)
-    t3 = z[indx_t3_1] .* z[indx_t3_2] .* z[indx_t3_3]
-    t3phi_model = angle.(t3) .* (180.0 / pi)
-    res = mod.(mod.(t3phi_model .- t3phi_data .+ 180.0, 360.0) .+ 360.0, 360.0) .- 180.0
-    return sum((res ./ t3phi_err).^2)
+function prox_centering!(x::AbstractVector, y::AbstractVector, lambda,
+                         p::AbstractVector, q::AbstractVector, AtA::AbstractMatrix)
+    c1 = dot(p, y)
+    c2 = dot(q, y)
+    M = [1 + 2lambda * AtA[1,1]  2lambda * AtA[1,2];
+         2lambda * AtA[2,1]      1 + 2lambda * AtA[2,2]]
+    s = M \ [c1, c2]
+    @. x = y - 2lambda * (s[1] * p + s[2] * q)
+    return x
 end

@@ -22,6 +22,7 @@ makedocs(;
         "Model Fitting" => "examples/modeling.md",
         "Simulating" => "examples/simulating.md",
         "Imaging" => "examples/imaging.md",
+        "BSDMM Reconstruction" => "examples/bsdmm.md",
         "API Reference" => [
             "OIFITS Handling" => "api/oifits.md",
             "Plotting"        => "api/plotting.md",

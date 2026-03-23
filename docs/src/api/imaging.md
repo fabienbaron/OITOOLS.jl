@@ -56,30 +56,24 @@ reconstruct(::AbstractArray{<:AbstractFloat,4}, ::AbstractMatrix{<:OITOOLS.OIdat
 reconstruct(::AbstractMatrix{<:AbstractFloat}, ::OITOOLS.OIdata, ::Any)
 ```
 
-## ADMM reconstruction
+## BSDMM reconstruction
 
 | Function | Description |
 |----------|-------------|
-| `reconstruct_admm(x0, d, nfft_plan, ft, data, nx)` | ADMM image reconstruction with proximal operators |
-| `prox_v2(z0, v2_data, v2_err, indx_v2, rho)` | Proximal operator for squared visibilities |
-| `prox_t3phi(z0, t3phi_deg, t3phi_err_deg, ...)` | Proximal operator for closure phases |
-| `prox_tv(y, lambda)` | Proximal operator for isotropic total variation |
-| `prox_l2smooth(y, lambda)` | Proximal operator for L2 smoothness |
+| `reconstruct_bsdmm(x0, data, ft)` | BSDMM image reconstruction with proximal regularizers |
+| `prox_tv(y, lambda)` | Proximal operator for isotropic total variation (Chambolle 2004) |
+| `prox_l2smooth(y, lambda)` | Proximal operator for L2 smoothness (FFT-based) |
+| `prox_centering!(x, y, lambda, p, q, AtA)` | Proximal operator for centering (Woodbury formula) |
 | `tv_norm(x_img)` | Isotropic total variation of a 2D image |
 | `l2smooth_norm(x_img)` | L2 smoothness norm of a 2D image |
-| `chi2_v2_at(z, v2_data, v2_err, indx_v2)` | V2 chi-squared at a visibility vector |
-| `chi2_t3phi_at(z, t3phi_data, t3phi_err, ...)` | Closure phase chi-squared at a visibility vector |
 
 ```@docs
-reconstruct_admm
-prox_v2
-prox_t3phi
+reconstruct_bsdmm
 prox_tv
 prox_l2smooth
+prox_centering!
 tv_norm
 l2smooth_norm
-chi2_v2_at
-chi2_t3phi_at
 ```
 
 ## SPARCO

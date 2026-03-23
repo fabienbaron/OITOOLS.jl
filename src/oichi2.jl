@@ -973,7 +973,8 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
                           weights = [1.0, 1.0, 1.0],
                           use_diffphases = false,
                           verb = false,
-                          vonmises = false)
+                          vonmises = false,
+                          normalize = true)
     nwav, nepoch = size(data)
     npix = size(x, 1)
     g .= 0
@@ -1031,11 +1032,13 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
         end
 
         # Apply per-cell flux correction
-        for w in 1:nwav_t
-            x_wt = @view x[:,:,w,t]
-            g_wt = @view g[:,:,w,t]
-            flux = sum(x_wt)
-            g_wt .= (g_wt .- sum(x_wt .* g_wt) / flux) ./ flux
+        if normalize
+            for w in 1:nwav_t
+                x_wt = @view x[:,:,w,t]
+                g_wt = @view g[:,:,w,t]
+                flux = sum(x_wt)
+                g_wt .= (g_wt .- sum(x_wt .* g_wt) / flux) ./ flux
+            end
         end
     end
 
@@ -1051,10 +1054,13 @@ Mono convenience: compute chi-squared and flux-corrected gradient for a single
 function image_to_chi2_fg(x::AbstractMatrix{<:AbstractFloat},
                           g::AbstractMatrix{<:AbstractFloat},
                           ft, data::OIdata;
-                          weights = [1.0, 1.0, 1.0], verb = false, vonmises = false)
+                          weights = [1.0, 1.0, 1.0], verb = false, vonmises = false,
+                          normalize = true)
     chi2 = chi2_fg(x, g, ft, data; weights=weights, verb=verb, vonmises=vonmises)
-    flux = sum(x)
-    g .= (g .- sum(x .* g) / flux) ./ flux
+    if normalize
+        flux = sum(x)
+        g .= (g .- sum(x .* g) / flux) ./ flux
+    end
     return chi2
 end
 
