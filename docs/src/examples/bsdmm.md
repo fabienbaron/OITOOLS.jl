@@ -37,7 +37,7 @@ Each BSDMM iteration performs three steps:
 3. **Dual updates**: `u_i <- u_i + x - z_i`.
 
 The penalty parameters `rho_i` can optionally be adapted per block using
-Barzilai-Borwein spectral estimates (ARADMM-style).
+one of several strategies (spectral, residual balancing, or ARADMM).
 
 ### Why BSDMM?
 
@@ -109,10 +109,31 @@ Recommended: `x_maxiter = 5`.
 
 ### Adaptive penalty (`adaptive`)
 
-When `adaptive = true`, each block's penalty `rho_i` is updated using
-Barzilai-Borwein spectral estimates with correlation safeguards.  This
-can improve convergence but may also cause instability for some
-problems.  Start with `adaptive = false`.
+The `adaptive` keyword selects the penalty adaptation strategy:
+
+| `adaptive` | Strategy | Description |
+|---|---|---|
+| `false` | Fixed | Constant ρ throughout (default, most stable) |
+| `true` / `:spectral` | Spectral (AADMM) | Adaptive BB selection + predictive dual + cross-block balancing |
+| `:balanced` | Residual balancing | Adjusts ρ based on primal/dual residual ratio |
+| `:aradmm` | ARADMM | Spectral penalty + over-relaxation parameter γ |
+
+Start with `adaptive = false`.  If convergence is slow, try `:spectral`
+or `:balanced`.  The `:aradmm` strategy adds over-relaxation which can
+accelerate convergence but may be less stable with non-convex chi-squared.
+
+The update frequency is controlled by `adp_freq` (default 2, meaning
+every 2 outer iterations) and `adp_start` (first iteration for
+adaptive updates, default 1).
+
+### Convergence history (`history`)
+
+When `history = true`, `reconstruct_bsdmm` returns `(image, hist)` where
+`hist` is a NamedTuple with per-iteration traces: `chi2`, `obj`, `r_norm`,
+`s_norm`, `rho` (Dict of per-block vectors), and `gamma`.  Useful for
+diagnosing convergence and comparing strategies.
+
+See `test_adaptive_strategies.jl` for a complete comparison script.
 
 ## API reference
 

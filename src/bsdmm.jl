@@ -12,10 +12,13 @@
 # Currently all L_i = I (identity). Future: transspectral operators for
 # polychromatic (N images coupled across wavelength channels).
 #
-# Per-block penalty ρ_i adapted via Barzilai-Borwein spectral estimates
-# with correlation safeguards (ARADMM-style).
+# Per-block penalty ρ_i adapted via three strategies:
+#   :spectral  — AADMM adaptive BB + predictive dual + cross-block balancing
+#   :balanced  — residual balancing (primal/dual ratio)
+#   :aradmm   — ARADMM spectral + over-relaxation γ
 #
-# Reference: Moolekamp & Melchior (arXiv:1708.09066), Xu & Taylor (ARADMM)
+# Reference: Moolekamp & Melchior (arXiv:1708.09066), Xu & Taylor (ARADMM),
+#            Xu (AMADMM multi-block), Goldstein (FASTA adaptive BB)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Block data structure ────────────────────────────────────────────────────
@@ -24,48 +27,148 @@ mutable struct BSDMMBlock{T<:AbstractFloat}
     name::Symbol
     z::Vector{T}         # auxiliary variable
     u::Vector{T}         # scaled dual variable
-    z_prev::Vector{T}    # previous z (for spectral update)
-    u_prev::Vector{T}    # previous u (for spectral update)
+    z_prev::Vector{T}    # previous z (for adaptive update)
+    u_prev::Vector{T}    # previous u (for adaptive update)
     prox!::Any           # prox!(z, v, rho) modifies z in place
     rho::T               # penalty parameter
     rho_min::T
     rho_max::T
+    # Storage for spectral/ARADMM adaptive updates
+    z_adp::Vector{T}       # z at previous adaptive-update iteration
+    lambda_adp::Vector{T}  # unscaled dual (ρu) at previous adaptive-update iteration
+    lhat_adp::Vector{T}    # predictive dual at previous adaptive-update iteration
 end
 
 function BSDMMBlock(name::Symbol, n::Int, prox!;
                     rho=10.0, rho_min=1e-3, rho_max=1e8)
     BSDMMBlock{Float64}(name,
         zeros(n), zeros(n), zeros(n), zeros(n),
-        prox!, rho, rho_min, rho_max)
+        prox!, rho, rho_min, rho_max,
+        zeros(n), zeros(n), zeros(n))
 end
 
-# ─── Spectral rho update (Barzilai-Borwein with ARADMM safeguards) ──────────
+# ─── Adaptive BB selection (Goldstein FASTA paper) ─────────────────────────
+# Ported from aradmm_core.jl (Baron/Xu)
 
-function spectral_rho_update!(blk::BSDMMBlock; ε_cor=0.2, smooth=0.9)
-    s = blk.z .- blk.z_prev     # Δz
-    y = blk.u .- blk.u_prev     # Δu
-    ss = dot(s, s)
-    sy = dot(s, y)
+function curv_adaptive_BB(αSD, αMG)
+    if 2.0 * αMG > αSD
+        return αMG
+    else
+        return αSD - 0.5 * αMG
+    end
+end
 
-    if ss < 1e-30
-        return
+# ─── Spectral penalty update (AADMM/ARADMM) ──────────────────────────────
+# Adapted from aradmm_core.jl:aradmm_estimate (two-block) and
+# amadmm_core.m (multi-block fallback) for BSDMM consensus form.
+#
+# For each block i (consensus: A=I, B=-I, b=0):
+#   x-block curvature α: from (Δx, Δl_hat)  where l_hat isolates x changes
+#   z-block curvature β: from (-Δz, Δλ)
+#   Combined: ρ = √(αβ)
+#
+# Returns (rho_estimate, gamma) where rho_estimate is nothing if curvature
+# could not be estimated (caller uses cross-block fallback).
+
+function spectral_update!(blk::BSDMMBlock, x::Vector, x_adp::Vector;
+                          ε_cor=0.2, compute_gamma=false,
+                          fallback_rho=nothing)
+    minval = 1e-30
+    rho = blk.rho
+
+    # Current unscaled dual and predictive dual
+    # l_hat = what dual would be if z had not changed (isolates x-block)
+    # BSDMM loop: z-update, x-update, dual-update
+    # u_prev/z_prev are from start of this iteration (before z-update)
+    lambda = rho .* blk.u
+    lhat = rho .* (blk.u_prev .+ x .- blk.z_prev)
+
+    # Deltas vs previous adaptive-update iteration
+    Δlhat = lhat .- blk.lhat_adp
+    Δlambda = lambda .- blk.lambda_adp
+    Δx = x .- x_adp
+    Δz = blk.z .- blk.z_adp
+
+    # Norms
+    dl_hat = norm(Δlhat)
+    dl = norm(Δlambda)
+    du = norm(Δx)
+    dv = norm(Δz)
+
+    # x-block curvature (α) — uses predictive dual
+    ul_hat = dot(Δx, Δlhat)
+    hflag = (du * dl_hat > minval) && (ul_hat > ε_cor * du * dl_hat + minval)
+    α = rho  # fallback
+    if hflag
+        αSD = dl_hat^2 / ul_hat
+        αMG = ul_hat / du^2
+        α = curv_adaptive_BB(αSD, αMG)
     end
 
-    # Correlation safeguard
-    yy = dot(y, y)
-    if sy < ε_cor * sqrt(ss * yy) + 1e-30
-        return
+    # z-block curvature (β) — uses actual dual, B=-I so ΔBv = -Δz
+    vl = -dot(Δz, Δlambda)   # = dot(-Δz, Δλ)
+    gflag = (dv * dl > minval) && (vl > ε_cor * dv * dl + minval)
+    β = rho  # fallback
+    if gflag
+        βSD = dl^2 / vl
+        βMG = vl / dv^2
+        β = curv_adaptive_BB(βSD, βMG)
     end
 
-    # BB spectral estimate
-    rho_bb = clamp(sy / ss, blk.rho_min, blk.rho_max)
+    # Combine curvatures
+    rho_est = nothing
+    gamma = 1.0
+    if hflag && gflag
+        rho_est = sqrt(α * β)
+        if compute_gamma
+            gamma = min(1.0 + 2.0 * sqrt(α * β) / (α + β), 1.9)
+        end
+    elseif hflag
+        rho_est = α
+        gamma = compute_gamma ? 1.9 : 1.0
+    elseif gflag
+        rho_est = β
+        gamma = compute_gamma ? 1.1 : 1.0
+    else
+        # Neither estimable — use fallback from other blocks (AMADMM line 129)
+        if fallback_rho !== nothing
+            rho_est = fallback_rho
+        end
+        gamma = compute_gamma ? 1.5 : 1.0
+    end
 
-    # Smooth update
+    # Apply penalty update
+    if rho_est !== nothing
+        rho_new = clamp(rho_est, blk.rho_min, blk.rho_max)
+        rho_old = blk.rho
+        blk.rho = rho_new
+        blk.u .*= rho_old / blk.rho
+    end
+
+    # Record for next adaptive update
+    blk.z_adp .= blk.z
+    blk.lambda_adp .= blk.rho .* blk.u  # use current rho (post-update); λ = ρu is invariant
+    blk.lhat_adp .= lhat
+
+    return (rho_est, gamma)
+end
+
+# ─── Residual balancing ───────────────────────────────────────────────────
+# Ported from aradmm_core.jl lines 134-142 (adp==3)
+
+function balanced_update!(blk::BSDMMBlock, x::Vector;
+                          beta_scale=2.0, res_scale=0.1)
+    r_norm = norm(x .- blk.z)                      # primal residual
+    s_norm = blk.rho * norm(blk.z .- blk.z_prev)   # dual residual
     rho_old = blk.rho
-    blk.rho = smooth * rho_old + (1 - smooth) * rho_bb
-
-    # Rescale dual variable to maintain λ = ρ u
-    blk.u .*= rho_old / blk.rho
+    if s_norm < r_norm * res_scale
+        blk.rho = clamp(beta_scale * blk.rho, blk.rho_min, blk.rho_max)
+    elseif r_norm < s_norm * res_scale
+        blk.rho = clamp(blk.rho / beta_scale, blk.rho_min, blk.rho_max)
+    end
+    if blk.rho != rho_old
+        blk.u .*= rho_old / blk.rho
+    end
 end
 
 # ─── Proximal operator factories ─────────────────────────────────────────────
@@ -132,17 +235,26 @@ Currently supports monochromatic (1×1) data only.
 - `rho_init=10.0`: initial ADMM penalty parameter for all blocks
 - `rho_min=1e-3`: minimum penalty (for adaptive update)
 - `rho_max=1e4`: maximum penalty (for adaptive update)
-- `adaptive=true`: enable per-block Barzilai-Borwein spectral ρ adaptation
+- `adaptive=false`: adaptive penalty strategy:
+  - `false`: fixed ρ throughout
+  - `true` or `:spectral`: AADMM spectral (adaptive BB + predictive dual + cross-block balancing)
+  - `:balanced`: residual balancing (adjusts ρ based on primal/dual residual ratio)
+  - `:aradmm`: ARADMM (spectral penalty + over-relaxation parameter γ)
+- `adp_freq=2`: adaptive update frequency (every N outer iterations)
+- `adp_start=1`: first iteration for adaptive updates
 - `maxit=300`: maximum BSDMM outer iterations
 - `x_maxiter=50`: maximum VMLMB iterations per x-update (use small values, e.g. 5)
 - `verb=true`: print convergence info every 10 iterations
+- `history=false`: when `true`, returns `(image, hist)` where `hist` is a NamedTuple
+  with fields `chi2`, `obj`, `r_norm`, `s_norm`, `rho` (Dict), `gamma`
 
 # Returns
 - `nx × nx` image (positive, unit flux) with best objective value
+- If `history=true`: `(image, hist)` tuple
 
 # References
 - Moolekamp & Melchior (arXiv:1708.09066) — BSDMM algorithm
-- Xu & Taylor — ARADMM adaptive penalty
+- Xu, Taylor & Goldstein — ARADMM / AMADMM adaptive penalty
 - Chambolle (2004) — TV proximal operator
 
 See also: [`reconstruct`](@ref), [`prox_tv`](@ref), [`prox_l2smooth`](@ref)
@@ -158,10 +270,25 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
                            mu_reg=0.0, mu_cen=0.0,
                            reg_type=:tv, tv_niter=50,
                            rho_init=10.0, rho_min=1e-3, rho_max=1e4,
-                           adaptive=true,
-                           maxit=300, x_maxiter=50, verb=true)
+                           adaptive=false,
+                           adp_freq=2, adp_start=1,
+                           maxit=300, x_maxiter=50, verb=true,
+                           history=false)
     nx = size(x_init, 1)
     npix = nx * nx
+
+    # Normalize adaptive keyword
+    adp_mode = if adaptive === true || adaptive == :spectral
+        :spectral
+    elseif adaptive === false
+        :none
+    elseif adaptive == :balanced
+        :balanced
+    elseif adaptive == :aradmm
+        :aradmm
+    else
+        error("Unknown adaptive mode: $adaptive. Use false, true, :spectral, :balanced, or :aradmm")
+    end
 
     # Initialize image: positive, unit flux
     x = copy(vec(x_init))
@@ -190,10 +317,23 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
                                  rho=rho_init, rho_min=rho_min, rho_max=rho_max))
     end
 
-    # Initialize z from x
+    # Initialize z and adaptive storage from x
     for blk in blocks
         blk.z .= x
         blk.z_prev .= x
+        blk.z_adp .= x
+        blk.lambda_adp .= blk.rho .* blk.u
+        blk.lhat_adp .= blk.rho .* blk.u
+    end
+
+    # ── Adaptive state ──
+    gamma = 1.0
+    x_adp = copy(x)
+
+    # ── History tracking ──
+    if history
+        hist = (chi2=Float64[], obj=Float64[], r_norm=Float64[], s_norm=Float64[],
+                rho=Dict(blk.name => Float64[] for blk in blocks), gamma=Float64[])
     end
 
     # ── Tracking ──
@@ -205,7 +345,11 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
         for blk in blocks
             blk.z_prev .= blk.z
             blk.u_prev .= blk.u
-            v = x .+ blk.u
+            if adp_mode == :aradmm && gamma > 1.0 + 1e-10
+                v = gamma .* x .+ (1.0 - gamma) .* blk.z_prev .+ blk.u
+            else
+                v = x .+ blk.u
+            end
             blk.prox!(blk.z, v, blk.rho)
         end
 
@@ -245,14 +389,40 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
 
         # ── Dual updates ──
         for blk in blocks
-            blk.u .+= x .- blk.z
+            if adp_mode == :aradmm && gamma > 1.0 + 1e-10
+                blk.u .+= gamma .* x .+ (1.0 - gamma) .* blk.z_prev .- blk.z
+            else
+                blk.u .+= x .- blk.z
+            end
         end
 
-        # ── Adaptive rho (spectral BB) ──
-        if adaptive && k > 1
-            for blk in blocks
-                spectral_rho_update!(blk)
+        # ── Adaptive penalty update ──
+        if adp_mode != :none && k >= adp_start && mod(k, adp_freq) == 0
+            if adp_mode == :spectral || adp_mode == :aradmm
+                cg = adp_mode == :aradmm
+                # First pass: estimate curvature per block
+                estimates = [spectral_update!(blk, x, x_adp; compute_gamma=cg) for blk in blocks]
+                # Cross-block fallback (AMADMM): non-estimable blocks use max of estimable
+                rho_ests = [e[1] for e in estimates]
+                good = filter(!isnothing, rho_ests)
+                if !isempty(good) && any(isnothing, rho_ests)
+                    fb = maximum(good)
+                    for (i, blk) in enumerate(blocks)
+                        if isnothing(rho_ests[i])
+                            spectral_update!(blk, x, x_adp; compute_gamma=cg, fallback_rho=fb)
+                        end
+                    end
+                end
+                if adp_mode == :aradmm
+                    gammas = [e[2] for e in estimates]
+                    gamma = clamp(sum(gammas) / length(gammas), 1.0, 1.9)
+                end
+            elseif adp_mode == :balanced
+                for blk in blocks
+                    balanced_update!(blk, x)
+                end
             end
+            x_adp .= x
         end
 
         # ── Convergence monitoring ──
@@ -277,16 +447,30 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
             best_x .= vec(x)
         end
 
+        # ── History tracking ──
+        if history
+            push!(hist.chi2, chi2_x)
+            push!(hist.obj, obj_x)
+            push!(hist.r_norm, r_norm)
+            push!(hist.s_norm, s_norm)
+            for blk in blocks
+                push!(hist.rho[blk.name], blk.rho)
+            end
+            push!(hist.gamma, gamma)
+        end
+
         # ── Display ──
         if verb && (mod(k, 10) == 0 || k <= 5)
             @printf("Iter %3d | ", k)
             image_to_chi2(x_2d, ft, data; verb=true)
             rho_str = join([@sprintf("%s=%.1e", blk.name, blk.rho) for blk in blocks], " ")
-            @printf("  obj=%.2f  |r|=%.2e |s|=%.2e  reg=%.4f  flux=%.4f  ρ: %s\n",
-                    obj_x, r_norm, s_norm, reg_val, sum(x), rho_str)
+            gamma_str = adp_mode == :aradmm ? @sprintf("  γ=%.3f", gamma) : ""
+            @printf("  obj=%.2f  |r|=%.2e |s|=%.2e  reg=%.4f  flux=%.4f  ρ: %s%s\n",
+                    obj_x, r_norm, s_norm, reg_val, sum(x), rho_str, gamma_str)
         end
     end
 
     @printf("Best objective: %.2f\n", best_obj)
-    return reshape(best_x, nx, nx)
+    result = reshape(best_x, nx, nx)
+    return history ? (result, hist) : result
 end
