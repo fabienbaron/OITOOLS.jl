@@ -651,6 +651,53 @@ function trans_grouptv(x, g; ε=1e-12)
     return f
 end
 
+"""
+    scale_regularizers(regularizers, pixsize; pixsize_ref=0.4)
+
+Convert dimensionless regularizer weights μ̃ (calibrated at `pixsize_ref` mas)
+to actual weights μ for a given `pixsize` (mas), using the scaling laws from
+Renard, Thiébaut & Malbet (2011, A&A 533, A64, Appendix C).
+
+For unit-flux normalized images in 2-D, the optimal μ scales as a power of
+the pixel size.  This function applies `μ = μ̃ · (pixsize_ref / pixsize)^α`
+where the exponent α depends on the regularizer type:
+
+| Regularizer | α | Description |
+|-------------|---|-------------|
+| `"tv"`, `"l1l2"` | 1 | ℓ₁ norm on spatial gradient |
+| `"tvsq"` | 4 | ℓ₂² norm on spatial gradient |
+| `"l2sq"` | 2 | separable ℓ₂ (Tikhonov) |
+| all others | 0 | already dimensionless |
+
+The returned list has the same structure as the input, with rescaled weights.
+"""
+function scale_regularizers(regularizers, pixsize; pixsize_ref=0.4)
+    scaling_exponents = Dict(
+        "tv" => 1, "l1l2" => 1,
+        "tvsq" => 4,
+        "l2sq" => 2,
+    )
+    ratio = pixsize_ref / pixsize
+    scaled = Vector{Any}()
+    for ireg in regularizers
+        name = ireg[1]
+        mu_tilde = ireg[2]
+        alpha = get(scaling_exponents, name, 0)
+        mu = mu_tilde * ratio^alpha
+        push!(scaled, [name, mu, ireg[3:end]...])
+    end
+    return scaled
+end
+
+"""
+    scale_tv_epsilon(pixsize; pixsize_ref=0.4, eps_ref=1e-8)
+
+Scale the TV relaxation parameter ε so that the regularization is
+pixel-size independent (Renard+ 2011, Appendix C.3).
+ε should scale linearly with `pixsize`.
+"""
+scale_tv_epsilon(pixsize; pixsize_ref=0.4, eps_ref=1e-8) = eps_ref * pixsize / pixsize_ref
+
 function regularization(x, reg_g; printcolor = :normal, regularizers=[], verb=true) # compound regularization
     reg_f = 0.0;
     if verb == true && !isempty(regularizers)
@@ -660,9 +707,8 @@ function regularization(x, reg_g; printcolor = :normal, regularizers=[], verb=tr
             temp_g = zeros(eltype(x), size(x))
             reg_f += @match ireg[1] begin 
                 "centering"   => ireg[2]*reg_centering(x, temp_g; verb)
-                "tv"          => ireg[2]*tv(x,temp_g; verb)
+                "tv"          => ireg[2]*tv(x,temp_g; verb, ϵ = length(ireg) > 2 ? ireg[3] : 1e-8)
                 "tvsq"        => ireg[2]*tvsq(x,temp_g; verb)
-                "EPLL"        => ireg[2]*EPLL_fg(x,temp_g, ireg[3])
                 "l1l2"        => ireg[2]*l1l2(x,temp_g; verb, α = ireg[3])
                 "l1l2w"       => ireg[2]*l1l2w(x,temp_g; verb)
                 "l1hyp"       => ireg[2]*l1hyp(x,temp_g; verb)
@@ -679,6 +725,109 @@ function regularization(x, reg_g; printcolor = :normal, regularizers=[], verb=tr
         print("\n");
     end
     return reg_f
+end
+
+"""
+    lcurve(x_start, data, ft, reg_name, mu_range;
+           reg_args=[], fixed_regularizers=[["centering", 1e3]],
+           pixsize=nothing, pixsize_ref=0.4, use_dimless=false,
+           weights=[1.0,1.0,1.0], maxiter=500, restarts=3,
+           verb=false, vonmises=false)
+
+Sweep a single regularizer's weight over `mu_range` and return L-curve data.
+
+- `reg_args`: extra arguments for the regularizer (e.g. `[1e-3]` for l1l2's α).
+- If `use_dimless=true` and `pixsize` is given, `mu_range` values are treated as
+  dimensionless μ̃ and converted via `scale_regularizers`.
+
+Returns a `NamedTuple` with fields:
+- `mu`: the input weight values
+- `chi2r`: reduced χ² (divided by ndof) at each point
+- `reg_val`: unweighted regularizer functional for the swept regularizer only
+- `ndof`: number of degrees of freedom
+- `images`: vector of reconstructed images
+"""
+function lcurve(x_start, data, ft, reg_name, mu_range;
+    reg_args = [],
+    fixed_regularizers = [["centering", 1e3]],
+    pixsize = nothing, pixsize_ref = 0.4, use_dimless = false,
+    weights = [1.0, 1.0, 1.0], maxiter = 500, restarts = 3,
+    verb = false, vonmises = false)
+    n = length(mu_range)
+    chi2r_vals = zeros(n)
+    reg_vals   = zeros(n)
+    images     = Vector{typeof(x_start)}(undef, n)
+
+    # Compute ndof
+    ndof = if data isa OIdata
+        weights[1]*data.nv2 + weights[2]*data.nt3amp + weights[3]*data.nt3phi
+    else
+        sum(weights[1]*d.nv2 + weights[2]*d.nt3amp + weights[3]*d.nt3phi for d in data)
+    end
+    ndof = max(ndof, 1.0)
+
+    for i in 1:n
+        mu = mu_range[i]
+        swept_reg = [[reg_name, mu, reg_args...]]
+        if use_dimless && !isnothing(pixsize)
+            swept_reg = scale_regularizers(swept_reg, pixsize; pixsize_ref=pixsize_ref)
+        end
+        regularizers = vcat(fixed_regularizers, swept_reg)
+        # Reconstruct with warm restarts
+        x = reconstruct(x_start, data, ft; regularizers=regularizers,
+            weights=weights, verb=verb, maxiter=maxiter, vonmises=vonmises)
+        for _ in 1:restarts
+            x = reconstruct(x, data, ft; regularizers=regularizers,
+                weights=weights, verb=verb, maxiter=div(maxiter, 5), vonmises=vonmises)
+        end
+        # Evaluate reduced chi2
+        g = similar(x)
+        chi2_raw = image_to_chi2_fg(x, g, ft, data; weights=weights, vonmises=vonmises)
+        chi2r_vals[i] = chi2_raw / ndof
+        # Evaluate the swept regularizer only (unweighted)
+        g_reg = similar(x)
+        eval_reg = [[reg_name, 1.0, reg_args...]]
+        reg_vals[i] = regularization(x, g_reg; regularizers=eval_reg, verb=false)
+        images[i] = copy(x)
+        @printf("L-curve point %d/%d: μ=%.2e  χ²r=%.3f  reg=%.4e\n", i, n, mu, chi2r_vals[i], reg_vals[i])
+    end
+    return (mu=mu_range, chi2r=chi2r_vals, reg_val=reg_vals, ndof=ndof, images=images)
+end
+
+"""
+    lcurve_elbow(chi2_vals, reg_vals)
+
+Find the L-curve corner (maximum discrete curvature) on a log-log plot.
+Returns the index of the elbow point.
+"""
+function lcurve_elbow(chi2_vals, reg_vals)
+    x = log.(chi2_vals)
+    y = log.(reg_vals)
+    n = length(x)
+    n >= 3 || return 1
+    kappa = zeros(n)
+    for i in 2:n-1
+        xp = (x[i+1] - x[i-1]) / 2
+        yp = (y[i+1] - y[i-1]) / 2
+        xpp = x[i+1] - 2*x[i] + x[i-1]
+        ypp = y[i+1] - 2*y[i] + y[i-1]
+        kappa[i] = abs(xpp*yp - ypp*xp) / (xp^2 + yp^2)^1.5
+    end
+    return argmax(kappa)
+end
+
+"""
+    lcurve_normalize(chi2_vals, reg_vals; ref_index=nothing)
+
+Normalize L-curve values by dividing each axis by its value at a reference
+point (Renard+ 2011, Fig. 15).  If `ref_index` is not given, the elbow
+point is used.  Returns `(chi2_norm, reg_norm)`.
+"""
+function lcurve_normalize(chi2_vals, reg_vals; ref_index=nothing)
+    if isnothing(ref_index)
+        ref_index = lcurve_elbow(chi2_vals, reg_vals)
+    end
+    return (chi2_vals ./ chi2_vals[ref_index], reg_vals ./ reg_vals[ref_index])
 end
 
 # DFT version
@@ -1766,17 +1915,24 @@ function _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint
             f += chi2_diffphi
             verb && printstyled(@sprintf("DiffPhi: %.2f ", chi2_diffphi/length(diffphi_model)), color=:magenta)
 
-            # Gradient: d(arg(V_i/V_ref_i))/d(pixel) via chain rule
-            # Leading-order approximation: gradient through numerator V_i only
-            # d(arg(V/Vref))/dpixel ≈ d(arg(V))/dpixel = Im((1/V) * dV/dpixel)
-            # Following the T3phi pattern: rhs = scalar_weight .* V ./ |V|²
+            # Gradient: d(arg(V_i/V_ref_i))/d(pixel_k) via chain rule
+            # φ_i = arg(V_i / V_ref_i), V_ref_i = (Σ_{j≠i} V_j) / (nwavs-1)
+            # For k = i:  dφ_i/dp_k =  Im(dV_i / (V_i · dp_i))       (direct)
+            # For k ≠ i:  dφ_i/dp_k = -Im(dV_k / ((nwavs-1)·V_ref_i · dp_k))  (cross-channel)
+            dT3_all = Matrix{Float64}(undef, ncommon, nwavs)
             for i=1:nwavs
-                dT3 = -360.0/pi .* mod360(diffphi_model[:,i]-diffphi[:,i])./diffphi_err[:,i].^2
-                # Scatter common-baseline rhs back to full-length vis vector for adjoint
-                rhs_full = zeros(ComplexF64, length(cvis[i]))
-                rhs_full[cidx[i]] = dT3 .* cvis_all[:,i] ./ abs2.(cvis_all[:,i])
-                g_contrib = imag.(vis_adjoint_fn(rhs_full, i))
-                g[:,:,i] .+= reshape(g_contrib, npix, npix)
+                dT3_all[:,i] = -360.0/pi .* mod360(diffphi_model[:,i]-diffphi[:,i])./diffphi_err[:,i].^2
+            end
+            for k=1:nwavs
+                rhs_full = zeros(ComplexF64, length(cvis[k]))
+                # Direct term: d(arg(V_k))/dp_k
+                rhs_full[cidx[k]] = dT3_all[:,k] .* cvis_all[:,k] ./ abs2.(cvis_all[:,k])
+                # Cross-channel terms: V_ref_i depends on V_k for all i≠k
+                for i=1:nwavs
+                    i == k && continue
+                    rhs_full[cidx[k]] .+= (-1.0/(nwavs-1)) .* dT3_all[:,i] .* cvis_ref_all[:,i] ./ abs2.(cvis_ref_all[:,i])
+                end
+                g[:,:,k] .+= reshape(imag.(vis_adjoint_fn(rhs_full, k)), npix, npix)
             end
         end
     end

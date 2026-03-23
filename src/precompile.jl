@@ -19,7 +19,7 @@
     # ── Monochromatic path ───────────────────────────────────────────────
     oifitsfile_gray = joinpath(@__DIR__, "..", "demos", "data", "2004-data1.oifits")
     if isfile(oifitsfile_gray)
-        data_gray = readoifits(oifitsfile_gray, filter_bad_data=true, verbose=false)
+        data_gray = readoifits(oifitsfile_gray, filter_bad_data=true, warn=false, verbose=false)
         nx = 32
         pixsize = 0.25
         ft_gray = setup_ft(data_gray, nx, pixsize)

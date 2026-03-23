@@ -82,6 +82,8 @@ export vis_to_v2, vis_to_t3, observables
 export crit_f, crit_fg, image_to_crit
 export reconstruct
 export gaussian2d, recenter
+export scale_regularizers, scale_tv_epsilon
+export lcurve, lcurve_elbow, lcurve_normalize
 
 # ── SPARCO ──────────────────────────────────────────────────────────────────
 export reconstruct_sparco_gray, reconstruct_sparco_multi
