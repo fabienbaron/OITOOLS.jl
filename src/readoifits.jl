@@ -1132,7 +1132,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         v2_uv   = hcat(raw_v2.v2_uv[bin_v2, 1], raw_v2.v2_uv[bin_v2, 2])'  # 2×nv2
         v2_sta_index = raw_v2.v2_sta_index[:, bin_v2]
         nv2     = length(v2)
-        indx_v2 = collect(nvisamp .+ (1:nv2))
+        indx_v2 = collect(length(visamp) .+ (1:nv2))
         v2_corr_idx = isempty(raw_v2.v2_corr_idx) ? Int64[] : raw_v2.v2_corr_idx[bin_v2]
     else
         v2 = T[]; v2_err = T[]; v2_mjd = T[]; v2_lam = T[]; v2_dlam = T[]

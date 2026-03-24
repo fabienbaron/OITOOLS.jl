@@ -2461,7 +2461,7 @@ end
 #
 # where α_k  = (λ/λ₀)^(-dindex_k)     (per-source chromatic scaling)
 #       α_bg = (λ/λ₀)^(-4)             (Rayleigh–Jeans background)
-#       β    = (λ/λ₀)^(d_env - 4)      (environment power law)
+#       β    = (λ/λ₀)^(d_env)           (environment power law)
 #       f_env= 1 - Σ_k f_k - f_bg
 #
 # Per-source parameters (5 each):
@@ -2485,7 +2485,7 @@ function _sparco_multi_model(params, nsources, x_img, ftplan, data)
 
     # Background and environment chromatic scaling
     α_bg = λr.^(-4.0)
-    β    = λr.^(d_env - 4.0)
+    β    = λr.^(d_env)
 
     # Accumulate source contributions
     nuv = length(λ)

@@ -308,15 +308,18 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Parameter optimization  (NelderMead, image fixed)
+# Parameter optimization  (image fixed)
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
     optimize_sparco_flat_parameters(params_start, model, x_img, ft, data;
-                                    w_name="env,f", weights=[1,1,1], lb, ub)
+                                    w_name="W", weights=[1,1,1], lb, ub,
+                                    method=:LN_NELDERMEAD, maxeval=2000)
 
 Optimize SPARCO-flat model parameters with the image held fixed.
-Uses NelderMead (gradient-free). Returns (minchi2, params_opt, ret).
+Supports gradient-free (`:LN_NELDERMEAD`) and gradient-based (`:LD_LBFGS`, etc.) methods.
+For `:LD_*` methods, the parameter gradient is extracted from `chi2_sparco_flat_fg`.
+Returns `(minchi2, params_opt, ret)`.
 """
 function optimize_sparco_flat_parameters(params_start::AbstractVector{<:AbstractFloat},
         model::FlatModel,
@@ -326,7 +329,9 @@ function optimize_sparco_flat_parameters(params_start::AbstractVector{<:Abstract
         w_name::String = "W",
         weights = [1.0, 1.0, 1.0],
         lb::Union{Nothing, Vector{Float64}} = nothing,
-        ub::Union{Nothing, Vector{Float64}} = nothing)
+        ub::Union{Nothing, Vector{Float64}} = nothing,
+        method::Symbol = :LN_NELDERMEAD,
+        maxeval::Int = 2000)
 
     np = length(params_start)
     if lb === nothing
@@ -336,13 +341,28 @@ function optimize_sparco_flat_parameters(params_start::AbstractVector{<:Abstract
         ub = fill(Inf, np)
     end
 
-    f_obj = (p, _) -> chi2_sparco_flat_f(x_img, p, model, ft, data;
-        w_name=w_name, weights=weights, verb=false)
-    optimizer = Opt(:LN_NELDERMEAD, np)
+    use_grad = startswith(string(method), "LD_")
+
+    function f_obj(p, grad)
+        if use_grad && length(grad) > 0
+            x_full = [p; vec(x_img)]
+            g_full = zeros(length(x_full))
+            chi2 = chi2_sparco_flat_fg(x_full, g_full, model, ft, data, np;
+                w_name=w_name, weights=weights, verb=false)
+            grad .= g_full[1:np]
+            return chi2
+        else
+            return chi2_sparco_flat_f(x_img, p, model, ft, data;
+                w_name=w_name, weights=weights, verb=false)
+        end
+    end
+
+    optimizer = Opt(method, np)
     min_objective!(optimizer, f_obj)
     lower_bounds!(optimizer, lb)
     upper_bounds!(optimizer, ub)
-    minchi2, params_opt, ret = optimize(optimizer, params_start)
+    maxeval!(optimizer, maxeval)
+    minchi2, params_opt, ret = optimize(optimizer, collect(Float64, params_start))
     return minchi2, params_opt, ret
 end
 
@@ -372,6 +392,8 @@ function reconstruct_sparco_flat(x_start::AbstractMatrix{<:AbstractFloat},
         regularizers = [],
         weights = [1.0, 1.0, 1.0],
         vonmises::Bool = false,
+        params_lower::Union{Nothing, Vector{Float64}} = nothing,
+        params_upper::Union{Nothing, Vector{Float64}} = nothing,
         ftol = (0, 1e-8),
         xtol = (0, 1e-8),
         gtol = (0, 1e-8))
@@ -383,11 +405,15 @@ function reconstruct_sparco_flat(x_start::AbstractMatrix{<:AbstractFloat},
         w_name=w_name, regularizers=regularizers, verb=verb,
         weights=weights, vonmises=vonmises)
 
-    # Allow negative values for model params, non-negative for image pixels
-    lower = [fill(-Inf, nparams); fill(0.0, npix)]
+    # Parameter bounds: default to unconstrained; image pixels are non-negative
+    plb = params_lower === nothing ? fill(-Inf, nparams) : params_lower
+    pub = params_upper === nothing ? fill(Inf, nparams) : params_upper
+    lower = [plb; fill(0.0, npix)]
+    upper = [pub; fill(Inf, npix)]
 
     sol = OptimPackNextGen.vmlmb(crit, [params_start; vec(x_start)]; verb=verb,
-        lower=lower, maxiter=maxiter, blmvm=false, xtol=xtol, ftol=ftol, gtol=gtol)
+        lower=lower, upper=upper, maxiter=maxiter, blmvm=false,
+        xtol=xtol, ftol=ftol, gtol=gtol)
 
     return (sol[1:nparams], reshape(sol[nparams+1:end], size(x_start)))
 end
