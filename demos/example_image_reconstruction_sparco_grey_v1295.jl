@@ -42,7 +42,7 @@ model_dict = Dict{String,Any}(
     "wl0"     => λ0,
 
     # Star: point source at origin (no x, y, ud keys → point source)
-    "star,f0" => 0.5,                # flux fraction at λ0
+    "star,f0" => 0.48,                # flux fraction at λ0
     "star,di" => 4.0,                # spectral index (fixed, standard star)
 
     # Background: over-resolved (V=0), same spectrum as star
@@ -50,7 +50,7 @@ model_dict = Dict{String,Any}(
     "bg,f0"       => 0.0,            # flux fraction at λ0
 
     # Environment spectral index (d_env=0 → grey)
-    "d_env"   => 0.0,
+    "d_env"   => -0.1,
 
     # Normalization denominator: sum of all chromatic flux contributions
     "D" => "\$star,f0 * (\$WL/\$wl0)^(-\$star,di) + " *
@@ -126,7 +126,7 @@ params, x = reconstruct_sparco_flat(x, params, model, data, ft;
     params_lower=lb_params, params_upper=ub_params)
 
 # ── Phase 2: decreasing TV regularization ─────────────────────────────────
-for (phase, mu_tv) in enumerate([1e4, 1e2, 1e1, 1e0])
+for (phase, mu_tv) in enumerate([1e5, 1e4, 1e2, 1e0])
     global params, x, minchi2, ret
     @printf("\n=== Phase %d: tvsq μ=%.0e (200 iters) ===\n", phase + 1, mu_tv)
     regularizers = [["tv", mu_tv]]

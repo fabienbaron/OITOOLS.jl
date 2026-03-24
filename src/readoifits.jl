@@ -504,6 +504,7 @@ function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
         !isempty(data.visphi_corr_idx) && (data.visphi_corr_idx = data.visphi_corr_idx[vis_good])
         data.nvisamp      = count(i -> !isnan(data.visamp[i]) && !isnan(data.visamp_err[i]) && data.visamp_err[i] > 0, eachindex(data.visamp))
         data.nvisphi      = count(i -> !isnan(data.visphi[i]) && !isnan(data.visphi_err[i]) && data.visphi_err[i] > 0, eachindex(data.visphi))
+        _sanitize_paired_observables!(data.visamp, data.visamp_err, data.visphi, data.visphi_err, "visamp")
     end
     if data.nv2 > 0
         v2_good          = setdiff(1:length(data.indx_v2), indexes_to_discard[3])
@@ -529,6 +530,7 @@ function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
         !isempty(data.t3phi_corr_idx) && (data.t3phi_corr_idx = data.t3phi_corr_idx[t3_good])
         data.nt3amp         = count(i -> !isnan(data.t3amp[i]) && !isnan(data.t3amp_err[i]) && data.t3amp_err[i] > 0, eachindex(data.t3amp))
         data.nt3phi         = count(i -> !isnan(data.t3phi[i]) && !isnan(data.t3phi_err[i]) && data.t3phi_err[i] > 0, eachindex(data.t3phi))
+        _sanitize_paired_observables!(data.t3amp, data.t3amp_err, data.t3phi, data.t3phi_err, "t3amp")
     end
     if data.nflux > 0 && length(indexes_to_discard) >= 5
         flux_good            = setdiff(1:data.nflux, indexes_to_discard[5])
@@ -1223,6 +1225,35 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
 end
 
 # ---------------------------------------------------------------------------
+# _sanitize_paired_observables!: for paired observables (visamp/visphi or
+# t3amp/t3phi) that share indices, set err=Inf for entries where one
+# observable is bad but the paired one is good. This ensures (residual/Inf)^2=0
+# so the bad entry contributes nothing to chi2 while preserving index alignment.
+# ---------------------------------------------------------------------------
+function _sanitize_paired_observables!(amp::Vector{T}, amp_err::Vector{T},
+        phi::Vector{T}, phi_err::Vector{T}, label::String) where T
+    n = length(amp)
+    n_sanitized = 0
+    for i in 1:n
+        amp_ok = !isnan(amp[i]) && !isnan(amp_err[i]) && amp_err[i] > 0
+        phi_ok = !isnan(phi[i]) && !isnan(phi_err[i]) && phi_err[i] > 0
+        if !amp_ok && phi_ok
+            amp[i] = T(0)
+            amp_err[i] = T(Inf)
+            n_sanitized += 1
+        elseif amp_ok && !phi_ok
+            phi[i] = T(0)
+            phi_err[i] = T(Inf)
+            n_sanitized += 1
+        end
+    end
+    if n_sanitized > 0
+        @warn "Sanitized $n_sanitized $label entries where one of amp/phi was bad — set err=Inf for the bad observable"
+    end
+    return nothing
+end
+
+# ---------------------------------------------------------------------------
 # filter_bad_observables!: remove flagged/NaN/out-of-range data in-place,
 # then prune the UV plane to only the points still referenced.
 # ---------------------------------------------------------------------------
@@ -1252,6 +1283,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.visphi            = bd.visphi[vis_good];    bd.visphi_err    = bd.visphi_err[vis_good]
         bd.nvisamp           = count(i -> !isnan(bd.visamp[i]) && !isnan(bd.visamp_err[i]) && bd.visamp_err[i] > 0, eachindex(bd.visamp))
         bd.nvisphi           = count(i -> !isnan(bd.visphi[i]) && !isnan(bd.visphi_err[i]) && bd.visphi_err[i] > 0, eachindex(bd.visphi))
+        _sanitize_paired_observables!(bd.visamp, bd.visamp_err, bd.visphi, bd.visphi_err, "visamp")
         bd.vis_baseline      = bd.vis_baseline[vis_good]
         bd.vis_mjd           = bd.vis_mjd[vis_good];   bd.vis_lam       = bd.vis_lam[vis_good]
         bd.vis_dlam          = bd.vis_dlam[vis_good];  bd.vis_flag      = bd.vis_flag[vis_good]
@@ -1288,6 +1320,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.t3phi             = bd.t3phi[t3_good];      bd.t3phi_err     = bd.t3phi_err[t3_good]
         bd.nt3amp            = count(i -> !isnan(bd.t3amp[i]) && !isnan(bd.t3amp_err[i]) && bd.t3amp_err[i] > 0, eachindex(bd.t3amp))
         bd.nt3phi            = count(i -> !isnan(bd.t3phi[i]) && !isnan(bd.t3phi_err[i]) && bd.t3phi_err[i] > 0, eachindex(bd.t3phi))
+        _sanitize_paired_observables!(bd.t3amp, bd.t3amp_err, bd.t3phi, bd.t3phi_err, "t3amp")
         bd.t3_baseline       = bd.t3_baseline[t3_good]; bd.t3_maxbaseline = bd.t3_maxbaseline[t3_good]
         bd.t3_mjd            = bd.t3_mjd[t3_good];    bd.t3_lam        = bd.t3_lam[t3_good]
         bd.t3_dlam           = bd.t3_dlam[t3_good];   bd.t3_flag       = bd.t3_flag[t3_good]
