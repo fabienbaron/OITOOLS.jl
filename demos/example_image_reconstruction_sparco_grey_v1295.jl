@@ -126,10 +126,10 @@ params, x = reconstruct_sparco_flat(x, params, model, data, ft;
     params_lower=lb_params, params_upper=ub_params)
 
 # ── Phase 2: decreasing TV regularization ─────────────────────────────────
-for (phase, mu_tv) in enumerate([1e7, 1e5, 1e3, 1e1])
+for (phase, mu_tv) in enumerate([1e4, 1e2, 1e1, 1e0])
     global params, x, minchi2, ret
     @printf("\n=== Phase %d: tvsq μ=%.0e (200 iters) ===\n", phase + 1, mu_tv)
-    regularizers = [["tvsq", mu_tv]]
+    regularizers = [["tv", mu_tv]]
 
     params, x = reconstruct_sparco_flat(x, params, model, data, ft;
         w_name="W", regularizers=regularizers, weights=weights, verb=true, maxiter=200,

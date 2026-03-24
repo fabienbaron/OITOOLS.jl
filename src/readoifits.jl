@@ -569,7 +569,7 @@ function remove_redundant_uv!(data::OIdata{T}; uvtol = 2e2) where T
     data.uv          = data.uv[:, tokeep];  data.uv_lam  = data.uv_lam[tokeep]
     data.uv_dlam     = data.uv_dlam[tokeep]; data.uv_mjd = data.uv_mjd[tokeep]
     data.uv_baseline = data.uv_baseline[tokeep]; data.nuv = length(tokeep)
-    data.nvisphi > 0 || data.nvisamp > 0 && (data.indx_vis = iconv[data.indx_vis])
+    (data.nvisphi > 0 || data.nvisamp > 0) && (data.indx_vis = iconv[data.indx_vis])
     data.nv2 > 0    && (data.indx_v2  = iconv[data.indx_v2])
     if data.nt3amp > 0 || data.nt3phi > 0
         data.indx_t3_1 = iconv[data.indx_t3_1]
