@@ -2241,513 +2241,34 @@ end
 
 
 # ---------------------------------------------------------------------------
-# SPARCO grey reconstruction
+# Legacy SPARCO functions (deprecated)
 # ---------------------------------------------------------------------------
-# The SPARCO model decomposes the total visibility as:
+# reconstruct_sparco_gray and reconstruct_sparco_multi have been replaced by
+# reconstruct_hybrid (in sparco_flat.jl), which uses the flat-model
+# infrastructure and model_and_image_to_chi2_fg internally.
 #
-#        f_star * α * V_star + f_env * β * V_env
-# V_tot = ----------------------------------------
-#              f_star * α + f_bg * α + f_env * β
-#
-# where α = (λ/λ₀)^-4   (Rayleigh–Jeans stellar+background scaling)
-#       β = (λ/λ₀)^(d-4) (environment power law, d = spectral index)
-#       f_env = 1 - f_star - f_bg
-#
-# params[1] = f_star  (stellar flux fraction at λ₀)
-# params[2] = f_bg    (incoherent background flux fraction at λ₀)
-# params[3] = D       (stellar angular diameter, uniform disk)
-# params[4] = d       (environment spectral index + 4)
-# params[5] = λ₀      (reference wavelength, fixed)
+# The old hardcoded single-source and multi-source SPARCO models can be
+# expressed as flat-model dicts — see demos/example_image_reconstruction_sparco_grey_v1295_newAPI.jl.
 # ---------------------------------------------------------------------------
 
-# Shared helper: compute SPARCO composite visibility and intermediate quantities.
-function _sparco_model(params, x_img, ftplan, data)
-    λ0 = params[5]
-    λ  = data.uv_lam
-    α  = (λ/λ0).^-4.0
-    β  = (λ/λ0).^(params[4]-4.0)
-    fluxstar = params[1]*α
-    fluxbg   = params[2]*α
-    fluxenv  = (1.0-params[1]-params[2])*β
-    Vstar = visibility_ud([params[3]], data.uv)
-    Venv  = image_to_vis(x_img, ftplan[1])
-    u = fluxstar.*Vstar .+ fluxenv.*Venv
-    v = fluxstar .+ fluxenv .+ fluxbg
-    cvis_model = u ./ v
-    imratio = fluxenv ./ v
-    return (; cvis_model, Vstar, Venv, fluxstar, fluxbg, fluxenv, α, β, u, v, imratio)
+function reconstruct_sparco_gray(args...; kwargs...)
+    Base.depwarn("`reconstruct_sparco_gray` is deprecated. Use `reconstruct_hybrid` with a flat model dict instead.", :reconstruct_sparco_gray)
+    error("reconstruct_sparco_gray has been removed. Use reconstruct_hybrid with a flat model dict.")
 end
 
-function chi2_sparco_f(x::AbstractMatrix{<:AbstractFloat}, params::AbstractVector{<:AbstractFloat},
-        ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata;
-        verb=true, weights=[1.0,1.0,1.0], vonmises=false)
-    m = _sparco_model(params, x, ftplan, data)
-    v2_model = vis_to_v2(m.cvis_model, data.indx_v2)
-    t3_model, t3amp_model, t3phi_model = vis_to_t3(m.cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
-    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
-    if (weights[1]>0) && (data.nv2>0)
-        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2
-    end
-    if (weights[2]>0) && (data.nt3amp>0)
-        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2
-    end
-    if (weights[3]>0) && (data.nt3phi>0)
-        if !vonmises
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2
-        else
-            chi2_t3phi = sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) .+ data.t3phi_vonmises_chi2_offset)
-        end
-    end
-    if verb
-        printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
-        printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
-        printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
-        printstyled(@sprintf("Flux: %.4f ", sum(x)), color=:normal)
-    end
-    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
+function reconstruct_sparco_multi(args...; kwargs...)
+    Base.depwarn("`reconstruct_sparco_multi` is deprecated. Use `reconstruct_hybrid` with a flat model dict instead.", :reconstruct_sparco_multi)
+    error("reconstruct_sparco_multi has been removed. Use reconstruct_hybrid with a flat model dict.")
 end
 
-using NLopt
-function optimize_sparco_parameters(params_start, x::AbstractMatrix{<:AbstractFloat}, ft, data;
-        weights=[1.0,1.0,1.0], lb=[0.0, 0.0, 0.0, -20.0], ub=[1.0, 1.0, 1.0, 20.0])
-    nparams = length(params_start)-1
-    f_params = (params, _)->chi2_sparco_f(x, [params;params_start[end]], ft, data; verb=false, weights)
-    optimizer = Opt(:LN_NELDERMEAD, nparams)
-    min_objective!(optimizer, f_params)
-    lower_bounds!(optimizer, lb)
-    upper_bounds!(optimizer, ub)
-    minchi2, params_opt, ret = optimize(optimizer, params_start[1:nparams])
-    return minchi2, [params_opt;params_start[end]], ret
+function chi2_sparco_multi_f(args...; kwargs...)
+    Base.depwarn("`chi2_sparco_multi_f` is deprecated. Use `model_and_image_to_vis` + `chi2_f` or `chi2_sparco_flat_f` instead.", :chi2_sparco_multi_f)
+    error("chi2_sparco_multi_f has been removed. Use chi2_sparco_flat_f with a flat model dict.")
 end
 
-# Gradient of chi2 w.r.t. a scalar parameter, given dcvis_model/dparam.
-function _sparco_param_grad(dcvis_model, cvis_model, v2_model, t3_model, t3amp_model, t3phi_model,
-        data; weights=[1.0,1.0,1.0], vonmises=false)
-    dv2 = 0.0; dt3amp = 0.0; dt3phi = 0.0
-    if (weights[1]>0) && (data.nv2>0)
-        dv2 = 4*sum(((v2_model-data.v2)./data.v2_err.^2).*real.(cvis_model[data.indx_v2].*dcvis_model[data.indx_v2]))
-    end
-    if (weights[2]>0) && (data.nt3amp>0)
-        dt3amp = 2.0*sum(((t3amp_model-data.t3amp)./data.t3amp_err.^2).*(
-            real(cvis_model[data.indx_t3_1].*conj(dcvis_model[data.indx_t3_1]))./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3])
-          + real(cvis_model[data.indx_t3_2].*conj(dcvis_model[data.indx_t3_2]))./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3])
-          + real(cvis_model[data.indx_t3_3].*conj(dcvis_model[data.indx_t3_3]))./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
-    end
-    if (weights[3]>0) && (data.nt3phi>0)
-        t3 = cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3]
-        dt3 = dcvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3] +
-              cvis_model[data.indx_t3_1].*dcvis_model[data.indx_t3_2].*cvis_model[data.indx_t3_3] +
-              cvis_model[data.indx_t3_1].*cvis_model[data.indx_t3_2].*dcvis_model[data.indx_t3_3]
-        if !vonmises
-            dt3phi = 360.0/pi*sum((mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2).*imag(conj(t3).*dt3)./abs2.(t3))
-        else
-            dt3phi = sum(2*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi)/180*pi).*(pi/180).*imag(conj(t3).*dt3)./abs2.(t3))
-        end
-    end
-    return weights[1]*dv2 + weights[2]*dt3amp + weights[3]*dt3phi
-end
-
-function chi2_sparco_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:AbstractFloat},
-        ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nparams::Int64;
-        verb=true, weights=[1.0,1.0,1.0], vonmises=false)
-    params = x[1:nparams]
-    nx = Int(sqrt(length(x)-nparams))
-    x_img = reshape(x[nparams+1:end], nx, nx)
-
-    m = _sparco_model(params, x_img, ftplan, data)
-    v2_model = vis_to_v2(m.cvis_model, data.indx_v2)
-    t3_model, t3amp_model, t3phi_model = vis_to_t3(m.cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
-
-    # Chi2 computation
-    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
-    g_v2 = 0.0; g_t3amp = 0.0; g_t3phi = 0.0
-    if (weights[1]>0) && (data.nv2>0)
-        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2
-        g_v2 = real(adjoint(ftplan[3])*(4*((v2_model-data.v2)./data.v2_err.^2).*m.cvis_model[data.indx_v2].*m.imratio[data.indx_v2]))
-    end
-    if (weights[2]>0) && (data.nt3amp>0)
-        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2
-        dT3 = 2.0*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
-        g_t3amp = real(adjoint(ftplan[4])*(dT3.*m.cvis_model[data.indx_t3_1].*m.imratio[data.indx_t3_1]./abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_2]).*abs.(m.cvis_model[data.indx_t3_3]))) +
-                  real(adjoint(ftplan[5])*(dT3.*m.cvis_model[data.indx_t3_2].*m.imratio[data.indx_t3_2]./abs.(m.cvis_model[data.indx_t3_2]).*abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_3]))) +
-                  real(adjoint(ftplan[6])*(dT3.*m.cvis_model[data.indx_t3_3].*m.imratio[data.indx_t3_3]./abs.(m.cvis_model[data.indx_t3_3]).*abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_2])))
-    end
-    if (weights[3]>0) && (data.nt3phi>0)
-        if !vonmises
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2
-            dT3 = -360.0/pi*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
-        else
-            chi2_t3phi = sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) .+ data.t3phi_vonmises_chi2_offset)
-            dT3 = -2.0*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi)/180*pi)
-        end
-        g_t3phi = imag(adjoint(ftplan[4])*(dT3./abs2.(m.cvis_model[data.indx_t3_1]).*m.cvis_model[data.indx_t3_1].*m.imratio[data.indx_t3_1]) +
-                       adjoint(ftplan[5])*(dT3./abs2.(m.cvis_model[data.indx_t3_2]).*m.cvis_model[data.indx_t3_2].*m.imratio[data.indx_t3_2]) +
-                       adjoint(ftplan[6])*(dT3./abs2.(m.cvis_model[data.indx_t3_3]).*m.cvis_model[data.indx_t3_3].*m.imratio[data.indx_t3_3]))
-    end
-    if verb
-        printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
-        printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
-        printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
-        printstyled(@sprintf("Flux: %.4f ", sum(x_img)), color=:normal)
-    end
-
-    # Parameter gradients via quotient rule on composite visibility
-    du = m.α.*m.Vstar .- m.β.*m.Venv                             # du/dfs
-    dv = m.α .- m.β                                               # dv/dfs
-    dcvis_dfs = (du.*m.v .- m.u.*dv)./(m.v.*m.v)
-    du_bg = .-m.β.*m.Venv                                         # du/dfg
-    dv_bg = m.α .- m.β                                            # dv/dfg
-    dcvis_dfg = (du_bg.*m.v .- m.u.*dv_bg)./(m.v.*m.v)
-    dVstar = dvisibility_ud([params[3]], data.uv)
-    dcvis_dD = (m.fluxstar.*dVstar)./m.v
-    λ = data.uv_lam; logλr = log.(λ/params[5])
-    du_ind = logλr.*m.fluxenv.*m.Venv
-    dv_ind = logλr.*m.fluxenv
-    dcvis_dind = (du_ind.*m.v .- m.u.*dv_ind)./(m.v.*m.v)
-
-    pgkw = (; weights, vonmises)
-    g[1] = _sparco_param_grad(dcvis_dfs,  m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-    g[2] = _sparco_param_grad(dcvis_dfg,  m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-    g[3] = _sparco_param_grad(dcvis_dD,   m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-    g[4] = _sparco_param_grad(dcvis_dind, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-    g[5] = 0.0  # λ₀ is fixed
-
-    # Image pixel gradient
-    g[nparams+1:end] = vec(weights[1]*g_v2 .+ weights[2]*g_t3amp .+ weights[3]*g_t3phi)
-    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
-end
-
-function crit_sparco_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:AbstractFloat},
-        ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nparams::Int64;
-        weights=[1.0,1.0,1.0], printcolor=:normal, regularizers=[], verb=true, vonmises=false)
-    chi2 = chi2_sparco_fg(x, g, ftplan, data, nparams, weights=weights, verb=verb, vonmises=vonmises)
-    nx = Int(sqrt(length(x)-nparams))
-    reg_g = zeros(eltype(x), nx, nx)
-    reg_f = regularization(reshape(x[nparams+1:end], nx, nx), reg_g, regularizers=regularizers, printcolor=printcolor, verb=verb)
-    g[nparams+1:end] += vec(reg_g)
-    # Gradient correction for the image (parameters are left untouched)
-    flux = sum(x[nparams+1:end])
-    g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux) / flux
-    return chi2 + reg_f
-end
-
-"""
-    reconstruct_sparco_gray(x_start, params_start, data, ft; kwargs...)
-
-SPARCO grey image reconstruction with a single chromatic point source.
-Jointly optimizes `[params; image_pixels]` via VMLMB.
-Returns `(params_final, x_final)`.
-"""
-function reconstruct_sparco_gray(x_start::AbstractMatrix{<:AbstractFloat}, params_start::AbstractVector{<:AbstractFloat},
-        data::OIdata, ft; printcolor=:normal, verb=false, maxiter=100,
-        regularizers=[], weights=[1.0,1.0,1.0], vonmises=false,
-        ftol=(0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
-    crit = (x,g)->crit_sparco_fg(x, g, ft, data, length(params_start),
-        regularizers=regularizers, verb=verb, weights=weights, vonmises=vonmises)
-    sol = OptimPackNextGen.vmlmb(crit, [params_start;vec(x_start)], verb=verb,
-        lower=0, maxiter=maxiter, blmvm=false, xtol=xtol, ftol=ftol, gtol=gtol)
-    nparams = length(params_start)
-    return (sol[1:nparams], reshape(sol[nparams+1:end], size(x_start)))
-end
-
-# ---------------------------------------------------------------------------
-# Multi-source SPARCO reconstruction
-# ---------------------------------------------------------------------------
-# Generalizes SPARCO to N chromatic point sources + grey environment image.
-#
-#        Σ_k f_k·α_k·V_k  +  f_env·β·V_env
-# V_tot = -------------------------------------------
-#        Σ_k f_k·α_k  +  f_bg·α_bg  +  f_env·β
-#
-# where α_k  = (λ/λ₀)^(-dindex_k)     (per-source chromatic scaling)
-#       α_bg = (λ/λ₀)^(-4)             (Rayleigh–Jeans background)
-#       β    = (λ/λ₀)^(d_env)           (environment power law)
-#       f_env= 1 - Σ_k f_k - f_bg
-#
-# Per-source parameters (5 each):
-#   flux_k, dindex_k, ra_k (mas), dec_k (mas), diam_k (mas)
-#
-# Global parameters (3):
-#   f_bg, d_env, λ₀  (last is fixed)
-#
-# Total nparams = 5*nsources + 3
-# ---------------------------------------------------------------------------
-
-const _MAS2RAD_SPARCO = π / (180.0 * 3600.0 * 1000.0)
-
-function _sparco_multi_model(params, nsources, x_img, ftplan, data)
-    nparams = 5*nsources + 3
-    λ0 = params[nparams]        # reference wavelength (fixed)
-    f_bg  = params[nparams-2]
-    d_env = params[nparams-1]
-    λ  = data.uv_lam
-    λr = λ ./ λ0
-
-    # Background and environment chromatic scaling
-    α_bg = λr.^(-4.0)
-    β    = λr.^(d_env)
-
-    # Accumulate source contributions
-    nuv = length(λ)
-    sum_fα   = f_bg .* α_bg                      # denominator accumulator
-    sum_fαV  = zeros(ComplexF64, nuv)             # numerator accumulator
-
-    Vsources = Vector{Vector{ComplexF64}}(undef, nsources)
-    αsources = Vector{Vector{Float64}}(undef, nsources)
-    fluxsources = Vector{Vector{Float64}}(undef, nsources)
-
-    u = data.uv[1,:]
-    v = data.uv[2,:]
-    for k in 1:nsources
-        off = 5*(k-1)
-        fk     = params[off+1]
-        dindex = params[off+2]
-        ra     = params[off+3]   # mas
-        dec    = params[off+4]   # mas
-        diam   = params[off+5]   # mas
-
-        αk = λr.^(-dindex)
-        Vud = visibility_ud([diam], data.uv)
-        phase = @. -2π * _MAS2RAD_SPARCO * (u * ra + v * dec)
-        Vk = Vud .* cis.(phase)
-
-        αsources[k] = αk
-        Vsources[k] = Vk
-        fαk = fk .* αk
-        fluxsources[k] = fαk
-        sum_fα  .+= fαk
-        sum_fαV .+= fαk .* Vk
-    end
-
-    # Environment contribution
-    f_env_scalar = 1.0 - sum(params[5*(j-1)+1] for j in 1:nsources) - f_bg
-    fluxenv = f_env_scalar .* β
-    Venv = image_to_vis(x_img, ftplan[1])
-    sum_fαV .+= fluxenv .* Venv
-    sum_fα  .+= fluxenv
-
-    cvis_model = sum_fαV ./ sum_fα
-    imratio = fluxenv ./ sum_fα
-
-    return (; cvis_model, Venv, Vsources, αsources, fluxsources, α_bg, β,
-              fluxenv, f_env_scalar, sum_fαV, sum_fα, imratio, λr, u, v)
-end
-
-"""
-    chi2_sparco_multi_f(x, params, nsources, ftplan, data; kwargs...)
-
-Compute chi-squared for the multi-source SPARCO model (forward only, no gradient).
-`params` layout: 5 per source `[flux, dindex, ra, dec, diam]` + 3 global `[f_bg, d_env, λ₀]`.
-"""
-function chi2_sparco_multi_f(x::AbstractMatrix{<:AbstractFloat}, params::AbstractVector{<:AbstractFloat},
-        nsources::Int, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata;
-        verb=true, weights=[1.0,1.0,1.0], vonmises=false)
-    m = _sparco_multi_model(params, nsources, x, ftplan, data)
-    v2_model = vis_to_v2(m.cvis_model, data.indx_v2)
-    t3_model, t3amp_model, t3phi_model = vis_to_t3(m.cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
-    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
-    if (weights[1]>0) && (data.nv2>0)
-        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2
-    end
-    if (weights[2]>0) && (data.nt3amp>0)
-        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2
-    end
-    if (weights[3]>0) && (data.nt3phi>0)
-        if !vonmises
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2
-        else
-            chi2_t3phi = sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) .+ data.t3phi_vonmises_chi2_offset)
-        end
-    end
-    if verb
-        printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
-        printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
-        printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
-        printstyled(@sprintf("Flux: %.4f ", sum(x)), color=:normal)
-    end
-    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
-end
-
-"""
-    optimize_sparco_multi_parameters(params_start, nsources, x, ft, data; kwargs...)
-
-Optimize multi-source SPARCO parameters with the image held fixed.
-Uses NelderMead (gradient-free). Returns `(minchi2, params_opt, ret)`.
-"""
-function optimize_sparco_multi_parameters(params_start, nsources::Int,
-        x::AbstractMatrix{<:AbstractFloat}, ft, data;
-        weights=[1.0,1.0,1.0], lb=nothing, ub=nothing)
-    # Default bounds: per source [flux 0-1, dindex -20..20, ra -500..500, dec -500..500, diam 0..50]
-    #                 global [f_bg 0..1, d_env -20..20]   (λ₀ is fixed)
-    nfree = 5*nsources + 2  # exclude λ₀
-    if lb === nothing
-        lb = Float64[]
-        for _ in 1:nsources
-            append!(lb, [0.0, -20.0, -500.0, -500.0, 0.0])
-        end
-        append!(lb, [0.0, -20.0])
-    end
-    if ub === nothing
-        ub = Float64[]
-        for _ in 1:nsources
-            append!(ub, [1.0, 20.0, 500.0, 500.0, 50.0])
-        end
-        append!(ub, [1.0, 20.0])
-    end
-    λ0 = params_start[end]
-    f_params = (p, _)->chi2_sparco_multi_f(x, [p; λ0], nsources, ft, data; verb=false, weights=weights)
-    optimizer = Opt(:LN_NELDERMEAD, nfree)
-    min_objective!(optimizer, f_params)
-    lower_bounds!(optimizer, lb)
-    upper_bounds!(optimizer, ub)
-    minchi2, params_opt, ret = optimize(optimizer, params_start[1:nfree])
-    return minchi2, [params_opt; λ0], ret
-end
-
-function chi2_sparco_multi_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:AbstractFloat},
-        ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nsources::Int, nparams::Int;
-        verb=true, weights=[1.0,1.0,1.0], vonmises=false)
-    params = x[1:nparams]
-    nx = Int(sqrt(length(x)-nparams))
-    x_img = reshape(x[nparams+1:end], nx, nx)
-
-    m = _sparco_multi_model(params, nsources, x_img, ftplan, data)
-    v2_model = vis_to_v2(m.cvis_model, data.indx_v2)
-    t3_model, t3amp_model, t3phi_model = vis_to_t3(m.cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
-
-    # Chi2 + image gradient (same structure as single-source SPARCO)
-    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
-    g_v2 = 0.0; g_t3amp = 0.0; g_t3phi = 0.0
-    if (weights[1]>0) && (data.nv2>0)
-        chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2
-        g_v2 = real(adjoint(ftplan[3])*(4*((v2_model-data.v2)./data.v2_err.^2).*m.cvis_model[data.indx_v2].*m.imratio[data.indx_v2]))
-    end
-    if (weights[2]>0) && (data.nt3amp>0)
-        chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2
-        dT3 = 2.0*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
-        g_t3amp = real(adjoint(ftplan[4])*(dT3.*m.cvis_model[data.indx_t3_1].*m.imratio[data.indx_t3_1]./abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_2]).*abs.(m.cvis_model[data.indx_t3_3]))) +
-                  real(adjoint(ftplan[5])*(dT3.*m.cvis_model[data.indx_t3_2].*m.imratio[data.indx_t3_2]./abs.(m.cvis_model[data.indx_t3_2]).*abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_3]))) +
-                  real(adjoint(ftplan[6])*(dT3.*m.cvis_model[data.indx_t3_3].*m.imratio[data.indx_t3_3]./abs.(m.cvis_model[data.indx_t3_3]).*abs.(m.cvis_model[data.indx_t3_1]).*abs.(m.cvis_model[data.indx_t3_2])))
-    end
-    if (weights[3]>0) && (data.nt3phi>0)
-        if !vonmises
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2
-            dT3 = -360.0/pi*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
-        else
-            chi2_t3phi = sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) .+ data.t3phi_vonmises_chi2_offset)
-            dT3 = -2.0*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi)/180*pi)
-        end
-        g_t3phi = imag(adjoint(ftplan[4])*(dT3./abs2.(m.cvis_model[data.indx_t3_1]).*m.cvis_model[data.indx_t3_1].*m.imratio[data.indx_t3_1]) +
-                       adjoint(ftplan[5])*(dT3./abs2.(m.cvis_model[data.indx_t3_2]).*m.cvis_model[data.indx_t3_2].*m.imratio[data.indx_t3_2]) +
-                       adjoint(ftplan[6])*(dT3./abs2.(m.cvis_model[data.indx_t3_3]).*m.cvis_model[data.indx_t3_3].*m.imratio[data.indx_t3_3]))
-    end
-    if verb
-        printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
-        printstyled(@sprintf("T3A: %.2f ", chi2_t3amp/data.nt3amp), color=:blue)
-        printstyled(@sprintf("T3P: %.2f ", chi2_t3phi/data.nt3phi), color=:green)
-        printstyled(@sprintf("Flux: %.4f ", sum(x_img)), color=:normal)
-    end
-
-    # Parameter gradients via quotient rule
-    pgkw = (; weights, vonmises)
-    logλr = log.(m.λr)
-
-    for k in 1:nsources
-        off = 5*(k-1)
-        fk     = params[off+1]
-        dindex = params[off+2]
-        ra     = params[off+3]
-        dec    = params[off+4]
-        diam   = params[off+5]
-        αk     = m.αsources[k]
-        Vk     = m.Vsources[k]
-        fαk    = m.fluxsources[k]
-
-        # ∂/∂fk: affects both source k and f_env (= 1 - Σf - fbg)
-        du_dfk = αk .* Vk .- m.β .* m.Venv         # d(numerator)/dfk
-        dv_dfk = αk .- m.β                           # d(denominator)/dfk
-        dcvis_dfk = (du_dfk .* m.sum_fα .- m.sum_fαV .* dv_dfk) ./ (m.sum_fα.^2)
-        g[off+1] = _sparco_param_grad(dcvis_dfk, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-
-        # ∂/∂dindex_k
-        du_dind = -logλr .* fαk .* Vk
-        dv_dind = -logλr .* fαk
-        dcvis_dind = (du_dind .* m.sum_fα .- m.sum_fαV .* dv_dind) ./ (m.sum_fα.^2)
-        g[off+2] = _sparco_param_grad(dcvis_dind, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-
-        # ∂/∂ra_k
-        dphase_dra = @. -2π * _MAS2RAD_SPARCO * m.u
-        dVk_dra = Vk .* (im .* dphase_dra)
-        dcvis_dra = (fαk .* dVk_dra) ./ m.sum_fα
-        g[off+3] = _sparco_param_grad(dcvis_dra, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-
-        # ∂/∂dec_k
-        dphase_ddec = @. -2π * _MAS2RAD_SPARCO * m.v
-        dVk_ddec = Vk .* (im .* dphase_ddec)
-        dcvis_ddec = (fαk .* dVk_ddec) ./ m.sum_fα
-        g[off+4] = _sparco_param_grad(dcvis_ddec, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-
-        # ∂/∂diam_k
-        dVud = dvisibility_ud([diam], data.uv)
-        phase = @. -2π * _MAS2RAD_SPARCO * (m.u * ra + m.v * dec)
-        dVk_dD = dVud .* cis.(phase)
-        dcvis_dD = (fαk .* dVk_dD) ./ m.sum_fα
-        g[off+5] = _sparco_param_grad(dcvis_dD, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-    end
-
-    # ∂/∂f_bg
-    goff = 5*nsources
-    du_dfbg = .- m.β .* m.Venv                       # f_env decreases
-    dv_dfbg = m.α_bg .- m.β
-    dcvis_dfbg = (du_dfbg .* m.sum_fα .- m.sum_fαV .* dv_dfbg) ./ (m.sum_fα.^2)
-    g[goff+1] = _sparco_param_grad(dcvis_dfbg, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-
-    # ∂/∂d_env
-    du_denv = logλr .* m.fluxenv .* m.Venv
-    dv_denv = logλr .* m.fluxenv
-    dcvis_denv = (du_denv .* m.sum_fα .- m.sum_fαV .* dv_denv) ./ (m.sum_fα.^2)
-    g[goff+2] = _sparco_param_grad(dcvis_denv, m.cvis_model, v2_model, t3_model, t3amp_model, t3phi_model, data; pgkw...)
-
-    # λ₀ is fixed
-    g[goff+3] = 0.0
-
-    # Image pixel gradient
-    g[nparams+1:end] = vec(weights[1]*g_v2 .+ weights[2]*g_t3amp .+ weights[3]*g_t3phi)
-    return weights[1]*chi2_v2 + weights[2]*chi2_t3amp + weights[3]*chi2_t3phi
-end
-
-function crit_sparco_multi_fg(x::AbstractVector{<:AbstractFloat}, g::AbstractVector{<:AbstractFloat},
-        ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata, nsources::Int, nparams::Int;
-        weights=[1.0,1.0,1.0], printcolor=:normal, regularizers=[], verb=true, vonmises=false)
-    chi2 = chi2_sparco_multi_fg(x, g, ftplan, data, nsources, nparams, weights=weights, verb=verb, vonmises=vonmises)
-    nx = Int(sqrt(length(x)-nparams))
-    reg_g = zeros(eltype(x), nx, nx)
-    reg_f = regularization(reshape(x[nparams+1:end], nx, nx), reg_g, regularizers=regularizers, printcolor=printcolor, verb=verb)
-    g[nparams+1:end] += vec(reg_g)
-    # Flux-normalization correction for image gradient
-    flux = sum(x[nparams+1:end])
-    g[nparams+1:end] = (g[nparams+1:end] .- sum(vec(x[nparams+1:end]).*g[nparams+1:end]) / flux) / flux
-    return chi2 + reg_f
-end
-
-"""
-    reconstruct_sparco_multi(x_start, params_start, nsources, data, ft; kwargs...)
-
-Multi-source SPARCO image reconstruction with N chromatic point sources.
-Jointly optimizes `[params; image_pixels]` via VMLMB.
-Returns `(params_final, x_final)`.
-"""
-function reconstruct_sparco_multi(x_start::AbstractMatrix{<:AbstractFloat},
-        params_start::AbstractVector{<:AbstractFloat}, nsources::Int,
-        data::OIdata, ft; printcolor=:normal, verb=false, maxiter=100,
-        regularizers=[], weights=[1.0,1.0,1.0], vonmises=false,
-        ftol=(0,1e-8), xtol=(0,1e-8), gtol=(0,1e-8))
-    nparams = length(params_start)
-    crit = (x,g)->crit_sparco_multi_fg(x, g, ft, data, nsources, nparams,
-        regularizers=regularizers, verb=verb, weights=weights, vonmises=vonmises)
-    sol = OptimPackNextGen.vmlmb(crit, [params_start;vec(x_start)], verb=verb,
-        lower=0, maxiter=maxiter, blmvm=false, xtol=xtol, ftol=ftol, gtol=gtol)
-    return (sol[1:nparams], reshape(sol[nparams+1:end], size(x_start)))
+function optimize_sparco_multi_parameters(args...; kwargs...)
+    Base.depwarn("`optimize_sparco_multi_parameters` is deprecated. Use `optimize_sparco_flat_parameters` instead.", :optimize_sparco_multi_parameters)
+    error("optimize_sparco_multi_parameters has been removed. Use optimize_sparco_flat_parameters with a flat model dict.")
 end
 
 # if Pkg.installed("Wavelets") !=nothing
@@ -2777,3 +2298,40 @@ end
 #     return tv_f
 #   end
 #   end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _backprop_image_gradient!: adjoint image gradient with flux normalization.
+#
+# Handles DFT matrices, single NFFT plans, and vector-of-NFFTPlan.
+# Extracted from image_to_chi2_fg's flux-correction logic.
+# ─────────────────────────────────────────────────────────────────────────────
+
+function _backprop_image_gradient!(g_image::AbstractMatrix, g_cvis::AbstractVector{<:Complex},
+                                   image::AbstractMatrix, ft, scale::Real=1.0;
+                                   accumulate::Bool=false)
+    flux = sum(image)
+    if ft isa AbstractMatrix{<:Complex}      # DFT matrix
+        g_raw = reshape(scale .* real.(transpose(ft) * g_cvis), size(image))
+    elseif ft isa AbstractVector{<:NFFTPlan}  # vector of NFFT plans
+        g_raw = scale .* real.(adjoint(ft[1]) * conj.(g_cvis))
+    elseif ft isa NFFTPlan                    # single NFFT plan
+        g_raw = scale .* real.(adjoint(ft) * conj.(g_cvis))
+    else
+        error("Unsupported Fourier transform type: $(typeof(ft))")
+    end
+    # Flux normalization correction: ∂chi2/∂x_img where image = x_img / sum(x_img)
+    g_norm = (g_raw .- sum(g_raw .* image / flux)) ./ flux
+    if accumulate
+        g_image .+= g_norm
+    else
+        g_image .= g_norm
+    end
+    return g_image
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# model_and_image_to_chi2_fg: monochromatic variant is in sparco_flat.jl
+# (moved there so it can use _eval_W / _jacobian_W for w_name support).
+# ─────────────────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@
 | `model_to_chi2_fg(model, x, data)` | Compute chi² + gradient (alias: `chi2_flat_fg`) |
 | `model_to_image(model, x; nx, pixsize)` | Synthesize a model image via inverse FFT |
 | `model_to_sed(model, x, wl_grid)` | Compute spectral energy distribution |
+| `model_to_flux(model, x; wl)` | Total flux at zero baseline: `real(V(0,0))` |
 | `resample_data(data)` | Bootstrap resample data (add Gaussian noise from error bars) |
 
 ```@docs
@@ -36,6 +37,7 @@ model_to_chi2
 model_to_chi2_fg
 model_to_image
 model_to_sed
+model_to_flux
 resample_data
 ```
 

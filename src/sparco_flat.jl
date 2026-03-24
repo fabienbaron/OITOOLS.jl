@@ -21,6 +21,40 @@
 
 using Printf, LinearAlgebra, NLopt
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Standard SPARCO model templates
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Star (point source) + resolved background + grey environment image.
+# Chromatic flux fractions:
+#   star,f = star,f0 · (λ/λ0)^(-star,di) / D
+#   bg,f   = bg,f0   · (λ/λ0)^(-4)       / D       (Rayleigh-Jeans)
+#   W      = (1 - star,f0 - bg,f0) · (λ/λ0)^(d_env) / D
+# where D = sum of all numerators (total flux normalization).
+
+const _SPARCO_EXPRS = Dict{String,Any}(
+    "D" => "\$star,f0 * (\$WL/\$wl0)^(-\$star,di) + " *
+           "\$bg,f0 * (\$WL/\$wl0)^(-4) + " *
+           "(1 - \$star,f0 - \$bg,f0) * (\$WL/\$wl0)^(\$d_env)",
+    "star,f" => "\$star,f0 * (\$WL/\$wl0)^(-\$star,di) / \$D",
+    "bg,f"   => "\$bg,f0 * (\$WL/\$wl0)^(-4) / \$D",
+    "W"      => "(1 - \$star,f0 - \$bg,f0) * (\$WL/\$wl0)^(\$d_env) / \$D",
+    "bg,resolved" => true,
+)
+
+const _SPARCO_DEFAULTS = Dict{String,Any}(
+    "wl0" => 1.6e-6, "star,f0" => 0.5, "star,di" => 4.0,
+    "bg,f0" => 0.0, "d_env" => 0.0,
+)
+
+const _SPARCO_FREE_PARAMS          = ["star,f0", "bg,f0", "d_env"]
+const _SPARCO_FREE_PARAMS_FREE_DI  = ["star,f0", "bg,f0", "d_env", "star,di"]
+
+const _SPARCO_LB = Dict("star,f0" => 0.0, "bg,f0" => 0.0, "d_env" => -20.0, "star,di" => -20.0)
+const _SPARCO_UB = Dict("star,f0" => 1.0, "bg,f0" => 1.0, "d_env" =>  20.0, "star,di" =>  20.0)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,106 +204,195 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
     # Combined Jacobian for parameters: ∂V_total/∂params = J_model + V_image ⊙ J_W
     J_total = J_model .+ V_image .* J_W   # (nUV, nparams) broadcasting
 
-    # ── Observables ───────────────────────────────────────────────────────────
-    v2_model = vis_to_v2(V_total, data.indx_v2)
-    t3, t3amp_model, t3phi_model = vis_to_t3(V_total, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+    # ── Chi2 + adjoint source ─────────────────────────────────────────────────
+    w = _pad_weights(weights)
+    chi2, g_cvis = cvis_to_chi2_fg(V_total, data; weights=w, vonmises=vonmises)
 
-    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
+    # ── Parameter gradient ────────────────────────────────────────────────────
+    g[1:nparams] = real.(transpose(J_total) * g_cvis)
 
-    # Parameter gradient (accumulated per-observable, matching chi2_flat_fg)
-    g_params = zeros(Float64, nparams)
-
-    # ── V2 ────────────────────────────────────────────────────────────────────
-    g_v2 = 0.0
-    if (weights[1] > 0) && (data.nv2 > 0)
-        r_v2 = (v2_model .- data.v2) ./ data.v2_err.^2
-        chi2_v2 = sum(r_v2 .* (v2_model .- data.v2))
-
-        # Parameter gradient: g += 4 Re(J^T * (r_v2 .* conj(V)))
-        rhs = r_v2 .* conj.(V_total[data.indx_v2])
-        g_params .+= weights[1] .* 4 .* real.(transpose(J_total[data.indx_v2, :]) * rhs)
-
-        # Image gradient via NFFT adjoint
-        g_v2 = real(adjoint(ftplan[3]) * (4 .* r_v2 .* V_total[data.indx_v2] .* W[data.indx_v2]))
-    end
-
-    # ── T3amp ─────────────────────────────────────────────────────────────────
-    g_t3amp = 0.0
-    if (weights[2] > 0) && (data.nt3amp > 0)
-        r_t3amp = 2.0 .* (t3amp_model .- data.t3amp) ./ data.t3amp_err.^2
-        chi2_t3amp = sum(r_t3amp .* (t3amp_model .- data.t3amp)) / 2
-
-        V1 = V_total[data.indx_t3_1]; V2c = V_total[data.indx_t3_2]; V3 = V_total[data.indx_t3_3]
-        a1 = abs.(V1); a2 = abs.(V2c); a3 = abs.(V3)
-        ε = eps(Float64)
-        safe1 = max.(a1, ε); safe2 = max.(a2, ε); safe3 = max.(a3, ε)
-
-        # Parameter gradient: g += Re(Σ_k J^T[t3_k,:] * rhs_k)
-        rhs1 = r_t3amp .* conj.(V1) ./ safe1 .* a2 .* a3
-        rhs2 = r_t3amp .* conj.(V2c) ./ safe2 .* a1 .* a3
-        rhs3 = r_t3amp .* conj.(V3) ./ safe3 .* a1 .* a2
-        g_params .+= weights[2] .* real.(
-            transpose(J_total[data.indx_t3_1, :]) * rhs1 .+
-            transpose(J_total[data.indx_t3_2, :]) * rhs2 .+
-            transpose(J_total[data.indx_t3_3, :]) * rhs3)
-
-        # Image gradient via NFFT adjoint
-        g_t3amp = real(adjoint(ftplan[4]) * (r_t3amp .* V1 .* W[data.indx_t3_1] ./ safe1 .* a2 .* a3)) +
-                  real(adjoint(ftplan[5]) * (r_t3amp .* V2c .* W[data.indx_t3_2] ./ safe2 .* a1 .* a3)) +
-                  real(adjoint(ftplan[6]) * (r_t3amp .* V3 .* W[data.indx_t3_3] ./ safe3 .* a1 .* a2))
-    end
-
-    # ── T3phi ─────────────────────────────────────────────────────────────────
-    g_t3phi = 0.0
-    if (weights[3] > 0) && (data.nt3phi > 0)
-        V1 = V_total[data.indx_t3_1]; V2c = V_total[data.indx_t3_2]; V3 = V_total[data.indx_t3_3]
-
-        if !vonmises
-            dphi = mod360(t3phi_model .- data.t3phi)
-            chi2_t3phi = norm(dphi ./ data.t3phi_err)^2
-            r_t3phi = (360.0 / π) .* dphi ./ data.t3phi_err.^2
-        else
-            dphi_rad = (t3phi_model .- data.t3phi) .* (π / 180.0)
-            chi2_t3phi = sum(-2 .* data.t3phi_vonmises_err .* cos.(dphi_rad) .+ data.t3phi_vonmises_chi2_offset)
-            r_t3phi = 2.0 .* data.t3phi_vonmises_err .* sin.(dphi_rad)
-        end
-
-        ε = eps(Float64)
-        safe1 = max.(abs2.(V1), ε)
-        safe2 = max.(abs2.(V2c), ε)
-        safe3 = max.(abs2.(V3), ε)
-
-        # Parameter gradient: g += Im(Σ_k J^T[t3_k,:] * rhs_k)
-        rhs1 = r_t3phi .* conj.(V1) ./ safe1
-        rhs2 = r_t3phi .* conj.(V2c) ./ safe2
-        rhs3 = r_t3phi .* conj.(V3) ./ safe3
-        g_params .+= weights[3] .* imag.(
-            transpose(J_total[data.indx_t3_1, :]) * rhs1 .+
-            transpose(J_total[data.indx_t3_2, :]) * rhs2 .+
-            transpose(J_total[data.indx_t3_3, :]) * rhs3)
-
-        # Image gradient via NFFT adjoint (SPARCO convention)
-        dT3 = .-r_t3phi   # sign flip for NFFT adjoint convention
-        g_t3phi = imag(adjoint(ftplan[4]) * (dT3 ./ safe1 .* V1 .* W[data.indx_t3_1]) +
-                       adjoint(ftplan[5]) * (dT3 ./ safe2 .* V2c .* W[data.indx_t3_2]) +
-                       adjoint(ftplan[6]) * (dT3 ./ safe3 .* V3 .* W[data.indx_t3_3]))
-    end
+    # ── Image gradient via NFFT adjoint ───────────────────────────────────────
+    # Identity: real(DFTᵀ · g_cvis) = real(NFFT^H · conj(g_cvis))
+    g[nparams+1:end] = vec(real.(adjoint(ftplan[1]) * conj.(W .* g_cvis)))
 
     # ── Verbose output ────────────────────────────────────────────────────────
     if verb
-        printstyled(@sprintf("V2: %.2f ", chi2_v2 / data.nv2), color=:red)
-        printstyled(@sprintf("T3A: %.2f ", chi2_t3amp / data.nt3amp), color=:blue)
-        printstyled(@sprintf("T3P: %.2f ", chi2_t3phi / data.nt3phi), color=:green)
+        t = _chi2_terms(V_total, data, w, vonmises)
+        printstyled(@sprintf("V2: %.2f ", t.chi2_v2 / data.nv2), color=:red)
+        printstyled(@sprintf("T3A: %.2f ", t.chi2_t3amp / data.nt3amp), color=:blue)
+        printstyled(@sprintf("T3P: %.2f ", t.chi2_t3phi / data.nt3phi), color=:green)
         printstyled(@sprintf("Flux: %.4f ", sum(x_img)), color=:normal)
     end
 
-    # ── Assemble gradient ─────────────────────────────────────────────────────
-    g[1:nparams] = g_params
+    return chi2
+end
 
-    # Image gradient: weighted sum of NFFT adjoint contributions
-    g[nparams+1:end] = vec(weights[1] * g_v2 .+ weights[2] * g_t3amp .+ weights[3] * g_t3phi)
 
-    return weights[1] * chi2_v2 + weights[2] * chi2_t3amp + weights[3] * chi2_t3phi
+# ─────────────────────────────────────────────────────────────────────────────
+# model_and_image_to_vis: public convenience wrapper for the SPARCO forward model.
+#
+# Returns a NamedTuple (; V_total, V_model, V_image, W).
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    model_and_image_to_vis(model, params, x_img, ftplan, data; w_name="W")
+
+Compute the combined visibility V_total = V_model + W(λ) · V_image.
+
+Returns a NamedTuple `(; V_total, V_model, V_image, W)`.
+"""
+function model_and_image_to_vis(model::FlatModel,
+                                params::AbstractVector,
+                                x_img::AbstractMatrix,
+                                ftplan::AbstractVector{<:NFFT.NFFTPlan},
+                                data::OIdata;
+                                w_name::String = "W")
+    w_idx = _resolve_w_idx(model, w_name)
+    return _sparco_flat_forward(model, params, x_img, ftplan, data, w_idx)
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# model_and_image_to_chi2_fg: monochromatic variant
+#
+# When w_name is given, uses _eval_W / _jacobian_W for the image weight.
+# When w_name is nothing, falls back to f_env = 1 - V_model(0,0).
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    model_and_image_to_chi2_fg(model, x_params, image, g_image, ft, data::OIdata;
+                                w_name=nothing, weights=[1,1,1], verb=false, vonmises=false)
+
+Hybrid chi2+gradient combining a parametric model with an image (monochromatic).
+
+When `w_name` is provided, the image weight `W(λ)` is evaluated from the named
+model output and `V_total = V_model + W(λ) · V_image`.
+
+When `w_name` is `nothing`, uses the SPARCO flux convention:
+`V_total = (1 - V_model(0,0)) · V_image + V_model`.
+
+Mutates `g_image` in-place. Returns `(chi2, g_params)`.
+"""
+function model_and_image_to_chi2_fg(
+        model::FlatModel, x_params::AbstractVector,
+        image::AbstractMatrix, g_image::AbstractMatrix,
+        ft, data::OIdata;
+        w_name::Union{String,Nothing} = nothing,
+        weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0],
+        verb::Bool = false, vonmises::Bool = false)
+
+    w = _pad_weights(weights)
+
+    # 1. Image → unit-flux cvis
+    cvis_image = image_to_vis(image, ft)
+
+    # 2. Model → cvis + Jacobian
+    wl = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
+    cvis_model, J = eval_model_grad(model, x_params, data.uv; wl=wl)
+
+    if !isnothing(w_name)
+        # Use named W output from model
+        w_idx = _resolve_w_idx(model, w_name)
+        W = _eval_W(model, x_params, wl, w_idx)
+        J_W = _jacobian_W(model, x_params, wl, w_idx)
+        cvis_total = cvis_model .+ W .* cvis_image
+
+        chi2, g_cvis = cvis_to_chi2_fg(cvis_total, data; weights=w, vonmises=vonmises)
+
+        # Image gradient: W * adjoint + flux normalization
+        _backprop_image_gradient!(g_image, W .* g_cvis, image, ft)
+
+        # Parameter gradient: J_total = J_model + cvis_image .* J_W
+        J_total = J .+ cvis_image .* J_W
+        g_params = real.(transpose(J_total) * g_cvis)
+    else
+        # Fallback: f_env = 1 - V_model(0,0)
+        uv_zero = zeros(2, 1)
+        wl_zero = isnothing(wl) ? nothing : [wl[1]]
+        cvis_zero, J_zero = eval_model_grad(model, x_params, uv_zero; wl=wl_zero)
+        f_env = 1.0 - real(cvis_zero[1])
+
+        cvis_total = f_env .* cvis_image .+ cvis_model
+
+        chi2, g_cvis = cvis_to_chi2_fg(cvis_total, data; weights=w, vonmises=vonmises)
+
+        _backprop_image_gradient!(g_image, g_cvis, image, ft, f_env)
+
+        g_params = real.(transpose(J) * g_cvis)
+
+        # f_env gradient chain rule
+        g_f_env = real(sum(cvis_image .* g_cvis))
+        df_env_dx = -real.(vec(J_zero[1, :]))
+        g_params .+= g_f_env .* df_env_dx
+    end
+
+    if verb
+        t = _chi2_terms(cvis_total, data, w, vonmises)
+        _verb_print(t, data, w, chi2)
+    end
+    return chi2, g_params
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# model_and_image_to_chi2_fg: polychromatic variant (power-law grey image)
+#
+# Uses _eval_W / _jacobian_W from this file.
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    model_and_image_to_chi2_fg(model, x_params, image, g_image, ft, data::Vector{<:OIdata};
+                                w_name="W", weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+
+Polychromatic hybrid chi2+gradient for a parametric model + power-law grey image.
+
+A single grey image is modulated by `W(λ)` at each wavelength channel, following
+the SPARCO convention: `V_total(λ) = V_model(λ) + W(λ) · V_image`.
+
+Mutates `g_image` in-place. Returns `(chi2, g_params)`.
+"""
+function model_and_image_to_chi2_fg(
+        model::FlatModel, x_params::AbstractVector,
+        image::AbstractMatrix, g_image::AbstractMatrix,
+        ft, data::Vector{<:OIdata};
+        w_name::String = "W",
+        weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        verb::Bool = false, vonmises::Bool = false)
+
+    w = _pad_weights(weights)
+    nwavs = length(data)
+
+    # Image → unit-flux cvis (single grey image)
+    cvis_image = image_to_vis(image, ft[1])
+
+    w_idx = _resolve_w_idx(model, w_name)
+    chi2 = 0.0
+    g_params = zeros(Float64, length(x_params))
+    g_image .= 0
+
+    for i in 1:nwavs
+        wl_i = data[i].uv_lam
+        V_model_i, J_i = eval_model_grad(model, x_params, data[i].uv; wl=wl_i)
+        W_i = _eval_W(model, x_params, wl_i, w_idx)
+        J_W_i = _jacobian_W(model, x_params, wl_i, w_idx)
+        V_total_i = V_model_i .+ W_i .* cvis_image
+
+        chi2_i, g_cvis_i = cvis_to_chi2_fg(V_total_i, data[i]; weights=w, vonmises=vonmises)
+        chi2 += chi2_i
+
+        # Parameter gradient: J_total = J_model + cvis_image .* J_W
+        J_total_i = J_i .+ cvis_image .* J_W_i
+        g_params .+= real.(transpose(J_total_i) * g_cvis_i)
+
+        # Image gradient: accumulate across channels
+        _backprop_image_gradient!(g_image, W_i .* g_cvis_i, image, ft[1]; accumulate=true)
+    end
+
+    if verb
+        ndof = _ndof(data, w)
+        printstyled(@sprintf("χ²r: %.3f\n", chi2 / ndof), color=:white)
+    end
+    return chi2, g_params
 end
 
 
@@ -368,17 +491,92 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Reconstruction  (VMLMB: joint params + image)
+# Reconstruction  (VMLMB image + NelderMead params, alternating)
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    reconstruct_sparco_flat(x_start, params_start, model, data, ft;
-                            w_name="env,f", regularizers=[], weights=[1,1,1],
-                            maxiter=100, verb=false, vonmises=false, ...)
+    reconstruct_hybrid(x_start, params_start, model, data, ft;
+                              w_name="W", regularizers=[], weights=[1,1,1],
+                              maxiter=200, rounds=5, verb=false, vonmises=false,
+                              params_lower=nothing, params_upper=nothing, ...)
 
 SPARCO image reconstruction using a flat-model parametric component.
 
+Alternates between:
+1. **Image VMLMB**: optimize image pixels with parameters fixed, using
+   `model_and_image_to_chi2_fg` + regularization.
+2. **Parameter NelderMead**: optimize model parameters with the image fixed,
+   using `optimize_sparco_flat_parameters`.
+
+This separation avoids the scale-mismatch problem of jointly optimizing
+parameters and image pixels in a single VMLMB run.
+
 Returns `(params_final, x_final)`.
+"""
+function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
+        params_start::AbstractVector{<:AbstractFloat},
+        model::FlatModel,
+        data::Union{OIdata, Vector{<:OIdata}},
+        ft;
+        w_name::String = "W",
+        printcolor = :normal,
+        verb::Bool = false,
+        maxiter::Int = 200,
+        rounds::Int = 5,
+        regularizers = [],
+        weights = [1.0, 1.0, 1.0],
+        vonmises::Bool = false,
+        params_lower::Union{Nothing, Vector{Float64}} = nothing,
+        params_upper::Union{Nothing, Vector{Float64}} = nothing,
+        ftol = (0, 1e-8),
+        xtol = (0, 1e-8),
+        gtol = (0, 1e-8))
+
+    nx = size(x_start, 1)
+    w = _pad_weights(weights)
+    x_img = copy(x_start)
+    x_params = collect(Float64, params_start)
+
+    for round in 1:rounds
+        # ── Phase 1: VMLMB over image pixels (params fixed) ──────────────
+        g_image = zeros(nx, nx)
+
+        function crit_image(x_flat, g_flat)
+            img = reshape(x_flat, nx, nx)
+            chi2, _ = model_and_image_to_chi2_fg(model, x_params, img, g_image, ft, data;
+                w_name=w_name, weights=w, verb=verb, vonmises=vonmises)
+            reg_g = zeros(nx, nx)
+            reg_f = regularization(img, reg_g; regularizers=regularizers,
+                printcolor=printcolor, verb=verb)
+            g_flat .= vec(g_image .+ reg_g)
+            return chi2 + reg_f
+        end
+
+        x_img_flat = OptimPackNextGen.vmlmb(crit_image, vec(copy(x_img));
+            lower=zeros(nx*nx), upper=fill(Inf, nx*nx),
+            maxiter=maxiter, verb=verb, blmvm=false,
+            xtol=xtol, ftol=ftol, gtol=gtol)
+        x_img = reshape(x_img_flat, nx, nx)
+
+        # ── Phase 2: NelderMead over parameters (image fixed) ────────────
+        # Only for monochromatic data with NFFT plans — use optimize_sparco_flat_parameters
+        if data isa OIdata && ft isa AbstractVector{<:NFFT.NFFTPlan}
+            minchi2, x_params, ret = optimize_sparco_flat_parameters(x_params, model, x_img, ft, data;
+                w_name=w_name, weights=collect(Float64, weights),
+                lb=params_lower, ub=params_upper)
+            if verb
+                @printf("  Round %d param opt: chi2=%.2f  ret=%s\n", round, minchi2, ret)
+            end
+        end
+    end
+
+    return (x_params, x_img)
+end
+
+"""
+    reconstruct_sparco_flat(x_start, params_start, model, data, ft; kwargs...)
+
+Deprecated. Use `reconstruct_hybrid` instead.
 """
 function reconstruct_sparco_flat(x_start::AbstractMatrix{<:AbstractFloat},
         params_start::AbstractVector{<:AbstractFloat},
@@ -416,4 +614,114 @@ function reconstruct_sparco_flat(x_start::AbstractMatrix{<:AbstractFloat},
         xtol=xtol, ftol=ftol, gtol=gtol)
 
     return (sol[1:nparams], reshape(sol[nparams+1:end], size(x_start)))
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# reconstruct_sparco: lean high-level interface
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    reconstruct_sparco(x_start, data, ft;
+                       lambda_ref, star_flux=0.5, bg_flux=0.0,
+                       d_env=0.0, star_di=4.0,
+                       star_spectral_index_fixed=true,
+                       fit_model_first=true,
+                       regularizers=[], weights=[1,1,1],
+                       maxiter=200, rounds=3, verb=false, ...)
+
+High-level SPARCO image reconstruction with the standard star + background + image model.
+
+Builds the flat-model dict internally from the physical parameters, then calls
+`reconstruct_hybrid`.
+
+# Arguments
+- `x_start`:  starting image (nx × nx)
+- `data`:     `OIdata` or `Vector{OIdata}`
+- `ft`:       Fourier transform plans from `setup_nfft`
+- `lambda_ref`:  reference wavelength in metres (required)
+- `star_flux`:   initial stellar flux fraction at λ₀ (default 0.5)
+- `bg_flux`:     initial background flux fraction at λ₀ (default 0.0)
+- `d_env`:       environment spectral index (default 0.0)
+- `star_di`:     stellar spectral index (default 4.0 = Rayleigh-Jeans)
+- `star_spectral_index_fixed`:  fix `star_di` during reconstruction (default `true`)
+- `fit_model_first`:  run a model-only fit before image reconstruction (default `true`)
+
+Returns a named tuple `(params, image, model, free_params, chi2)`.
+"""
+function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
+        data::Union{OIdata, Vector{<:OIdata}},
+        ft;
+        lambda_ref::Real,
+        star_flux::Real = 0.5,
+        bg_flux::Real = 0.0,
+        d_env::Real = 0.0,
+        star_di::Real = 4.0,
+        star_spectral_index_fixed::Bool = true,
+        fit_model_first::Bool = true,
+        weights = [1.0, 1.0, 1.0],
+        regularizers = [],
+        maxiter::Int = 200,
+        rounds::Int = 3,
+        verb::Bool = false,
+        vonmises::Bool = false,
+        printcolor = :normal,
+        ftol = (0, 1e-8),
+        xtol = (0, 1e-8),
+        gtol = (0, 1e-8))
+
+    # Build model dict
+    model_dict = merge(_SPARCO_DEFAULTS, _SPARCO_EXPRS)
+    model_dict["wl0"]     = Float64(lambda_ref)
+    model_dict["star,f0"] = Float64(star_flux)
+    model_dict["bg,f0"]   = Float64(bg_flux)
+    model_dict["d_env"]   = Float64(d_env)
+    model_dict["star,di"] = Float64(star_di)
+
+    free_params = star_spectral_index_fixed ? _SPARCO_FREE_PARAMS : _SPARCO_FREE_PARAMS_FREE_DI
+    model = dict_to_model(model_dict, free_params)
+
+    # Bounds
+    lb = Float64[_SPARCO_LB[k] for k in free_params]
+    ub = Float64[_SPARCO_UB[k] for k in free_params]
+    x_params = Float64[model_dict[k] for k in free_params]
+
+    # Optional model-only fit
+    if fit_model_first
+        data_single = data isa Vector ? data[1] : data
+        if verb
+            printstyled("SPARCO: fitting model parameters first...\n", color=:cyan)
+        end
+        result = fit_model(model_dict, free_params, data_single;
+            weights=[collect(Float64, weights); 0.0; 0.0; 0.0; 0.0],
+            method=:LD_LBFGS,
+            lb=Dict(k => _SPARCO_LB[k] for k in free_params),
+            ub=Dict(k => _SPARCO_UB[k] for k in free_params),
+            maxeval=5000)
+        x_params = result.x_opt
+        if verb
+            println(result)
+        end
+        # Rebuild model with fitted values
+        for (i, k) in enumerate(free_params)
+            model_dict[k] = x_params[i]
+        end
+        model = dict_to_model(model_dict, free_params)
+    end
+
+    # Reconstruct
+    x_params, x_img = reconstruct_hybrid(x_start, x_params, model, data, ft;
+        w_name="W", regularizers=regularizers, weights=weights,
+        maxiter=maxiter, rounds=rounds, verb=verb, vonmises=vonmises,
+        printcolor=printcolor, params_lower=lb, params_upper=ub,
+        ftol=ftol, xtol=xtol, gtol=gtol)
+
+    # Final chi2
+    data_single = data isa Vector ? data[1] : data
+    ft_vec = ft isa AbstractVector{<:NFFT.NFFTPlan} ? ft : ft[1]
+    chi2 = chi2_sparco_flat_f(x_img, x_params, model, ft_vec, data_single;
+        w_name="W", weights=weights, verb=verb)
+
+    return (; params=x_params, image=x_img, model, free_params, chi2,
+              param_names=Dict(free_params[i] => x_params[i] for i in eachindex(free_params)))
 end

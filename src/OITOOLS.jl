@@ -64,7 +64,8 @@ export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, displ
 export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
-       model_to_image, model_to_sed, resample_data
+       model_to_image, model_to_sed, model_to_flux, resample_data
+export cvis_to_chi2_fg, model_and_image_to_chi2_fg
 
 # ── Visibility functions ─────────────────────────────────────────────────────
 export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_alt,
@@ -86,9 +87,12 @@ export scale_regularizers, scale_tv_epsilon
 export lcurve, lcurve_elbow, lcurve_normalize
 
 # ── SPARCO ──────────────────────────────────────────────────────────────────
+export reconstruct_sparco, reconstruct_hybrid
+export reconstruct_sparco_flat, chi2_sparco_flat_f, optimize_sparco_flat_parameters
+export model_and_image_to_vis
+# Deprecated (error on call):
 export reconstruct_sparco_gray, reconstruct_sparco_multi
 export chi2_sparco_multi_f, optimize_sparco_multi_parameters
-export reconstruct_sparco_flat, chi2_sparco_flat_f, optimize_sparco_flat_parameters
 
 # ── BSDMM reconstruction ──────────────────────────────────────────────────
 export reconstruct_bsdmm

@@ -78,13 +78,23 @@ imdisp_multi(x[:,:,1,:]; labels=["Epoch $i" for i in 1:nepochs], pixsize)
 
 For targets with a spectrally-variable environment (e.g. T Tauri discs), the
 SPARCO framework separates a grey circumstellar component from an unresolved
-stellar point source. SPARCO functions work with a single `OIdata`:
+stellar point source:
 
 ```julia
-x = reconstruct_sparco_gray(x0, data[1], ft[1]; regularizers)
+result = reconstruct_sparco(x0, data[1,1], ft;
+    lambda_ref=1.6e-6, star_flux=0.5, weights=[1,0,1],
+    regularizers=[["tv", 1e2]], rounds=3)
 ```
 
-See `example_image_reconstruction_sparco_grey.jl`.
+For custom models, use `reconstruct_hybrid` directly with a flat model dict:
+
+```julia
+model = parse_model(model_dict, free_params)
+params, x_img = reconstruct_hybrid(x0, params0, model, data, ft;
+    w_name="W", regularizers=[["tv", 1e2]], rounds=3)
+```
+
+See `example_image_reconstruction_sparco_grey_v1295_newAPI.jl`.
 
 ## Maximum Entropy reconstruction (OIMEM)
 
@@ -160,4 +170,4 @@ x = reconstruct_bsdmm(x0, data, ft;
 
 See `example_image_reconstruction_bsdmm.jl`.
 
-See the [Imaging](@ref) API reference for full docstrings.
+See the [Imaging (Setup)](@ref) API reference for full docstrings.

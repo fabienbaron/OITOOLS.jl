@@ -218,6 +218,127 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# _accumulate_g_cvis!: compute the complex adjoint source vector from chi2 terms.
+#
+# Convention: g_cvis is defined so that for any linear map V = A * z (z ∈ ℝⁿ):
+#   ∂chi²/∂z = real(Aᵀ * g_cvis)
+#
+# This means phase-type observables (T3phi, visphi) contribute via -im factors,
+# so that imag(Jᵀ * rhs) becomes real(Jᵀ * (-im * rhs)) inside the combined g_cvis.
+#
+# Uses scatter-add loops to correctly handle duplicate T3 indices.
+# ─────────────────────────────────────────────────────────────────────────────
+
+function _accumulate_g_cvis!(g_cvis::AbstractVector{<:Complex},
+                             V::AbstractVector{<:Complex},
+                             t::NamedTuple, data::OIdata,
+                             weights::AbstractVector{<:Real})
+    w = _pad_weights(weights)
+    w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi = w[1], w[2], w[3], w[4], w[5]
+    ε = eps(Float64)
+
+    # V2: g_cvis[k] += w_v2 * 4 * r_v2 * conj(V[k])
+    if w_v2 > 0 && data.nv2 > 0
+        for j in eachindex(t.r_v2)
+            k = data.indx_v2[j]
+            g_cvis[k] += w_v2 * 4 * t.r_v2[j] * conj(V[k])
+        end
+    end
+
+    # T3amp: scatter-add over three legs
+    if w_t3amp > 0 && data.nt3amp > 0
+        a1 = abs.(t.V1); a2 = abs.(t.V2); a3 = abs.(t.V3)
+        safe1 = max.(a1, ε); safe2 = max.(a2, ε); safe3 = max.(a3, ε)
+        for j in eachindex(t.r_t3amp)
+            c1 = t.r_t3amp[j] * conj(t.V1[j]) / safe1[j] * a2[j] * a3[j]
+            c2 = t.r_t3amp[j] * conj(t.V2[j]) / safe2[j] * a1[j] * a3[j]
+            c3 = t.r_t3amp[j] * conj(t.V3[j]) / safe3[j] * a1[j] * a2[j]
+            g_cvis[data.indx_t3_1[j]] += w_t3amp * c1
+            g_cvis[data.indx_t3_2[j]] += w_t3amp * c2
+            g_cvis[data.indx_t3_3[j]] += w_t3amp * c3
+        end
+    end
+
+    # T3phi: scatter-add with -im factor
+    if w_t3phi > 0 && data.nt3phi > 0
+        safe1 = max.(abs2.(t.V1), ε)
+        safe2 = max.(abs2.(t.V2), ε)
+        safe3 = max.(abs2.(t.V3), ε)
+        for j in eachindex(t.r_t3phi)
+            c1 = t.r_t3phi[j] * conj(t.V1[j]) / safe1[j]
+            c2 = t.r_t3phi[j] * conj(t.V2[j]) / safe2[j]
+            c3 = t.r_t3phi[j] * conj(t.V3[j]) / safe3[j]
+            g_cvis[data.indx_t3_1[j]] += -im * w_t3phi * c1
+            g_cvis[data.indx_t3_2[j]] += -im * w_t3phi * c2
+            g_cvis[data.indx_t3_3[j]] += -im * w_t3phi * c3
+        end
+    end
+
+    # Visamp: g_cvis[k] += w_visamp * r_visamp * conj(Vvis) / |Vvis|
+    if w_visamp > 0 && data.nvisamp > 0
+        safe = max.(abs.(t.Vvis), ε)
+        for j in eachindex(t.r_visamp)
+            k = data.indx_vis[j]
+            g_cvis[k] += w_visamp * t.r_visamp[j] * conj(t.Vvis[j]) / safe[j]
+        end
+    end
+
+    # Visphi: g_cvis[k] += -im * w_visphi * r_visphi * conj(Vvis) / |Vvis|²
+    if w_visphi > 0 && data.nvisphi > 0
+        safe = max.(abs2.(t.Vvis), ε)
+        for j in eachindex(t.r_visphi)
+            k = data.indx_vis[j]
+            g_cvis[k] += -im * w_visphi * t.r_visphi[j] * conj(t.Vvis[j]) / safe[j]
+        end
+    end
+
+    return g_cvis
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# cvis_to_chi2_fg: chi2 + complex adjoint source from complex visibilities.
+#
+# Building block for all chi2+gradient code paths (model, image, SPARCO, hybrid).
+# Handles: V², T3amp, T3phi, absolute visamp, absolute visphi.
+# Does NOT handle: flux (separate observable), differential observables (cross-channel).
+#
+# Returns (chi2, g_cvis) where g_cvis satisfies:
+#   g_params = real(Jᵀ · g_cvis)              for any model Jacobian J
+#   g_image  = real(DFTᵀ · g_cvis)            for DFT image reconstruction
+#   g_image  = real(NFFT^H · conj(g_cvis))    for NFFT image reconstruction
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    cvis_to_chi2_fg(V, data; weights=[1,1,1,0,0,0,0], vonmises=false)
+        -> (Float64, Vector{ComplexF64})
+
+Compute chi-squared and the complex adjoint source `g_cvis` from complex
+visibilities `V` and interferometric data `data`.
+
+This is the core building block for all gradient-based chi² code paths
+(model fitting, image reconstruction, SPARCO, hybrid model+image).
+It handles per-channel observables: V², T3amp, T3phi, visamp, visphi.
+It does **not** handle flux or differential phase (cross-channel observables).
+
+The adjoint source `g_cvis` satisfies:
+- `g_params = real(Jᵀ · g_cvis)` for any model Jacobian J
+- `g_image  = real(DFTᵀ · g_cvis)` for DFT image reconstruction
+- `g_image  = real(NFFT^H · conj(g_cvis))` for NFFT image reconstruction
+"""
+function cvis_to_chi2_fg(V::AbstractVector{<:Complex}, data::OIdata;
+                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                         vonmises::Bool = false)
+    w = _pad_weights(weights)
+    t = _chi2_terms(V, data, w, vonmises)
+    chi2 = _total_chi2(t, w)
+    g_cvis = zeros(ComplexF64, length(V))
+    _accumulate_g_cvis!(g_cvis, V, t, data, w)
+    return chi2, g_cvis
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # _chi2_flux: compute flux chi2.
 # If flux is calibrated (CALSTAT=C), compare model directly to data.
 # If uncalibrated (CALSTAT=U), fit optimal scaling C = Σ(fm·fd·w) / Σ(fm²·w).
@@ -377,7 +498,7 @@ function chi2_flat_fg(model::FlatModel,
                       vonmises::Bool = false)
 
     w = _pad_weights(weights)
-    w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi, w_flux = w[1], w[2], w[3], w[4], w[5], w[6]
+    w_flux = w[6]
     need_flux = w_flux > 0 && data.nflux > 0
 
     # ── Forward pass + Jacobian ─────────────────────────────────────────────
@@ -397,8 +518,8 @@ function chi2_flat_fg(model::FlatModel,
         model_flux = NaN
     end
 
-    # ── Observable chi2 terms ───────────────────────────────────────────────
-    t    = _chi2_terms(V, data, w, vonmises)
+    # ── Per-channel chi2 + adjoint source ──────────────────────────────────
+    chi2_obs, g_cvis = cvis_to_chi2_fg(V, data; weights=w, vonmises=vonmises)
 
     # ── Flux chi2 ───────────────────────────────────────────────────────────
     chi2_fl = 0.0; C_fl = NaN; r_flux = Float64[]
@@ -407,72 +528,20 @@ function chi2_flat_fg(model::FlatModel,
         chi2_fl = fl.chi2; C_fl = fl.C; r_flux = fl.residual
     end
 
-    chi2 = _total_chi2(t, w; chi2_flux=chi2_fl)
+    chi2 = chi2_obs + w_flux * chi2_fl
 
-    # ── Gradient ────────────────────────────────────────────────────────────
-    nparams = length(x)
-    g = zeros(Float64, nparams)
+    # ── Gradient via single matrix-vector product ──────────────────────────
+    g = real.(transpose(J) * g_cvis)
 
-    # V2: g += 4 Re( Jᵀ[v2_idx,:] · (r_v2 .* conj(V[v2_idx])) )
-    if w_v2 > 0 && data.nv2 > 0
-        rhs   = t.r_v2 .* conj.(V[data.indx_v2])
-        g .+= w_v2 .* 4 .* real.(transpose(J[data.indx_v2, :]) * rhs)
-    end
-
-    # T3amp: g += Re( Σ_k Jᵀ[t3_k,:] · (r_t3amp .* conj(V_k)/|V_k| .* |V_other legs|) )
-    if w_t3amp > 0 && data.nt3amp > 0
-        a1 = abs.(t.V1); a2 = abs.(t.V2); a3 = abs.(t.V3)
-        ε  = eps(Float64)
-        safe1 = max.(a1, ε); safe2 = max.(a2, ε); safe3 = max.(a3, ε)
-        rhs1  = t.r_t3amp .* conj.(t.V1) ./ safe1 .* a2 .* a3
-        rhs2  = t.r_t3amp .* conj.(t.V2) ./ safe2 .* a1 .* a3
-        rhs3  = t.r_t3amp .* conj.(t.V3) ./ safe3 .* a1 .* a2
-        g .+= w_t3amp .* real.(
-            transpose(J[data.indx_t3_1, :]) * rhs1 .+
-            transpose(J[data.indx_t3_2, :]) * rhs2 .+
-            transpose(J[data.indx_t3_3, :]) * rhs3
-        )
-    end
-
-    # T3phi: g += Im( Σ_k Jᵀ[t3_k,:] · (r_t3phi .* conj(V_k) / |V_k|²) )
-    if w_t3phi > 0 && data.nt3phi > 0
-        ε     = eps(Float64)
-        safe1 = max.(abs2.(t.V1), ε)
-        safe2 = max.(abs2.(t.V2), ε)
-        safe3 = max.(abs2.(t.V3), ε)
-        rhs1  = t.r_t3phi .* conj.(t.V1) ./ safe1
-        rhs2  = t.r_t3phi .* conj.(t.V2) ./ safe2
-        rhs3  = t.r_t3phi .* conj.(t.V3) ./ safe3
-        g .+= w_t3phi .* imag.(
-            transpose(J[data.indx_t3_1, :]) * rhs1 .+
-            transpose(J[data.indx_t3_2, :]) * rhs2 .+
-            transpose(J[data.indx_t3_3, :]) * rhs3
-        )
-    end
-
-    # Visamp: g += Re( Jᵀ[vis_idx,:] · (r_visamp .* conj(Vvis) / |Vvis|) )
-    if w_visamp > 0 && data.nvisamp > 0
-        ε    = eps(Float64)
-        safe = max.(abs.(t.Vvis), ε)
-        rhs  = t.r_visamp .* conj.(t.Vvis) ./ safe
-        g .+= w_visamp .* real.(transpose(J[data.indx_vis, :]) * rhs)
-    end
-
-    # Visphi: g += Im( Jᵀ[vis_idx,:] · (r_visphi .* conj(Vvis) / |Vvis|²) )
-    if w_visphi > 0 && data.nvisphi > 0
-        ε    = eps(Float64)
-        safe = max.(abs2.(t.Vvis), ε)
-        rhs  = t.r_visphi .* conj.(t.Vvis) ./ safe
-        g .+= w_visphi .* imag.(transpose(J[data.indx_vis, :]) * rhs)
-    end
-
-    # Flux: g += 2·C·Σ(r_flux)·Re(J_zero)
-    # C=1 for calibrated flux; for uncalibrated, C_flux treated as constant
+    # Flux gradient
     if need_flux
         g .+= w_flux .* 2.0 .* C_fl .* sum(r_flux) .* real.(vec(J_zero))
     end
 
-    verb && _verb_print(t, data, w, chi2; chi2_flux=chi2_fl, C_flux=C_fl)
+    if verb
+        t = _chi2_terms(V, data, w, vonmises)
+        _verb_print(t, data, w, chi2; chi2_flux=chi2_fl, C_flux=C_fl)
+    end
     return chi2, g
 end
 
@@ -594,7 +663,7 @@ function chi2_flat_fg(model::FlatModel,
                       vonmises::Bool = false)
 
     w = _pad_weights(weights)
-    w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi, w_flux, w_dp = w[1], w[2], w[3], w[4], w[5], w[6], w[7]
+    w_flux, w_dp = w[6], w[7]
     nwavs = length(data)
     nparams = length(x)
 
@@ -631,64 +700,9 @@ function chi2_flat_fg(model::FlatModel,
     g = zeros(Float64, nparams)
 
     for i in 1:nwavs
-        V = cvis[i]
-        J = Jac[i]
-        d = data[i]
-        t = _chi2_terms(V, d, w, vonmises)
-        chi2 += _total_chi2(t, w)
-
-        # V2 gradient
-        if w_v2 > 0 && d.nv2 > 0
-            rhs = t.r_v2 .* conj.(V[d.indx_v2])
-            g .+= w_v2 .* 4 .* real.(transpose(J[d.indx_v2, :]) * rhs)
-        end
-
-        # T3amp gradient
-        if w_t3amp > 0 && d.nt3amp > 0
-            a1 = abs.(t.V1); a2 = abs.(t.V2); a3 = abs.(t.V3)
-            ε = eps(Float64)
-            safe1 = max.(a1, ε); safe2 = max.(a2, ε); safe3 = max.(a3, ε)
-            rhs1 = t.r_t3amp .* conj.(t.V1) ./ safe1 .* a2 .* a3
-            rhs2 = t.r_t3amp .* conj.(t.V2) ./ safe2 .* a1 .* a3
-            rhs3 = t.r_t3amp .* conj.(t.V3) ./ safe3 .* a1 .* a2
-            g .+= w_t3amp .* real.(
-                transpose(J[d.indx_t3_1, :]) * rhs1 .+
-                transpose(J[d.indx_t3_2, :]) * rhs2 .+
-                transpose(J[d.indx_t3_3, :]) * rhs3
-            )
-        end
-
-        # T3phi gradient
-        if w_t3phi > 0 && d.nt3phi > 0
-            ε = eps(Float64)
-            safe1 = max.(abs2.(t.V1), ε)
-            safe2 = max.(abs2.(t.V2), ε)
-            safe3 = max.(abs2.(t.V3), ε)
-            rhs1 = t.r_t3phi .* conj.(t.V1) ./ safe1
-            rhs2 = t.r_t3phi .* conj.(t.V2) ./ safe2
-            rhs3 = t.r_t3phi .* conj.(t.V3) ./ safe3
-            g .+= w_t3phi .* imag.(
-                transpose(J[d.indx_t3_1, :]) * rhs1 .+
-                transpose(J[d.indx_t3_2, :]) * rhs2 .+
-                transpose(J[d.indx_t3_3, :]) * rhs3
-            )
-        end
-
-        # Visamp gradient
-        if w_visamp > 0 && d.nvisamp > 0
-            ε = eps(Float64)
-            safe = max.(abs.(t.Vvis), ε)
-            rhs = t.r_visamp .* conj.(t.Vvis) ./ safe
-            g .+= w_visamp .* real.(transpose(J[d.indx_vis, :]) * rhs)
-        end
-
-        # Visphi gradient (absolute)
-        if w_visphi > 0 && d.nvisphi > 0
-            ε = eps(Float64)
-            safe = max.(abs2.(t.Vvis), ε)
-            rhs = t.r_visphi .* conj.(t.Vvis) ./ safe
-            g .+= w_visphi .* imag.(transpose(J[d.indx_vis, :]) * rhs)
-        end
+        chi2_i, g_cvis_i = cvis_to_chi2_fg(cvis[i], data[i]; weights=w, vonmises=vonmises)
+        chi2 += chi2_i
+        g .+= real.(transpose(Jac[i]) * g_cvis_i)
     end
 
     # ── Flux chi2 + gradient (across all channels) ─────────────────────────

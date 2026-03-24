@@ -41,8 +41,9 @@ from inside that directory. Data files live in `demos/data/`.
 | `example_image_reconstruction_regularization_weight.jl` | Regularization weight selection |
 | `example_image_reconstruction_lcurve.jl` | L-curve for regularization weight |
 | `example_image_reconstruction_support.jl` | Support-constrained reconstruction |
-| `example_image_reconstruction_sparco_grey.jl` | SPARCO grey reconstruction |
-| `example_image_reconstruction_sparco_grey_v1295.jl` | SPARCO grey for V1295 Aql |
+| `example_image_reconstruction_sparco_grey.jl` | SPARCO grey reconstruction (legacy) |
+| `example_image_reconstruction_sparco_grey_v1295.jl` | SPARCO grey for V1295 Aql (legacy) |
+| `example_image_reconstruction_sparco_grey_v1295_newAPI.jl` | SPARCO with `reconstruct_sparco` high-level API |
 | `example_image_reconstruction_oimem.jl` | Maximum entropy (BSMEM) reconstruction |
 | `example_image_reconstruction_pigru.jl` | Pi Gru reconstruction |
 | `example_dirty_beam_and_image.jl` | Dirty beam and dirty image computation |

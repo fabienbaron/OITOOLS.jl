@@ -1004,6 +1004,21 @@ function model_to_sed(model::FlatModel,
 end
 
 
+"""
+    model_to_flux(model, x; wl=nothing)
+
+Total flux of the model at zero baseline: `real(V(0,0))`.
+
+For polychromatic models, pass `wl` as a scalar or 1-element vector.
+See also `model_to_sed` for the full spectral energy distribution.
+"""
+function model_to_flux(model::FlatModel, x::AbstractVector; wl=nothing)
+    wl_arg = isnothing(wl) ? nothing : (wl isa Number ? [wl] : wl)
+    V = eval_model(model, x, zeros(2, 1); wl=wl_arg)
+    return real(V[1])
+end
+
+
 const _MAS2RAD_IMG = 2.0626480624709636e8   # 1 rad in mas (same as _MAS2RAD_PM)
 
 """

@@ -166,5 +166,5 @@ See `example_image_reconstruction_bsdmm_polychromatic_v1295aql.jl`.
 
 ## API reference
 
-See the [Imaging](@ref) API reference for full docstrings of
+See the [Imaging (BSDMM)](@ref) API reference for full docstrings of
 `reconstruct_bsdmm`, proximal operators, and regularization norms.
