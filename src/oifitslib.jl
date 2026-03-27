@@ -1,7 +1,6 @@
 # Julia's command line wrapper for John Young's oifitslib library
 # Library available here https://github.com/jsy1001/oifitslib
 
-using Glob
 function oifits_check(;infile::String="")
     if infile==""
         println("Syntax: ")
@@ -17,7 +16,10 @@ function oifits_merge(;outfile::String="", infiles::Union{String, Vector{String}
     if typeof(infiles)==Vector{String}
         infiles_str = join(infiles, " ")
     else
-        infiles_str = join(glob(infiles)," ")
+        dir = dirname(infiles)
+        pat = Regex("^" * replace(basename(infiles), "*" => ".*", "?" => ".") * "\$")
+        d = isempty(dir) ? "." : dir
+        infiles_str = join([joinpath(d, f) for f in readdir(d) if occursin(pat, f)], " ")
     end
     if (infiles=="")||(outfile=="")
         println("Syntax for oifits_merge: ")

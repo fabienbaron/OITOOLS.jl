@@ -1,4 +1,4 @@
-using Statistics,LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, Match, Printf
+using Statistics, LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, Printf
 
 
 
@@ -705,19 +705,31 @@ function regularization(x, reg_g; printcolor = :normal, regularizers=[], verb=tr
     end
     for ireg in regularizers
             temp_g = zeros(eltype(x), size(x))
-            reg_f += @match ireg[1] begin 
-                "centering"   => ireg[2]*reg_centering(x, temp_g; verb)
-                "tv"          => ireg[2]*tv(x,temp_g; verb, ϵ = length(ireg) > 2 ? ireg[3] : 1e-8)
-                "tvsq"        => ireg[2]*tvsq(x,temp_g; verb)
-                "l1l2"        => ireg[2]*l1l2(x,temp_g; verb, α = ireg[3])
-                "l1l2w"       => ireg[2]*l1l2w(x,temp_g; verb)
-                "l1hyp"       => ireg[2]*l1hyp(x,temp_g; verb)
-                "l2sq"        => ireg[2]*l2sq(x,temp_g; verb)
-                "compactness" => ireg[2]*compactness(x,temp_g; verb, w = length(ireg) > 2 ? ireg[3] : nothing)
-                "radialvar"   => ireg[2]*radial_variance(x,temp_g, H=ireg[3], G=ireg[4]; verb)
-                "entropy"     => ireg[2]*entropy(x,temp_g; verb)
-                "support"     => ireg[2]*reg_support(x, prior=ireg[3], temp_g; verb)
-                _             => error("Unknown regularizer")
+            name = ireg[1]
+            reg_f += if name == "centering"
+                ireg[2]*reg_centering(x, temp_g; verb)
+            elseif name == "tv"
+                ireg[2]*tv(x,temp_g; verb, ϵ = length(ireg) > 2 ? ireg[3] : 1e-8)
+            elseif name == "tvsq"
+                ireg[2]*tvsq(x,temp_g; verb)
+            elseif name == "l1l2"
+                ireg[2]*l1l2(x,temp_g; verb, α = ireg[3])
+            elseif name == "l1l2w"
+                ireg[2]*l1l2w(x,temp_g; verb)
+            elseif name == "l1hyp"
+                ireg[2]*l1hyp(x,temp_g; verb)
+            elseif name == "l2sq"
+                ireg[2]*l2sq(x,temp_g; verb)
+            elseif name == "compactness"
+                ireg[2]*compactness(x,temp_g; verb, w = length(ireg) > 2 ? ireg[3] : nothing)
+            elseif name == "radialvar"
+                ireg[2]*radial_variance(x,temp_g, H=ireg[3], G=ireg[4]; verb)
+            elseif name == "entropy"
+                ireg[2]*entropy(x,temp_g; verb)
+            elseif name == "support"
+                ireg[2]*reg_support(x, prior=ireg[3], temp_g; verb)
+            else
+                error("Unknown regularizer: $name")
             end
             reg_g[:,:] += ireg[2]*temp_g
     end
