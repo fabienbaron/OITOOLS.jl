@@ -1703,14 +1703,16 @@ Prints a summary line per file. Passes `filter_bad_data`, `force_full_t3`, and
 `polychromatic` through to `readoifits`.
 """
 function readoifits_multiepochs(oifitsfiles; filter_bad_data=true, force_full_t3=false,
-                                polychromatic=false,
+                                polychromatic=false, warn=true, verbose=true,
                                 T::Type{<:AbstractFloat}=Float64)
-    per_file = [readoifits(f; filter_bad_data, force_full_t3, polychromatic, T) for f in oifitsfiles]
+    per_file = [readoifits(f; filter_bad_data, force_full_t3, polychromatic, warn, verbose, T) for f in oifitsfiles]
     data = hcat(per_file...)   # each is nwav×1, result is nwav×nepochs
-    for i in eachindex(oifitsfiles)
-        println(oifitsfiles[i], "\t MJD: ", data[1,i].mean_mjd,
-                "\t nV2 = ", data[1,i].nv2, "\t nT3amp = ", data[1,i].nt3amp,
-                "\t nT3phi = ", data[1,i].nt3phi)
+    if verbose
+        for i in eachindex(oifitsfiles)
+            println(oifitsfiles[i], "\t MJD: ", data[1,i].mean_mjd,
+                    "\t nV2 = ", data[1,i].nv2, "\t nT3amp = ", data[1,i].nt3amp,
+                    "\t nT3phi = ", data[1,i].nt3phi)
+        end
     end
     return data
 end
