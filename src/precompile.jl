@@ -18,5 +18,6 @@
         model_dict = Dict{String,Any}("c1,ud" => 1.0, "c1,f" => 1.0)
         fm = parse_model(model_dict, ["c1,ud"])
         model_to_chi2(fm, [1.0], data[1,1], verb=false)
+        model_to_obs(fm, [1.0], data[1,1])
     end
 end
