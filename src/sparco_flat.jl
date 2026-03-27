@@ -537,13 +537,16 @@ function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
     x_img = copy(x_start)
     x_params = collect(Float64, params_start)
 
+    # Unwrap ft for mono data: Matrix{Vector{NFFTPlan}} → Vector{NFFTPlan}
+    ft_use = (data isa OIdata && ft isa AbstractMatrix) ? ft[1] : ft
+
     for round in 1:rounds
         # ── Phase 1: VMLMB over image pixels (params fixed) ──────────────
         g_image = zeros(nx, nx)
 
         function crit_image(x_flat, g_flat)
             img = reshape(x_flat, nx, nx)
-            chi2, _ = model_and_image_to_chi2_fg(model, x_params, img, g_image, ft, data;
+            chi2, _ = model_and_image_to_chi2_fg(model, x_params, img, g_image, ft_use, data;
                 w_name=w_name, weights=w, verb=verb, vonmises=vonmises)
             reg_g = zeros(nx, nx)
             reg_f = regularization(img, reg_g; regularizers=regularizers,
@@ -560,8 +563,8 @@ function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
 
         # ── Phase 2: NelderMead over parameters (image fixed) ────────────
         # Only for monochromatic data with NFFT plans — use optimize_sparco_flat_parameters
-        if data isa OIdata && ft isa AbstractVector{<:NFFT.NFFTPlan}
-            minchi2, x_params, ret = optimize_sparco_flat_parameters(x_params, model, x_img, ft, data;
+        if data isa OIdata && ft_use isa AbstractVector{<:NFFT.NFFTPlan}
+            minchi2, x_params, ret = optimize_sparco_flat_parameters(x_params, model, x_img, ft_use, data;
                 w_name=w_name, weights=collect(Float64, weights),
                 lb=params_lower, ub=params_upper)
             if verb
@@ -718,7 +721,8 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
 
     # Final chi2
     data_single = data isa Vector ? data[1] : data
-    ft_vec = ft isa AbstractVector{<:NFFT.NFFTPlan} ? ft : ft[1]
+    ft_vec = ft isa AbstractVector{<:NFFT.NFFTPlan} ? ft :
+             ft isa AbstractMatrix ? ft[1] : ft[1]
     chi2 = chi2_sparco_flat_f(x_img, x_params, model, ft_vec, data_single;
         w_name="W", weights=weights, verb=verb)
 

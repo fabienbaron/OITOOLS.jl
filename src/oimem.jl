@@ -667,6 +667,351 @@ function reconstruct_bsmem(x_start, data::OIdata, ft;
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Polychromatic MaximENT
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    PolyImagingContext
+
+Multi-wavelength wrapper: one `ImagingContext` per spectral channel, with
+bookkeeping for the concatenated data vector used by MaximENT.
+
+Fields
+------
+- `nwav`    : number of wavelength channels
+- `nx`      : image side length (pixels), same for all channels
+- `xyint`   : pixel size [mas], same for all channels
+- `ctxs`    : `Vector{ImagingContext}`, one per channel
+- `ndat_ch` : number of data slots per channel (`npow + 2*nbis`)
+- `offset`  : cumulative data offset; `offset[w]` = sum of ndat_ch[1:w-1]
+"""
+struct PolyImagingContext
+    nwav    :: Int
+    nx      :: Int
+    xyint   :: Float64
+    ctxs    :: Vector{ImagingContext}
+    ndat_ch :: Vector{Int}
+    offset  :: Vector{Int}
+end
+
+"""
+    PolyImagingContext(data_channels, nx, xyint) → PolyImagingContext
+
+Construct from a vector of `OIdata` (one per wavelength channel).
+"""
+function PolyImagingContext(data_channels::AbstractVector, nx::Int, xyint::Float64)
+    nwav = length(data_channels)
+    ctxs = [imaging_context(data_channels[w], nx, xyint) for w in 1:nwav]
+    ndat_ch = [ctx.npow + 2 * ctx.nbis for ctx in ctxs]
+    offset  = [sum(ndat_ch[1:w-1]) for w in 1:nwav]
+    return PolyImagingContext(nwav, nx, xyint, ctxs, ndat_ch, offset)
+end
+
+# -- Polychromatic operators -------------------------------------------------
+
+function compute_data_poly!(pctx::PolyImagingContext,
+                            image_cube::AbstractVector{Float64},
+                            data_vec::AbstractVector{Float64})
+    npix = pctx.nx * pctx.nx
+    for w in 1:pctx.nwav
+        img_w = @view image_cube[(w-1)*npix+1 : w*npix]
+        dat_w = @view data_vec[pctx.offset[w]+1 : pctx.offset[w]+pctx.ndat_ch[w]]
+        compute_data!(pctx.ctxs[w], img_w, dat_w)
+    end
+    return nothing
+end
+
+function linearised_fwd_poly!(pctx::PolyImagingContext,
+                              δimage::AbstractVector{Float64},
+                              δdata::AbstractVector{Float64})
+    npix = pctx.nx * pctx.nx
+    for w in 1:pctx.nwav
+        δimg_w = @view δimage[(w-1)*npix+1 : w*npix]
+        δdat_w = @view δdata[pctx.offset[w]+1 : pctx.offset[w]+pctx.ndat_ch[w]]
+        linearised_fwd!(pctx.ctxs[w], δimg_w, δdat_w)
+    end
+    return nothing
+end
+
+function linearised_adj_poly!(pctx::PolyImagingContext,
+                              δdata::AbstractVector{Float64},
+                              δimage::AbstractVector{Float64})
+    npix = pctx.nx * pctx.nx
+    for w in 1:pctx.nwav
+        δdat_w = @view δdata[pctx.offset[w]+1 : pctx.offset[w]+pctx.ndat_ch[w]]
+        δimg_w = @view δimage[(w-1)*npix+1 : w*npix]
+        linearised_adj!(pctx.ctxs[w], δdat_w, δimg_w)
+    end
+    return nothing
+end
+
+# -- Polychromatic data packing ----------------------------------------------
+
+"""
+    set_dataspace_poly!(s, pctx, data_channels; kwargs...)
+
+Fill the concatenated data/accuracy vectors for all wavelength channels.
+Delegates to the monochromatic `set_dataspace!` for each channel.
+"""
+function set_dataspace_poly!(s::MaximENTState,
+                             pctx::PolyImagingContext,
+                             data_channels::AbstractVector;
+                             biserrtype::Symbol = :full,
+                             force_extrapolate::Bool = false,
+                             flux_err::Float64 = 0.01)
+    npix = pctx.nx * pctx.nx
+    for w in 1:pctx.nwav
+        ndat_w = pctx.ndat_ch[w]
+        s_tmp = MaximENTState(npix, ndat_w)
+        set_dataspace!(s_tmp, pctx.ctxs[w], data_channels[w];
+                       biserrtype=biserrtype,
+                       force_extrapolate=force_extrapolate,
+                       flux_err=flux_err)
+        off = pctx.offset[w]
+        s.data[off+1 : off+ndat_w]    .= s_tmp.data
+        s.acc_vec[off+1 : off+ndat_w] .= s_tmp.acc_vec
+    end
+    return nothing
+end
+
+# -- Polychromatic setup -----------------------------------------------------
+
+"""
+    maxent_setup_poly(data_channels, nx, xyint, prior_cube=nothing; kwargs...)
+        → (pctx::PolyImagingContext, s::MaximENTState, p::MaximENTParams)
+
+Build everything needed for polychromatic MaximENT reconstruction.
+
+`data_channels` is a `Vector{OIdata}` with one entry per wavelength channel.
+
+`prior_cube` may be:
+- `nothing`           → flat uniform prior (replicated per channel)
+- an `nx×nx` matrix   → replicated identically across all channels
+- an `nx×nx×nwav` array → used directly (normalised per-channel to unit flux)
+"""
+function maxent_setup_poly(data_channels::AbstractVector,
+                           nx::Int, xyint::Float64,
+                           prior_cube = nothing;
+                           methd       :: Vector{Int} = [1, 1, 1],
+                           nrand       :: Int         = 1,
+                           iseed       :: Int         = 0,
+                           aim         :: Float64     = 1.0,
+                           rate        :: Float64     = 1.0,
+                           utol        :: Float64     = 0.1,
+                           alpha       :: Float64     = 1.0,
+                           biserrtype        :: Symbol = :full,
+                           force_extrapolate :: Bool   = false,
+                           flux_err          :: Float64 = 0.01,
+                           mackay_alpha      :: Bool    = false,
+                           ritz_alpha        :: Bool    = false)
+    nwav = length(data_channels)
+    pctx = PolyImagingContext(data_channels, nx, xyint)
+
+    npix = nx * nx
+    nhid = npix * nwav
+    ndat = sum(pctx.ndat_ch)
+
+    s = MaximENTState(nhid, ndat)
+    p = MaximENTParams(; methd, nrand, iseed, aim, rate, utol, alpha,
+                         mackay_alpha, ritz_alpha)
+
+    # Build prior model: per-channel unit-flux normalisation
+    model = if isnothing(prior_cube)
+        repeat(fill(1.0 / npix, npix), nwav)
+    elseif ndims(prior_cube) == 2 && length(prior_cube) == npix
+        m = vec(Float64.(prior_cube))
+        m ./= max(sum(m), eps())
+        repeat(m, nwav)
+    else
+        m = vec(Float64.(prior_cube))
+        @assert length(m) == nhid "prior_cube must have $nhid elements (nx²×nwav), got $(length(m))"
+        for w in 1:nwav
+            idx = (w-1)*npix+1 : w*npix
+            mw = @view m[idx]
+            mw ./= max(sum(mw), eps())
+        end
+        m
+    end
+    s.model .= model
+    s.h     .= model
+
+    set_dataspace_poly!(s, pctx, data_channels;
+                        biserrtype, force_extrapolate, flux_err)
+    return pctx, s, p
+end
+
+# -- Polychromatic reconstruct -----------------------------------------------
+
+"""
+    maxent_reconstruct_poly!(pctx, s, p; maxiter=200, verbose=true) → Array{Float64,3}
+
+Run the MaximENT iterative reconstruction loop for polychromatic data and
+return the result as an `nx × nx × nwav` array.
+"""
+function maxent_reconstruct_poly!(pctx :: PolyImagingContext,
+                                  s    :: MaximENTState,
+                                  p    :: MaximENTParams;
+                                  maxiter :: Int  = 200,
+                                  verbose :: Bool = true)
+    linfwd! = (δim, δdat) -> linearised_fwd_poly!(pctx, δim, δdat)
+    linadj! = (δdat, δim) -> linearised_adj_poly!(pctx, δdat, δim)
+    fwd!    = (im,  dat)  -> compute_data_poly!(pctx, im, dat)
+
+    # Warm-up: populate each ctx.visi from the starting model
+    compute_data_poly!(pctx, s.h, s.d_w2)
+
+    reconstruct!(s, p, maxiter, linfwd!, linadj!, fwd!; verbose)
+
+    return reshape(s.h, pctx.nx, pctx.nx, pctx.nwav)
+end
+
+# -- Polychromatic reconstruct_bsmem entry points ----------------------------
+
+"""
+    reconstruct_bsmem(x_start_3d, data_channels, ft_channels; kwargs...) → Array{Float64,3}
+
+Polychromatic Maximum Entropy reconstruction.  Same keyword arguments as the
+monochromatic `reconstruct_bsmem`, but accepts:
+
+- `x_start_3d` — `nx × nx × nwav` starting image cube
+- `data_channels` — `Vector{OIdata}` (one per wavelength channel)
+- `ft_channels` — `Vector` of NFFT plans (one per channel, from a column of `setup_ft`)
+
+Returns an `nx × nx × nwav` image cube normalised to unit flux per channel.
+"""
+function reconstruct_bsmem(x_start::AbstractArray{<:AbstractFloat,3},
+                           data_channels::AbstractVector{<:OIdata},
+                           ft_channels::AbstractVector;
+                           regularizers      = [],
+                           method            = [4, 1, 1, 2],
+                           maxiter  :: Int   = 200,
+                           verbose  :: Bool  = true,
+                           flux_err :: Float64 = 1e-5,
+                           biserrtype        :: Symbol = :full,
+                           force_extrapolate :: Bool   = false,
+                           nrand  :: Int     = 10,
+                           iseed  :: Int     = 0,
+                           aim    :: Float64 = 1.0,
+                           rate   :: Float64 = 1.0,
+                           utol   :: Float64 = 0.1,
+                           alpha        :: Float64 = 1.0,
+                           mackay_alpha :: Bool    = false,
+                           ritz_alpha   :: Bool    = false)
+
+    nx   = size(x_start, 1)
+    nwav = size(x_start, 3)
+    @assert length(data_channels) == nwav "x_start has $nwav channels but $(length(data_channels)) data entries"
+
+    # Extract pixsize from first channel FT plan
+    ft1 = ft_channels[1]
+    plan1 = ft1 isa AbstractVector ? ft1[1] : ft1
+    j = argmax(vec(sqrt.(sum(data_channels[1].uv .^ 2, dims=1))))
+    pixsize = (norm(plan1.k[:, j]) / norm(data_channels[1].uv[:, j])) / MAS
+
+    # Parse method
+    methd_vec = method isa Integer ? [Int(method), 1, 1, 2] : collect(Int, method)
+
+    # Extract prior from regularizers
+    prior_cube = vec(Float64.(x_start))
+    for reg in regularizers
+        if !isempty(reg) && reg[1] == "mem" && length(reg) >= 2 && !isnothing(reg[2])
+            prior_cube = vec(Float64.(reg[2]))
+            break
+        end
+    end
+
+    pctx, s, p = maxent_setup_poly(data_channels, nx, pixsize, prior_cube;
+                                   methd=methd_vec, nrand, iseed, aim, rate, utol, alpha,
+                                   biserrtype, force_extrapolate, flux_err,
+                                   mackay_alpha, ritz_alpha)
+
+    return maxent_reconstruct_poly!(pctx, s, p; maxiter, verbose)
+end
+
+"""
+    reconstruct_bsmem(x_start_4d, data_matrix, ft_matrix; kwargs...) → Array{Float64,4}
+
+Polychromatic convenience wrapper accepting 4D image and `Matrix{OIdata}`.
+Requires single epoch (`size(data,2) == 1`).
+"""
+function reconstruct_bsmem(x_start::AbstractArray{<:AbstractFloat,4},
+                           data::AbstractMatrix{<:OIdata},
+                           ft::AbstractMatrix;
+                           kwargs...)
+    nwav, nepoch = size(data)
+    @assert nepoch == 1 "Polychromatic BSMEM currently supports single-epoch only (got nepoch=$nepoch)"
+    x3d = x_start[:, :, :, 1]
+    data_channels = [data[w, 1] for w in 1:nwav]
+    ft_channels   = [ft[w, 1]   for w in 1:nwav]
+    result_3d = reconstruct_bsmem(x3d, data_channels, ft_channels; kwargs...)
+    return reshape(result_3d, size(result_3d,1), size(result_3d,2), nwav, 1)
+end
+
+# -- Matrix convenience methods (auto-dispatch mono vs poly) ------------------
+
+"""
+    reconstruct_bsmem(x_start_2d, data::AbstractMatrix{OIdata}, ft; kwargs...)
+
+Convenience method accepting the raw `Matrix{OIdata}` from `readoifits` and
+a 2D starting image.  If `size(data,1) == 1` (monochromatic), delegates to the
+monochromatic path; otherwise wraps into 3D/Vector form for polychromatic.
+"""
+function reconstruct_bsmem(x_start::AbstractMatrix{<:AbstractFloat},
+                           data::AbstractMatrix{<:OIdata},
+                           ft::AbstractMatrix;
+                           kwargs...)
+    nwav, nepoch = size(data)
+    @assert nepoch == 1 "Polychromatic BSMEM currently supports single-epoch only (got nepoch=$nepoch)"
+    if nwav == 1
+        # Monochromatic — unwrap and delegate
+        return reconstruct_bsmem(x_start, data[1,1], ft[1,1] isa AbstractVector ? ft[1,1] : ft[1]; kwargs...)
+    else
+        # Polychromatic — expand x_start to cube (replicate across channels)
+        nx = size(x_start, 1)
+        x3d = zeros(nx, nx, nwav)
+        m = Float64.(x_start); m ./= max(sum(m), eps())
+        for w in 1:nwav
+            x3d[:,:,w] .= m
+        end
+        data_channels = [data[w,1] for w in 1:nwav]
+        ft_channels   = [ft[w,1]   for w in 1:nwav]
+        return reconstruct_bsmem(x3d, data_channels, ft_channels; kwargs...)
+    end
+end
+
+# Mono: accept Matrix data/ft with 2D image, ft as Vector (from ft[1])
+function reconstruct_bsmem(x_start::AbstractMatrix{<:AbstractFloat},
+                           data::AbstractMatrix{<:OIdata},
+                           ft::AbstractVector;
+                           kwargs...)
+    nwav, nepoch = size(data)
+    @assert nepoch == 1 "BSMEM currently supports single-epoch only (got nepoch=$nepoch)"
+    if nwav == 1
+        return reconstruct_bsmem(x_start, data[1,1], ft; kwargs...)
+    else
+        error("Polychromatic data requires a 3D starting image (nx, nx, nwav)")
+    end
+end
+
+# -- Prior cube helper -------------------------------------------------------
+
+"""
+    gaussian_prior_cube(nx, pixsize_mas, nwav; fwhm_mas=nx*pixsize_mas/5)
+
+Build an `nx × nx × nwav` Gaussian prior image cube with identical spatial
+profile in each channel, each normalised to unit flux.
+"""
+function gaussian_prior_cube(nx::Int, pixsize_mas::Float64, nwav::Int;
+                             fwhm_mas::Float64 = Float64(nx) * pixsize_mas / 5.0)
+    mono = reshape(gaussian_prior(nx, pixsize_mas; fwhm_mas=fwhm_mas), nx, nx)
+    cube = zeros(nx, nx, nwav)
+    for w in 1:nwav
+        cube[:, :, w] .= mono
+    end
+    return cube
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
 # make_operators
 # ─────────────────────────────────────────────────────────────────────────────
 

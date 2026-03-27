@@ -112,29 +112,6 @@ function main()
     println("Diagonal chi2/N:        $(round(chi2_diag/data.nv2, digits=4))")
     println("Ratio corr/diag:        $(round(chi2_corr/chi2_diag, digits=4))")
 
-    # ── 4. UD grid search (fast — no factorization in the loop) ──────────────
-    println("\n── UD grid search ──")
-    best_diam = 0.0
-    best_chi2 = Inf
-
-    B   = data.v2_baseline
-    lam = data.v2_lam
-
-    for diam in 0.1:0.05:5.0
-        x      = @. pi * diam * (pi/180/3600/1000) * B / lam
-        V      = @. ifelse(abs(x) < 1e-12, 1.0, 2 * besselj1(x) / x)
-        v2_mod = @. V^2
-
-        chi2, _ = chi2_whitened(v2_mod, data, blocks)
-        if chi2 < best_chi2
-            best_chi2 = chi2
-            best_diam = diam
-        end
-    end
-
-    println("Best UD diameter:       $(best_diam) mas")
-    println("Best correlated chi2:   $(round(best_chi2, digits=2))")
-    println("Best chi2/N:            $(round(best_chi2/data.nv2, digits=4))")
-end
+  end
 
 main()

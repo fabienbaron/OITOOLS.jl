@@ -64,24 +64,3 @@ Verify the installation:
 using OITOOLS
 ```
 
-## Speeding up load times with PackageCompiler
-
-Julia compiles code on first use, which can make the initial load of OITOOLS slow.
-Using [PackageCompiler](https://github.com/JuliaLang/PackageCompiler.jl) you can
-bake a precompiled system image:
-
-```julia
-using PackageCompiler
-create_sysimage([:OITOOLS];
-    sysimage_path          = "oitools.so",
-    precompile_execution_file = "demos/oitools_precomp.jl")
-```
-
-Then launch Julia with:
-
-```
-julia --sysimage oitools.so
-```
-
-The precompilation script `demos/oitools_precomp.jl` covers the most commonly used
-functions. Add any functions you use frequently to reduce their first-call latency.

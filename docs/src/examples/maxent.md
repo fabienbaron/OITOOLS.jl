@@ -59,4 +59,40 @@ pixsize = auto_pixsize(data; oversampling=3.0)
 
 See `example_image_reconstruction_oimem.jl` for a complete worked example.
 
+## Polychromatic BSMEM
+
+For multi-wavelength data, `reconstruct_bsmem` accepts a 3D starting image
+(`nx, nx, nwav`) and per-channel data/FT vectors. Each wavelength channel gets
+its own flux constraint and imaging operators; spectral smoothness is enforced
+through the prior cube.
+
+```julia
+using OITOOLS
+data = readoifits("data/polychromatic.oifits", filter_bad_data=true)
+nwav = size(data, 1)
+nx   = 64
+pixsize = 0.1
+
+# Extract per-channel data and FT plans
+ft = setup_nfft(data, nx, pixsize)
+data_channels = data[:, 1]   # Vector{OIdata}, one per wavelength
+ft_channels   = ft[:, 1]     # Vector of FT plans
+
+# Build a spectrally-smooth prior cube
+prior_cube = gaussian_prior_cube(nx, pixsize, nwav; fwhm_mas=nx*pixsize/5)
+
+# Reconstruct
+x = reconstruct_bsmem(prior_cube, data_channels, ft_channels;
+                      method   = [1, 1, 1, 2],
+                      maxiter  = 100,
+                      flux_err = 1e-5)
+# x is an nx x nx x nwav cube, each channel normalised to unit flux
+imdisp(x[:,:,1]; pixsize)
+```
+
+The polychromatic path concatenates per-channel data into one flat vector and
+uses `nhid = nx*nx*nwav`, so the MaximENT engine in `maximent.jl` runs
+unmodified. Entropy is computed per pixel per channel, and the spectrally-smooth
+prior naturally penalizes spectral departures.
+
 See the [Imaging (Maximum Entropy)](@ref) API reference for full docstrings.

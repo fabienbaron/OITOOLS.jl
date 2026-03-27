@@ -109,7 +109,7 @@ export reconstruct_multitemporal, reconstruct_polychromatic
 
 # ── Maximum entropy (BSMEM) ──────────────────────────────────────────────────
 export reconstruct_bsmem
-export auto_pixsize, gaussian_prior
+export auto_pixsize, gaussian_prior, gaussian_prior_cube
 
 # ── Simulation ───────────────────────────────────────────────────────────────
 export simulate, simulate_from_oifits, get_uv

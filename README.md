@@ -38,7 +38,7 @@ using OITOOLS
 ```
 
 See the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for
-Python dependencies (UltraNest, Astroquery) and PackageCompiler setup.
+Python dependencies (UltraNest, Astroquery).
 
 ## Quick start
 
@@ -155,21 +155,6 @@ including:
 - [Simulation and planning](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/simulating/)
 - [Demo scripts](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/intro/)
 - API reference: [OIFITS](https://fabienbaron.github.io/OITOOLS.jl/dev/api/oifits/), [Plotting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/plotting/), [Model Fitting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/modeling/), [Imaging](https://fabienbaron.github.io/OITOOLS.jl/dev/api/imaging/), [Observation Planning](https://fabienbaron.github.io/OITOOLS.jl/dev/api/planning/)
-
-## Speeding up load times with PackageCompiler
-
-```julia
-using PackageCompiler
-create_sysimage([:OITOOLS];
-    sysimage_path = "oitools.so",
-    precompile_execution_file = "demos/oitools_precomp.jl")
-```
-
-Then launch Julia with:
-
-```
-julia --sysimage oitools.so
-```
 
 ## Development install
 

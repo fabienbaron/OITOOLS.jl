@@ -1,4 +1,3 @@
-using AstroTime
 using Dates
 
 function hours_to_date(obsdate, hours)
