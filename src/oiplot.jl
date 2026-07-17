@@ -103,9 +103,9 @@ const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","
 
 # ── Data normalization ────────────────────────────────────────────────────────
 """
-    as_datavec(data) -> Vector{OIdata}
+    as_datavec(data) -> Vector{<:OIdata}
 
-Ensure `data` is a flat `Vector{OIdata}`, wrapping a single `OIdata` or
+Ensure `data` is a flat `Vector{<:OIdata}`, wrapping a single `OIdata` or
 flattening a 2-D array as needed.
 """
 function as_datavec(data::Union{OIdata, AbstractArray{<:OIdata}})

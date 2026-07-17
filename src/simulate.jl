@@ -521,7 +521,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
 
     if (((typeof(image) == String) && (image !="")) || ((typeof(image) != String) && (image !="")) )
         # TODO: Update polychromatic and dynamic imaging and non square images
-        x = readfits(image)
+        x = image isa AbstractString ? readfits(image) : Float64.(image)
         nx = size(x,1); 
         if ndims(x) == 2 # Monochromatic image
             println("Simulating monochromatic observations...")
@@ -798,11 +798,11 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
 
     # Compute complex visibilities from truth image or model
     if (((typeof(image) == String) && (image != "")) || ((typeof(image) != String) && (image != "")))
-        x = readfits(image)
+        x = image isa AbstractString ? readfits(image) : Float64.(image)
         nx = size(x, 1)
         x = vec(x) / sum(x)
         ft = setup_nfft(data, nx, pixsize)
-        cvis_model = image_to_vis(x, ft)
+        cvis_model = image_to_vis(to_ft_precision(x, ft), ft)
     elseif flat_model !== nothing
         cvis_model = eval_model(flat_model, flat_params, data.uv)
     else

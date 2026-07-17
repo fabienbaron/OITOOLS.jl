@@ -22,7 +22,7 @@
 #   chi2_flat_reduced(model, x, data; weights, vonmises)
 #       → Float64     (chi2 / ndof — for human-readable goodness-of-fit)
 #
-# Polychromatic interface (data::Vector{OIdata}):
+# Polychromatic interface (data::Vector{<:OIdata}):
 #   chi2_flat(model, x, data_array; weights, verb, vonmises)
 #   chi2_flat_fg(model, x, data_array; weights, verb, vonmises)
 #       Evaluates the model at each channel's UV points and optionally computes
@@ -551,7 +551,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat(model, x, data::Vector{OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+    chi2_flat(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
         -> Float64
 
 Polychromatic chi-squared.  Evaluates the model at each channel's UV points and
@@ -649,7 +649,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat_fg(model, x, data::Vector{OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+    chi2_flat_fg(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
         -> (Float64, Vector{Float64})
 
 Polychromatic chi-squared and gradient.  Computes per-channel V2/T3/visamp/visphi/flux
@@ -963,7 +963,7 @@ end
         -> Float64
 
 Return chi2 / ndof (reduced chi-squared).  Useful for assessing goodness of fit.
-Works with both monochromatic (OIdata) and polychromatic (Vector{OIdata}) data.
+Works with both monochromatic (OIdata) and polychromatic (Vector{<:OIdata}) data.
 """
 function chi2_flat_reduced(model::FlatModel,
                            x::AbstractVector,

@@ -312,6 +312,23 @@ mutable struct OIdata{T<:AbstractFloat}
     filename::String
 end
 
+"""
+    oi_eltype(data) -> Type
+
+Floating-point precision of an `OIdata` or of a collection of them (errors if the
+collection mixes precisions).
+"""
+oi_eltype(::OIdata{T}) where T = T
+# Concrete element type: answered at compile time, no iteration.
+oi_eltype(::AbstractArray{<:OIdata{T}}) where T = T
+# Abstract element type (e.g. Matrix{OIdata}): check the cells actually agree.
+function oi_eltype(data::AbstractArray{<:OIdata})
+    isempty(data) && error("oi_eltype: empty data collection")
+    T = oi_eltype(first(data))
+    all(d -> oi_eltype(d) === T, data) || error("oi_eltype: data mixes floating-point precisions")
+    return T
+end
+
 function Base.display(data::OIdata{T}) where T
     println("Mean MJD: $(data.mean_mjd)  [eltype: $T]")
     println("Wavelength range: $(minimum(data.uv_lam)) - $(maximum(data.uv_lam))")
@@ -320,6 +337,11 @@ function Base.display(data::OIdata{T}) where T
 end
 
 function Base.display(data::Array{<:OIdata})
+    nassigned = count(i -> isassigned(data, i), eachindex(data))
+    if nassigned == 0
+        println("OIdata array: $(size(data)) — all elements #undef")
+        return
+    end
     println("Original data file: $(data[1].filename)")
     nwav = size(data, 1)
     nepo = size(data, 2)
@@ -1231,7 +1253,7 @@ end
 # so the bad entry contributes nothing to chi2 while preserving index alignment.
 # ---------------------------------------------------------------------------
 function _sanitize_paired_observables!(amp::Vector{T}, amp_err::Vector{T},
-        phi::Vector{T}, phi_err::Vector{T}, label::String) where T
+        phi::Vector{T}, phi_err::Vector{T}, label::String; warn::Bool=true) where T
     n = length(amp)
     n_sanitized = 0
     for i in 1:n
@@ -1247,7 +1269,7 @@ function _sanitize_paired_observables!(amp::Vector{T}, amp_err::Vector{T},
             n_sanitized += 1
         end
     end
-    if n_sanitized > 0
+    if n_sanitized > 0 && warn
         @warn "Sanitized $n_sanitized $label entries where one of amp/phi was bad — set err=Inf for the bad observable"
     end
     return nothing
@@ -1262,7 +1284,7 @@ function filter_bad_observables!(bd::BinData{T};
         force_full_vis::Bool, force_full_t3::Bool, special_filter_diffvis::Bool,
         cutoff_minv2::Real, cutoff_maxv2::Real,
         cutoff_mint3amp::Real, cutoff_maxt3amp::Real,
-        filter_v2_snr_threshold::Real) where T
+        filter_v2_snr_threshold::Real, warn::Bool=true) where T
 
     good_uv_vis  = Int64[]; good_uv_v2   = Int64[]
     good_uv_t3_1 = Int64[]; good_uv_t3_2 = Int64[]; good_uv_t3_3 = Int64[]
@@ -1283,7 +1305,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.visphi            = bd.visphi[vis_good];    bd.visphi_err    = bd.visphi_err[vis_good]
         bd.nvisamp           = count(i -> !isnan(bd.visamp[i]) && !isnan(bd.visamp_err[i]) && bd.visamp_err[i] > 0, eachindex(bd.visamp))
         bd.nvisphi           = count(i -> !isnan(bd.visphi[i]) && !isnan(bd.visphi_err[i]) && bd.visphi_err[i] > 0, eachindex(bd.visphi))
-        _sanitize_paired_observables!(bd.visamp, bd.visamp_err, bd.visphi, bd.visphi_err, "visamp")
+        _sanitize_paired_observables!(bd.visamp, bd.visamp_err, bd.visphi, bd.visphi_err, "visamp"; warn)
         bd.vis_baseline      = bd.vis_baseline[vis_good]
         bd.vis_mjd           = bd.vis_mjd[vis_good];   bd.vis_lam       = bd.vis_lam[vis_good]
         bd.vis_dlam          = bd.vis_dlam[vis_good];  bd.vis_flag      = bd.vis_flag[vis_good]
@@ -1320,7 +1342,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.t3phi             = bd.t3phi[t3_good];      bd.t3phi_err     = bd.t3phi_err[t3_good]
         bd.nt3amp            = count(i -> !isnan(bd.t3amp[i]) && !isnan(bd.t3amp_err[i]) && bd.t3amp_err[i] > 0, eachindex(bd.t3amp))
         bd.nt3phi            = count(i -> !isnan(bd.t3phi[i]) && !isnan(bd.t3phi_err[i]) && bd.t3phi_err[i] > 0, eachindex(bd.t3phi))
-        _sanitize_paired_observables!(bd.t3amp, bd.t3amp_err, bd.t3phi, bd.t3phi_err, "t3amp")
+        _sanitize_paired_observables!(bd.t3amp, bd.t3amp_err, bd.t3phi, bd.t3phi_err, "t3amp"; warn)
         bd.t3_baseline       = bd.t3_baseline[t3_good]; bd.t3_maxbaseline = bd.t3_maxbaseline[t3_good]
         bd.t3_mjd            = bd.t3_mjd[t3_good];    bd.t3_lam        = bd.t3_lam[t3_good]
         bd.t3_dlam           = bd.t3_dlam[t3_good];   bd.t3_flag       = bd.t3_flag[t3_good]
@@ -1446,8 +1468,9 @@ data in a single bin.
 - `uvtol` — merge radius in cycles/rad (i.e. B/λ). Default: `200.0`.
 
 ## Numeric precision
-- `T` — element type for all numeric arrays. Use `Float32` for ~50% memory reduction.
-  Default: `Float64`.
+- `T` — element type for all numeric arrays. Default: `Float32` (half the memory of
+  `Float64`, and enough precision for interferometric observables). Pass `T=Float64`
+  if a downstream computation needs it.
 
 ## Output
 - `warn` — print warnings about non-standard files. Default: `true`.
@@ -1458,7 +1481,7 @@ data in a single bin.
 data = readoifits("mystar.oifits")                         # all data, single bin
 data = readoifits("mystar.oifits"; polychromatic=true)     # one bin per channel
 data = readoifits("multi.oifits"; polychromatic=true, merge_oi_wavelength=true) # merge compatible tables
-data = readoifits("mystar.oifits"; T=Float32)              # half memory
+data = readoifits("mystar.oifits"; T=Float64)              # double precision
 data = readoifits("multi.oifits"; targetname="Betelgeuse") # one target
 ```
 """
@@ -1484,7 +1507,7 @@ function readoifits(oifitsfile;
         special_filter_diffvis = false,
         warn = true,
         verbose = true,
-        T::Type{<:AbstractFloat} = Float64)
+        T::Type{<:AbstractFloat} = Float32)
 
     if !isfile(oifitsfile)
         @error("readoifits could not locate the requested data file — please check path")
@@ -1643,7 +1666,7 @@ function readoifits(oifitsfile;
         filter_bad_data && filter_bad_observables!(bd;
             use_vis, use_v2, use_t3, force_full_vis, force_full_t3,
             special_filter_diffvis, cutoff_minv2, cutoff_maxv2,
-            cutoff_mint3amp, cutoff_maxt3amp, filter_v2_snr_threshold)
+            cutoff_mint3amp, cutoff_maxt3amp, filter_v2_snr_threshold, warn)
 
         redundance_remove && remove_redundant_uv!(bd; uvtol)
 
@@ -1704,7 +1727,7 @@ Prints a summary line per file. Passes `filter_bad_data`, `force_full_t3`, and
 """
 function readoifits_multiepochs(oifitsfiles; filter_bad_data=true, force_full_t3=false,
                                 polychromatic=false, warn=true, verbose=true,
-                                T::Type{<:AbstractFloat}=Float64)
+                                T::Type{<:AbstractFloat}=Float32)
     per_file = [readoifits(f; filter_bad_data, force_full_t3, polychromatic, warn, verbose, T) for f in oifitsfiles]
     data = hcat(per_file...)   # each is nwav×1, result is nwav×nepochs
     if verbose

@@ -41,6 +41,35 @@ const EPS   = 1e-20  # General numerical floor
 const FLOOR = 1e-12  # Positivity floor for image update (VUPDT1)
 const PILOG = 0.9189385332046727  # log(√(2π))
 
+"""
+    _tol(T=Float64) -> Float64
+
+Arithmetic tolerance ≈ machine epsilon.
+
+Historically computed inline by Skilling's trick, `abs((4/3 - 1) - 1/3)`. That
+expression is exactly `eps(T)/4` for every IEEE type (verified for Float16/32/64 and
+BigFloat), so this reproduces the original Float64 value **bit for bit** while being
+FMA-proof — the original relies on a cancellation that a contracted `4/3-1` could
+collapse to exactly 0.
+
+Deliberately called at `Float64` even when the arrays are `Float32`. It does **not**
+gate normal CG exit — that is `beta*(1+p.utol)*QB + QAB >= gamma0`, which uses `utol` —
+it only detects CG breakdown (`gamma <= gamma0*p.tol`) and floors the α-table regression
+weights. The α machinery is a deliberate Float64 island, and narrowing this to
+`eps(Float32)/4` would collapse its weight dynamic range from ~1e16 to ~1e7 for no gain:
+measured, it moved `ntrans` by 1 out of 453.
+"""
+_tol(::Type{T} = Float64) where {T<:AbstractFloat} = Float64(eps(T) / 4)
+
+# Element-wise constants at the storage precision. These are NOT recalibrations: 1e-20,
+# 1e-30 and 1e-12 are all ordinary normal Float32 numbers (floatmin(Float32) = 1.18e-38).
+# Their only job is to stop `s.acc_vec::Vector{Float32} .+ 1e-20::Float64` from promoting
+# a whole ndat array to Float64 and allocating. `T(x)` is the identity at T=Float64, so
+# the Float64 path is unchanged by construction.
+_eps(::Type{T})   where {T<:AbstractFloat} = T(EPS)
+_tiny(::Type{T})  where {T<:AbstractFloat} = T(TINY)
+_floor(::Type{T}) where {T<:AbstractFloat} = T(FLOOR)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Control parameters  (replaces ICOM / RCOM COMMON blocks)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -103,8 +132,7 @@ function MaximENTParams(;
         mackay_alpha ::Bool         = false,
         mackay_damp  ::Float64      = 0.5,
         ritz_alpha   ::Bool         = false)
-    # Machine epsilon via the Skilling formula: |(4/3 - 1) - 1/3|
-    tol = abs((4.0/3.0 - 1.0) - 1.0/3.0)
+    tol = _tol()   # Float64 by design — see `_tol`
     rng = Xoshiro(iseed)
     MaximENTParams(
         methd[1], methd[2], methd[3],
@@ -120,7 +148,8 @@ end
 # State workspace  (replaces the numbered ST area system)
 # ─────────────────────────────────────────────────────────────────────────────
 """
-    MaximENTState(nhid, ndat)
+    MaximENTState{T}(nhid, ndat)
+    MaximENTState(nhid, ndat)          # T = Float64
 
 Working storage for one MaxEnt reconstruction problem.
 
@@ -129,35 +158,111 @@ Areas correspond to the internal numbering convention:
                               <4> gradL, <5> h
   Visible space (size nhid):  <11> f  (= h when ICF = identity)
   Data space (size ndat):     <21> data, <22> acc_vec, <23>..<28> workspaces
+
+`T` is the *storage* precision of the bulk arrays. For polychromatic work
+`nhid = nx²·nwav` runs to millions of elements, so `Float32` halves the memory traffic
+of the BLAS-1-heavy CG. Note that **reductions over these arrays still accumulate in
+Float64** (see `_dot64`/`_sum64`): at poly scale a Float32-accumulated `dot` carries ~23×
+more error than the CG breakdown threshold. `ritz_λ`/`ritz_w` stay Float64 — they are
+part of the Float64 evidence/Ritz island and are at most `nrand × LMAX` elements.
 """
-mutable struct MaximENTState
-    sqrt_metric ::Vector{Float64}  # <1>  √[metric]
-    gradS       ::Vector{Float64}  # <2>  −∇S  (workspace)
-    model       ::Vector{Float64}  # <3>  Default model m
-    gradL       ::Vector{Float64}  # <4>  −∇L  (workspace)
-    h           ::Vector{Float64}  # <5>  Hidden distribution
-    f           ::Vector{Float64}  # <11> Visible distribution f = ICF·h
-    data        ::Vector{Float64}  # <21> Observed data D
-    acc_vec     ::Vector{Float64}  # <22> Accuracies 1/σ
-    d_w1        ::Vector{Float64}  # <23>
-    residuals   ::Vector{Float64}  # <24> Normalised residuals
-    d_w2        ::Vector{Float64}  # <25>
-    d_w3        ::Vector{Float64}  # <26> (random vectors)
-    d_w4        ::Vector{Float64}  # <27>
-    d_w5        ::Vector{Float64}  # <28>
-    ritz_λ      ::Vector{Float64}  # Ritz eigenvalues (lower bidiagonal SVD²)
-    ritz_w      ::Vector{Float64}  # Ritz weights (projection × x0sq × trial wt)
+mutable struct MaximENTState{T<:AbstractFloat}
+    sqrt_metric ::Vector{T}  # <1>  √[metric]
+    gradS       ::Vector{T}  # <2>  −∇S  (workspace)
+    model       ::Vector{T}  # <3>  Default model m
+    gradL       ::Vector{T}  # <4>  −∇L  (workspace)
+    h           ::Vector{T}  # <5>  Hidden distribution
+    f           ::Vector{T}  # <11> Visible distribution f = ICF·h
+    h_w1        ::Vector{T}  #      scratch for _apply_fwd! (√[metric]·in_h)
+    data        ::Vector{T}  # <21> Observed data D
+    acc_vec     ::Vector{T}  # <22> Accuracies 1/σ
+    d_w1        ::Vector{T}  # <23>
+    residuals   ::Vector{T}  # <24> Normalised residuals
+    d_w2        ::Vector{T}  # <25>
+    d_w3        ::Vector{T}  # <26> (random vectors)
+    d_w4        ::Vector{T}  # <27>
+    d_w5        ::Vector{T}  # <28>
+    d_w6        ::Vector{T}  #      scratch for _apply_adj! / _compute_gradient! ([acc]·in_d)
+    ritz_λ      ::Vector{Float64}  # Ritz eigenvalues (lower bidiagonal SVD²) — Float64 island
+    ritz_w      ::Vector{Float64}  # Ritz weights (projection × x0sq × trial wt) — Float64 island
 end
 
-function MaximENTState(nhid::Int, ndat::Int)
-    MaximENTState(
-        zeros(nhid), zeros(nhid), zeros(nhid),
-        zeros(nhid), zeros(nhid), zeros(nhid),
-        zeros(ndat), zeros(ndat), zeros(ndat),
-        zeros(ndat), zeros(ndat), zeros(ndat),
-        zeros(ndat), zeros(ndat),
+# Field groups, also used by the constructor shape test. Keep in sync with the struct;
+# the `fieldcount` assertion in the tests fails if a field is added without updating these.
+const _MES_HID_FIELDS = (:sqrt_metric, :gradS, :model, :gradL, :h, :f, :h_w1)
+const _MES_DAT_FIELDS = (:data, :acc_vec, :d_w1, :residuals, :d_w2, :d_w3, :d_w4, :d_w5, :d_w6)
+
+function MaximENTState{T}(nhid::Int, ndat::Int) where {T<:AbstractFloat}
+    H() = zeros(T, nhid)   # sqrt_metric, gradS, model, gradL, h, f, h_w1
+    D() = zeros(T, ndat)   # data, acc_vec, d_w1, residuals, d_w2, d_w3, d_w4, d_w5, d_w6
+    MaximENTState{T}(
+        H(), H(), H(), H(), H(), H(), H(),
+        D(), D(), D(), D(), D(), D(), D(), D(), D(),
         Float64[], Float64[]
     )
+end
+
+MaximENTState(nhid::Int, ndat::Int) = MaximENTState{Float64}(nhid, ndat)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Float64-accumulating reductions
+#
+# The bulk arrays may be Float32, but every reduction over them accumulates in Float64.
+# This is not belt-and-braces: at polychromatic scale (n ≈ 5e5) a Float32-accumulated
+# `dot` carries ~7e-7 relative error against a CG breakdown threshold of eps(F32)/4 ≈
+# 3e-8 — 23× too coarse — while Float64 accumulation over Float32 storage lands at 3e-11
+# for a cost that is negligible beside one NFFT.
+#
+# The Float64 methods forward to the original calls, so T=Float64 stays bit-identical
+# (BLAS's blocked ddot does not associate the same way a hand-written @simd loop does).
+# ─────────────────────────────────────────────────────────────────────────────
+
+_dot64(x::AbstractVector{Float64}, y::AbstractVector{Float64}) = dot(x, y)
+function _dot64(x::AbstractVector, y::AbstractVector)
+    s = 0.0
+    @inbounds @simd for i in eachindex(x, y)
+        s += Float64(x[i]) * Float64(y[i])
+    end
+    return s
+end
+
+_sum64(x::AbstractVector{Float64}) = sum(x)
+function _sum64(x::AbstractVector)
+    s = 0.0
+    @inbounds @simd for i in eachindex(x)
+        s += Float64(x[i])
+    end
+    return s
+end
+
+# `sum(f, x)` with a Float64 accumulator.
+_sum64(f, x::AbstractVector{Float64}) = sum(f, x)
+function _sum64(f, x::AbstractVector)
+    s = 0.0
+    @inbounds for i in eachindex(x)
+        s += Float64(f(x[i]))
+    end
+    return s
+end
+
+# `mapreduce(f, +, xs...)` with a Float64 accumulator, for 2- and 3-array arities.
+_mapreduce64(f, x::AbstractVector{Float64}, y::AbstractVector{Float64}) = mapreduce(f, +, x, y)
+function _mapreduce64(f, x::AbstractVector, y::AbstractVector)
+    s = 0.0
+    @inbounds for i in eachindex(x, y)
+        s += Float64(f(x[i], y[i]))
+    end
+    return s
+end
+
+_mapreduce64(f, x::AbstractVector{Float64}, y::AbstractVector{Float64}, z::AbstractVector{Float64}) =
+    mapreduce(f, +, x, y, z)
+function _mapreduce64(f, x::AbstractVector, y::AbstractVector, z::AbstractVector)
+    s = 0.0
+    @inbounds for i in eachindex(x, y, z)
+        s += Float64(f(x[i], y[i], z[i]))
+    end
+    return s
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,16 +270,22 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Linearised forward: out_d = [acc] · linfwd · √[metric] · in_h
+#
+# s.h_w1 / s.d_w6 are dedicated scratch: these run once per transform (tens of thousands
+# of times per reconstruction), so the obvious `s.sqrt_metric .* in_h` temporary was
+# nhid-sized garbage on every call. No caller ever passes h_w1/d_w6 in, and linfwd!/
+# linadj! do not re-enter, so reusing them across calls is safe.
 function _apply_fwd!(s, p, in_h, out_d, linfwd!)
-    tmp = s.sqrt_metric .* in_h
-    linfwd!(tmp, out_d)
+    @. s.h_w1 = s.sqrt_metric * in_h
+    linfwd!(s.h_w1, out_d)
     out_d .*= s.acc_vec
     p.ntrans += 1
 end
 
 # Linearised adjoint: out_h = √[metric] · linadj · [acc] · in_d
 function _apply_adj!(s, p, in_d, out_h, linadj!)
-    linadj!(in_d .* s.acc_vec, out_h)
+    @. s.d_w6 = in_d * s.acc_vec
+    linadj!(s.d_w6, out_h)
     out_h .*= s.sqrt_metric
     p.ntrans += 1
 end
@@ -203,8 +314,8 @@ end
 function _ment1!(s, p)
     @. s.gradS       = log(s.h / s.model)
     @. s.sqrt_metric = sqrt(s.h)
-    summet = sum(s.h)
-    S      = summet - sum(s.model) - dot(s.h, s.gradS)
+    summet = _sum64(s.h)
+    S      = summet - _sum64(s.model) - _dot64(s.h, s.gradS)
     return S, summet
 end
 
@@ -230,9 +341,9 @@ end
 end
 
 function _ment2!(s, p)
-    S = 0.0; summet = 0.0
+    S = 0.0; summet = 0.0   # accumulate in Float64 even when s.h is Float32
     @inbounds for i in eachindex(s.h)
-        AY, logZ, Si, meti = _ment2_element(s.h[i], s.model[i])
+        AY, logZ, Si, meti = _ment2_element(Float64(s.h[i]), Float64(s.model[i]))
         summet           += AY
         s.gradS[i]        = logZ
         S                += Si
@@ -247,8 +358,8 @@ function _ment3!(s, p)
     mh = s.model .+ s.h
     @. s.gradS       = s.h / mh
     @. s.sqrt_metric = mh / sqrt(s.model)
-    summet = dot(s.sqrt_metric, s.sqrt_metric)
-    S      = mapreduce((mi, mhi, hi) -> mi * log(mhi/mi) - hi, +, s.model, mh, s.h)
+    summet = _dot64(s.sqrt_metric, s.sqrt_metric)
+    S      = _mapreduce64((mi, mhi, hi) -> mi * log(mhi/mi) - hi, s.model, mh, s.h)
     return S, summet
 end
 
@@ -257,8 +368,8 @@ end
 function _ment4!(s, p)
     @. s.gradS       = s.h / s.model
     @. s.sqrt_metric = sqrt(s.model)
-    summet = sum(s.model)
-    S      = -dot(s.h, s.gradS) / 2
+    summet = _sum64(s.model)
+    S      = -_dot64(s.h, s.gradS) / 2
     return S, summet
 end
 
@@ -269,29 +380,33 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Gaussian: residuals = (D − F)·acc,  alhood = ½ Σ residuals²
-function likelihood_gradient!(s::MaximENTState, p::MaximENTParams)
+function likelihood_gradient!(s::MaximENTState{T}, p::MaximENTParams) where T
     D = s.data; F = s.d_w2; r = s.residuals
-    a = s.acc_vec .+ EPS
+    a = s.acc_vec .+ _eps(T)
     @. r = (D - F) * a
-    return dot(r, r) / 2, Float64(count(>(EPS), a)), sum(log, a)
+    return _dot64(r, r) / 2, Float64(count(>(_eps(T)), a)), _sum64(log, a)
 end
 
 # Poisson: updates acc_vec, residuals, alhood
-function poisson_gradient!(s::MaximENTState, p::MaximENTParams)
+function poisson_gradient!(s::MaximENTState{T}, p::MaximENTParams) where T
     D   = s.data; F = s.d_w2
-    PI2 = 0.15915494309189534   # 1/(2π)
-    @. s.acc_vec   = sqrt(D + 1) / (F + EPS)
+    PI2 = T(0.15915494309189534)   # 1/(2π)
+    ε   = _eps(T)
+    @. s.acc_vec   = sqrt(D + 1) / (F + ε)
     @. s.residuals = (D - F) * s.acc_vec
-    alhood = mapreduce((d, f) -> f - d + d * log(d / (f + EPS) + EPS), +, D, F)
-    units  = -0.5 * sum(d -> log(d + PI2), D)
+    alhood = _mapreduce64((d, f) -> f - d + d * log(d / (f + ε) + ε), D, F)
+    units  = -0.5 * _sum64(d -> log(d + PI2), D)
     return alhood, Float64(length(D)), units
 end
 
 # METEST: 1 − cos(∠(−∇S, −∇L))
+# Reductions are Float64 (see `_dot64`), so `ss*cc` cannot underflow or overflow the way
+# it would in Float32, and the `1 - sc/denom` cancellation retains Float64 resolution
+# even when the gradients themselves are stored as Float32.
 function gradient_angle(s::MaximENTState)
-    ss = dot(s.gradS, s.gradS)
-    sc = dot(s.gradS, s.gradL)
-    cc = dot(s.gradL, s.gradL)
+    ss = _dot64(s.gradS, s.gradS)
+    sc = _dot64(s.gradS, s.gradL)
+    cc = _dot64(s.gradL, s.gradL)
     denom = sqrt(max(ss * cc, EPS^2))
     return 1.0 - sc / denom
 end
@@ -472,9 +587,10 @@ end
 # Image update within positivity limits (MEMUPD / VUPDT1)
 # h_new = max(h + δh,  h_old/5,  FLOOR)
 # ─────────────────────────────────────────────────────────────────────────────
-function image_update!(s::MaximENTState, p::MaximENTParams, delta_h::Vector{Float64})
+function image_update!(s::MaximENTState{T}, p::MaximENTParams, delta_h::AbstractVector) where T
     if p.methd1 in (1, 3, 4)   # positive-only entropy
-        @. s.h = max(s.h + delta_h, s.h / 5, FLOOR)
+        fl = _floor(T)
+        @. s.h = max(s.h + delta_h, s.h / 5, fl)
     else                        # bipolar (pos/neg)
         s.h .+= delta_h
     end
@@ -486,8 +602,8 @@ end
 # Updates h ← clamp(h + √[metric]·y)
 # Returns (hlow, hhigh, dist, lcodeb, lcodec)
 # ─────────────────────────────────────────────────────────────────────────────
-function cg_solve!(s::MaximENTState, p::MaximENTParams,
-                 summet::Float64, linfwd!, linadj!)
+function cg_solve!(s::MaximENTState{T}, p::MaximENTParams,
+                 summet::Float64, linfwd!, linadj!) where T
     b    = s.gradL      # <4> will hold b then y then δh
     w2   = s.gradS      # <2> hidden workspace
     w23  = s.d_w1       # <23>
@@ -495,11 +611,11 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
     w26  = s.d_w3       # <26>
     w27  = s.d_w4       # <27>
     w28  = s.d_w5       # <28>
-    fill!(w23, 0.0); fill!(w27, 0.0)
+    fill!(w23, zero(T)); fill!(w27, zero(T))
 
     # b ← √[metric] · b  (into area <4>)
     b .*= s.sqrt_metric
-    temp = dot(b, b)
+    temp = _dot64(b, b)
     if temp < TINY
         return 0.0, 0.0, 0.0, true, false
     end
@@ -513,10 +629,10 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
 
     # First forward transform: w28 = A_fwd(b) / scale
     _apply_fwd!(s, p, b, w28, linfwd!)
-    w28 ./= scale
-    fill!(w26, 0.0)
+    w28 ./= T(scale)
+    fill!(w26, zero(T))
 
-    delta  = dot(w28, w28)
+    delta  = _dot64(w28, w28)
     phi_b  = beta;  eps_b = 1.0
     delb   = phi_b + delta
     QB     = 1.0 / delb
@@ -533,14 +649,18 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
         phi_ab += beta / (eps_ab * delta * eps_ab) + tmp * gamma * tmp
 
         # Update data-space gradient accumulator: w26 -= w28 / delta
-        @. w26 -= w28 / delta
+        # (scalars narrowed to T: a Float64 scalar in a Float32 broadcast silently widens
+        #  every element, halving SIMD width, with no allocation to give it away)
+        δ = T(delta)
+        @. w26 -= w28 / δ
 
         # Backward transform: w2 = A_adj(w26)
         _apply_adj!(s, p, w26, w2, linadj!)
 
         # w2 += b/scale  and  gamma = ‖w2‖²
-        @. w2 += b / scale
-        gamma = dot(w2, w2)
+        sc = T(scale)
+        @. w2 += b / sc
+        gamma = _dot64(w2, w2)
 
         delab  = phi_ab + (gamma / eps_ab) / eps_ab
         eps_ab = gamma / (eps_ab * delab)
@@ -558,28 +678,32 @@ function cg_solve!(s::MaximENTState, p::MaximENTParams,
         _apply_fwd!(s, p, w2, w25, linfwd!)
 
         # w28 += w25 / gamma  and  delta = ‖w28‖²
-        @. w28 += w25 / gamma
-        delta = dot(w28, w28)
+        γ = T(gamma)
+        @. w28 += w25 / γ
+        delta = _dot64(w28, w28)
 
         delb  = phi_b + (delta / eps_b) / eps_b
         QB   += 1.0 / delb
 
         tmp   = 1.0 / (eps_b * gamma)
         V0   += tmp
-        @. w27 += w26 * tmp
+        tmpT  = T(tmp)
+        @. w27 += w26 * tmpT
 
         tmp  = 1.0 / delb
         Y0  += V0 * tmp
-        @. w23 += w27 * tmp
+        tmpT = T(tmp)
+        @. w23 += w27 * tmpT
     end
 
     # Reconstruct solution: b (area <4>) ← y = b*Y0 + A_adj(scale·w23)
     # i.e. b = b*Y0 + w2  (NOT b += Y0*w2)
-    w23 .*= scale
+    w23 .*= T(scale)
     _apply_adj!(s, p, w23, w2, linadj!)
-    @. b = b * Y0 + w2
+    Y0T = T(Y0)
+    @. b = b * Y0T + w2
 
-    YY   = dot(b, b)
+    YY   = _dot64(b, b)
     hlow  = scale^2 * QB / 2.0
     hhigh = scale^2 * (gamma0 - QAB) / (2.0 * beta)
     dist  = sqrt(YY / max(summet, EPS))
@@ -604,7 +728,8 @@ end
 
 # Backward transform without metric scaling: out_h = linadj * [acc] * in_d
 function _compute_gradient!(s::MaximENTState, p::MaximENTParams, in_d, out_h, linadj!)
-    linadj!(in_d .* s.acc_vec, out_h)
+    @. s.d_w6 = in_d * s.acc_vec
+    linadj!(s.d_w6, out_h)
     p.ntrans += 1
 end
 
@@ -618,18 +743,19 @@ end
 # Returns: (gam[0..M], del[0..N], M, N, lcodec)
 #          gam and del are 1-indexed (index k here corresponds to k-1 in the algorithm)
 # ─────────────────────────────────────────────────────────────────────────────
-function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
+function lanczos_bidiag!(s::MaximENTState{T}, p::MaximENTParams, linfwd!, linadj!) where T
     b   = s.d_w3   # <26>  input random vector, modified in-place
     w2  = s.gradS  # <2>   hidden-space workspace
     w25 = s.d_w2   # <25>  data-space workspace
     w28 = s.d_w5   # <28>  conjugate accumulator (data space)
 
+    # gam/del feed the bidiagonal SVD in evidence_estimate!, which is a Float64 island.
     gam = zeros(LMAX+1)
     del = zeros(LMAX+1)
     M   = 0
     N   = 0
 
-    temp = dot(b, b)
+    temp = _dot64(b, b)
     if temp < TINY
         return gam, del, 0, 0, false
     end
@@ -639,7 +765,7 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
     gamma  = gamma0
     gam[1] = scale            # gam[0] = sqrt(gamma)*scale = scale
 
-    b ./= scale               # Normalise b (area <26>) in-place
+    b ./= T(scale)            # Normalise b (area <26>) in-place
 
     eps_ab = gamma0
     phi_ab = 0.0
@@ -652,7 +778,7 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
     # delta = ||w2||^2,  w25 = A_fwd(w2)
     copy!(w28, b)           # MESMUL(26, 1/gamma, 28) with gamma=1
     _apply_adj!(s, p, w28, w2, linadj!)   # w2 = sqrt_metric * linadj * [acc] * w28
-    delta  = dot(w2, w2)
+    delta  = _dot64(w2, w2)
     _apply_fwd!(s, p, w2, w25, linfwd!)     # w25 = [acc] * linfwd * sqrt_metric * w2
     del[1] = sqrt(delta) / scale      # del[0]
     phi_b  = p.alpha / gamma          # = alpha
@@ -676,8 +802,9 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
 
         # ── MEMSMD(25, -1/delta, 26, gamma):
         #    b += (-1/delta)*w25;  gamma = dot(b,b) ──
-        @. b  -= w25 / delta
-        gamma  = dot(b, b)
+        δ = T(delta)
+        @. b  -= w25 / δ
+        gamma  = _dot64(b, b)
 
         delab  = phi_ab + (gamma / eps_ab) / eps_ab
         M      = L
@@ -690,7 +817,8 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
         gamma <= gamma0 * p.tol                      && (icode = 1; break)
 
         # ── MEMSMA(26, 1/gamma, 28, 28):  w28 += (1/gamma)*b ──
-        @. w28 += b / gamma
+        γ = T(gamma)
+        @. w28 += b / γ
 
         # ── eps_b update ──
         tmp2   = 1.0 / eps_b
@@ -700,7 +828,7 @@ function lanczos_bidiag!(s::MaximENTState, p::MaximENTParams, linfwd!, linadj!)
 
         # ── New backward transform: w2 = A_adj(w28), delta = ||w2||^2 ──
         _apply_adj!(s, p, w28, w2, linadj!)
-        delta = dot(w2, w2)
+        delta = _dot64(w2, w2)
         N     = L
         del[N+1] = sqrt(delta) / scale   # del[N]
     end
@@ -861,10 +989,22 @@ end
 # NCORR = 0 : random signs (±1) using s.d_w3 (<26>)
 # NCORR > 0 : Gaussian with inter-sample correlation
 # ─────────────────────────────────────────────────────────────────────────────
-function random_vector!(s::MaximENTState, p::MaximENTParams, area_m::Vector{Float64}, ncorr::Int)
+
+# Always draw the stream in Float64, then narrow. randn!(rng, ::Vector{Float32}) consumes
+# the Xoshiro stream differently from Float64, so drawing natively at T would desynchronise
+# the probe vectors and make a Float32/Float64 comparison measure the RNG rather than the
+# precision. The Float64 method is the original call, so that path is bit-identical.
+_randn_f64!(rng, x::AbstractVector{Float64}) = randn!(rng, x)
+function _randn_f64!(rng, x::AbstractVector)
+    tmp = Vector{Float64}(undef, length(x))
+    randn!(rng, tmp)
+    copyto!(x, tmp)
+    return x
+end
+function random_vector!(s::MaximENTState, p::MaximENTParams, area_m::AbstractVector, ncorr::Int)
     if ncorr <= 0
         # Random signs: generate normal, extract sign
-        randn!(p.rng, area_m)
+        _randn_f64!(p.rng, area_m)
         @. area_m = sign(area_m)
     elseif ncorr == 1
         randn!(p.rng, area_m)
@@ -897,7 +1037,7 @@ function trace_estimate_init!(s::MaximENTState, p::MaximENTParams, linfwd!, lina
     for _ in 1:p.nrand
         random_vector!(s, p, w26, 0)          # random signs
         _apply_adj!(s, p, w26, w2, linadj!)  # w2 = sqrt_metric * linadj * [acc] * w26
-        alfgd += dot(w2, w2)
+        alfgd += _dot64(w2, w2)
     end
     return alfgd / p.nrand
 end
@@ -1028,7 +1168,7 @@ function maxent_scalars!(s::MaximENTState, p::MaximENTParams, memrun::Int,
     lcodet = (test <= 1.0)
 
     # ── Step 5: GRADL scalar = ‖√[metric] · (−∇L)‖ ──
-    alf2s = mapreduce((l, m) -> (l * m)^2, +, s.gradL, s.sqrt_metric)
+    alf2s = _mapreduce64((l, m) -> (l * m)^2, s.gradL, s.sqrt_metric)
     gradl = sqrt(alf2s)
 
     # ── Step 6: SCALE and CHISQ ──
@@ -1273,7 +1413,7 @@ function reconstruct!(s::MaximENTState, p::MaximENTParams, maxiter::Int,
                       linfwd!, linadj!, fwd!;
                       verbose::Bool = false,
                       ndata::Int = count(>(0.0), s.acc_vec))
-    history = []
+    history = NamedTuple[]
     for k in 1:maxiter
         memrun = (k == 1) ? 1 : 2
         result = maxent_step!(s, p, memrun, linfwd!, linadj!, fwd!)

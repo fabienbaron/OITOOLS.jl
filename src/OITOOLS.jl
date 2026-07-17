@@ -7,8 +7,7 @@
 #
 # Float precision:
 #   OIdata is now OIdata{T<:AbstractFloat}.
-#   Default T=Float64 preserves full backward compatibility.
-#   Use readoifits(file; T=Float32) for half-memory datasets.
+#   Default T=Float32; use readoifits(file; T=Float64) for double precision.
 #   NFFT plans, DFT matrices, and chi2 functions propagate T automatically.
 
 module OITOOLS

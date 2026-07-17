@@ -190,7 +190,9 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
 
     params = x[1:nparams]
     nx = Int(sqrt(length(x) - nparams))
-    x_img = reshape(x[nparams+1:end], nx, nx)
+    # x holds params and image pixels in one vector, so it is Float64 whenever the model
+    # parameters are: bring the image slice back to the operator's precision.
+    x_img = to_ft_precision(reshape(x[nparams+1:end], nx, nx), ftplan)
     w_idx = _resolve_w_idx(model, w_name)
     wl = data.uv_lam
 
@@ -213,7 +215,7 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
 
     # ── Image gradient via NFFT adjoint ───────────────────────────────────────
     # Identity: real(DFTᵀ · g_cvis) = real(NFFT^H · conj(g_cvis))
-    g[nparams+1:end] = vec(real.(adjoint(ftplan[1]) * conj.(W .* g_cvis)))
+    g[nparams+1:end] = vec(real.(adjoint(ftplan[1]) * Complex{ft_eltype(ftplan)}.(conj.(W .* g_cvis))))
 
     # ── Verbose output ────────────────────────────────────────────────────────
     if verb
@@ -534,21 +536,25 @@ function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
 
     nx = size(x_start, 1)
     w = _pad_weights(weights)
-    x_img = copy(x_start)
-    x_params = collect(Float64, params_start)
 
     # Unwrap ft for mono data: Matrix{Vector{NFFTPlan}} → Vector{NFFTPlan}
     ft_use = (data isa OIdata && ft isa AbstractMatrix) ? ft[1] : ft
 
+    # The image runs at the precision of the FT operator (Float32 by default); the model
+    # parameters stay Float64, being a handful of scalars where the precision is free.
+    x_img = to_ft_precision(copy(x_start), ft_use)
+    T = eltype(x_img)
+    x_params = collect(Float64, params_start)
+
     for round in 1:rounds
         # ── Phase 1: VMLMB over image pixels (params fixed) ──────────────
-        g_image = zeros(nx, nx)
+        g_image = zeros(T, nx, nx)
 
         function crit_image(x_flat, g_flat)
             img = reshape(x_flat, nx, nx)
             chi2, _ = model_and_image_to_chi2_fg(model, x_params, img, g_image, ft_use, data;
                 w_name=w_name, weights=w, verb=verb, vonmises=vonmises)
-            reg_g = zeros(nx, nx)
+            reg_g = zeros(T, nx, nx)
             reg_f = regularization(img, reg_g; regularizers=regularizers,
                 printcolor=printcolor, verb=verb)
             g_flat .= vec(g_image .+ reg_g)
@@ -556,7 +562,7 @@ function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
         end
 
         x_img_flat = OptimPackNextGen.vmlmb(crit_image, vec(copy(x_img));
-            lower=zeros(nx*nx), upper=fill(Inf, nx*nx),
+            lower=0, upper=Inf,
             maxiter=maxiter, verb=verb, blmvm=false,
             xtol=xtol, ftol=ftol, gtol=gtol)
         x_img = reshape(x_img_flat, nx, nx)
@@ -640,7 +646,7 @@ Builds the flat-model dict internally from the physical parameters, then calls
 
 # Arguments
 - `x_start`:  starting image (nx × nx)
-- `data`:     `OIdata` or `Vector{OIdata}`
+- `data`:     `OIdata` or `Vector{<:OIdata}`
 - `ft`:       Fourier transform plans from `setup_nfft`
 - `lambda_ref`:  reference wavelength in metres (required)
 - `star_flux`:   initial stellar flux fraction at λ₀ (default 0.5)

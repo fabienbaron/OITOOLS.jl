@@ -13,7 +13,7 @@ ft = setup_ft(data, nx, pixsize)  # nx=256, pixsize=0.101 mas
 x_start = gaussian2d(nx, nx, nx/6)
 image_to_chi2(x_start, ft, data; verb=true)
 
-# ── Reconstruction ───────────────────────────────────────────────────────────
+# ── Reconstruction ────────────────────────────`you───────────────────────────────
 regularizers = [["centering", 1e5], ["l1l2", 1e7, 1e-3]]
 x = reconstruct(x_start, data, ft; regularizers, verb=true, maxiter=500)
 imdisp(x; pixsize)

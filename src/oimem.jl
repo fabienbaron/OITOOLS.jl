@@ -98,10 +98,17 @@ end
 Per-reconstruction workspace shared by compute_data!, linearised_fwd!, and linearised_adj!.
 Construct via `imaging_context(...)`.
 
+`T` is the floating-point precision of the Fourier operator and its complex scratch —
+`Float32` roughly halves the plan's memory and speeds up the transform. The MaximENT
+solver itself remains `Float64` regardless (see `maxent_reconstruct!`); the widening at
+`compute_data!`/`linearised_fwd!` and the narrowing at `linearised_adj!` convert at the
+context boundary, which costs O(nx²) against an O(nuv·m² + nx² log nx) transform.
+
 Fields
 ------
 - `npow`, `nbis`, `nuv`, `nx` : problem dimensions
-- `xyint`    : pixel size [mas]
+- `xyint`    : pixel size [mas] — always Float64; the uv→k scaling chains three
+  multiplies off u ~ 1e8 λ and must not be computed in reduced precision
 - `plan`     : 2-D NFFTPlan mapping nx×nx image ↔ nuv complex visibilities
 - `visi`     : current complex visibilities (set by compute_data!, read by linearised_fwd!/linearised_adj!)
 - `bs_pnt`   : (3 × nbis) 1-based UV-table indices; rows = [ab; bc; ca]
@@ -109,24 +116,24 @@ Fields
 - `phasor`   : exp(−i·ϕ_data_rad) per triple
 - `flag_pow` : Bool vector length npow  (false = flagged / no measurement)
 - `flag_bs`  : Bool vector length nbis  (false = flagged / excluded)
-- `_f_hat`   : nx×nx ComplexF64 scratch for NFFT input/output
-- `_dvisi`   : nuv ComplexF64 scratch for adjoint accumulation
+- `_f_hat`   : nx×nx Complex{T} scratch for NFFT input/output
+- `_dvisi`   : npow Complex{T} scratch for adjoint accumulation
 """
-mutable struct ImagingContext
+mutable struct ImagingContext{T<:AbstractFloat}
     npow     :: Int
     nbis     :: Int
     nuv      :: Int
     nx       :: Int
     xyint    :: Float64
-    plan     :: NFFTPlan
-    visi     :: Vector{ComplexF64}
+    plan     :: NFFTPlan{T,2,1}   # concrete: a bare `NFFTPlan` makes every mul! a dynamic dispatch
+    visi     :: Vector{Complex{T}}
     bs_pnt   :: Matrix{Int}    # 3 × nbis
     bs_sign  :: Matrix{Int8}   # 3 × nbis
-    phasor   :: Vector{ComplexF64}
+    phasor   :: Vector{Complex{T}}
     flag_pow :: Vector{Bool}
     flag_bs  :: Vector{Bool}
-    _f_hat   :: Matrix{ComplexF64}
-    _dvisi   :: Vector{ComplexF64}
+    _f_hat   :: Matrix{Complex{T}}
+    _dvisi   :: Vector{Complex{T}}
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,7 +178,9 @@ function imaging_context(u         :: AbstractVector{<:Real},
                        flag_pow  :: AbstractVector{Bool},
                        flag_bs   :: AbstractVector{Bool},
                        nx        :: Int,
-                       xyint     :: Float64)
+                       xyint     :: Float64;
+                       T         :: Type{<:AbstractFloat} = Float64,
+                       fftflags  = FFT_FLAGS)
     nuv  = length(u)
     nbis = size(bs_pnt, 1)
     @assert length(v) == nuv
@@ -186,33 +195,42 @@ function imaging_context(u         :: AbstractVector{<:Real},
     # Prepend a (u=0, v=0) point as UV slot 1 (matching the C convention in
     # oifits.c: uv[0]=(0,0), pow[0]=1, powerr[0]=fluxerr, then real data from
     # index 1 onward). V(0,0) = Σ image = total flux.
-    k = Matrix{Float64}(undef, 2, nuv + 1)
-    k[:, 1]       .= 0.0          # zero-baseline flux point (slot 1)
-    k[1, 2:end]   .= v .* scale   # v ↔ N–S baseline
-    k[2, 2:end]   .= u .* scale   # u ↔ E–W baseline
+    #
+    # eltype(k) alone fixes the plan's precision. Build the node positions in Float64 and
+    # narrow only on store: u·xyint·MAS chains three multiplies off u ~ 1e8 λ, and doing
+    # that chain in Float32 would cost ~7 significant digits on the node positions
+    # themselves. Same idiom as setup_nfft (oichi2.jl).
+    k64 = Matrix{Float64}(undef, 2, nuv + 1)
+    k64[:, 1]       .= 0.0          # zero-baseline flux point (slot 1)
+    k64[1, 2:end]   .= Float64.(v) .* scale   # v ↔ N–S baseline
+    k64[2, 2:end]   .= Float64.(u) .* scale   # u ↔ E–W baseline
+    k = T === Float64 ? k64 : T.(k64)
 
     npow = nuv + 1
     flag_pow_ext = vcat(true, Vector{Bool}(flag_pow))  # flux slot always active
 
+    # FFTW planning strategy: see `FFT_FLAGS` in oichi2.jl for the measurements motivating
+    # MEASURE over NFFT's unset-flags default (which makes FFTW use ESTIMATE).
     plan = NFFTPlan(k, (nx, nx); m=6, σ=2.0,
                     precompute=NFFT.POLYNOMIAL,
-                    blocking=true, sortNodes=false)
+                    blocking=true, sortNodes=false, fftflags)
 
     # Transpose to 3×nbis for fast column access in the hot-path loops
     bs_pnt_T  = Matrix{Int}( permutedims(bs_pnt)  )
     bs_sign_T = Matrix{Int8}(permutedims(bs_sign) )
 
-    phasor = exp.(-im .* (closure_phases_deg .* (π / 180.0)))
+    # Phase conversion in Float64, narrowed on store (same reasoning as k).
+    phasor = Complex{T}.(exp.(-im .* (Float64.(closure_phases_deg) .* (π / 180.0))))
 
-    ImagingContext(
+    ImagingContext{T}(
         npow, nbis, nuv, nx, Float64(xyint),
         plan,
-        zeros(ComplexF64, npow),
+        zeros(Complex{T}, npow),
         bs_pnt_T, bs_sign_T,
-        Vector{ComplexF64}(phasor),
+        phasor,
         flag_pow_ext, Vector{Bool}(flag_bs),
-        zeros(ComplexF64, nx, nx),
-        zeros(ComplexF64, npow)
+        zeros(Complex{T}, nx, nx),
+        zeros(Complex{T}, npow)
     )
 end
 
@@ -239,7 +257,9 @@ Data layout: npow = nuv → MaximENT4 data vector has length nuv + 2·nt3phi.
 """
 function imaging_context(data,            # OIdata from OITOOLS
                        nx    :: Int,
-                       xyint :: Float64)
+                       xyint :: Float64;
+                       T     :: Type{<:AbstractFloat} = Float64,
+                       fftflags = FFT_FLAGS)
 
     u = data.uv[1, :]   # E–W, wavelengths
     v = data.uv[2, :]   # N–S, wavelengths
@@ -268,7 +288,7 @@ function imaging_context(data,            # OIdata from OITOOLS
 
     imaging_context(u, v, bs_pnt, bs_sign,
                   data.t3phi,      # closure phases in degrees
-                  flag_pow, flag_bs, nx, xyint)
+                  flag_pow, flag_bs, nx, xyint; T, fftflags)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -467,13 +487,15 @@ function maxent_setup(data,
                      force_extrapolate :: Bool   = false,
                      flux_err          :: Float64 = 0.01,
                      mackay_alpha      :: Bool    = false,
-                     ritz_alpha        :: Bool    = false)
+                     ritz_alpha        :: Bool    = false,
+                     T           :: Type{<:AbstractFloat} = Float64,
+                     fftflags    = FFT_FLAGS)
 
-    ctx  = imaging_context(data, nx, xyint)
+    ctx  = imaging_context(data, nx, xyint; T, fftflags)
     npix = nx * nx
     ndat = ctx.npow + 2 * ctx.nbis
 
-    s = MaximENTState(npix, ndat)
+    s = MaximENTState{T}(npix, ndat)
     p = MaximENTParams(; methd, nrand, iseed, aim, rate, utol, alpha, mackay_alpha, ritz_alpha)
 
     model = if isnothing(prior_image)
@@ -521,6 +543,10 @@ to build all three from an `OIdata` struct.
 - `maxiter` — maximum number of outer MaximENT iterations. Default: `200`.
 - `verbose` — print per-iteration χ², entropy, and α diagnostics to stdout.
   Default: `true`.
+- `history` — if a `Vector` is passed, the per-iteration diagnostic trace is appended to
+  it (entropy `S`, `chisq`, `alpha`, `omega`, `ntrans`, `istat`, evidence bounds, …).
+  A far more precise convergence fingerprint than the `verbose` printout, which is
+  rounded to 4-5 significant digits. Default: `nothing` (no trace, no cost).
 
 # Example
 
@@ -537,7 +563,8 @@ function maxent_reconstruct!(ctx :: ImagingContext,
                              s   :: MaximENTState,
                              p   :: MaximENTParams;
                              maxiter :: Int  = 200,
-                             verbose :: Bool = true)
+                             verbose :: Bool = true,
+                             history :: Union{Nothing,Vector} = nothing)
     linfwd! = (δim, δdat) -> linearised_fwd!(ctx, δim, δdat)
     linadj! = (δdat, δim) -> linearised_adj!(ctx, δdat, δim)
     fwd!    = (im,  dat)  -> compute_data!(ctx, im, dat)
@@ -546,7 +573,8 @@ function maxent_reconstruct!(ctx :: ImagingContext,
     # before the first MaxEnt iteration
     compute_data!(ctx, s.h, s.d_w2)
 
-    reconstruct!(s, p, maxiter, linfwd!, linadj!, fwd!; verbose)
+    h = reconstruct!(s, p, maxiter, linfwd!, linadj!, fwd!; verbose)
+    history === nothing || append!(history, h)
 
     return reshape(s.h, ctx.nx, ctx.nx)
 end
@@ -556,10 +584,15 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    reconstruct_bsmem(x_start, data, ft; kwargs...) → Matrix{Float64}
+    reconstruct_bsmem(x_start, data, ft; kwargs...) → Matrix
 
 Maximum Entropy image reconstruction using power spectra (V²) and closure
 phases (T3φ), with the same calling convention as `reconstruct`.
+
+The MaximENT solver itself always runs in `Float64` — it builds its own NFFT plan,
+and its entropy, Ritz-value and trust-region steps are precision-sensitive — but the
+image is returned at the precision of `ft`, so it composes with the rest of the
+pipeline (`Float32` by default).
 
 This is the recommended high-level entry point.  Pixel size and image size
 are inferred from the OITOOLS NFFT plan `ft`; you do not need to call
@@ -636,7 +669,9 @@ function reconstruct_bsmem(x_start, data::OIdata, ft;
                             utol   :: Float64 = 0.1,
                             alpha        :: Float64 = 1.0,
                             mackay_alpha :: Bool    = false,
-                            ritz_alpha   :: Bool    = false)
+                            ritz_alpha   :: Bool    = false,
+                            fftflags               = FFT_FLAGS,
+                            history :: Union{Nothing,Vector} = nothing)
 
     # ── Extract nx and pixsize from the OITOOLS NFFT plan ─────────────────────
     # setup_nfft stores ft[1].k[:, j] = pixsize_rad * [u_j; v_j],
@@ -659,11 +694,15 @@ function reconstruct_bsmem(x_start, data::OIdata, ft;
     end
 
     # ── Build context and run ─────────────────────────────────────────────────
+    # The Fourier operator follows the precision of `ft` (Float32 by default since
+    # readoifits does); the MaximENT solver itself stays Float64 either way.
     ctx, s, p = maxent_setup(data, nx, pixsize, prior_image;
                              methd=methd_vec, nrand, iseed, aim, rate, utol, alpha,
-                             biserrtype, force_extrapolate, flux_err, mackay_alpha, ritz_alpha)
+                             biserrtype, force_extrapolate, flux_err, mackay_alpha, ritz_alpha,
+                             T = ft_eltype(ft), fftflags)
 
-    return maxent_reconstruct!(ctx, s, p; maxiter, verbose)
+    # The solver is Float64 throughout; hand the image back at the caller's precision.
+    return to_ft_precision(maxent_reconstruct!(ctx, s, p; maxiter, verbose, history), ft)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -681,37 +720,41 @@ Fields
 - `nwav`    : number of wavelength channels
 - `nx`      : image side length (pixels), same for all channels
 - `xyint`   : pixel size [mas], same for all channels
-- `ctxs`    : `Vector{ImagingContext}`, one per channel
+- `ctxs`    : `Vector{ImagingContext{T}}`, one per channel
 - `ndat_ch` : number of data slots per channel (`npow + 2*nbis`)
 - `offset`  : cumulative data offset; `offset[w]` = sum of ndat_ch[1:w-1]
+
+`T` is the Fourier-operator precision, as for [`ImagingContext`](@ref). This is where
+`Float32` pays off most: the plan and complex scratch are replicated per channel.
 """
-struct PolyImagingContext
+struct PolyImagingContext{T<:AbstractFloat}
     nwav    :: Int
     nx      :: Int
     xyint   :: Float64
-    ctxs    :: Vector{ImagingContext}
+    ctxs    :: Vector{ImagingContext{T}}
     ndat_ch :: Vector{Int}
     offset  :: Vector{Int}
 end
 
 """
-    PolyImagingContext(data_channels, nx, xyint) → PolyImagingContext
+    PolyImagingContext(data_channels, nx, xyint; T=Float64) → PolyImagingContext
 
 Construct from a vector of `OIdata` (one per wavelength channel).
 """
-function PolyImagingContext(data_channels::AbstractVector, nx::Int, xyint::Float64)
+function PolyImagingContext(data_channels::AbstractVector, nx::Int, xyint::Float64;
+                            T::Type{<:AbstractFloat} = Float64, fftflags = FFT_FLAGS)
     nwav = length(data_channels)
-    ctxs = [imaging_context(data_channels[w], nx, xyint) for w in 1:nwav]
+    ctxs = ImagingContext{T}[imaging_context(data_channels[w], nx, xyint; T, fftflags) for w in 1:nwav]
     ndat_ch = [ctx.npow + 2 * ctx.nbis for ctx in ctxs]
     offset  = [sum(ndat_ch[1:w-1]) for w in 1:nwav]
-    return PolyImagingContext(nwav, nx, xyint, ctxs, ndat_ch, offset)
+    return PolyImagingContext{T}(nwav, nx, xyint, ctxs, ndat_ch, offset)
 end
 
 # -- Polychromatic operators -------------------------------------------------
 
 function compute_data_poly!(pctx::PolyImagingContext,
-                            image_cube::AbstractVector{Float64},
-                            data_vec::AbstractVector{Float64})
+                            image_cube::AbstractVector{<:AbstractFloat},
+                            data_vec::AbstractVector{<:AbstractFloat})
     npix = pctx.nx * pctx.nx
     for w in 1:pctx.nwav
         img_w = @view image_cube[(w-1)*npix+1 : w*npix]
@@ -722,8 +765,8 @@ function compute_data_poly!(pctx::PolyImagingContext,
 end
 
 function linearised_fwd_poly!(pctx::PolyImagingContext,
-                              δimage::AbstractVector{Float64},
-                              δdata::AbstractVector{Float64})
+                              δimage::AbstractVector{<:AbstractFloat},
+                              δdata::AbstractVector{<:AbstractFloat})
     npix = pctx.nx * pctx.nx
     for w in 1:pctx.nwav
         δimg_w = @view δimage[(w-1)*npix+1 : w*npix]
@@ -734,8 +777,8 @@ function linearised_fwd_poly!(pctx::PolyImagingContext,
 end
 
 function linearised_adj_poly!(pctx::PolyImagingContext,
-                              δdata::AbstractVector{Float64},
-                              δimage::AbstractVector{Float64})
+                              δdata::AbstractVector{<:AbstractFloat},
+                              δimage::AbstractVector{<:AbstractFloat})
     npix = pctx.nx * pctx.nx
     for w in 1:pctx.nwav
         δdat_w = @view δdata[pctx.offset[w]+1 : pctx.offset[w]+pctx.ndat_ch[w]]
@@ -782,7 +825,7 @@ end
 
 Build everything needed for polychromatic MaximENT reconstruction.
 
-`data_channels` is a `Vector{OIdata}` with one entry per wavelength channel.
+`data_channels` is a `Vector{<:OIdata}` with one entry per wavelength channel.
 
 `prior_cube` may be:
 - `nothing`           → flat uniform prior (replicated per channel)
@@ -803,15 +846,17 @@ function maxent_setup_poly(data_channels::AbstractVector,
                            force_extrapolate :: Bool   = false,
                            flux_err          :: Float64 = 0.01,
                            mackay_alpha      :: Bool    = false,
-                           ritz_alpha        :: Bool    = false)
+                           ritz_alpha        :: Bool    = false,
+                           T           :: Type{<:AbstractFloat} = Float64,
+                           fftflags    = FFT_FLAGS)
     nwav = length(data_channels)
-    pctx = PolyImagingContext(data_channels, nx, xyint)
+    pctx = PolyImagingContext(data_channels, nx, xyint; T, fftflags)
 
     npix = nx * nx
     nhid = npix * nwav
     ndat = sum(pctx.ndat_ch)
 
-    s = MaximENTState(nhid, ndat)
+    s = MaximENTState{T}(nhid, ndat)
     p = MaximENTParams(; methd, nrand, iseed, aim, rate, utol, alpha,
                          mackay_alpha, ritz_alpha)
 
@@ -847,12 +892,16 @@ end
 
 Run the MaximENT iterative reconstruction loop for polychromatic data and
 return the result as an `nx × nx × nwav` array.
+
+Pass a `Vector` as `history` to collect the per-iteration diagnostic trace; see
+[`maxent_reconstruct!`](@ref).
 """
 function maxent_reconstruct_poly!(pctx :: PolyImagingContext,
                                   s    :: MaximENTState,
                                   p    :: MaximENTParams;
                                   maxiter :: Int  = 200,
-                                  verbose :: Bool = true)
+                                  verbose :: Bool = true,
+                                  history :: Union{Nothing,Vector} = nothing)
     linfwd! = (δim, δdat) -> linearised_fwd_poly!(pctx, δim, δdat)
     linadj! = (δdat, δim) -> linearised_adj_poly!(pctx, δdat, δim)
     fwd!    = (im,  dat)  -> compute_data_poly!(pctx, im, dat)
@@ -860,7 +909,8 @@ function maxent_reconstruct_poly!(pctx :: PolyImagingContext,
     # Warm-up: populate each ctx.visi from the starting model
     compute_data_poly!(pctx, s.h, s.d_w2)
 
-    reconstruct!(s, p, maxiter, linfwd!, linadj!, fwd!; verbose)
+    h = reconstruct!(s, p, maxiter, linfwd!, linadj!, fwd!; verbose)
+    history === nothing || append!(history, h)
 
     return reshape(s.h, pctx.nx, pctx.nx, pctx.nwav)
 end
@@ -874,7 +924,7 @@ Polychromatic Maximum Entropy reconstruction.  Same keyword arguments as the
 monochromatic `reconstruct_bsmem`, but accepts:
 
 - `x_start_3d` — `nx × nx × nwav` starting image cube
-- `data_channels` — `Vector{OIdata}` (one per wavelength channel)
+- `data_channels` — `Vector{<:OIdata}` (one per wavelength channel)
 - `ft_channels` — `Vector` of NFFT plans (one per channel, from a column of `setup_ft`)
 
 Returns an `nx × nx × nwav` image cube normalised to unit flux per channel.
@@ -896,7 +946,9 @@ function reconstruct_bsmem(x_start::AbstractArray{<:AbstractFloat,3},
                            utol   :: Float64 = 0.1,
                            alpha        :: Float64 = 1.0,
                            mackay_alpha :: Bool    = false,
-                           ritz_alpha   :: Bool    = false)
+                           ritz_alpha   :: Bool    = false,
+                           fftflags               = FFT_FLAGS,
+                           history :: Union{Nothing,Vector} = nothing)
 
     nx   = size(x_start, 1)
     nwav = size(x_start, 3)
@@ -923,13 +975,16 @@ function reconstruct_bsmem(x_start::AbstractArray{<:AbstractFloat,3},
     pctx, s, p = maxent_setup_poly(data_channels, nx, pixsize, prior_cube;
                                    methd=methd_vec, nrand, iseed, aim, rate, utol, alpha,
                                    biserrtype, force_extrapolate, flux_err,
-                                   mackay_alpha, ritz_alpha)
+                                   mackay_alpha, ritz_alpha,
+                                   T = ft_eltype(ft_channels), fftflags)
 
-    return maxent_reconstruct_poly!(pctx, s, p; maxiter, verbose)
+    # The solver is Float64 throughout; hand the cube back at the caller's precision.
+    return to_ft_precision(maxent_reconstruct_poly!(pctx, s, p; maxiter, verbose, history),
+                           ft_channels)
 end
 
 """
-    reconstruct_bsmem(x_start_4d, data_matrix, ft_matrix; kwargs...) → Array{Float64,4}
+    reconstruct_bsmem(x_start_4d, data_matrix, ft_matrix; kwargs...) → Array{<:AbstractFloat,4}
 
 Polychromatic convenience wrapper accepting 4D image and `Matrix{OIdata}`.
 Requires single epoch (`size(data,2) == 1`).
@@ -1049,8 +1104,8 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 function compute_data!(ctx   :: ImagingContext,
-                 image :: AbstractVector{Float64},
-                 data  :: AbstractVector{Float64})
+                 image :: AbstractVector{<:AbstractFloat},
+                 data  :: AbstractVector{<:AbstractFloat})
     (; npow, nbis, nuv, nx, plan, visi, _f_hat, bs_pnt, bs_sign, phasor, flag_pow, flag_bs) = ctx
 
     _f_hat .= reshape(image, nx, nx)
@@ -1080,8 +1135,8 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 function linearised_fwd!(ctx    :: ImagingContext,
-                δimage :: AbstractVector{Float64},
-                δdata  :: AbstractVector{Float64})
+                δimage :: AbstractVector{<:AbstractFloat},
+                δdata  :: AbstractVector{<:AbstractFloat})
     (; npow, nbis, nx, plan, visi, _f_hat, _dvisi,
        bs_pnt, bs_sign, phasor, flag_pow, flag_bs) = ctx
 
@@ -1125,12 +1180,12 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 function linearised_adj!(ctx    :: ImagingContext,
-                δdata  :: AbstractVector{Float64},
-                δimage :: AbstractVector{Float64})
+                δdata  :: AbstractVector{<:AbstractFloat},
+                δimage :: AbstractVector{<:AbstractFloat})
     (; npow, nbis, plan, visi, _f_hat, _dvisi,
        bs_pnt, bs_sign, phasor, flag_pow, flag_bs) = ctx
 
-    fill!(_dvisi, zero(ComplexF64))
+    fill!(_dvisi, zero(eltype(_dvisi)))
 
     @views _dvisi[1:npow] .+= flag_pow .* 2 .* δdata[1:npow] .* visi[1:npow]
 
@@ -1156,7 +1211,10 @@ function linearised_adj!(ctx    :: ImagingContext,
     end
 
     mul!(_f_hat, adjoint(plan), _dvisi)
-    δimage .= vec(real.(_f_hat))
+    # `vec(real.(_f_hat))` would materialise a whole nx×nx temporary: vec() is a plain
+    # call, so it breaks broadcast fusion and forces real.() to allocate. Taking vec()
+    # first (a cheap reshape view) lets real.() fuse straight into the store.
+    δimage .= real.(vec(_f_hat))
     return nothing
 end
 

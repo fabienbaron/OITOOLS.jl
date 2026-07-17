@@ -1,0 +1,11 @@
+path,targets,nv2,nt3amp,nt3phi,nvisamp,nflux,nuv,mean_mjd,f32_ok,diffvis_ok,warnings,error,elapsed_s
+test/oifits_for_tests/2004-data1.oifits,FKV0497,195,130,130,0,0,247,53107.00000,true,n/a,,,21.888
+test/oifits_for_tests/2019_v1295Aql.WL_SMOOTH.A.oifits,HD 190073,955,840,840,2225,0,4932,58647.70754,true,true,,,5.163
+test/oifits_for_tests/AlphaCenA.oifits,Alpha_Cen_A,324,156,156,0,0,461,57536.21893,true,n/a,,,0.584
+test/oifits_for_tests/AlphaCenB.oifits,Alpha_Cen_B,432,226,226,0,0,624,57535.90648,true,n/a,,,0.015
+test/oifits_for_tests/OBJECT1_LM.oifits,OBJECT 1,13392,8478,8478,13391,8928,16902,60930.16710,true,true,,,4.323
+test/oifits_for_tests/OBJECT1_N.oifits,OBJECT 1,23557,15435,15435,23560,15708,29835,60930.14874,true,true,,,0.839
+test/oifits_for_tests/OBJECT2_K.oifits,OBJECT 2,34932,23300,23300,34950,233,52425,61305.18734,true,true,NaN in t3amp (unflagged); NaN in t3amp_err; NaN in visphi (unflagged); NaN in visphi_err,,3.660
+test/oifits_for_tests/betlyr6t.oifits,bet Lyr,3836,4636,4636,0,0,11161,56466.30069,true,n/a,,,0.042
+test/oifits_for_tests/pigru.oifits,PI_GRU,909,603,603,0,0,1425,56928.14758,true,n/a,,,0.016
+test/oifits_for_tests/polaris.oifits,HD 8890,3194,1928,1928,50524,0,58616,59307.42896,true,true,,,0.305
