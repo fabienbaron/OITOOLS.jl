@@ -19,6 +19,14 @@
 #
 # BLAS threading is pinned because _bidiag_svd calls LAPACK and reductions can
 # reassociate with thread count, which would make the baseline machine-dependent.
+#
+# Storage format: the Serialization stdlib (.jls), chosen only because it adds no
+# dependency. Its format is NOT guaranteed stable across Julia versions, so a Julia
+# upgrade may make existing baselines unreadable and force a re-cut. That fails loudly
+# (`deserialize` throws) rather than silently passing, and `env` pins the Julia version,
+# so it cannot go unnoticed — but the pre-upgrade reference is lost when it happens.
+# If this becomes annoying, switch to JLD2: version-stable, no text bulk, drop-in for the
+# serialize/deserialize calls here and in test_bsmem_regression.jl.
 
 using LinearAlgebra
 BLAS.set_num_threads(1)

@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.10'     # LTS
+          - '1.12'     # minimum supported
           - '1'        # latest stable release
         os:
           - ubuntu-latest
@@ -30,7 +30,7 @@ jobs:
         include:
           - os: macos-latest
             arch: aarch64
-            version: '1.10'
+            version: '1.12'
           - os: macos-latest
             arch: aarch64
             version: '1'

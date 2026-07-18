@@ -117,8 +117,15 @@ baseline_path(case) = joinpath(REF_DIR, "bsmem_baseline_$(case.name).jls")
 """
     compare_bsmem(ref, got; rtol)
 
-Compare a case result against its baseline. Returns `(; pass, msg)`. `rtol=0` demands
-bit-for-bit equality (the gate for pure-typing refactor phases).
+Compare a case result against its baseline. Returns `(; pass, msg)`, plus `comparable=false`
+when the recorded codegen env differs (in which case a bit-for-bit verdict is meaningless and
+the caller should skip, not fail). `rtol=0` demands bit-for-bit equality (the gate for
+pure-typing refactor phases).
+
+Note the env does NOT record OS/arch — bit-for-bit equality is only defined on the platform the
+baseline was captured on (linux x86_64), because this solver is chaotic and reductions differ
+across architecture and BLAS. The caller must additionally gate on platform; see
+`test_bsmem_regression.jl`.
 """
 function compare_bsmem(ref, got; rtol = 0.0)
     # A bit-for-bit baseline is only meaningful under the codegen it was captured with
@@ -126,7 +133,7 @@ function compare_bsmem(ref, got; rtol = 0.0)
     if rtol == 0 && hasproperty(ref, :env) && ref.env != got.env
         diff = [string(k, ": ", getfield(ref.env, k), " -> ", getfield(got.env, k))
                 for k in keys(ref.env) if getfield(ref.env, k) != getfield(got.env, k)]
-        return (; pass = false,
+        return (; pass = false, comparable = false,
             msg = "codegen/threading mismatch, baseline not comparable — " * join(diff, ", ") *
                   ". Re-run under the baseline's settings (Pkg.test() uses --check-bounds=yes), " *
                   "or delete test/references/bsmem_baseline_*.jls and re-capture.")

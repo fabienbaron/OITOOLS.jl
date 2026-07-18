@@ -11,6 +11,7 @@
 
 ```@docs
 setup_ft
+gaussian2d
 ```
 
 ## Forward model
