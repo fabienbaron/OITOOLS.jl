@@ -18,7 +18,25 @@
 | `model_to_image(model, x; nx, pixsize)` | Synthesize a model image via inverse FFT |
 | `model_to_sed(model, x, wl_grid)` | Compute spectral energy distribution |
 | `model_to_flux(model, x; wl)` | Total flux at zero baseline: `real(V(0,0))` |
-| `resample_data(data)` | Bootstrap resample data (add Gaussian noise from error bars) |
+
+## Uncertainty estimation by resampling
+
+| Function | Description |
+|----------|-------------|
+| `bootstrap_fit(model_dict, list_free_params, data)` | Nonparametric block bootstrap: refit replicates in which blocks of data are resampled |
+| `data_blocks(data; granularity)` | Partition data into resampling blocks (`:config`, `:epoch`, `:point`) |
+| `resample_blocks(data, blocks; mode)` | One bootstrap replicate (`:replacement`, `:halfsample`, `:weights`; `:pmoired` reproduces PMOIRED's scheme and is biased low by √2) |
+| `block_counts(nblocks, mode)` | Block multiplicities drawn by a resampling scheme |
+| `block_weights(nblocks)` | Continuous block weights for the multiplier (Bayesian) bootstrap |
+| `apply_block_weights(data, blocks, w)` | Build the weighted replicate (error bars scaled by 1/√w) |
+| `apply_block_counts(data, blocks, counts)` | Build the replicate for given block multiplicities |
+| `perturb_data(data)` | Add Gaussian noise drawn from the error bars — a simulation utility, not an uncertainty estimator (was `resample_data`) |
+
+`bootstrap_fit` resamples *which observations are used*, in blocks of (MJD,
+telescope configuration), and therefore responds to correlated calibration
+errors and to mis-stated error bars — neither of which the analytic covariance
+of `fit_model_lsqfit` can see.  See the model-fitting examples page, and
+`demos/bootstrap_validation` for the calibration test behind that statement.
 
 ```@docs
 FlatModel
@@ -38,7 +56,17 @@ model_to_chi2_fg
 model_to_image
 model_to_sed
 model_to_flux
+bootstrap_fit
+data_blocks
+resample_blocks
+block_counts
+apply_block_counts
+block_weights
+apply_block_weights
+perturb_data
 resample_data
+BootstrapResult
+DataBlocks
 ```
 
 | Type | Description |
@@ -46,6 +74,8 @@ resample_data
 | `FitResult` | Result from `fit_model` (fields: `x_opt`, `chi2r`, `model`, ...) |
 | `LsqFitResult` | Result from `fit_model_lsqfit` (adds `stderror`, `covar`, `converged`) |
 | `UltraNestResult` | Result from `fit_model_ultranest` (adds `logz`, `logzerr`, `posterior`) |
+| `BootstrapResult` | Result from `bootstrap_fit` (adds `samples`, `median`, `sigma_minus`, `sigma_plus`, `covar`) |
+| `DataBlocks` | Partition of an `OIdata` into resampling blocks |
 
 ## Visibility functions
 

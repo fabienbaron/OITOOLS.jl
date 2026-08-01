@@ -586,15 +586,79 @@ wl_grid = range(1.5e-6, 2.5e-6, length=100)
 total_flux, component_fluxes = model_to_sed(result.model, result.x_opt, wl_grid)
 ```
 
-## Bootstrap error estimation
+## Uncertainty estimation
 
-Generate resampled datasets with Gaussian noise from the error bars and
-re-fit to estimate parameter uncertainties:
+Two estimates of the parameter uncertainties are available, and they do not
+measure the same thing:
+
+| Method | What it assumes | What it catches |
+|--------|-----------------|-----------------|
+| `fit_model_lsqfit` covariance | error bars correct and uncorrelated; model locally linear | nothing beyond the quoted errors, rescaled to χ²ᵣ = 1 |
+| `bootstrap_fit` | blocks of data are numerous and exchangeable | correlated calibration errors, mis-stated error bars, a bad night or baseline |
+
+Both are calibrated when the error bars are right; only the bootstrap survives
+correlated calibration errors, where the analytic covariance is 3–5× too small
+even after its χ²ᵣ rescaling.  The [Uncertainties](@ref) page measures both
+against simulated truth and compares them with PMOIRED.
+
+### Block bootstrap
 
 ```julia
-nboot = 200
-results = [fit_model(model_dict, list_free_params, resample_data(data);
-    lb=lb, ub=ub, maxeval=200).x_opt for _ in 1:nboot]
+boot = bootstrap_fit(model_dict, list_free_params, data;
+    lb=lb, ub=ub, weights=[1.0, 0.0, 0.0], nboot=500, seed=42)
+
+boot.median        # median of the bootstrap distribution
+boot.sigma         # (84th − 16th percentile) / 2
+boot.sigma_plus    # asymmetric error bars
+boot.samples       # nboot × npar matrix, for corner plots or derived quantities
+boot.covar         # parameter covariance
 ```
 
-See `example_bootstrap_fit.jl`.
+The resampling unit is set by `granularity`:
+
+- `:config` (default) — one block per (MJD, baseline / triangle / telescope);
+  all wavelength channels of a block are kept or dropped together.  This is
+  PMOIRED's "spectral vector".
+- `:epoch` — one block per MJD.  More conservative, but it needs many epochs:
+  on a single night it becomes erratic.
+- `:point` — one block per data point.  Destroys the correlation structure and
+  will underestimate the uncertainties on real data; provided for comparison.
+
+`mode` selects how block multiplicities are drawn:
+
+| Mode | Scheme | Measured ratio, many blocks | few blocks | Cost |
+|------|--------|------------------|------------|------|
+| `:replacement` (default) | multinomial — the textbook bootstrap | 0.87–1.01 | 0.96–1.14 | 1 dataset |
+| `:halfsample` | balanced repeated replication: one random half | **0.94–1.06** | 1.24–1.56 | ½ dataset |
+| `:weights` | multiplier (Bayesian) bootstrap: continuous block weights, applied by scaling the error bars | 0.78–0.99 | 0.71–0.85 | 1 dataset |
+| `:pmoired` | PMOIRED's two independent half-samples, fitted jointly | 0.62–0.74 ⚠ | 0.67–0.79 ⚠ | 1 dataset |
+
+"Measured ratio" is the quoted σ divided by the true parameter scatter over 120
+simulated realisations (1.00 = calibrated); see the [Uncertainties](@ref) page
+for the study, the wall times and the comparison with PMOIRED.
+`:halfsample` is the best-calibrated option when blocks are numerous, and the
+cheapest; with few blocks it becomes conservative.  `:replacement` is the most
+uniform across regimes, which is why it is the default.  `:pmoired` is **not** an estimator to quote from: it reproduces PMOIRED's
+construction so that its results can be cross-checked, and it draws
+multiplicities with variance ½ instead of 1, which makes its error bars about
+√2 too small.  `bootstrap_fit` warns the first time it is used.
+
+Derived quantities are obtained from the raw samples, which propagates the full
+covariance:
+
+```julia
+sep = sqrt.(boot.samples[boot.mask, 1].^2 .+ boot.samples[boot.mask, 2].^2)
+println("separation = ", median(sep), " ± ", 0.5*(quantile(sep, 0.84) - quantile(sep, 0.16)))
+```
+
+### What about adding noise to the data?
+
+`perturb_data(data)` displaces every observable by a Gaussian draw from its
+error bar.  It is useful for building simulated datasets, but refitting such
+replicates is *not* a bootstrap: it takes the quoted errors at face value, so
+it can only reproduce the analytic covariance — and in the validation study it
+understated the true scatter by a factor 11–25 once calibration systematics
+were present, and by exactly the factor by which the error bars were
+underestimated.  `resample_data` is a deprecated alias for it.
+
+See `example_bootstrap_fit.jl` for a side-by-side comparison of all schemes.

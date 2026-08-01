@@ -1,6 +1,57 @@
 # Julia's command line wrapper for John Young's oifitslib library
 # Library available here https://github.com/jsy1001/oifitslib
 
+"""
+    oifits_fix_tdim(file) -> Int
+
+Remove the redundant `TDIMn` cards that cfitsio writes for one-dimensional
+columns, and return how many were removed.
+
+Files written through `OIFITS.write` (i.e. by `simulate`,
+`simulate_from_oifits`, ...) carry a `TDIMn = (1)` card for every scalar
+column.  The card is legal but redundant, and readers that honour it — astropy,
+and therefore PMOIRED — return such columns with shape `(nrow, 1)` instead of
+`(nrow,)`.  PMOIRED then fails to load the file with
+
+    TypeError: cannot use 'numpy.ndarray' as a set element
+
+Multi-element columns (`VIS2DATA`, `FLAG`, `STA_INDEX`, ...) keep their `TDIM`.
+The file is modified in place.
+"""
+function oifits_fix_tdim(file::AbstractString)
+    isfile(file) || error("oifits_fix_tdim: no such file: $file")
+    C = FITSIO.CFITSIO
+    f = C.fits_open_file(String(file), 1)   # 1 = read/write
+    ndeleted = 0
+    try
+        for hdu in 1:C.fits_get_num_hdus(f)
+            C.fits_movabs_hdu(f, hdu)
+            tfields = try
+                C.fits_read_keyword(f, "TFIELDS")[1]
+            catch
+                nothing
+            end
+            tfields === nothing && continue
+            for i in 1:parse(Int, strip(tfields))
+                key = "TDIM$i"
+                val = try
+                    C.fits_read_keyword(f, key)[1]
+                catch
+                    nothing
+                end
+                # a one-dimensional TDIM has no comma, e.g. "(1)" or "(8)"
+                if val !== nothing && !occursin(",", val)
+                    C.fits_delete_key(f, key)
+                    ndeleted += 1
+                end
+            end
+        end
+    finally
+        C.fits_close_file(f)
+    end
+    return ndeleted
+end
+
 function oifits_check(;infile::String="")
     if infile==""
         println("Syntax: ")

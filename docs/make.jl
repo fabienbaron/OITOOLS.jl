@@ -21,6 +21,7 @@ makedocs(;
             "Reading OIFITS"         => "examples/reading.md",
             "Plotting"               => "examples/plotting.md",
             "Model Fitting"          => "examples/modeling.md",
+            "Uncertainties"          => "examples/uncertainties.md",
             "Simulating"             => "examples/simulating.md",
             "Imaging"                => "examples/imaging.md",
             "SPARCO"                 => "examples/sparco.md",

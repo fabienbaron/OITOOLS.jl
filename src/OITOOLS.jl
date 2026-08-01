@@ -26,6 +26,7 @@ include("hankel.jl")             # Hankel transform + chainrules + profile compi
 include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
 include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
 include("fit_model.jl")          # fit_model (NLopt), fit_model_ultranest, display_model
+include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
 
 
 include("utils.jl")
@@ -63,8 +64,15 @@ export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, displ
 export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
-       model_to_image, model_to_sed, model_to_flux, resample_data
+       model_to_image, model_to_sed, model_to_flux
 export cvis_to_chi2_fg, model_and_image_to_chi2_fg
+
+# ── Uncertainty estimation by resampling ─────────────────────────────────────
+export bootstrap_fit, BootstrapResult
+export data_blocks, DataBlocks, resample_blocks
+export block_counts, apply_block_counts, block_weights, apply_block_weights
+export perturb_data
+export resample_data          # deprecated alias for perturb_data
 
 # ── Visibility functions ─────────────────────────────────────────────────────
 export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_alt,
@@ -124,7 +132,7 @@ export obs_plan, chara_plan, print_pop_results
 export moon_radec, moon_illumination, angular_separation
 
 # ── Writing OIFITS ───────────────────────────────────────────────────────────
-export oifits_check, oifits_merge, oifits_filter
+export oifits_check, oifits_merge, oifits_filter, oifits_fix_tdim
 
 # ── PMOIRED compatibility ────────────────────────────────────────────────────
 export pmoired_to_julia, pmoired_to_julia_file, pmoired_to_dict

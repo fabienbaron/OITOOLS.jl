@@ -29,6 +29,11 @@ set_data_filter
 | `oifits_check(file)` | Validate an OIFITS file |
 | `oifits_merge(files, outfile)` | Merge multiple OIFITS files |
 | `oifits_filter(infile, outfile)` | Filter an OIFITS file |
+| `oifits_fix_tdim(file)` | Drop the redundant `TDIM` cards cfitsio writes on scalar columns (needed for astropy/PMOIRED to read the file) |
+
+```@docs
+oifits_fix_tdim
+```
 
 ## PMOIRED compatibility
 

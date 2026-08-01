@@ -1116,22 +1116,5 @@ function model_to_image(model::FlatModel,
     return img
 end
 
-"""
-    resample_data(data::OIdata)
-
-Create a bootstrapped copy of the data by adding Gaussian noise
-(drawn from the error bars) to the observables. Useful for bootstrap
-uncertainty estimation.
-"""
-function resample_data(data::OIdata)
-    d = deepcopy(data)
-    d.v2      .+= d.v2_err      .* randn(length(d.v2))
-    d.t3amp   .+= d.t3amp_err   .* randn(length(d.t3amp))
-    d.t3phi   .+= d.t3phi_err   .* randn(length(d.t3phi))
-    d.visamp  .+= d.visamp_err  .* randn(length(d.visamp))
-    d.visphi  .+= d.visphi_err  .* randn(length(d.visphi))
-    if length(d.flux) > 0
-        d.flux .+= d.flux_err   .* randn(length(d.flux))
-    end
-    return d
-end
+# `perturb_data` (formerly `resample_data`) and the block bootstrap now live in
+# bootstrap.jl.
