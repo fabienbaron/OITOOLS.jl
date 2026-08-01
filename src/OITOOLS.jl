@@ -68,7 +68,7 @@ export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_c
 export cvis_to_chi2_fg, model_and_image_to_chi2_fg
 
 # ── Uncertainty estimation by resampling ─────────────────────────────────────
-export bootstrap_fit, BootstrapResult
+export bootstrap_fit, bootstrap_driver, BootstrapResult
 export data_blocks, DataBlocks, resample_blocks
 export block_counts, apply_block_counts, block_weights, apply_block_weights
 export perturb_data

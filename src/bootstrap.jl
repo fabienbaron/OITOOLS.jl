@@ -511,7 +511,194 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Bootstrap driver
+# Bootstrap driver — model-agnostic replicate loop and statistics
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    bootstrap_driver(fitfun, x_opt, list_free_params; kwargs...) -> BootstrapResult
+
+Run `nboot` bootstrap replicates of an arbitrary fit and summarise the scatter
+of the resulting parameters.
+
+This is the model-agnostic half of [`bootstrap_fit`](@ref): it owns the
+replicate loop, the seeding, the threading, the failure handling, the clipping
+and the statistics, and knows nothing about what is being fitted or how the
+data are resampled.  Packages with their own estimators (or their own notion of
+a resampling unit) can reuse the statistics by calling this directly.
+
+# Arguments
+- `fitfun(state, rng) -> (x, chi2r)` — performs **one replicate**: it resamples
+  the data and fits them, returning the best-fit parameters and the reduced χ².
+  The driver never resamples; that is deliberate, so that callers are free to
+  resample structures OITOOLS knows nothing about.  A third element may be
+  returned, `(x, chi2r, extra)`, which is stored in `info` (see below).
+- `x_opt` — best fit to the unresampled data, recorded in the result.
+- `list_free_params` — parameter names; `length` sets the expected width of `x`.
+
+# Keywords
+- `nboot` — number of replicates (default 200)
+- `worker_init(w::Int) -> state` — build per-worker state, called **once per
+  worker and serially, before any task is spawned** (compiling or allocating
+  concurrently is exactly what this exists to avoid).  `state` is `nothing`
+  when `worker_init` is not given.
+- `nworkers` — number of replicate-level workers; `0` (default) means
+  `min(nthreads(), nboot)`.  Set it to 1 when `fitfun` threads internally, so
+  the two levels do not oversubscribe.
+- `info` — optional `AbstractVector` of length `nboot`; when given and `fitfun`
+  returns a third element, `info[i]` receives it.  Written at the replicate's
+  own index, never in completion order.
+- `sigma_clipping`, `chi2r_max` — reject replicates beyond this many σ from the
+  median, or above this reduced χ²
+- `seed` — replicate `i` uses `Xoshiro(seed + i)`, so results do not depend on
+  thread scheduling
+- `threaded` — use several workers (default `true`; ignored if `nworkers` is set)
+- `verb` — progress reporting
+- `mode`, `granularity`, `nblocks` — metadata only, copied into the result
+
+# Example
+```julia
+# a fit with no data at all: recover the scatter of a known Gaussian
+x_true = [1.0, 2.0]
+r = bootstrap_driver((state, rng) -> (x_true .+ 0.1 .* randn(rng, 2), 1.0),
+                     x_true, ["a", "b"]; nboot = 500, seed = 1, verb = false)
+r.sigma   # ≈ [0.1, 0.1]
+```
+"""
+function bootstrap_driver(fitfun,
+                          x_opt            ::AbstractVector{<:Real},
+                          list_free_params ::AbstractVector{<:AbstractString};
+    nboot          ::Int    = 200,
+    worker_init             = nothing,
+    nworkers       ::Int    = 0,
+    info                    = nothing,
+    sigma_clipping          = nothing,
+    chi2r_max               = nothing,
+    seed                    = nothing,
+    threaded       ::Bool   = true,
+    verb           ::Bool   = true,
+    mode           ::Symbol = :replacement,
+    granularity    ::Symbol = :config,
+    nblocks        ::Int    = 0,
+)
+    npar = length(list_free_params)
+    nboot >= 2 || error("bootstrap_driver: nboot must be at least 2 (got $nboot)")
+    length(x_opt) == npar ||
+        error("bootstrap_driver: x_opt has $(length(x_opt)) entries but " *
+              "list_free_params has $npar")
+    info === nothing || length(info) == nboot ||
+        error("bootstrap_driver: info has length $(length(info)), expected nboot = $nboot")
+
+    nw = nworkers > 0 ? min(nworkers, nboot) :
+                        (threaded ? min(Threads.nthreads(), nboot) : 1)
+
+    # Per-worker state, built serially: `worker_init` typically compiles or
+    # allocates something that must not be shared between threads, and doing
+    # that concurrently is the very race it is meant to prevent.
+    states = worker_init === nothing ? fill(nothing, nw) :
+                                       [worker_init(w) for w in 1:nw]
+
+    seed0   = seed === nothing ? rand(UInt32) : UInt64(seed)
+    samples = fill(NaN, nboot, npar)
+    chi2r   = fill(NaN, nboot)
+    done    = Threads.Atomic{Int}(0)
+    step    = max(nboot ÷ 10, 1)
+
+    function run_chunk(w::Int, chunk)
+        state = states[w]
+        for i in chunk
+            rng  = Xoshiro(seed0 + i)
+            got  = false
+            x_i  = x_opt
+            c_i  = NaN
+            try
+                out  = fitfun(state, rng)
+                x_i  = out[1]
+                c_i  = out[2]
+                if info !== nothing && length(out) >= 3
+                    info[i] = out[3]
+                end
+                got = true
+            catch e
+                e isa InterruptException && rethrow(e)
+                # leave the row as NaN — counted as a failure below
+            end
+            if got
+                # a wrong-width return is a bug in `fitfun`, not a failed
+                # replicate: surface it instead of silently dropping the row
+                length(x_i) == npar ||
+                    error("bootstrap_driver: fitfun returned $(length(x_i)) " *
+                          "parameters, expected $npar")
+                samples[i, :] = x_i
+                chi2r[i]      = c_i
+            end
+            if verb
+                n = Threads.atomic_add!(done, 1) + 1
+                (n % step == 0 || n == nboot) &&
+                    @printf("\rBootstrap: %d/%d replicates", n, nboot)
+            end
+        end
+    end
+
+    verb && println("Running $nboot bootstrap fits on $nw thread(s)...")
+    if nw == 1
+        run_chunk(1, 1:nboot)
+    else
+        chunks = [w:nw:nboot for w in 1:nw]
+        tasks  = [Threads.@spawn run_chunk(w, chunks[w]) for w in 1:nw]
+        foreach(wait, tasks)
+    end
+    verb && println()
+
+    # ── Clipping ─────────────────────────────────────────────────────────────
+    mask = [all(isfinite, @view samples[i, :]) for i in 1:nboot]
+    nfailed = count(!, mask)
+    if chi2r_max !== nothing
+        mask .&= (isfinite.(chi2r) .& (chi2r .<= chi2r_max))
+    end
+    if sigma_clipping !== nothing
+        for j in 1:npar
+            keep = copy(mask)
+            for _ in 1:3
+                any(keep) || break
+                x   = @view samples[:, j]
+                med = median(x[keep])
+                s   = 0.5 * (quantile(x[keep], 0.84) - quantile(x[keep], 0.16))
+                s > 0 || break
+                keep = mask .& (abs.(x .- med) .<= sigma_clipping * s)
+            end
+            mask .&= keep
+        end
+    end
+    count(mask) >= 2 ||
+        error("bootstrap_driver: fewer than 2 usable replicates ($(count(mask))/$nboot); " *
+              "check the fit setup, the bounds, or relax the clipping")
+
+    # ── Summary statistics ───────────────────────────────────────────────────
+    X = samples[mask, :]
+    med  = [median(X[:, j])              for j in 1:npar]
+    p16  = [quantile(X[:, j], 0.16)      for j in 1:npar]
+    p84  = [quantile(X[:, j], 0.84)      for j in 1:npar]
+    sm   = med .- p16
+    sp   = p84 .- med
+    sig  = 0.5 .* (sm .+ sp)
+    C    = npar > 1 ? cov(X) : reshape([var(X[:, 1])], 1, 1)
+    R    = npar > 1 ? cor(X) : ones(1, 1)
+
+    if verb
+        println()
+        for (j, p) in enumerate(list_free_params)
+            @printf("  %-20s = %10.5f  +%.5f -%.5f\n", p, med[j], sp[j], sm[j])
+        end
+    end
+
+    return BootstrapResult(samples, collect(String, list_free_params),
+                           collect(Float64, x_opt), med, sig, sm, sp,
+                           C, R, chi2r, mask, nblocks, mode, granularity, nfailed)
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bootstrap of an OITOOLS parametric fit
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
@@ -626,103 +813,36 @@ function bootstrap_fit(model_dict       ::Dict{String},
               "errors from fit_model_lsqfit / a perturb_data Monte Carlo."
     end
 
-    # ── 3. Replicates ────────────────────────────────────────────────────────
-    seed0    = seed === nothing ? rand(UInt32) : UInt64(seed)
-    samples  = fill(NaN, nboot, npar)
-    chi2r    = fill(NaN, nboot)
-    nworkers = threaded ? min(Threads.nthreads(), nboot) : 1
+    # ── 3. One replicate: resample, then fit ────────────────────────────────
+    # The rng is consumed in a fixed order — resampling first, the optional
+    # starting-point perturbation second — so that a given seed always yields
+    # the same replicate.
+    function one_replicate(fm, rng)
+        rd = resample_blocks(data, blocks; mode=mode, rng=rng)
+        x0 = start_scatter > 0 ?
+             x_opt .+ start_scatter .* x_sigma .* randn(rng, npar) : x_opt
+        r = fitter == :lsqfit ?
+            fit_model_lsqfit(fm, x0, rd; lb=lb, ub=ub, weights=weights,
+                             vonmises=vonmises, maxIter=maxIter) :
+            fit_model(fm, x0, rd; lb=lb, ub=ub, weights=weights,
+                      vonmises=vonmises, method=method, maxeval=maxeval)
+        return r.x_opt, r.chi2r
+    end
 
     # One compiled model per worker: FlatModel carries mutable Hankel
-    # workspaces, so it cannot be shared between threads.  Compiled serially
-    # to keep the runtime-generated-function cache single-threaded.
-    models = [parse_model(model_dict, list_free_params; nB_workspace=nB) for _ in 1:nworkers]
-
-    done = Threads.Atomic{Int}(0)
-    step = max(nboot ÷ 10, 1)
-
-    function run_chunk(w::Int, chunk)
-        fm = models[w]
-        for i in chunk
-            rng = Xoshiro(seed0 + i)
-            try
-                rd = resample_blocks(data, blocks; mode=mode, rng=rng)
-                x0 = start_scatter > 0 ?
-                     x_opt .+ start_scatter .* x_sigma .* randn(rng, npar) : x_opt
-                if fitter == :lsqfit
-                    r = fit_model_lsqfit(fm, x0, rd; lb=lb, ub=ub, weights=weights,
-                                         vonmises=vonmises, maxIter=maxIter)
-                    samples[i, :] = r.x_opt
-                    chi2r[i]      = r.chi2r
-                else
-                    r = fit_model(fm, x0, rd; lb=lb, ub=ub, weights=weights,
-                                  vonmises=vonmises, method=method, maxeval=maxeval)
-                    samples[i, :] = r.x_opt
-                    chi2r[i]      = r.chi2r
-                end
-            catch e
-                e isa InterruptException && rethrow(e)
-                # leave the row as NaN — counted as a failure below
-            end
-            if verb
-                n = Threads.atomic_add!(done, 1) + 1
-                (n % step == 0 || n == nboot) &&
-                    @printf("\rBootstrap: %d/%d replicates", n, nboot)
-            end
-        end
-    end
-
-    verb && println("Running $nboot bootstrap fits on $nworkers thread(s)...")
-    if nworkers == 1
-        run_chunk(1, 1:nboot)
-    else
-        chunks = [w:nworkers:nboot for w in 1:nworkers]
-        tasks  = [Threads.@spawn run_chunk(w, chunks[w]) for w in 1:nworkers]
-        foreach(wait, tasks)
-    end
-    verb && println()
-
-    # ── 4. Clipping ──────────────────────────────────────────────────────────
-    mask = [all(isfinite, @view samples[i, :]) for i in 1:nboot]
-    nfailed = count(!, mask)
-    if chi2r_max !== nothing
-        mask .&= (isfinite.(chi2r) .& (chi2r .<= chi2r_max))
-    end
-    if sigma_clipping !== nothing
-        for j in 1:npar
-            keep = copy(mask)
-            for _ in 1:3
-                any(keep) || break
-                x   = @view samples[:, j]
-                med = median(x[keep])
-                s   = 0.5 * (quantile(x[keep], 0.84) - quantile(x[keep], 0.16))
-                s > 0 || break
-                keep = mask .& (abs.(x .- med) .<= sigma_clipping * s)
-            end
-            mask .&= keep
-        end
-    end
-    count(mask) >= 2 ||
-        error("bootstrap_fit: fewer than 2 usable replicates ($(count(mask))/$nboot); " *
-              "check the fit setup, the bounds, or relax the clipping")
-
-    # ── 5. Summary statistics ────────────────────────────────────────────────
-    X = samples[mask, :]
-    med  = [median(X[:, j])              for j in 1:npar]
-    p16  = [quantile(X[:, j], 0.16)      for j in 1:npar]
-    p84  = [quantile(X[:, j], 0.84)      for j in 1:npar]
-    sm   = med .- p16
-    sp   = p84 .- med
-    sig  = 0.5 .* (sm .+ sp)
-    C    = npar > 1 ? cov(X) : reshape([var(X[:, 1])], 1, 1)
-    R    = npar > 1 ? cor(X) : ones(1, 1)
-
-    if verb
-        println()
-        for (j, p) in enumerate(list_free_params)
-            @printf("  %-20s = %10.5f  +%.5f -%.5f\n", p, med[j], sp[j], sm[j])
-        end
-    end
-
-    return BootstrapResult(samples, list_free_params, x_opt, med, sig, sm, sp,
-                           C, R, chi2r, mask, nblocks, mode, granularity, nfailed)
+    # workspaces, so it cannot be shared between threads.  `bootstrap_driver`
+    # calls this serially, which keeps the runtime-generated-function cache
+    # single-threaded.
+    return bootstrap_driver(one_replicate, x_opt, list_free_params;
+                            nboot          = nboot,
+                            worker_init    = _ -> parse_model(model_dict, list_free_params;
+                                                              nB_workspace = nB),
+                            sigma_clipping = sigma_clipping,
+                            chi2r_max      = chi2r_max,
+                            seed           = seed,
+                            threaded       = threaded,
+                            verb           = verb,
+                            mode           = mode,
+                            granularity    = granularity,
+                            nblocks        = nblocks)
 end

@@ -24,6 +24,7 @@
 | Function | Description |
 |----------|-------------|
 | `bootstrap_fit(model_dict, list_free_params, data)` | Nonparametric block bootstrap: refit replicates in which blocks of data are resampled |
+| `bootstrap_driver(fitfun, x_opt, list_free_params)` | The model-agnostic replicate loop and statistics behind `bootstrap_fit`, for callers with their own fitter or resampling unit |
 | `data_blocks(data; granularity)` | Partition data into resampling blocks (`:config`, `:epoch`, `:point`) |
 | `resample_blocks(data, blocks; mode)` | One bootstrap replicate (`:replacement`, `:halfsample`, `:weights`; `:pmoired` reproduces PMOIRED's scheme and is biased low by √2) |
 | `block_counts(nblocks, mode)` | Block multiplicities drawn by a resampling scheme |
@@ -57,6 +58,7 @@ model_to_image
 model_to_sed
 model_to_flux
 bootstrap_fit
+bootstrap_driver
 data_blocks
 resample_blocks
 block_counts

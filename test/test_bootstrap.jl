@@ -1,6 +1,6 @@
 # Tests for the resampling-based uncertainty estimation (src/bootstrap.jl)
 
-using OITOOLS, Test, Random, Statistics
+using OITOOLS, Test, Random, Statistics, LinearAlgebra
 
 const _BOOT_FILE = joinpath(@__DIR__, "oifits_for_tests", "AlphaCenA.oifits")
 
@@ -161,6 +161,110 @@ end
     end
 end
 
+@testset "bootstrap_driver" begin
+    npar   = 3
+    x_true = [1.0, 2.0, -0.5]
+    names  = ["a", "b", "c"]
+    gauss  = (_, rng) -> (x_true .+ 0.1 .* randn(rng, npar), 1.0)
+
+    @testset "statistics" begin
+        # no data, no model: the driver must recover a known scatter
+        r = bootstrap_driver(gauss, x_true, names; nboot=2000, seed=7, verb=false)
+        @test size(r.samples) == (2000, npar)
+        @test r.nfailed == 0
+        @test count(r.mask) == 2000
+        @test r.x_opt == x_true
+        @test r.list_free_params == names
+        @test all(isapprox.(r.sigma, 0.1, rtol=0.15))
+        @test all(isapprox.(r.median, x_true, atol=0.02))
+        @test size(r.covar) == (npar, npar)
+        @test all(isapprox.(diag(r.correlation), 1.0))
+        # metadata is carried through untouched
+        r2 = bootstrap_driver(gauss, x_true, names; nboot=10, seed=1, verb=false,
+                              mode=:weights, granularity=:epoch, nblocks=42)
+        @test (r2.mode, r2.granularity, r2.nblocks) == (:weights, :epoch, 42)
+    end
+
+    @testset "reproducible and scheduling-independent" begin
+        a = bootstrap_driver(gauss, x_true, names; nboot=50, seed=3, verb=false)
+        b = bootstrap_driver(gauss, x_true, names; nboot=50, seed=3, verb=false, nworkers=1)
+        c = bootstrap_driver(gauss, x_true, names; nboot=50, seed=3, verb=false, nworkers=3)
+        @test a.samples == b.samples          # same seed, any number of workers
+        @test a.samples == c.samples
+        @test bootstrap_driver(gauss, x_true, names; nboot=50, seed=4, verb=false).samples != a.samples
+    end
+
+    @testset "failures" begin
+        flaky = (_, rng) -> (rand(rng) < 0.25 ? error("boom") :
+                             (x_true .+ 0.1 .* randn(rng, npar), 1.0))
+        r = bootstrap_driver(flaky, x_true, names; nboot=200, seed=11, verb=false)
+        @test 0 < r.nfailed < 200
+        @test count(r.mask) == 200 - r.nfailed
+        @test all(isnan, r.samples[.!r.mask, :])
+        @test all(isfinite, r.samples[r.mask, :])
+        # an interrupt is never swallowed by the per-replicate catch
+        @test_throws InterruptException bootstrap_driver(
+            (_, _) -> throw(InterruptException()), x_true, names;
+            nboot=4, seed=1, nworkers=1, verb=false)
+    end
+
+    @testset "clipping" begin
+        # chi2r_max
+        noisy = (_, rng) -> (x_true .+ 0.1 .* randn(rng, npar),
+                             rand(rng) < 0.5 ? 1.0 : 100.0)
+        r = bootstrap_driver(noisy, x_true, names; nboot=200, seed=5,
+                             chi2r_max=10.0, verb=false)
+        @test count(r.mask) < 200
+        @test all(r.chi2r[r.mask] .<= 10.0)
+        # sigma clipping removes injected outliers.  The outlier fraction has to
+        # stay small: the clip is on the 16-84 half-width, so a large fraction
+        # inflates that half-width until nothing is more than 4σ from the median
+        # — a property of the (PMOIRED) algorithm, not of this driver.
+        wild = (_, rng) -> begin
+            x = x_true .+ 0.1 .* randn(rng, npar)
+            (rand(rng) < 0.02 ? x .+ 20.0 : x, 1.0)
+        end
+        r_no = bootstrap_driver(wild, x_true, names; nboot=400, seed=6, verb=false)
+        r_cl = bootstrap_driver(wild, x_true, names; nboot=400, seed=6,
+                                sigma_clipping=4.0, verb=false)
+        @test any(abs.(r_no.samples[r_no.mask, 1] .- x_true[1]) .> 10)  # outliers present
+        @test count(r_cl.mask) < count(r_no.mask)                       # some were dropped
+        @test all(abs.(r_cl.samples[r_cl.mask, 1] .- x_true[1]) .< 1)   # all of them
+        @test isapprox(r_cl.sigma[1], 0.1, rtol=0.2)                    # clean σ recovered
+    end
+
+    @testset "worker_init" begin
+        calls = Threads.Atomic{Int}(0)
+        winit = w -> (Threads.atomic_add!(calls, 1); w)          # state = worker id
+        fw    = (state, rng) -> (fill(Float64(state), npar), 1.0)
+        r = bootstrap_driver(fw, x_true, names; nboot=60, seed=2, nworkers=3,
+                             worker_init=winit, verb=false)
+        @test calls[] == 3                                        # once per worker
+        @test sort(unique(r.samples)) == [1.0, 2.0, 3.0]          # state reached fitfun
+        @test bootstrap_driver(gauss, x_true, names; nboot=10, seed=2,
+                               nworkers=1, verb=false).nfailed == 0   # state = nothing
+    end
+
+    @testset "info sink is indexed by replicate" begin
+        info = Vector{Any}(undef, 40)
+        fi = (_, rng) -> (copy(x_true), 1.0, rand(rng))
+        bootstrap_driver(fi, x_true, names; nboot=40, seed=9, info=info,
+                         nworkers=3, verb=false)
+        # replicate i is seeded Xoshiro(seed + i) whatever worker ran it
+        @test all(i -> info[i] == rand(Xoshiro(UInt64(9) + i)), 1:40)
+    end
+
+    @testset "argument validation" begin
+        @test_throws ErrorException bootstrap_driver(gauss, x_true, ["a"]; nboot=10, verb=false)
+        @test_throws ErrorException bootstrap_driver(gauss, x_true, names; nboot=1, verb=false)
+        @test_throws ErrorException bootstrap_driver(gauss, x_true, names; nboot=10,
+                                                     info=zeros(3), verb=false)
+        # a wrong-width return is a bug in fitfun, not a failed replicate
+        @test_throws ErrorException bootstrap_driver((_, _) -> ([1.0], 1.0), x_true, names;
+                                                     nboot=10, nworkers=1, verb=false)
+    end
+end
+
 @testset "bootstrap_fit" begin
     model = Dict{String,Any}("star,ldlin" => 8.0, "star,u" => 0.3, "star,f" => 1.0)
     free  = ["star,ldlin", "star,u"]
@@ -180,6 +284,11 @@ end
     @test isapprox(b.median[1], b.x_opt[1], atol=5 * b.sigma[1])
     # reproducible
     @test bootstrap_fit(model, free, data; kw...).samples == b.samples
+    # ...and unchanged since before bootstrap_driver was factored out.  The line
+    # above only proves determinism within a session: if the refactor shifted the
+    # RNG stream, both sides would move together and still compare equal.
+    @test b.samples[1, :] ≈ [8.431927658994, 0.189155508420] atol=1e-10
+    @test b.sigma        ≈ [0.010065732616, 0.019544361596] atol=1e-10
 
     # these data are correlated: block bootstrap must exceed a per-point bootstrap
     p = bootstrap_fit(model, free, data; granularity=:point, kw...)
