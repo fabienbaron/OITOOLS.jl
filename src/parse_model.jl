@@ -195,14 +195,16 @@ function _vis_crescent(params::AbstractVector, u::AbstractVector, v::AbstractVec
     croff     = params[3]  # offset factor 0..1 (0 = concentric ring)
     crprojang = params[4]  # PA of thinnest part (deg, 0=N, 90=E)
 
-    crpa = crprojang * π / 180
-    off  = croff * (crout - crin) / 2   # offset distance (mas)
+    # broadcast throughout: any of these may be a per-point vector when the
+    # parameter is given as a $WL / $MJD / $B expression
+    crpa = @. crprojang * π / 180
+    off  = @. croff * (crout - crin) / 2   # offset distance (mas)
 
     # Outer disk shifted away from thin side, inner toward thin side
-    offXo = -off / 2 * sin(crpa)
-    offYo = -off / 2 * cos(crpa)
-    offXi =  off / 2 * sin(crpa)
-    offYi =  off / 2 * cos(crpa)
+    offXo = @. -off / 2 * sin(crpa)
+    offYo = @. -off / 2 * cos(crpa)
+    offXi = @.  off / 2 * sin(crpa)
+    offYi = @.  off / 2 * cos(crpa)
 
     ρ = @. sqrt(u^2 + v^2)
     V_out = vis_ud(crout, ρ)

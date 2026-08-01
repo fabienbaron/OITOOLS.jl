@@ -234,6 +234,27 @@ model_dict = Dict{String,Any}(
 )
 ```
 
+They are not restricted to fluxes: **any** parameter may be an expression, including
+the geometric ones, in which case it takes a different value at every uv point:
+
+```julia
+model_dict = Dict{String,Any}(
+    # a diameter that grows linearly with wavelength
+    "star,d0"    => 3.0,
+    "star,slope" => 0.05,
+    "star,ud"    => "\$star,d0 * (1 + \$star,slope * (\$WL/1.6e-6 - 1))",
+    "star,f"     => 1.0,
+)
+list_free_params = ["star,d0", "star,slope"]   # both are fitted as usual
+```
+
+This works for every analytic component — `ud`, `ldlin`, `ldquad`, `ldpow`,
+`fwhm`, the rings and the crescent — and for every one of their parameters, not
+only the size: a limb-darkening coefficient varying with time
+(`"star,u" => "0.3 + 0.01*(\$MJD - 60000)"`) is equally valid. Gradients follow
+automatically, so such models can be fitted with `fit_model` or
+`fit_model_lsqfit` without any special handling.
+
 ### Shared parameters across components
 
 Bare keys (without a `component,` prefix) act as global variables that

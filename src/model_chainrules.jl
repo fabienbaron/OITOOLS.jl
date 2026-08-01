@@ -28,6 +28,24 @@ using ChainRulesCore
 const MAS2RAD = 2.0626480624709636e8   # 1 radian in milli-arcseconds
 
 # ---------------------------------------------------------------------------
+# Per-point parameters
+# ---------------------------------------------------------------------------
+#
+# A parameter may be a scalar, or a vector holding one value per uv point —
+# the latter is what the resolver produces for an expression referencing the
+# implicit variables `$WL`, `$MJD` or `$B` (a chromatic diameter, a
+# time-variable limb darkening, ...).  Every formula below is written with
+# broadcasting, so the same body serves both cases; only the reduction in the
+# pullback differs, hence `_dparam`.
+
+const VisParam = Union{Real,AbstractVector}
+
+# Cotangent for a parameter: summed over uv points if the parameter is shared
+# (scalar), left element-wise if each uv point has its own value.
+_dparam(θ::Real, v) = sum(v)
+_dparam(::AbstractVector, v) = v
+
+# ---------------------------------------------------------------------------
 # 1.  Uniform disk
 # ---------------------------------------------------------------------------
 #
@@ -39,12 +57,12 @@ const MAS2RAD = 2.0626480624709636e8   # 1 radian in milli-arcseconds
 #
 # Note: jinc(y) = 2 J₁(πy) / (πy), i.e. V = jinc(θ ρ / C)
 
-function vis_ud(θ::Real, ρ::AbstractVector)
+function vis_ud(θ::VisParam, ρ::AbstractVector)
     t = @. π * θ * ρ / MAS2RAD
     return @. ifelse(t < 1e-8, one(t), 2 * besselj1(t) / t)
 end
 
-function ChainRulesCore.rrule(::typeof(vis_ud), θ::Real, ρ::AbstractVector)
+function ChainRulesCore.rrule(::typeof(vis_ud), θ::VisParam, ρ::AbstractVector)
     t    = @. π * θ * ρ / MAS2RAD
     safe = t .> 1e-8
     V    = @. ifelse(safe, 2 * besselj1(t) / t, one(t))
@@ -52,7 +70,7 @@ function ChainRulesCore.rrule(::typeof(vis_ud), θ::Real, ρ::AbstractVector)
     function vis_ud_pullback(ȳ)
         dV_dt = @. ifelse(safe, 2*(t*besselj0(t) - 2*besselj1(t)) / t^2, zero(t))
         dt_dθ = @. π * ρ / MAS2RAD
-        ∂θ    = sum(ȳ .* dV_dt .* dt_dθ)
+        ∂θ    = _dparam(θ, ȳ .* dV_dt .* dt_dθ)
         return NoTangent(), ∂θ, NoTangent()   # ρ is treated as data
     end
     return V, vis_ud_pullback
@@ -87,8 +105,8 @@ end
 
 const _SQRTPIO2 = sqrt(π/2)
 
-function vis_ldlin(θ::Real, u::Real, ρ::AbstractVector)
-    N = 0.5 - u/6
+function vis_ldlin(θ::VisParam, u::VisParam, ρ::AbstractVector)
+    N = @. 0.5 - u/6
     ζ = @. π * θ * ρ / MAS2RAD
     B1  = @. ifelse(ζ < 1e-8, one(ζ)/2, besselj1(ζ)/ζ)
     B32 = @. ifelse(ζ < 1e-8, one(ζ)/3, besselj(1.5,ζ)/ζ^1.5)
@@ -160,8 +178,8 @@ function vis_ldlin_fwd!(V::AbstractVector, dV_dθ::AbstractVector, dV_du::Abstra
     return nothing
 end
 
-function ChainRulesCore.rrule(::typeof(vis_ldlin), θ::Real, u::Real, ρ::AbstractVector)
-    N    = 0.5 - u/6
+function ChainRulesCore.rrule(::typeof(vis_ldlin), θ::VisParam, u::VisParam, ρ::AbstractVector)
+    N    = @. 0.5 - u/6
     ζ    = @. π * θ * ρ / MAS2RAD
     safe = ζ .> 1e-8
 
@@ -182,11 +200,11 @@ function ChainRulesCore.rrule(::typeof(vis_ldlin), θ::Real, u::Real, ρ::Abstra
         # ∂θ
         dV_dζ = @. ((1-u)*dB1_dζ + u*_SQRTPIO2*dB32_dζ) / N
         dζ_dθ = @. π * ρ / MAS2RAD
-        ∂θ    = sum(ȳ_safe .* dV_dζ .* dζ_dθ)
+        ∂θ    = _dparam(θ, ȳ_safe .* dV_dζ .* dζ_dθ)
 
         # ∂u
         dV_du = @. (-B1 + _SQRTPIO2*B32) / N  +  V / (6*N)
-        ∂u    = sum(ȳ_safe .* dV_du)
+        ∂u    = _dparam(u, ȳ_safe .* dV_du)
 
         return NoTangent(), ∂θ, ∂u, NoTangent()
     end
@@ -212,8 +230,8 @@ end
 # ∂V/∂w  = (∂V_num/∂w · N + V_num/12) / N²
 #   ∂V_num/∂w = -B₁ + 2√(π/2) B₃₂ - 2B₂
 
-function vis_ldquad(θ::Real, u::Real, w::Real, ρ::AbstractVector)
-    N   = 0.5 - u/6 - w/12
+function vis_ldquad(θ::VisParam, u::VisParam, w::VisParam, ρ::AbstractVector)
+    N   = @. 0.5 - u/6 - w/12
     ζ   = @. π * θ * ρ / MAS2RAD
     B1  = @. ifelse(ζ < 1e-8, 0.5,                  besselj1(ζ)/ζ)
     B32 = @. ifelse(ζ < 1e-8, 1/(2^1.5*gamma(2.5)),  besselj(1.5,ζ)/ζ^1.5)
@@ -223,8 +241,8 @@ function vis_ldquad(θ::Real, u::Real, w::Real, ρ::AbstractVector)
     return @. ifelse(ζ < 1e-8, one(ζ), V_num/N)
 end
 
-function ChainRulesCore.rrule(::typeof(vis_ldquad), θ::Real, u::Real, w::Real, ρ::AbstractVector)
-    N    = 0.5 - u/6 - w/12
+function ChainRulesCore.rrule(::typeof(vis_ldquad), θ::VisParam, u::VisParam, w::VisParam, ρ::AbstractVector)
+    N    = @. 0.5 - u/6 - w/12
     ζ    = @. π * θ * ρ / MAS2RAD
     safe = ζ .> 1e-8
 
@@ -246,13 +264,13 @@ function ChainRulesCore.rrule(::typeof(vis_ldquad), θ::Real, u::Real, w::Real, 
         ȳs = @. ifelse(safe, ȳ, zero(ȳ))
 
         dV_dζ = @. ((1-u-w)*dB1_dζ + (u+2w)*_SQRTPIO2*dB32_dζ - 2w*dB2_dζ) / N
-        ∂θ = sum(ȳs .* dV_dζ .* π .* ρ ./ MAS2RAD)
+        ∂θ = _dparam(θ, ȳs .* dV_dζ .* π .* ρ ./ MAS2RAD)
 
         dVnum_du = @. -B1 + _SQRTPIO2*B32
         dVnum_dw = @. -B1 + 2*_SQRTPIO2*B32 - 2*B2
 
-        ∂u = sum(ȳs .* ((dVnum_du .* N .+ V_num ./ 6) ./ N^2))
-        ∂w = sum(ȳs .* ((dVnum_dw .* N .+ V_num ./ 12) ./ N^2))
+        ∂u = _dparam(u, ȳs .* ((dVnum_du .* N .+ V_num ./ 6) ./ N^2))
+        ∂w = _dparam(w, ȳs .* ((dVnum_dw .* N .+ V_num ./ 12) ./ N^2))
 
         return NoTangent(), ∂θ, ∂u, ∂w, NoTangent()
     end
@@ -308,8 +326,8 @@ function _dbesselj_dnu(ν::Real, x::Real; nterms::Int=30)
     return lhalf * besselj(ν, x) - s
 end
 
-function vis_ldpow(θ::Real, α::Real, ρ::AbstractVector)
-    ν   = α/2 + 1
+function vis_ldpow(θ::VisParam, α::VisParam, ρ::AbstractVector)
+    ν   = @. α/2 + 1
     ζ   = @. π * θ * ρ / MAS2RAD
     Vz  = @. ifelse(ζ < 1e-8,
                     one(ζ),                              # limit: V → 1 as ζ→0
@@ -317,15 +335,15 @@ function vis_ldpow(θ::Real, α::Real, ρ::AbstractVector)
     return Vz
 end
 
-function ChainRulesCore.rrule(::typeof(vis_ldpow), θ::Real, α::Real, ρ::AbstractVector)
-    ν    = α/2 + 1
+function ChainRulesCore.rrule(::typeof(vis_ldpow), θ::VisParam, α::VisParam, ρ::AbstractVector)
+    ν    = @. α/2 + 1
     ζ    = @. π * θ * ρ / MAS2RAD
     safe = ζ .> 1e-8
 
     Jν   = @. ifelse(safe, besselj(ν, ζ),   zero(ζ))
     Jν1  = @. ifelse(safe, besselj(ν+1, ζ), zero(ζ))
     pow  = @. ifelse(safe, (ζ/2)^(-ν),      one(ζ))
-    Gν1  = gamma(ν+1)
+    Gν1  = @. gamma(ν+1)
 
     V = @. ifelse(safe, Gν1 * Jν * pow, one(ζ))
 
@@ -342,7 +360,7 @@ function ChainRulesCore.rrule(::typeof(vis_ldpow), θ::Real, α::Real, ρ::Abstr
 
     # ∂/∂ν [Γ(ν+1)] = ψ(ν+1)·Γ(ν+1)
     # ∂V/∂ν = ψ(ν+1)·V + Γ(ν+1)·2^ν·[dJν_dν/ζ^ν - log(ζ)·Jν/ζ^ν]
-    ψν1 = digamma(ν+1)
+    ψν1 = @. digamma(ν+1)
     log2ν = log(2)^ν   # 2^ν
     dV_dν = @. ifelse(safe,
         ψν1*V + Gν1 * 2^ν * (dJν_dν - log(ζ_safe)*Jν) / ζ_safe^ν,
@@ -352,8 +370,8 @@ function ChainRulesCore.rrule(::typeof(vis_ldpow), θ::Real, α::Real, ρ::Abstr
 
     function vis_ldpow_pullback(ȳ)
         ȳs = @. ifelse(safe, ȳ, zero(ȳ))
-        ∂θ = sum(ȳs .* dV_dζ .* π .* ρ ./ MAS2RAD)
-        ∂α = sum(ȳs .* dV_dα)
+        ∂θ = _dparam(θ, ȳs .* dV_dζ .* π .* ρ ./ MAS2RAD)
+        ∂α = _dparam(α, ȳs .* dV_dα)
         return NoTangent(), ∂θ, ∂α, NoTangent()
     end
     return V, vis_ldpow_pullback
