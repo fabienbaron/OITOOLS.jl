@@ -140,17 +140,25 @@ end
         @test eltype(perturb_data(d; rng=Xoshiro(1)).v2) === eltype(d.v2)
     end
 
-    # ...but Float32 cannot resolve MJD: near MJD 55000 its representable values
-    # are 3.9e-3 d apart, so exposures closer than ~6 minutes merge into one
-    # block.  Float64 must therefore find at least as many blocks.
-    @test length(data_blocks(f64; granularity=:epoch)) >=
-          length(data_blocks(f32; granularity=:epoch))
-    @test_logs (:warn, r"MJDs are stored as Float32"i) match_mode = :any data_blocks(f32)
-    # ... and no warning once the data are read in double precision
-    @test_logs data_blocks(f64)
-    # :point blocks do not use the MJD at all
-    @test length(data_blocks(f32; granularity=:point)) ==
-          length(data_blocks(f64; granularity=:point))
+    # MJDs are stored in Float64 whatever T is, because Float32 cannot resolve
+    # them: near MJD 55000 its representable values are 3.9e-3 d = 5.6 min apart,
+    # which would merge the blocks of exposures taken minutes apart.
+    for d in (f32, f64)
+        @test eltype(d.v2_mjd)   === Float64
+        @test eltype(d.t3_mjd)   === Float64
+        @test eltype(d.vis_mjd)  === Float64
+        @test eltype(d.flux_mjd) === Float64
+        @test eltype(d.uv_mjd)   === eltype(d.v2)   # uv_mjd follows T: it feeds $MJD
+    end
+    @test f32.v2_mjd == f64.v2_mjd
+    @test f32.mean_mjd == f64.mean_mjd
+
+    # so the block structure is identical in both precisions, at every granularity
+    for g in (:config, :epoch, :point)
+        @test length(data_blocks(f32; granularity=g)) ==
+              length(data_blocks(f64; granularity=g))
+        @test data_blocks(f32; granularity=g).keys == data_blocks(f64; granularity=g).keys
+    end
 end
 
 @testset "bootstrap_fit" begin

@@ -96,27 +96,18 @@ per MJD and telescope configuration) works from 18 blocks upward; `:epoch`
 becomes erratic when there are few epochs (0.92–1.83 on a single snapshot);
 `:point` destroys the correlation structure and underestimates by design.
 
-## Read the data in double precision
+## A note on MJD precision
 
-`readoifits` defaults to `T=Float32`.  That is fine for the visibilities, but
-not for the MJDs: near MJD 55000 the representable `Float32` values are
-3.9 × 10⁻³ d apart — **5.6 minutes**.  Exposures closer together than that end up
-with *identical* MJDs, so blocks that belong to different epochs merge silently.
-On a CHARA/MIRC test file:
+Blocking is keyed on the MJD, and `Float32` cannot resolve it: near MJD 55000 its
+representable values are 3.9 × 10⁻³ d apart — **5.6 minutes** — so exposures taken
+minutes apart would collapse onto one value and their blocks would silently merge.
 
-| | `T=Float32` (default) | `T=Float64` |
-|---|---|---|
-| `:config` blocks | 90 | 180 |
-| `:epoch` blocks | 3 | 24 |
-| distinct MJD values | 3 | 24 |
-
-The fit itself is unaffected (identical parameters and analytic errors to five
-digits), but the bootstrap error bars moved by 10–20% between the two.
-`data_blocks` warns when this applies.  For any bootstrap work, read with
-
-```julia
-data = readoifits("file.oifits"; T=Float64)[1,1]
-```
+`readoifits` therefore stores `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` as
+`Float64` regardless of `T`, so the block structure is identical whether you read
+with the default `T=Float32` or with `T=Float64`. (`uv_mjd` follows `T` — it is
+the array handed to the model evaluator as `$MJD`, where the extra precision buys
+nothing.) Nothing to do on your side; the numbers below are unaffected by the
+precision you choose.
 
 ## Results
 

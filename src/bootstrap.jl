@@ -118,34 +118,6 @@ end
 _mjd_str(mjd, digits) = string(round(Float64(mjd), digits=digits))
 
 """
-    _check_mjd_precision(data, mjd_digits)
-
-Warn if the stored MJDs cannot resolve the requested block granularity.  With
-the default `T=Float32` of `readoifits`, the spacing of representable values
-near MJD 55000 is 3.9e-3 d = 5.6 minutes, so exposures closer together than
-that collapse onto the same value and their blocks merge.
-"""
-function _check_mjd_precision(data::OIdata, mjd_digits::Int)
-    T = eltype(data.v2_mjd)
-    T === Float64 && return nothing
-    m = 0.0
-    for v in (data.v2_mjd, data.t3_mjd, data.vis_mjd, data.flux_mjd)
-        isempty(v) || (m = max(m, Float64(maximum(abs, v))))
-    end
-    m == 0.0 && return nothing
-    q = Float64(eps(T(m)))
-    if q > 10.0^(-mjd_digits)
-        @warn("MJDs are stored as $T: the spacing of representable values near " *
-              "MJD $(round(Int, m)) is $(round(q, sigdigits=2)) d " *
-              "($(round(q*24*60, digits=1)) min), so observations closer together " *
-              "than that share the same MJD and their resampling blocks merge. " *
-              "Re-read the data with readoifits(file; T=Float64) if the block " *
-              "structure matters.", maxlog=1)
-    end
-    return nothing
-end
-
-"""
     data_blocks(data::OIdata; granularity=:config, mjd_digits=5) -> DataBlocks
 
 Partition `data` into resampling blocks.
@@ -167,18 +139,18 @@ Partition `data` into resampling blocks.
 `mjd_digits` sets the rounding used to group MJDs into a common epoch
 (default 5 decimals ≈ 0.86 s, matching PMOIRED).
 
-!!! note "Read your data in Float64 before bootstrapping"
-    `readoifits` defaults to `T=Float32`, whose representable values near
-    MJD 55000 are 3.9e-3 d = 5.6 minutes apart.  Exposures closer together than
-    that then carry *identical* MJDs and their blocks merge — on a CHARA/MIRC
-    test file the block count halved (180 to 90) and the epoch count fell from
-    24 to 3.  `data_blocks` warns when this applies; pass `T=Float64` to
-    `readoifits` to avoid it.
+!!! note "MJD precision"
+    Blocking needs the MJDs at full precision: near MJD 55000 the representable
+    `Float32` values are 3.9e-3 d = 5.6 minutes apart, so exposures closer than
+    that would collapse onto one value and their blocks would merge.  `readoifits`
+    therefore stores `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` as `Float64`
+    whatever `T` is — the block structure is identical at `T=Float32` and
+    `T=Float64`.  (`uv_mjd` follows `T`: it is the array handed to the model
+    evaluator as `\$MJD`, where the precision is irrelevant.)
 """
 function data_blocks(data::OIdata; granularity::Symbol=:config, mjd_digits::Int=5)
     granularity in (:config, :epoch, :point) ||
         error("data_blocks: granularity must be :config, :epoch or :point (got :$granularity)")
-    granularity === :point || _check_mjd_precision(data, mjd_digits)
 
     keys     = String[]
     lookup   = Dict{String,Int}()

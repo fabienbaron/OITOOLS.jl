@@ -262,12 +262,12 @@ mutable struct OIdata{T<:AbstractFloat}
     # Complex visibilities
     visamp::Vector{T};             visamp_err::Vector{T}
     visphi::Vector{T};             visphi_err::Vector{T}
-    vis_baseline::Vector{T};       vis_mjd::Vector{T}
+    vis_baseline::Vector{T};       vis_mjd::Vector{Float64}   # Float64: grouping/filtering only, never in the hot loop
     vis_lam::Vector{T};            vis_dlam::Vector{T}
     vis_flag::Vector{Bool}
     # V2
     v2::Vector{T};                 v2_err::Vector{T}
-    v2_baseline::Vector{T};        v2_mjd::Vector{T}
+    v2_baseline::Vector{T};        v2_mjd::Vector{Float64}
     mean_mjd::Float64              # always Float64 — MJD precision matters
     v2_lam::Vector{T};             v2_dlam::Vector{T}
     v2_flag::Vector{Bool}
@@ -276,11 +276,11 @@ mutable struct OIdata{T<:AbstractFloat}
     t3phi::Vector{T};              t3phi_err::Vector{T}
     t3phi_vonmises_err::Vector{T}; t3phi_vonmises_chi2_offset::Vector{T}
     t3_baseline::Vector{T};        t3_maxbaseline::Vector{T}
-    t3_mjd::Vector{T};             t3_lam::Vector{T};    t3_dlam::Vector{T}
+    t3_mjd::Vector{Float64};       t3_lam::Vector{T};    t3_dlam::Vector{T}
     t3_flag::Vector{Bool}
     # OIFlux
     flux::Vector{T};               flux_err::Vector{T}
-    flux_mjd::Vector{T};           flux_lam::Vector{T};  flux_dlam::Vector{T}
+    flux_mjd::Vector{Float64};     flux_lam::Vector{T};  flux_dlam::Vector{T}
     flux_flag::Vector{Bool};       flux_sta_index::Vector{Int64}
     flux_calibrated::Bool          # true if CALSTAT="C" (calibrated source spectrum)
     # UV coverage (columns = uv points, rows = [u; v])
@@ -783,7 +783,7 @@ function read_flux_tables(fluxtables, targetid_filter,
                           wavtables, wavtableref,
                           arraytableref, conversion_index, station_index_offset;
                           correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
-    flux_all = T[]; flux_err_all = T[]; flux_mjd_all = T[]
+    flux_all = T[]; flux_err_all = T[]; flux_mjd_all = Float64[]
     flux_lam_all = T[]; flux_dlam_all = T[]; flux_flag_all = Bool[]
     flux_sta_index_all = Int64[]
     flux_calibrated = false   # will be set true if any table has CALSTAT="C"
@@ -801,7 +801,7 @@ function read_flux_tables(fluxtables, targetid_filter,
         fdata = T.(db.fluxdata[:, tid_ok])
         ferr  = T.(db.fluxerr[:,  tid_ok])
         fflag = Bool.(db.flag[:, tid_ok])
-        fmjd  = repeat(T.(db.mjd[tid_ok])', nwave)
+        fmjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         flam  = repeat(T.(wav.eff_wave), 1, nobs)
         fdlam = repeat(T.(wav.eff_band), 1, nobs)
 
@@ -850,7 +850,7 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
                          correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
     visamp_all = T[]; visamp_err_all = T[]
     visphi_all = T[]; visphi_err_all = T[]
-    vis_mjd_all = T[]; vis_lam_all = T[]; vis_dlam_all = T[]
+    vis_mjd_all = Float64[]; vis_lam_all = T[]; vis_dlam_all = T[]
     vis_flag_all = Bool[]
     vis_uv_all   = Matrix{T}(undef, 0, 2)   # N×2
     vis_baseline_all  = T[]
@@ -874,7 +874,7 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
         verr   = T.(db.visamperr[:, tid_ok])
         vphi   = T.(db.visphi[:,    tid_ok])
         vperr  = T.(db.visphierr[:, tid_ok])
-        vmjd   = repeat(T.(db.mjd[tid_ok])', nwave)
+        vmjd   = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         vflag  = Bool.(db.flag[:, tid_ok])
         uc     = T.(db.ucoord[tid_ok]);  vc = T.(db.vcoord[tid_ok])
         vlam   = repeat(T.(wav.eff_wave), 1, length(tid_ok))
@@ -927,7 +927,7 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
                         arraytableref, conversion_index, station_index_offset;
                         correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
     v2_all = T[]; v2_err_all = T[]
-    v2_mjd_all = T[]; v2_lam_all = T[]; v2_dlam_all = T[]
+    v2_mjd_all = Float64[]; v2_lam_all = T[]; v2_dlam_all = T[]
     v2_flag_all = Bool[]
     v2_uv_all   = Matrix{T}(undef, 0, 2)   # N×2
     v2_baseline_all  = T[]
@@ -941,7 +941,7 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
         nwave  = length(wav.eff_wave)
         v2d    = T.(db.vis2data[:, tid_ok])
         v2e    = T.(db.vis2err[:,  tid_ok])
-        v2mjd  = repeat(T.(db.mjd[tid_ok])', nwave)
+        v2mjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         v2flag = Bool.(db.flag[:, tid_ok])
         uc     = T.(db.ucoord[tid_ok]);  vc = T.(db.vcoord[tid_ok])
         vlam   = repeat(T.(wav.eff_wave), 1, length(tid_ok))
@@ -988,7 +988,7 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
                         correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
     t3amp_all = T[]; t3amp_err_all = T[]
     t3phi_all = T[]; t3phi_err_all = T[]
-    t3_mjd_all = T[]; t3_lam_all = T[]; t3_dlam_all = T[]
+    t3_mjd_all = Float64[]; t3_lam_all = T[]; t3_dlam_all = T[]
     t3_flag_all = Bool[]
     t3_u1_all = T[]; t3_v1_all = T[]
     t3_u2_all = T[]; t3_v2_all = T[]
@@ -1006,7 +1006,7 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
         nwave  = length(wav.eff_wave)
         t3a    = T.(db.t3amp[:,    tid_ok]); t3ae = T.(db.t3amperr[:, tid_ok])
         t3p    = T.(db.t3phi[:,    tid_ok]); t3pe = T.(db.t3phierr[:,  tid_ok])
-        t3mjd  = repeat(T.(db.mjd[tid_ok])', nwave)
+        t3mjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         t3flag = Bool.(db.flag[:, tid_ok])
         u1c = T.(db.u1coord[tid_ok]); v1c = T.(db.v1coord[tid_ok])
         u2c = T.(db.u2coord[tid_ok]); v2c = T.(db.v2coord[tid_ok])
@@ -1076,27 +1076,27 @@ mutable struct BinData{T<:AbstractFloat}
     # VIS
     visamp::Vector{T};         visamp_err::Vector{T}
     visphi::Vector{T};         visphi_err::Vector{T}
-    vis_mjd::Vector{T};        vis_lam::Vector{T};    vis_dlam::Vector{T}
+    vis_mjd::Vector{Float64};  vis_lam::Vector{T};    vis_dlam::Vector{T}
     vis_flag::Vector{Bool};    vis_baseline::Vector{T}
     vis_sta_index::Matrix{Int64}
     indx_vis::Vector{Int64};   nvisamp::Int64;         nvisphi::Int64
     # V2
     v2::Vector{T};             v2_err::Vector{T}
-    v2_mjd::Vector{T};         v2_lam::Vector{T};     v2_dlam::Vector{T}
+    v2_mjd::Vector{Float64};   v2_lam::Vector{T};     v2_dlam::Vector{T}
     v2_flag::Vector{Bool};     v2_baseline::Vector{T}
     v2_sta_index::Matrix{Int64}
     indx_v2::Vector{Int64};    nv2::Int64
     # T3
     t3amp::Vector{T};          t3amp_err::Vector{T}
     t3phi::Vector{T};          t3phi_err::Vector{T}
-    t3_mjd::Vector{T};         t3_lam::Vector{T};     t3_dlam::Vector{T}
+    t3_mjd::Vector{Float64};   t3_lam::Vector{T};     t3_dlam::Vector{T}
     t3_flag::Vector{Bool};     t3_baseline::Vector{T}; t3_maxbaseline::Vector{T}
     t3_sta_index::Matrix{Int64}
     indx_t3_1::Vector{Int64};  indx_t3_2::Vector{Int64}; indx_t3_3::Vector{Int64}
     nt3amp::Int64;             nt3phi::Int64
     # Flux
     flux::Vector{T};           flux_err::Vector{T}
-    flux_mjd::Vector{T};       flux_lam::Vector{T};   flux_dlam::Vector{T}
+    flux_mjd::Vector{Float64}; flux_lam::Vector{T};   flux_dlam::Vector{T}
     flux_flag::Vector{Bool};   flux_sta_index::Vector{Int64};  nflux::Int64
     flux_calibrated::Bool      # true if CALSTAT="C"
     # UV plane (2×nuv: row 1 = u/λ, row 2 = v/λ)
@@ -1139,7 +1139,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         visphi_corr_idx = isempty(raw_vis.visphi_corr_idx) ? Int64[] : raw_vis.visphi_corr_idx[bin_vis]
     else
         visamp = T[]; visamp_err = T[]; visphi = T[]; visphi_err = T[]
-        vis_mjd = T[]; vis_lam = T[]; vis_dlam = T[]
+        vis_mjd = Float64[]; vis_lam = T[]; vis_dlam = T[]
         vis_flag = Bool[]; vis_baseline = T[]; vis_uv = Matrix{T}(undef, 2, 0)
         vis_sta_index = Matrix{Int64}(undef, 2, 0)
         nvisamp = 0; nvisphi = 0; indx_vis = Int64[]
@@ -1159,7 +1159,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         indx_v2 = collect(length(visamp) .+ (1:nv2))
         v2_corr_idx = isempty(raw_v2.v2_corr_idx) ? Int64[] : raw_v2.v2_corr_idx[bin_v2]
     else
-        v2 = T[]; v2_err = T[]; v2_mjd = T[]; v2_lam = T[]; v2_dlam = T[]
+        v2 = T[]; v2_err = T[]; v2_mjd = Float64[]; v2_lam = T[]; v2_dlam = T[]
         v2_flag = Bool[]; v2_baseline = T[]; v2_uv = Matrix{T}(undef, 2, 0)
         v2_sta_index = Matrix{Int64}(undef, 2, 0)
         nv2 = 0; indx_v2 = Int64[]
@@ -1187,7 +1187,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         t3phi_corr_idx = isempty(raw_t3.t3phi_corr_idx) ? Int64[] : raw_t3.t3phi_corr_idx[bin_t3]
     else
         t3amp = T[]; t3amp_err = T[]; t3phi = T[]; t3phi_err = T[]
-        t3_mjd = T[]; t3_lam = T[]; t3_dlam = T[]; t3_flag = Bool[]
+        t3_mjd = Float64[]; t3_lam = T[]; t3_dlam = T[]; t3_flag = Bool[]
         t3_baseline = T[]; t3_maxbaseline = T[]; t3_sta_index = Matrix{Int64}(undef, 3, 0)
         nt3amp = 0; nt3phi = 0; indx_t3_1 = Int64[]; indx_t3_2 = Int64[]; indx_t3_3 = Int64[]
         t3amp_corr_idx = Int64[]; t3phi_corr_idx = Int64[]
@@ -1204,7 +1204,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         flux_calibrated = raw_flux.flux_calibrated
         flux_corr_idx = isempty(raw_flux.flux_corr_idx) ? Int64[] : raw_flux.flux_corr_idx[bin_flux]
     else
-        flux = T[]; flux_err = T[]; flux_mjd = T[]; flux_lam = T[]
+        flux = T[]; flux_err = T[]; flux_mjd = Float64[]; flux_lam = T[]
         flux_dlam = T[]; flux_flag = Bool[]; flux_sta_index = Int64[]; nflux = 0
         flux_calibrated = false
         flux_corr_idx = Int64[]
@@ -1220,10 +1220,14 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
     uv = hcat(vis_uv, v2_uv, t3_uv)
     uv_lam  = vcat(use_vis ? vis_lam  : T[], use_v2 ? v2_lam  : T[], use_t3 ? repeat(t3_lam,  3) : T[])
     uv_dlam = vcat(use_vis ? vis_dlam : T[], use_v2 ? v2_dlam : T[], use_t3 ? repeat(t3_dlam, 3) : T[])
-    uv_mjd  = vcat(use_vis ? vis_mjd  : T[], use_v2 ? v2_mjd  : T[], use_t3 ? repeat(t3_mjd,  3) : T[])
+    # uv_mjd deliberately stays in T: it is the array handed to eval_model as the
+    # implicit $MJD variable, i.e. the only MJD reaching the hot loop.
+    uv_mjd_f64 = vcat(use_vis ? vis_mjd : Float64[], use_v2 ? v2_mjd : Float64[],
+                      use_t3 ? repeat(t3_mjd, 3) : Float64[])
+    uv_mjd  = T.(uv_mjd_f64)
     uv_baseline = vec(sqrt.(sum(uv.^2, dims=1)))
     nuv      = size(uv, 2)
-    mean_mjd = isempty(uv_mjd) ? 0.0 : Float64(mean(uv_mjd))
+    mean_mjd = isempty(uv_mjd_f64) ? 0.0 : mean(uv_mjd_f64)
 
     return BinData{T}(
         visamp, visamp_err, visphi, visphi_err,
@@ -1369,7 +1373,9 @@ function filter_bad_observables!(bd::BinData{T};
     isempty(good_uv_t3_1) || (bd.indx_t3_1  = iconv[good_uv_t3_1])
     isempty(good_uv_t3_2) || (bd.indx_t3_2  = iconv[good_uv_t3_2])
     isempty(good_uv_t3_3) || (bd.indx_t3_3  = iconv[good_uv_t3_3])
-    bd.mean_mjd = isempty(bd.uv_mjd) ? 0.0 : Float64(mean(bd.uv_mjd))
+    # averaged over the Float64 per-table MJDs, not over uv_mjd, which is stored in T
+    mjd_f64 = vcat(bd.vis_mjd, bd.v2_mjd, bd.t3_mjd)
+    bd.mean_mjd = isempty(mjd_f64) ? 0.0 : mean(mjd_f64)
     return bd
 end
 
