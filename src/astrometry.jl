@@ -9,19 +9,19 @@ end
 
 
 
-function hour_angle_calc(dates::Union{DateTime, Vector{DateTime}}, longitude::Float64, ra::Union{Vector{Float64}, Float64};ldir="E")
-return hour_angle_calc(from_utc.(dates), longitude, ra, ldir=ldir)
-end
-
-function hour_angle_calc(dates, longitude::Float64, ra::Union{Vector{Float64}, Float64};ldir="E")
-
 """
-This function calculates and returns the hour angle for the desired object given a RA, time, and longitude
-of observations. 
-Dates: UTC.
-Longitude: degrees
-RA: degrees
+    hour_angle_calc(dates, longitude, ra_hours; ldir="E")
+
+Local sidereal time and hour angle for a target, from UTC timestamps.
+
+- `dates`: UTC, a `DateTime` or a vector of them.
+- `longitude`: degrees, sign convention set by `ldir` ("E" positive east, the default).
+- `ra_hours`: right ascension in **hours**, not degrees. A target's `raep0` follows the
+  OIFITS standard and is stored in degrees, so callers must pass `raep0/15`.
+
+Returns `(lst, hour_angle)`, both in hours. `lst` is wrapped into [0,24).
 """
+function hour_angle_calc(dates, longitude::Float64, ra_hours::Union{Vector{Float64}, Float64};ldir="E")
 
 alpha= 1
 if ldir == "W"
@@ -30,9 +30,10 @@ elseif ldir == "E"
     alpha = 1.
 end
 
-if typeof(dates) == Epoch{InternationalAtomicTime, Float64} # transform single epochs into Array
+if dates isa DateTime # transform a single timestamp into an Array
     dates = [dates]
 end
+ra = ra_hours
 
 Y= year.(dates)
 M= month.(dates)
@@ -124,9 +125,39 @@ N = floor(275 * month / 9) - floor((month + 9) / 12) * (1 + floor((year - 4 * fl
 return N
 end
 
-function sunrise_sunset(obsdate::DateTime, latitude, longitude;zenith=102.0)
-    return sunrise_sunset(from_utc(obsdate), latitude, longitude,zenith=zenith)
+"""
+    datetime_to_jd(dt::DateTime)
+
+Convert a Julia `DateTime` to Julian Date.
+"""
+function datetime_to_jd(dt::DateTime)
+    Y = Dates.year(dt)
+    M = Dates.month(dt)
+    D = Dates.day(dt) + (Dates.hour(dt) + Dates.minute(dt)/60.0 + Dates.second(dt)/3600.0) / 24.0
+    if M <= 2
+        Y -= 1
+        M += 12
+    end
+    A = floor(Int, Y / 100)
+    B = 2 - A + floor(Int, A / 4)
+    return floor(Int, 365.25 * (Y + 4716)) + floor(Int, 30.6001 * (M + 1)) + D + B - 1524.5
 end
+
+"""
+    datetime_to_mjd(dt::DateTime)
+
+Convert a Julia `DateTime` to Modified Julian Date (JD - 2400000.5), the epoch OIFITS uses.
+"""
+datetime_to_mjd(dt::DateTime) = datetime_to_jd(dt) - 2_400_000.5
+
+"""
+    airmass(alt_deg)
+
+Plane-parallel airmass `1/cos(z)` from altitude in degrees. The altitude is clamped to
+`≥ 0.5°` so the value stays finite at and below the horizon, matching how ASPRO guards its
+Strehl computation.
+"""
+airmass(alt_deg) = 1.0 ./ cos.((90.0 .- max.(alt_deg, 0.5)) .* (pi/180))
 
 function sunrise_sunset(obsdate, latitude, longitude;zenith=102.0)
 #Source:
@@ -319,14 +350,32 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
     return fig
 end
 
+"""
+    get_baselines(facility; config = [])
+
+Baselines for observation planning. `config` flags each telescope: `1` = use, `0` = do not
+use, `2` = delay-line reference cart. Defaults to using every telescope.
+
+Two modes:
+
+- **No reference cart** (the default, or any `config` without a single `2`): every pair of
+  active telescopes, ordered `i < j`. This is the same ordering and sign convention as
+  `get_v2_baselines` in `simulate.jl`, so the two agree baseline-for-baseline.
+- **One reference cart**: only the `ntel-1` pairs joining the reference to each other active
+  telescope, with the reference first. Fewer baselines, and the sign convention is flipped
+  relative to `get_v2_baselines` whenever the reference has the higher station index — so do
+  not index into `simulate.jl` arrays with these.
+
+Returns `(nbaselines, baseline_xyz, baseline_stations, baseline_names)`.
+"""
 function get_baselines(facility; config = []) # similar to get_v2_baselines in simulate.jl, but here for planning
     # determine baselines and make necessary arrays
     N = facility.ntel
     station_xyz = facility.sta_xyz
 
     # Use all scopes by default, without a specific reference cart
-    if config == []
-        config = ones(N)
+    if isempty(config)
+        config = ones(Int, N)
     end
 
     # Example for CHARA, the facility.sta_names ["S1"  "S2"  "E1"  "E2"  "W1"  "W2"]
@@ -335,32 +384,27 @@ function get_baselines(facility; config = []) # similar to get_v2_baselines in s
     use_ref = ( length(iref) == 1 ) # we discard several refs as a mistake
     itels =  findall(config .== 1 )
 
-    list_one = []
+    # Build the (i,j) list first so the arrays are sized exactly right. Without a reference
+    # this is the i<j upper triangle; with one it is ref-to-each-telescope.
+    pairs = Tuple{Int,Int}[]
     if use_ref
-        list_one = iref
+        r = iref[1]
+        for j in itels
+            j != r && push!(pairs, (r, j))
+        end
     else
-        list_one = itels
-    end
-    list_two = itels
-
-    # Note: this should be done with push!
-    nbaselines = Int64(N*(N-1)/2);
-    baseline_xyz = Array{Float64}(undef,3,nbaselines);
-    baseline_stations  = Array{Int64}(undef,2,nbaselines);
-    ind = 1
-    for i in list_one
-      for j in list_two
-          if i!=j
-            baseline_xyz[:,ind] .= station_xyz[j,:]-station_xyz[i,:];
-            baseline_stations[:,ind] = [i,j];
-            ind += 1
-            end
+        for a in eachindex(itels), b in eachindex(itels)
+            a < b && push!(pairs, (itels[a], itels[b]))
         end
     end
 
-    nbaselines = ind-1;
-    baseline_xyz = baseline_xyz[:,1:nbaselines]
-    baseline_stations = baseline_stations[:,1:nbaselines];
+    nbaselines = length(pairs)
+    baseline_xyz = Array{Float64}(undef,3,nbaselines);
+    baseline_stations  = Array{Int64}(undef,2,nbaselines);
+    for (ind, (i, j)) in enumerate(pairs)
+        baseline_xyz[:,ind] .= station_xyz[j,:]-station_xyz[i,:];
+        baseline_stations[:,ind] = [i,j];
+    end
 
     baseline_names = Array{String}(undef,nbaselines);
     for i=1:nbaselines

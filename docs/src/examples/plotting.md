@@ -121,7 +121,7 @@ Empty panels are skipped automatically.
 Plot the telescope positions from a `FacilityConfig`:
 
 ```julia
-facility = read_facility_file("CHARA_new.toml")
+facility = read_facility_file("CHARA.toml")
 plot_facility(facility)
 ```
 

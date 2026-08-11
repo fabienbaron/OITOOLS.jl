@@ -1,6 +1,7 @@
 using NFFT
 using DelimitedFiles
 using FITSIO
+using Random
 
 import TOML
 
@@ -11,9 +12,15 @@ Base.@kwdef mutable struct FacilityConfig
     lat::Float64                = 0.0
     lon::Float64                = 0.0
     alt::Float64                = 0.0
+    # Extra transmission factor applied on top of CombinerConfig.transmission. Combiner
+    # configs transcribed from ASPRO already carry the array transmission end-to-end, so this
+    # is 1.0 for them; it exists for arrays whose combiners are specified instrument-only.
     throughput::Float64         = 1.0
     wind_speed::Float64         = 10.0
-    r0::Float64                 = 0.1
+    r0::Float64                 = 0.1     # Fried parameter at 500 nm, zenith [m]
+    seeing::Float64             = 0.0     # arcsec at 500 nm; 0 => derived from r0
+    t0::Float64                 = 0.0     # coherence time [s]; 0 => derived from r0/wind_speed
+    ao::Union{AOConfig,Nothing} = nothing # adaptive optics, or nothing for an uncorrected array
     ntel::Int                   = 0
     tel_names::Vector{String}   = String[]
     sta_names::Vector{String}   = String[]
@@ -44,22 +51,53 @@ Base.@kwdef mutable struct TargetConfig
     spectyp::String     = "G0"
 end
 
+"""
+    CombinerConfig
+
+Beam-combiner properties. The fields mirror ASPRO 2's `FocalInstrumentSetup` one for one, so
+that a combiner config can be transcribed directly from ASPRO's interferometer XML
+(`aspro-conf`, e.g. `CHARA.xml`) and reproduce its predictions.
+
+- `transmission`: **end-to-end** transmission, array *and* instrument, excluding quantum
+  efficiency, Strehl and atmosphere (ASPRO `transmission`). Because it already covers the
+  array, `FacilityConfig.throughput` is 1.0 for any facility whose combiners are specified
+  this way.
+- `instrument_visibility`: instrumental contrast (ASPRO `instrumentVisibility`).
+- `dit`: detector integration time in seconds — a **fixed** instrument property, shortened
+  only when the detector would saturate (ASPRO `dit`).
+- `total_int_time`: total on-source time per uv point, seconds (ASPRO
+  `defaultTotalIntegrationTime`).
+- `detector_saturation`: full-well in electrons per pixel (ASPRO `detectorSaturation`).
+- `flux_frac_fringes` / `flux_frac_photometry`: how the light splits between the
+  interferometric and photometric channels (ASPRO `fracFluxIn…`).
+- `vis_cal_err`: systematic error on `|V|`, as a fraction. ASPRO stores this as
+  `instrumentVisibilityBias` in **percent**, so `instrumentVisibilityBias = 1` is
+  `vis_cal_err = 0.01`. The systematic on `V²` is twice this.
+- `phase_cal_err`: systematic error on phases and closure phases, in degrees (ASPRO
+  `instrumentPhaseBias`).
+"""
 Base.@kwdef mutable struct CombinerConfig
     name::String                    = ""
-    int_trans::Float64              = 1.0
-    vis::Float64                    = 0.9
+    transmission::Float64           = 0.01
+    instrument_visibility::Float64  = 0.9
+    dit::Float64                    = 0.01
+    total_int_time::Float64         = 600.0
+    detector_saturation::Float64    = 50000.0
     n_pix_fringe::Int               = 128
     n_pix_photometry::Int           = 4
-    flux_frac_photometry::Float64   = 0.5
-    flux_frac_fringes::Float64      = 0.5
-    throughput_photometry::Float64  = 0.1
-    throughput_fringes::Float64     = 0.1
-    n_splits::Int                   = 4
+    flux_frac_photometry::Float64   = 0.2
+    flux_frac_fringes::Float64      = 0.8
     read_noise::Float64             = 10.0
-    quantum_efficiency::Float64     = 0.7
-    v2_cal_err::Float64             = 0.005
+    quantum_efficiency::Float64     = 1.0
+    vis_cal_err::Float64            = 0.01
     phase_cal_err::Float64          = 1.0
-    incoh_int_time::Float64         = 100.0
+    # "ao"          use the facility's AO model (the physical default)
+    # "fixed_spica" reproduce ASPRO's hardcoded SPICA Strehl: 0.25 for seeing <= 0.7",
+    #               0.15 for seeing <= 1.0", 0.10 otherwise, independent of magnitude and
+    #               elevation. ASPRO applies this in NoiseService even though its own
+    #               published Strehl plots use the AO model, so the two disagree; this exists
+    #               to reproduce ASPRO's *noise*.
+    strehl_model::String            = "ao"
 end
 
 Base.@kwdef mutable struct WaveConfig
@@ -100,14 +138,37 @@ function _read_facility_toml(path)
     for (i, t) in enumerate(tels)
         xyz[i, :] .= Float64.(t["xyz"])
     end
+    r0 = Float64(get(d, "r0", 0.1))
+    wind_speed = Float64(get(d, "wind_speed", 10.0))
+    # seeing and t0 are the physical inputs; fall back to the legacy r0/wind_speed pair so
+    # configs written before the AO model keep working unchanged.
+    seeing = Float64(get(d, "seeing", 0.0));  seeing <= 0 && (seeing = seeing_from_r0(r0))
+    t0     = Float64(get(d, "t0", 0.0));      t0     <= 0 && (t0 = 0.31 * r0 / wind_speed)
+
+    aod = get(d, "ao", nothing)
+    ao = aod === nothing ? nothing : AOConfig(
+        band          = String(get(aod, "band", "V")),
+        n_subpupils   = Int(get(aod, "n_subpupils", 36)),
+        n_actuators   = Int(get(aod, "n_actuators", 24)),
+        dit           = Float64(get(aod, "dit", 2.0e-3)),
+        ron           = Float64(get(aod, "ron", 5.0)),
+        qe            = Float64(get(aod, "qe", 0.7)),
+        transmission  = Float64(get(aod, "transmission", 0.0)),
+        mag_offset    = Float64(get(aod, "mag_offset", 0.0)),
+        strehl_max    = Float64(get(aod, "strehl_max", 0.0)),
+    )
+
     FacilityConfig(
         name       = String(get(d, "name", "")),
         lat        = Float64(get(d, "lat", 0.0)),
         lon        = Float64(get(d, "lon", 0.0)),
         alt        = Float64(get(d, "alt", 0.0)),
         throughput = Float64(get(d, "throughput", 1.0)),
-        wind_speed = Float64(get(d, "wind_speed", 10.0)),
-        r0         = Float64(get(d, "r0", 0.1)),
+        wind_speed = wind_speed,
+        r0         = r0,
+        seeing     = seeing,
+        t0         = t0,
+        ao         = ao,
         ntel       = ntel,
         tel_names  = [String(get(t, "name", "T$i"))    for (i,t) in enumerate(tels)],
         sta_names  = [String(get(t, "station", get(t, "name", "S$i"))) for (i,t) in enumerate(tels)],
@@ -144,22 +205,32 @@ end
 
 function _read_combiner_toml(path)
     d = TOML.parsefile(path)
+    # Accept the pre-ASPRO field names so combiner configs that have not been transcribed
+    # yet keep working: `throughput_fringes` folded into a single end-to-end transmission,
+    # `vis`, `incoh_int_time`, and an absolute `v2_cal_err`.
+    transmission = if haskey(d, "transmission")
+        Float64(d["transmission"])
+    else
+        Float64(get(d, "throughput_fringes", 0.1)) * Float64(get(d, "int_trans", 1.0))
+    end
+    vis_cal = haskey(d, "vis_cal_err") ? Float64(d["vis_cal_err"]) :
+                                         0.5 * Float64(get(d, "v2_cal_err", 0.02))
     CombinerConfig(
-        name                = String(get(d, "name", "")),
-        int_trans           = Float64(get(d, "int_trans", 1.0)),
-        vis                 = Float64(get(d, "vis", 0.9)),
-        n_pix_fringe        = Int(get(d, "n_pix_fringe", 128)),
-        n_pix_photometry    = Int(get(d, "n_pix_photometry", 4)),
-        flux_frac_photometry = Float64(get(d, "flux_frac_photometry", 0.5)),
-        flux_frac_fringes   = Float64(get(d, "flux_frac_fringes", 0.5)),
-        throughput_photometry = Float64(get(d, "throughput_photometry", 0.1)),
-        throughput_fringes  = Float64(get(d, "throughput_fringes", 0.1)),
-        n_splits            = Int(get(d, "n_splits", 4)),
-        read_noise          = Float64(get(d, "read_noise", 10.0)),
-        quantum_efficiency  = Float64(get(d, "quantum_efficiency", 0.7)),
-        v2_cal_err          = Float64(get(d, "v2_cal_err", 0.005)),
-        phase_cal_err       = Float64(get(d, "phase_cal_err", 1.0)),
-        incoh_int_time      = Float64(get(d, "incoh_int_time", 100.0)),
+        name                 = String(get(d, "name", "")),
+        transmission         = transmission,
+        instrument_visibility = Float64(get(d, "instrument_visibility", get(d, "vis", 0.9))),
+        dit                  = Float64(get(d, "dit", 0.01)),
+        total_int_time       = Float64(get(d, "total_int_time", get(d, "incoh_int_time", 600.0))),
+        detector_saturation  = Float64(get(d, "detector_saturation", 50000.0)),
+        n_pix_fringe         = Int(get(d, "n_pix_fringe", 128)),
+        n_pix_photometry     = Int(get(d, "n_pix_photometry", 4)),
+        flux_frac_photometry = Float64(get(d, "flux_frac_photometry", 0.2)),
+        flux_frac_fringes    = Float64(get(d, "flux_frac_fringes", 0.8)),
+        read_noise           = Float64(get(d, "read_noise", 10.0)),
+        quantum_efficiency   = Float64(get(d, "quantum_efficiency", 1.0)),
+        vis_cal_err          = vis_cal,
+        phase_cal_err        = Float64(get(d, "phase_cal_err", 1.0)),
+        strehl_model         = String(get(d, "strehl_model", "ao")),
     )
 end
 
@@ -180,8 +251,12 @@ function _read_facility_txt(path)
     _get(key) = f[(LinearIndices(f .== key))[findall(f .== key)], 3]
     n = Int(_get("ntel")[1])
     _row(key, n) = f[(LinearIndices(f .== key))[findall(f .== key)], 3:n+2]
+    _has(key) = !isempty(findall(f .== key))
     flat_xyz = Float64.(f[(LinearIndices(f .== "sta_xyz"))[findall(f .== "sta_xyz")], 3:n*3+2])
     xyz = reshape(vec(flat_xyz), 3, n)'  # (ntel, 3)
+    # Legacy .txt files predate delay_lengths; without it the delay-line check in plan.jl
+    # silently falls back to a hardcoded 45.7 m, so say so rather than failing quietly.
+    _has("delay_lengths") || @warn "Facility file $path has no 'delay_lengths' row; delay-line checks will use a default length." maxlog=1
     FacilityConfig(
         name       = String(_get("name")[1]),
         lat        = Float64(_get("lat")[1]),
@@ -197,6 +272,7 @@ function _read_facility_txt(path)
         tel_gain   = Float64.(vec(_row("tel_gain", n))),
         sta_index  = Int.(vec(_row("sta_index", n))),
         sta_xyz    = xyz,
+        delay_lengths = _has("delay_lengths") ? Float64.(vec(_row("delay_lengths", n))) : Float64[],
     )
 end
 
@@ -227,22 +303,26 @@ end
 function _read_combiner_txt(path)
     f = readdlm(path)
     _get(key) = f[(LinearIndices(f .== key))[findall(f .== key)], 3]
+    _has(key) = !isempty(findall(f .== key))
+    _num(key, default) = _has(key) ? Float64(_get(key)[1]) : default
+    # Legacy whitespace format predates the ASPRO-aligned schema; map what it does carry.
+    transmission = _has("transmission") ? _num("transmission", 0.01) :
+                   _num("throughput_fringes", 0.1) * _num("int_trans", 1.0)
     CombinerConfig(
-        name                = String(_get("name")[1]),
-        int_trans           = Float64(_get("int_trans")[1]),
-        vis                 = Float64(_get("vis")[1]),
-        n_pix_fringe        = Int(_get("n_pix_fringe")[1]),
-        n_pix_photometry    = Int(_get("n_pix_photometry")[1]),
-        flux_frac_photometry = Float64(_get("flux_frac_photometry")[1]),
-        flux_frac_fringes   = Float64(_get("flux_frac_fringes")[1]),
-        throughput_photometry = Float64(_get("throughput_photometry")[1]),
-        throughput_fringes  = Float64(_get("throughput_fringes")[1]),
-        n_splits            = Int(_get("n_splits")[1]),
-        read_noise          = Float64(_get("read_noise")[1]),
-        quantum_efficiency  = Float64(_get("quantum_efficiency")[1]),
-        v2_cal_err          = Float64(_get("v2_cal_err")[1]),
-        phase_cal_err       = Float64(_get("phase_cal_err")[1]),
-        incoh_int_time      = Float64(_get("incoh_int_time")[1]),
+        name                 = String(_get("name")[1]),
+        transmission         = transmission,
+        instrument_visibility = _has("instrument_visibility") ? _num("instrument_visibility", 0.9) : _num("vis", 0.9),
+        dit                  = _num("dit", 0.01),
+        total_int_time       = _has("total_int_time") ? _num("total_int_time", 600.0) : _num("incoh_int_time", 600.0),
+        detector_saturation  = _num("detector_saturation", 50000.0),
+        n_pix_fringe         = Int(_num("n_pix_fringe", 128)),
+        n_pix_photometry     = Int(_num("n_pix_photometry", 4)),
+        flux_frac_photometry = _num("flux_frac_photometry", 0.2),
+        flux_frac_fringes    = _num("flux_frac_fringes", 0.8),
+        read_noise           = _num("read_noise", 10.0),
+        quantum_efficiency   = _num("quantum_efficiency", 1.0),
+        vis_cal_err          = _has("vis_cal_err") ? _num("vis_cal_err", 0.01) : 0.5*_num("v2_cal_err", 0.02),
+        phase_cal_err        = _num("phase_cal_err", 1.0),
     )
 end
 
@@ -280,97 +360,257 @@ function read_wave_file(path)
 end
 
 
-# Zero-point flux for a mag=0 star in photons/s/m²/μm
-# Log-linear interpolation from standard photometric bands (Cohen et al. 2003, Bessell et al. 1998)
-const _F0_λ_μm = [0.55, 0.70, 0.90, 1.25, 1.65, 2.20, 3.50, 4.80, 10.0]
-const _F0_phot = [3.6e10, 1.8e10, 8.4e9, 3.1e9, 1.15e9, 4.3e8, 8.1e7, 2.1e7, 9.7e5]
+# zero_point_flux and the photometric band table live in atmosphere.jl, included first.
 
-function zero_point_flux(λ_meters)
-    λ_μm = clamp(λ_meters * 1e6, _F0_λ_μm[1], _F0_λ_μm[end])
-    logλ = log.(_F0_λ_μm)
-    logF = log.(_F0_phot)
-    for i in 1:length(_F0_λ_μm)-1
-        if λ_μm <= _F0_λ_μm[i+1]
-            t = (log(λ_μm) - logλ[i]) / (logλ[i+1] - logλ[i])
-            return exp(logF[i] + t * (logF[i+1] - logF[i]))
+"""
+    resolve_magnitudes(mag, λ) -> Vector{Float64}
+
+Expand a magnitude specification onto the `length(λ)` spectral channels.
+
+`mag` may be
+
+- a `Real`: the same magnitude in every channel, i.e. the source is assumed to have Vega
+  colours. Fine within one band, wrong across a mode like MIRC-X `Low_J` that spans J and H.
+- an `AbstractDict` mapping band names to magnitudes, e.g. `Dict("J"=>2.1,"H"=>1.8)`, or
+  what [`magnitudes_from_simbad`](@ref) returns. Interpolated linearly in log(λ) between the
+  band centres and held flat outside them.
+- an `AbstractVector` of length `length(λ)`: one magnitude per channel.
+"""
+function resolve_magnitudes(mag, λ)
+    nw = length(λ)
+    if mag isa Real
+        return fill(Float64(mag), nw)
+    elseif mag isa AbstractVector
+        length(mag) == nw || throw(ArgumentError(
+            "mag has $(length(mag)) entries but there are $nw spectral channels"))
+        return Float64.(collect(mag))
+    elseif mag isa AbstractDict
+        pts = Tuple{Float64,Float64}[]
+        for (k, v) in mag
+            b = band_by_name(String(k))
+            b === nothing && continue
+            push!(pts, (b.lambda, Float64(v)))
         end
+        isempty(pts) && throw(ArgumentError(
+            "none of the magnitude keys $(collect(keys(mag))) match a known photometric band"))
+        sort!(pts, by=first)
+        out = Vector{Float64}(undef, nw)
+        for w in 1:nw
+            l = λ[w]
+            if l <= pts[1][1]
+                out[w] = pts[1][2]
+            elseif l >= pts[end][1]
+                out[w] = pts[end][2]
+            else
+                k = findlast(p -> p[1] <= l, pts)
+                l1, m1 = pts[k]; l2, m2 = pts[k+1]
+                t = (log(l) - log(l1)) / (log(l2) - log(l1))
+                out[w] = m1 + t * (m2 - m1)
+            end
+        end
+        return out
     end
-    return _F0_phot[end]
+    throw(ArgumentError("mag must be a Real, a Dict of band=>magnitude, or a Vector per channel"))
 end
 
-function compute_telescope_snr(mag, λ, δλ, facility, combiner, ntel, nwavs)
-    # Single-telescope photometric SNR per telescope per wavelength
-    # Returns (ntel, nwavs) matrix
-    r0_ref   = facility.r0
-    v_wind   = facility.wind_speed
-    T_atm    = facility.throughput
-    T_phot   = combiner.throughput_photometry
-    QE       = combiner.quantum_efficiency
-    n_pix_ph = combiner.n_pix_photometry
-    σ_ron    = combiner.read_noise
-    t_incoh  = combiner.incoh_int_time
-    T_total  = T_atm * T_phot * QE
-    snr = zeros(ntel, nwavs)
+"""
+    photons_per_telescope(mags, λ, δλ, facility, combiner, elevation_deg, mag_ao;
+                          channel=:fringes, spec_weight=nothing)
+
+Photons detected per telescope, per spectral channel, per detector frame, as an
+`(ntel, nhours, nwavs)` array, together with the frame time and frame count.
+
+The budget is stated once, here, and nowhere else:
+
+    N = F0(λ) · 10^(-m(λ)/2.5) · A_tel · δλ · DIT
+        · T_atm(λ)             atmospheric transmission (see `atm_transmission`)
+        · facility.throughput  telescopes and beam train only
+        · combiner.transmission   end-to-end array + instrument (ASPRO convention)
+        · flux_frac            fraction split into this channel
+        · QE
+        · S(λ, elevation, m_ao)   Strehl, or the seeing-limited coupling with no AO
+
+Note in particular that `facility.throughput` no longer doubles as a coupling term: fibre
+injection is the Strehl now, so a facility that has AO must carry an `[ao]` block or it will
+be modelled as an uncorrected aperture.
+"""
+function photons_per_telescope(mags, λ, δλ, facility, combiner, elevation_deg, mag_ao;
+                               channel::Symbol=:fringes, spec_weight=nothing)
+    ntel   = facility.ntel
+    nwavs  = length(λ)
+    nhours = length(elevation_deg)
+
+    flux_frac = channel === :fringes ? combiner.flux_frac_fringes :
+                                       combiner.flux_frac_photometry
+
+    QE      = combiner.quantum_efficiency
+    t_total = combiner.total_int_time
+    seeing  = facility.seeing
+    t0      = facility.t0
+
+    w_spec = spec_weight === nothing ? ones(nwavs) : spec_weight
+
+    # Photons per second per telescope, before the flux split, for saturation accounting.
+    rate = zeros(ntel, nhours, nwavs)
     for w in 1:nwavs
-        F0 = zero_point_flux(λ[w])
-        r0_λ = r0_ref * (λ[w] / 0.5e-6)^(6/5)
-        τ0 = 0.31 * r0_λ / v_wind
-        DIT = min(τ0, t_incoh)
-        N_frames = max(1.0, t_incoh / DIT)
-        δλ_μm = δλ[w] * 1e6
+        F0     = zero_point_flux(λ[w])                     # ph/s/m^2/um
+        δλ_μm  = δλ[w] * 1e6
+        T_atm  = atm_transmission(λ[w])
+        base   = F0 * 10^(-mags[w] / 2.5) * δλ_μm *
+                 T_atm * facility.throughput * combiner.transmission * QE * w_spec[w]
+        for h in 1:nhours, t in 1:ntel
+            D = facility.tel_diams[t]
+            S = combiner.strehl_model == "fixed_spica" ? _spica_fixed_strehl(seeing) :
+                coupling_efficiency(λ[w], D, seeing, t0, mag_ao, facility.ao;
+                                    elevation_deg=elevation_deg[h])
+            rate[t, h, w] = base * (π/4 * D^2) * S
+        end
+    end
+
+    # DIT is a fixed instrument property, shortened only to avoid saturating the detector.
+    # The worst case is the peak pixel of the interferometric channel, which sees the flux of
+    # every telescope spread over nbPixInterferometry pixels.
+    peak_per_sec = combiner.flux_frac_fringes * ntel *
+                   maximum(rate) / max(combiner.n_pix_fringe, 1)
+    max_dit = peak_per_sec > 0 ? combiner.detector_saturation / peak_per_sec : Inf
+    DIT = min(combiner.dit, max_dit, t_total)
+    if DIT < combiner.dit
+        @info "DIT shortened from $(combiner.dit) s to $(round(DIT, sigdigits=3)) s to avoid detector saturation" maxlog=1
+    end
+    N_frames = max(1.0, t_total / DIT)
+
+    return rate .* (DIT * flux_frac), DIT, N_frames
+end
+
+# ASPRO's hardcoded SPICA Strehl (NoiseService.initParameters), pending CHARA AO
+# characterisation in the visible. Independent of magnitude and elevation.
+_spica_fixed_strehl(seeing) = seeing <= 0.7 ? 0.25 : (seeing <= 1.0 ? 0.15 : 0.10)
+
+# Combine a statistical error with a systematic floor. One rule, used for every observable,
+# so that V2, VISAMP, VISPHI, T3AMP and T3PHI stay on the same footing.
+_with_systematics(σ_stat, σ_sys) = sqrt(σ_stat^2 + σ_sys^2)
+
+"""
+    correlated_flux_coefficients(N_interf, N_phot, combiner, ntel, v2_stations)
+
+Coefficients of ASPRO's squared-correlated-flux error model, each an
+`(nv2, nhours, nwavs)` array:
+
+- `sq_coef`:   squared correlated flux at `V² = 1`, i.e. `(sqrt(N_i·N_j)·vinst)²`
+- `var_coef`:  coefficient multiplying the squared correlated flux in its variance
+- `var_const`: the constant part of that variance
+- `v2phot`:    variance the photometric channels contribute to `V²`
+
+The variance of the squared correlated flux is `var = sq_coef·V²·var_coef + var_const`. The
+constant part is what gives `σ(V²)` a floor as `V² → 0`: on a fully resolved baseline the
+error stops shrinking rather than vanishing.
+
+The photon-noise term counts **all** telescopes feeding the interferometric channel, not just
+the two forming the baseline — an all-in-one combiner overlaps every beam, so every beam
+contributes photon noise to every baseline.
+"""
+function correlated_flux_coefficients(N_interf, N_phot, combiner, ntel, v2_stations)
+    nv2 = size(v2_stations, 2)
+    _, nhours, nwavs = size(N_interf)
+    σ_ron  = combiner.read_noise
+    n_pix  = combiner.n_pix_fringe
+    n_pixp = combiner.n_pix_photometry
+    vinst  = combiner.instrument_visibility
+
+    sq_coef   = zeros(nv2, nhours, nwavs)
+    var_coef  = zeros(nv2, nhours, nwavs)
+    var_const = zeros(nv2, nhours, nwavs)
+    v2phot    = zeros(nv2, nhours, nwavs)
+
+    ron2 = n_pix * σ_ron^2
+    for w in 1:nwavs, h in 1:nhours
+        N_tot = zero(eltype(N_interf))
         for t in 1:ntel
-            D_t = facility.tel_diams[t]
-            η_t = min(1.0, (r0_λ / D_t)^2)
-            Nphot = F0 * 10^(-mag / 2.5) * (π / 4 * D_t^2) * δλ_μm * DIT * T_total * η_t
-            N_noise = Nphot + n_pix_ph * σ_ron^2
-            snr[t, w] = sqrt(max(Nphot, 0.0)) / sqrt(max(N_noise, 1.0)) * sqrt(N_frames)
+            N_tot += N_interf[t, h, w]
         end
-    end
-    return snr
-end
-
-function compute_baseline_snr(mag, λ, δλ, facility, combiner, v2_stations, nv2, nwavs)
-    # Photometric SNR (for unresolved source V=1) per baseline per wavelength
-    # Returns (nv2, nwavs) matrix
-    r0_ref   = facility.r0
-    v_wind   = facility.wind_speed
-    T_atm    = facility.throughput
-    T_inst   = combiner.throughput_fringes
-    QE       = combiner.quantum_efficiency
-    n_pix    = combiner.n_pix_fringe
-    n_splits = combiner.n_splits
-    σ_ron    = combiner.read_noise
-    t_incoh  = combiner.incoh_int_time
-    T_total  = T_atm * T_inst * QE
-    snr = zeros(nv2, nwavs)
-    for w in 1:nwavs
-        F0 = zero_point_flux(λ[w])
-        r0_λ = r0_ref * (λ[w] / 0.5e-6)^(6/5)
-        τ0 = 0.31 * r0_λ / v_wind
-        DIT = min(τ0, t_incoh)
-        N_frames = max(1.0, t_incoh / DIT)
-        δλ_μm = δλ[w] * 1e6
+        vc = 2.0 * (N_tot + ron2) + 4.0
+        vk = N_tot^2 + N_tot * (1.0 + 2.0 * ron2) + (3.0 + n_pix) * n_pix * σ_ron^4
         for b in 1:nv2
             i, j = v2_stations[1, b], v2_stations[2, b]
-            D_i = facility.tel_diams[i]
-            D_j = facility.tel_diams[j]
-            η_i = min(1.0, (r0_λ / D_i)^2)
-            η_j = min(1.0, (r0_λ / D_j)^2)
-            Nphot_i = F0 * 10^(-mag / 2.5) * (π / 4 * D_i^2) * δλ_μm * DIT * T_total * η_i
-            Nphot_j = F0 * 10^(-mag / 2.5) * (π / 4 * D_j^2) * δλ_μm * DIT * T_total * η_j
-            N_noise = (Nphot_i + Nphot_j) / n_splits + n_pix * σ_ron^2
-            snr[b, w] = sqrt(max(Nphot_i * Nphot_j, 0.0)) / sqrt(max(N_noise, 1.0)) * sqrt(N_frames)
+            sq_coef[b, h, w]   = N_interf[i, h, w] * N_interf[j, h, w] * vinst^2
+            var_coef[b, h, w]  = vc
+            var_const[b, h, w] = vk
+
+            if combiner.flux_frac_photometry > 0
+                Np = 0.5 * (N_phot[i, h, w] + N_phot[j, h, w])
+                if Np > 0
+                    σp = sqrt(Np + n_pixp * σ_ron^2)
+                    v2phot[b, h, w] = 2.0 * (σp / Np)^2
+                end
+            end
         end
     end
-    return snr
+    return sq_coef, var_coef, var_const, v2phot
 end
+
+"""
+    complex_vis_error(visamp, sq_coef, var_coef, var_const, v2phot, N_frames)
+
+Per-component error `σ_c` of the complex visibility, i.e. the standard deviation of the real
+and of the imaginary part of a circular complex Gaussian perturbation.
+
+This, and not `σ(V²)`, is the primitive quantity of the noise model. Every observable is
+derived from one perturbed complex visibility, so every error bar has to be derived from the
+same `σ_c` or the written uncertainties will not describe the scatter actually present.
+
+`σ_c` is fixed by matching the two limits of ASPRO's correlated-flux variance. For a circular
+complex Gaussian, `Var(|V+n|²) = 4V²σ_c² + 4σ_c⁴`, so
+
+- as `V → 0`, `σ(V²) → 2σ_c²`, which must equal the additive floor
+  `sqrt(var_const)/(sq_coef·sqrt(N_frames))`
+- for large `V`, `σ(V²) → 2Vσ_c`, which must equal `V·sqrt(var_coef/(sq_coef·N_frames))`
+
+giving the two terms below, plus a photometric-normalisation term that scales with `|V|`
+because a photometric error is multiplicative on `V²`.
+
+Deriving `σ_c` the other way round — as `σ(V²)/(2|V|)` — diverges on a resolved baseline and
+injects noise far larger than the error bars claim.
+"""
+function complex_vis_error(visamp, sq_coef, var_coef, var_const, v2phot, N_frames)
+    sq_coef <= 0 && return 10.0
+    σ2  = 0.25 * var_coef / (sq_coef * N_frames)                    # multiplicative / photon
+    σ2 += 0.5 * sqrt(max(var_const, 0.0)) / (sq_coef * sqrt(N_frames))  # additive floor
+    σ2 += 0.25 * v2phot * visamp^2 / N_frames                       # photometric channels
+    return min(sqrt(max(σ2, 0.0)), 10.0)
+end
+
+"""
+    vis2_error_from_sigma(v2, σ_c)
+
+`σ(V²)` implied by a circular complex Gaussian of per-component width `σ_c`:
+`sqrt(4V²σ_c² + 4σ_c⁴) = 2σ_c·sqrt(V² + σ_c²)`.
+
+Using this rather than an independent expression is what makes the written `VIS2ERR` match
+the scatter that the sampler actually produces.
+"""
+vis2_error_from_sigma(v2, σ_c) = 2 * σ_c * sqrt(max(abs(v2), 0.0) + σ_c^2)
 
 
 #CODES FOR SIMULATING OIFITS BASED ON INPUT IMAGE AND EITHER INPUT OIFITS OR HOUR ANGLES
 
-#Functions used in main Functions
-# vis_to_t3_conj is removed — use vis_to_t3 from oichi2.jl instead.
-# The conjugate was a workaround for a sign convention mismatch that is now fixed.
+"""
+    vis_to_t3_closure(cvis, indx1, indx2, indx3)
+
+Bispectrum and closure phase for a triangle whose three legs are indexed as `(i,j)`, `(j,k)`
+and `(i,k)` — the convention `get_t3_baselines` produces.
+
+The closure phase is `φ_ij + φ_jk + φ_ki`, and the third leg stored is `(i,k) = -(k,i)`, so
+the third visibility has to be **conjugated**: `V_ij · V_jk · conj(V_ik)`.
+
+This differs from `vis_to_t3` in oichi2.jl, which takes no conjugate because `readoifits`
+gives it indices pointing at the already-negated third leg `u3 = -(u1+u2)`. Both are correct
+for their own index convention; using the wrong one flips the sign of the closure phase while
+leaving V2 and T3AMP untouched, which is exactly why it can go unnoticed.
+"""
+function vis_to_t3_closure(cvis::AbstractVector{Complex{T}}, indx1, indx2, indx3) where T<:AbstractFloat
+    t3 = cvis[indx1] .* cvis[indx2] .* conj.(cvis[indx3])
+    return t3, abs.(t3), angle.(t3) .* T(180/pi)
+end
 
 
 function get_v2_baselines(N,station_xyz,tel_names)
@@ -487,16 +727,46 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
-function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,nonoise=false, mag::Float64=2.0)
+function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,
+                  noise::Bool=true, nonoise::Union{Nothing,Bool}=nothing, debias::Bool=true,
+                  mag=2.0, mag_ao::Union{Nothing,Real}=nothing,
+                  n_samples::Int=100, rng::Union{Nothing,AbstractRNG}=nothing, seed::Union{Nothing,Integer}=nothing,
+                  observability=nothing)
     #simulate an observation using input hour angles, info about array and combiner, and input image
     ntel=facility.ntel;
 
-    # Override RA and DEC if not fixed (e.g. Sat) -- input RA and DEC should be in (decimal) degrees
+    # `nonoise=true` is the old spelling of `noise=false`.
+    if nonoise !== nothing
+        Base.depwarn("simulate(...; nonoise=$(nonoise)) is deprecated, use noise=$(!nonoise) instead", :simulate)
+        noise = !nonoise
+    end
+    _rng = rng !== nothing ? rng : (seed !== nothing ? MersenneTwister(seed) : Random.default_rng())
+
+    # Observability filtering is strictly opt-in: by default `simulate` is a pure uv-coverage
+    # simulator and every epoch you pass in is used, observable or not.
+    if observability !== nothing
+        sel = observable_epochs(facility, target, collect(dates); observability...)
+        r = sel.report
+        if r.n_out == 0
+            error("observability filter removed all $(r.n_in) epochs " *
+                  "($(r.n_dropped_elevation) below/above elevation limits, $(r.n_dropped_delay) outside delay lines)")
+        end
+        if r.n_out < r.n_in
+            @info "observability: keeping $(r.n_out)/$(r.n_in) epochs " *
+                  "(dropped $(r.n_dropped_elevation) on elevation, $(r.n_dropped_delay) on delay lines)"
+        end
+        dates = sel.dates
+    end
+
+    # RA and DEC are in (decimal) degrees, per the OIFITS standard for OI_TARGET.
     dec = target.decep0/180*pi
     ra = target.raep0/180*pi
 
-    lst, hour_angles = hour_angle_calc(dates,facility.lon, ra*180/pi);
+    # hour_angle_calc wants RA in hours, hence the /15.
+    lst, hour_angles = hour_angle_calc(dates, facility.lon, target.raep0/15);
     nhours = length(hour_angles);
+    # Altitude at each epoch drives the airmass-dependent Strehl and photon budget.
+    elevation_deg, _ = alt_az(target.decep0, facility.lat, hour_angles)
     h_rad = hour_angles' .* pi / 12;
     l = facility.lat/180*pi;
     λ = wavelength.λ;
@@ -517,6 +787,11 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
 
     # Compute complex visibilities from either a truth image or a model
     cvis_model = ComplexF64[]
+    # Per-channel relative flux of the source, normalised to a mean of 1. Multiplies the
+    # photon count per channel and fills OI_FLUX. Stays at 1 unless an image cube supplies a
+    # spectrum: normalising each channel of a cube (which is required to get V right) would
+    # otherwise throw the source SED away entirely.
+    spec_weight = ones(nwavs)
     # Determine if image or model
 
     if (((typeof(image) == String) && (image !="")) || ((typeof(image) != String) && (image !="")) )
@@ -530,6 +805,12 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
             cvis_model = image_to_vis(x, ft);
         elseif ndims(x) == 3 # at the moment, we assume polychromatic
             println("Simulating polychromatic observations...")
+            # Capture the spectrum before normalising each channel to unit total flux.
+            chan_flux = vec(sum(x, dims=(1,2)))
+            size(x,3) == nwavs || throw(DimensionMismatch(
+                "image cube has $(size(x,3)) planes but the wavelength table has $nwavs channels"))
+            mean_flux = sum(chan_flux) / nwavs
+            spec_weight = mean_flux > 0 ? chan_flux ./ mean_flux : ones(nwavs)
             x = x ./ sum(x, dims=(1,2))
             # uv_lambda = reshape(uv, 2*nuv*nhours,nw) 
             # k=8; range=(k-1)*nuv*nhours+1:k*nuv*nhours; norm(uv_lambda[:,:,k]-uv[:,range]); 
@@ -558,7 +839,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         # Build per-UV-point wavelength and MJD vectors matching the uv ordering
         # uv is (nuv, nhours, nwavs) flattened: baseline fastest, wavelength slowest
         wl_per_uv  = repeat(λ, inner=nuv*nhours)                          # (nuv*nhours*nwavs,)
-        mjd_per_uv = repeat(repeat(Float64.(value.(modified_julian.(dates))), inner=nuv), outer=nwavs)
+        mjd_per_uv = repeat(repeat(datetime_to_mjd.(dates), inner=nuv), outer=nwavs)
         cvis_model = eval_model(flat_model, flat_params, uv; wl=wl_per_uv, mjd=mjd_per_uv)
     else
         @warn("No image nor model definition in call to simulate()")
@@ -566,81 +847,164 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         cvis_model = zeros(ComplexF64, size(uv,2))
     end
 
-    # Compute true values of observables
-    v2_model = vis_to_v2(cvis_model, v2_indx_w);
-    t3_model, t3amp_model, t3phi_model = vis_to_t3(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w);
-
-    # Compute uncertainties — physical noise model from magnitude, instrument, and atmosphere
-    snr0 = compute_baseline_snr(mag, λ, δλ, facility, combiner, v2_stations, nv2, nwavs)
-    # Expand (nv2, nwavs) → flat vector matching v2_model ordering (baseline fastest, hour, wavelength)
-    snr0_v2 = vec(repeat(max.(snr0, 1.0), nhours, 1))
-
-    # V² error: σ(V²) ≈ 2|V|/SNR_0 + calibration systematic
-    v2_model_err = 2.0 .* sqrt.(abs.(v2_model)) ./ snr0_v2 .+ combiner.v2_cal_err .* abs.(v2_model)
-
-    # T3 errors: get SNR for each triangle baseline
-    snr0_t3_1 = max.(snr0[t3_indx_1, :], 1.0)  # (nt3, nwavs)
-    snr0_t3_2 = max.(snr0[t3_indx_2, :], 1.0)
-    snr0_t3_3 = max.(snr0[t3_indx_3, :], 1.0)
-
-    # |V| per triangle baseline from v2_model
-    v2_per_bw = reshape(v2_model, nv2, nhours, nwavs)[:, 1, :]  # (nv2, nwavs)
-    V_t3_1 = sqrt.(clamp.(v2_per_bw[t3_indx_1, :], 1e-20, Inf))
-    V_t3_2 = sqrt.(clamp.(v2_per_bw[t3_indx_2, :], 1e-20, Inf))
-    V_t3_3 = sqrt.(clamp.(v2_per_bw[t3_indx_3, :], 1e-20, Inf))
-
-    # Inverse SNR² sum for the three baselines
-    inv_snr2_sum = 1.0 ./ (V_t3_1 .* snr0_t3_1).^2 .+ 1.0 ./ (V_t3_2 .* snr0_t3_2).^2 .+ 1.0 ./ (V_t3_3 .* snr0_t3_3).^2
-
-    # Closure phase error (degrees) with calibration floor
-    sigma_t3phi_bw = sqrt.((180.0/π)^2 .* inv_snr2_sum .+ combiner.phase_cal_err^2)
-    t3phi_model_err = vec(repeat(sigma_t3phi_bw, nhours, 1))
-
-    # T3 amplitude error
-    t3amp_model_err = abs.(t3amp_model) .* vec(repeat(sqrt.(inv_snr2_sum), nhours, 1))
-
-    # OI_VIS observables: visibility amplitude and differential phase
-    visamp_model = abs.(cvis_model[v2_indx_w])
-    visphi_abs   = angle.(cvis_model[v2_indx_w]) .* (180.0 / π)  # absolute phase [deg]
-
-    # Differential phase: subtract mean phase across wavelengths per baseline/hour
-    phi_3d = reshape(visphi_abs, nv2, nhours, nwavs)
-    phi_ref = sum(phi_3d, dims=3) ./ nwavs
-    dphi_model = vec(phi_3d .- phi_ref)
-
-    # Visibility amplitude error: σ(|V|) ≈ 1/SNR_0 + calibration systematic
-    visamp_model_err = 1.0 ./ snr0_v2 .+ combiner.v2_cal_err .* visamp_model
-
-    # Differential phase error [deg]: σ(φ) ≈ (180/π)/SNR_0 + calibration floor
-    dphi_model_err = (180.0 / π) ./ snr0_v2 .+ combiner.phase_cal_err
-
-    # OI_FLUX: per-telescope photometric flux (normalised to 1)
-    snr_tel = compute_telescope_snr(mag, λ, δλ, facility, combiner, ntel, nwavs)
-    nobs_flux = ntel * nhours
-    flux_model     = ones(nobs_flux * nwavs)  # normalised total flux
-    flux_model_err = vec(repeat(1.0 ./ max.(snr_tel, 1.0), nhours, 1))
-
-    # Add noise
-    if nonoise==true
-        v2_model_err[:] .= 1.0
-        t3amp_model_err[:] .= 1.0
-        t3phi_model_err[:] .= 1.0
-        visamp_model_err[:] .= 1.0
-        dphi_model_err[:] .= 1.0
-        flux_model_err[:] .= 1.0
+    # ── Photon budget ────────────────────────────────────────────────────────
+    mags   = resolve_magnitudes(mag, λ)
+    # The AO wavefront sensor guides on the science target unless told otherwise, and it
+    # senses in its own band, not the science band.
+    _ao_mag = if mag_ao !== nothing
+        Float64(mag_ao)
+    elseif mag isa AbstractDict && facility.ao !== nothing && haskey(mag, facility.ao.band)
+        Float64(mag[facility.ao.band])
+    elseif facility.ao !== nothing
+        b = band_by_name(facility.ao.band)
+        resolve_magnitudes(mag, [b === nothing ? 0.55e-6 : b.lambda])[1]
     else
-        v2_model       += v2_model_err     .* randn(length(v2_model))
-        t3amp_model    += t3amp_model_err  .* randn(length(t3amp_model))
-        t3phi_model    += t3phi_model_err  .* randn(length(t3phi_model))
-        visamp_model   += visamp_model_err .* randn(length(visamp_model))
-        dphi_model     += dphi_model_err   .* randn(length(dphi_model))
-        flux_model     += flux_model_err   .* randn(length(flux_model))
+        mags[1]
     end
+
+    N_interf, DIT, N_frames = photons_per_telescope(mags, λ, δλ, facility, combiner,
+                                                    elevation_deg, _ao_mag;
+                                                    channel=:fringes, spec_weight=spec_weight)
+    N_phot, _, _            = photons_per_telescope(mags, λ, δλ, facility, combiner,
+                                                    elevation_deg, _ao_mag;
+                                                    channel=:photometry, spec_weight=spec_weight)
+
+    # Error model coefficients per (baseline, epoch, channel). Flatten to the ordering
+    # simulate uses everywhere: baseline fastest, then epoch, then wavelength.
+    sq_coef3, var_coef3, var_const3, v2phot3 =
+        correlated_flux_coefficients(N_interf, N_phot, combiner, ntel, v2_stations)
+    sq_coef   = vec(sq_coef3)
+    var_coef  = vec(var_coef3)
+    var_const = vec(var_const3)
+    v2phot    = vec(v2phot3)
+
+    # ── Error bars from the noiseless model ──────────────────────────────────
+    v2_true     = vis_to_v2(cvis_model, v2_indx_w)
+    visamp_true = abs.(cvis_model[v2_indx_w])
+
+    # The complex-visibility error is the primitive: the noise is drawn from it and every
+    # error bar below is derived from it, so the written uncertainties describe the scatter.
+    σ_cvis = complex_vis_error.(visamp_true, sq_coef, var_coef, var_const, v2phot, N_frames)
+    # Scatter into cvis index space. v2_indx_w happens to be the identity here (nuv == nv2),
+    # but do not rely on that: the triangle indices below index cvis directly.
+    σ_cvis_full = zeros(length(cvis_model))
+    σ_cvis_full[v2_indx_w] .= σ_cvis
+
+    v2_stat = vis2_error_from_sigma.(v2_true, σ_cvis)
+    v2_model_err = _with_systematics.(v2_stat, 2 * combiner.vis_cal_err .* abs.(v2_true))
+    v2_model_err = min.(v2_model_err, 100.0)   # cap runaway errors, as ASPRO does
+
+    visamp_model_err = _with_systematics.(σ_cvis, combiner.vis_cal_err .* visamp_true)
+    # Phase error of a complex visibility with amplitude |V| and per-component error sigma.
+    visphi_stat_deg  = (180.0/π) .* σ_cvis ./ max.(visamp_true, 1e-6)
+    dphi_model_err   = _with_systematics.(min.(visphi_stat_deg, 180.0), combiner.phase_cal_err)
+
+    # Closure quantities: add the three baselines' relative errors in quadrature.
+    rel1 = σ_cvis_full[t3_indx_1_w] ./ max.(abs.(cvis_model[t3_indx_1_w]), 1e-6)
+    rel2 = σ_cvis_full[t3_indx_2_w] ./ max.(abs.(cvis_model[t3_indx_2_w]), 1e-6)
+    rel3 = σ_cvis_full[t3_indx_3_w] ./ max.(abs.(cvis_model[t3_indx_3_w]), 1e-6)
+    rel_t3 = sqrt.(rel1.^2 .+ rel2.^2 .+ rel3.^2)
+
+    _, t3amp_true, _ = vis_to_t3_closure(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+    t3amp_model_err = _with_systematics.(abs.(t3amp_true) .* rel_t3,
+                                         3 * combiner.vis_cal_err .* abs.(t3amp_true))
+    t3phi_model_err = _with_systematics.(min.((180.0/π) .* rel_t3, 180.0), combiner.phase_cal_err)
+
+    # OI_FLUX: per-telescope spectrophotometry, normalised so the mean channel is 1.
+    ron2_p       = combiner.n_pix_photometry * combiner.read_noise^2
+    snr_tel_3d   = sqrt.(N_frames) .* N_phot ./ sqrt.(max.(N_phot .+ ron2_p, 1.0))
+    nobs_flux    = ntel * nhours
+    flux_true_3d = repeat(reshape(spec_weight, 1, 1, nwavs), ntel, nhours, 1)
+    flux_true    = vec(flux_true_3d)
+    flux_model_err = vec(flux_true_3d ./ max.(snr_tel_3d, 1e-3))
+
+    # ── Draw the noise ONCE, on the complex visibility ───────────────────────
+    # Every observable is then derived from the same perturbed cvis, so VISAMP^2 == VIS2 and
+    # T3PHI is exactly the sum of the three baseline phases. Drawing each observable
+    # independently, as this code used to, breaks both relations.
+    cvis_noisy = cvis_model
+    flux_model = copy(flux_true)
+    if noise
+        cvis_noisy = cvis_model .+ σ_cvis_full .* (randn(_rng, length(cvis_model)) .+
+                                            im .* randn(_rng, length(cvis_model)))
+        flux_model .+= flux_model_err .* randn(_rng, length(flux_model))
+    end
+
+    v2_model = vis_to_v2(cvis_noisy, v2_indx_w)
+    # A squared visibility built from a noisy complex visibility is biased high by 2*sigma_c^2
+    # (E|V+n|^2 = V^2 + 2 sigma_c^2). Real pipelines subtract this, so by default so do we:
+    # otherwise every simulated V2 sits ~0.5 sigma above the truth and biases anything fitted
+    # to it. Pass debias=false to keep the raw, biased estimator.
+    if noise && debias
+        v2_model = v2_model .- 2 .* σ_cvis.^2
+    end
+    _, t3amp_model, t3phi_model = vis_to_t3_closure(cvis_noisy, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+    # Debias the amplitude with the same correction so that VISAMP^2 == VIS2 still holds
+    # exactly: the two must stay the same measurement expressed two ways.
+    visamp_model = (noise && debias) ? sqrt.(max.(v2_model, 0.0)) : abs.(cvis_noisy[v2_indx_w])
+    visphi_abs   = angle.(cvis_noisy[v2_indx_w]) .* (180.0 / π)
+
+    # Differential phase: subtract the mean phase over the other channels of the same
+    # baseline and epoch. Excluding the channel itself is what makes this a differential
+    # measurement rather than a slightly-shrunk absolute one.
+    phi_3d = reshape(visphi_abs, nv2, nhours, nwavs)
+    dphi_model = if nwavs > 1
+        tot = sum(phi_3d, dims=3)
+        vec(phi_3d .- (tot .- phi_3d) ./ (nwavs - 1))
+    else
+        zeros(length(visphi_abs))
+    end
+
+    # Wrap phases into (-180, 180].
+    _wrap180(x) = x - 360.0 * floor((x + 180.0) / 360.0)
+    t3phi_model = _wrap180.(t3phi_model)
+    dphi_model  = _wrap180.(dphi_model)
+
+    # Replace the analytic T3 error bars with sampled ones.
+    #
+    # The analytic closure errors are a small-error expansion: they hold while sigma/|V| << 1
+    # and fail badly outside it. Measured against the realised scatter on a resolved disc:
+    #
+    #     median SNR(V2)      6.3     1.0     0.09    0.02
+    #     T3AMP z-std analytic  1.01    1.90   25.9    152
+    #     T3AMP z-std sampled   1.08    1.09    1.08    1.08
+    #
+    # i.e. two orders of magnitude wrong exactly in the faint regime worth simulating, for no
+    # measurable extra time. Hence sampling is the default; pass n_samples=0 for the analytic
+    # form (cheaper, and adequate when every baseline is well detected).
+    #
+    # The spread is taken about the noiseless truth rather than about the sample mean, so the
+    # error bar covers T3AMP's bias as well as its scatter. That is what makes a chi2 against
+    # the true model come out at 1.
+    if n_samples > 0
+        _, t3amp_tr, t3phi_tr = vis_to_t3_closure(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+        t3amp_s2 = zeros(length(t3amp_model_err))
+        t3phi_s2 = zeros(length(t3phi_model_err))
+        for _ in 1:n_samples
+            c = cvis_model .+ σ_cvis_full .* (randn(_rng, length(cvis_model)) .+
+                                       im .* randn(_rng, length(cvis_model)))
+            _, a, p = vis_to_t3_closure(c, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+            t3amp_s2 .+= (a .- t3amp_tr).^2
+            t3phi_s2 .+= _wrap180.(p .- t3phi_tr).^2
+        end
+        t3amp_model_err = sqrt.(t3amp_s2 ./ n_samples)
+        t3phi_model_err = sqrt.(t3phi_s2 ./ n_samples)
+        t3amp_model_err = _with_systematics.(t3amp_model_err, 3 * combiner.vis_cal_err .* abs.(t3amp_true))
+        t3phi_model_err = _with_systematics.(min.(t3phi_model_err, 180.0), combiner.phase_cal_err)
+    end
+
+    # Flag points whose error bars make them meaningless rather than writing garbage.
+    v2_flag_flat     = (.!isfinite.(v2_model))     .| (v2_model_err     .> 10.0)
+    t3amp_flag_flat  = (.!isfinite.(t3amp_model))  .| (t3amp_model_err  .> 10.0)
+    t3phi_flag_flat  = (.!isfinite.(t3phi_model))  .| (t3phi_model_err  .> 180.0)
+    t3_flag_flat     = t3amp_flag_flat .| t3phi_flag_flat
+    vis_flag_flat    = (.!isfinite.(visamp_model)) .| (visamp_model_err .> 10.0)
+    flux_flag_flat   = (.!isfinite.(flux_model))   .| (flux_model_err   .> 10.0)
 
     # --- Build OIFITS data structures and save ---
     nobs_v2  = nv2 * nhours
     nobs_t3  = nt3 * nhours
-    mjd_vals = Float64.(value.(modified_julian.(dates)))
+    mjd_vals = datetime_to_mjd.(dates)
     date_obs = string(Dates.Date(dates[1]))
     tid      = target.target_id
 
@@ -663,6 +1027,10 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     dphierr_matrix  = to_oifits_matrix(dphi_model_err,   nv2, nhours, nwavs)
     flux_matrix     = to_oifits_matrix(flux_model,       ntel, nhours, nwavs)
     fluxerr_matrix  = to_oifits_matrix(flux_model_err,   ntel, nhours, nwavs)
+    v2_flag_matrix   = Matrix{Bool}(to_oifits_matrix(v2_flag_flat,   nv2,  nhours, nwavs))
+    t3_flag_matrix   = Matrix{Bool}(to_oifits_matrix(t3_flag_flat,   nt3,  nhours, nwavs))
+    vis_flag_matrix  = Matrix{Bool}(to_oifits_matrix(vis_flag_flat,  nv2,  nhours, nwavs))
+    flux_flag_matrix = Matrix{Bool}(to_oifits_matrix(flux_flag_flat, ntel, nhours, nwavs))
 
     # Per-observation vectors (meter-baseline coords, MJD, station indices)
     ucoord_vis2 = vec(u_M[v2_indx_M])
@@ -723,7 +1091,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     db_vis2.ucoord    = ucoord_vis2
     db_vis2.vcoord    = vcoord_vis2
     db_vis2.sta_index = repeat(v2_stations, 1, nhours)
-    db_vis2.flag      = fill(false, nwavs, nobs_v2)
+    db_vis2.flag      = v2_flag_matrix
 
     # OI_VIS (differential visibility amplitude and phase)
     db_vis = OIFITS.OI_VIS(undef)
@@ -744,7 +1112,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     db_vis.ucoord    = ucoord_vis2
     db_vis.vcoord    = vcoord_vis2
     db_vis.sta_index = repeat(v2_stations, 1, nhours)
-    db_vis.flag      = fill(false, nwavs, nobs_v2)
+    db_vis.flag      = vis_flag_matrix
 
     # OI_T3
     db_t3 = OIFITS.OI_T3(undef)
@@ -765,7 +1133,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     db_t3.u2coord   = u2coord
     db_t3.v2coord   = v2coord
     db_t3.sta_index = repeat(t3_stations, 1, nhours)
-    db_t3.flag      = fill(false, nwavs, nobs_t3)
+    db_t3.flag      = t3_flag_matrix
 
     # OI_FLUX (per-telescope spectrophotometry)
     db_flux = OIFITS.OI_FLUX(undef)
@@ -782,7 +1150,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     db_flux.fluxdata  = flux_matrix
     db_flux.fluxerr   = fluxerr_matrix
     db_flux.sta_index = repeat(sta_idx_arr, nhours)
-    db_flux.flag      = fill(false, nwavs, nobs_flux)
+    db_flux.flag      = flux_flag_matrix
 
     # Assemble and write
     ds = OIFITS.OIDataSet(tgt, arr, ins, db_vis2, db_vis, db_t3, db_flux)

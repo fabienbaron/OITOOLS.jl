@@ -41,13 +41,12 @@ automatically.
 **Facility** — array layout, telescope positions, atmospheric conditions:
 
 ```julia
-facility = read_facility_file("CHARA_new")
+facility = read_facility_file("CHARA")
 ```
 
 | Config name | Interferometer | Telescopes |
 |---|---|---|
 | `CHARA` | CHARA array | 6×1 m |
-| `CHARA_new` | CHARA array (updated) | 6×1 m |
 | `VLTI_UT` | VLTI Unit Telescopes | 4×8.2 m |
 | `VLTI_AT_small` | VLTI ATs — small config | 4×1.8 m |
 | `VLTI_AT_medium` | VLTI ATs — medium config | 4×1.8 m |
@@ -79,7 +78,6 @@ combiner = read_comb_file("MIRCX")
 | `MATISSE_N` | MATISSE | VLTI | N |
 | `MIRCX` | MIRC-X | CHARA | H |
 | `MYSTIC` | MYSTIC | CHARA | K |
-| `MIRC` | MIRC (legacy) | CHARA | H |
 | `SPICA` | SPICA | CHARA | V |
 
 **Wavelength** — spectral setup for a given combiner mode:
@@ -96,7 +94,6 @@ wave = read_wave_file("MIRCX_LOWH")
 | `MIRCX_LOWH` | MIRCX | Low spectral resolution | H |
 | `MIRCX_LOWJ` | MIRCX | Low spectral resolution | J |
 | `MYSTIC_LOWK` | MYSTIC | Low spectral resolution | K |
-| `MIRC_LOWH` | MIRC | H-band prism | H |
 | `SPICA_LR` | SPICA | Low resolution | V |
 
 ### Simulating from an image
@@ -107,10 +104,10 @@ using Dates
 # Observation times: every 15 minutes over a 5.5-hour window
 dates = collect(DateTime(2024,8,13,3,0,0):Minute(15):DateTime(2024,8,13,8,30,0))
 
-facility = read_facility_file("CHARA_new")
+facility = read_facility_file("CHARA")
 target   = read_obs_file("default_obs")
 combiner = read_comb_file("MIRCX")
-wave     = read_wave_file("MIRCX")
+wave     = read_wave_file("MIRCX_LOWH")
 
 simulate(facility, target, combiner, wave, dates, "sim_image.oifits";
          image="data/2004true.fits", pixsize=0.101)
@@ -142,6 +139,92 @@ time-variable disk with an off-axis companion. The companion introduces
 wavelength-dependent differential phases, producing non-zero OI_VIS signals.
 The example writes OI_VIS2, OI_VIS (with differential phases), OI_T3, and
 OI_FLUX tables.
+
+For an image **cube**, the spectrum matters: each plane is normalised to unit total flux (as
+it must be, for the visibilities to be correct), but the plane-to-plane totals are captured
+first and used to weight the photon count per channel and to fill `OI_FLUX`.
+
+## Keyword arguments to `simulate`
+
+| keyword | default | meaning |
+|---|---|---|
+| `image` / `pixsize` | `""` / `0.1` | truth image (2-D) or cube (3-D), and its pixel scale in mas |
+| `flat_model` / `flat_params` | `nothing` | parametric model instead of an image |
+| `mag` | `2.0` | target magnitude: a number, a `Dict("H"=>1.8, …)` of band magnitudes, or one value per spectral channel |
+| `mag_ao` | from `mag` | guide-star magnitude in the AO wavefront-sensor band |
+| `noise` | `true` | add noise; `false` writes the model with its computed error bars |
+| `debias` | `true` | subtract the `2σ²` bias from `V²`, as a real pipeline does |
+| `n_samples` | `100` | Monte-Carlo samples for the T3 error bars; `0` uses the analytic form |
+| `seed` / `rng` | `nothing` | make the realisation reproducible |
+| `observability` | `nothing` | opt-in observability filtering, see below |
+| `nonoise` | — | deprecated spelling of `noise=false` |
+
+Coordinates follow the OIFITS standard: `target.raep0` and `target.decep0` are in **degrees**.
+
+## Noise model
+
+Photons per telescope, per spectral channel, per frame:
+
+```
+N = F0(λ) · 10^(-m(λ)/2.5) · A_tel · δλ · DIT
+    · T_atm(λ)             atmospheric transmission (`atm_transmission`, 1.0 by default)
+    · facility.throughput  telescopes and beam train only
+    · T_ins(λ)             combiner (`throughput_fringes` / `throughput_photometry`)
+    · flux_frac            split between interferometric and photometric channels
+    · QE
+    · S(λ, elevation, m_ao)   Strehl ratio
+```
+
+`S` comes from [`strehl_ratio`](@ref), a port of JMMC's `Band.strehl`, and reproduces ASPRO 2's
+published CHARA Strehl curves to a median 0.7%. It needs an `[ao]` block in the facility
+config; without one the code falls back to the seeing-limited coupling `min(1,(r₀/D)²)`,
+which underestimates an AO-equipped array by roughly 5× in H and 20× in R.
+
+Noise is drawn **once**, on the complex visibility, and every observable is derived from that
+one perturbation. `VISAMP² == VIS2` exactly and the closure phase is exactly the sum of the
+three baseline phases — which is not true if each observable is noised independently.
+
+T3AMP and T3PHI error bars are estimated by sampling (`n_samples`, default 100). The analytic
+closure errors are a small-error expansion and are only adequate while every baseline is well
+detected; measured reduced chi² against the true model, on a resolved disc:
+
+| median SNR(V²) | 6.3 | 1.0 | 0.09 | 0.02 |
+|---|---|---|---|---|
+| T3AMP, analytic | 1.04 | 2.16 | 27.6 | 159.6 |
+| T3AMP, sampled  | 1.01 | 1.02 | 1.03 | 1.03 |
+| T3PHI, analytic | 1.02 | 0.96 | 0.58 | 0.57 |
+| T3PHI, sampled  | 1.01 | 1.01 | 1.00 | 1.00 |
+
+Sampling costs no measurable time, so it is the default; set `n_samples=0` for the analytic
+form.
+
+Run `demos/validate_noise_model.jl` to print the Strehl comparison against ASPRO and the
+predicted σ(V²)/σ(CP) against magnitude for MIRC-X, MYSTIC and SPICA.
+
+## Observability filtering (opt-in)
+
+`simulate` is a pure uv-coverage simulator: by default every epoch you pass is used, whether
+or not the target was above the horizon or within the delay lines. That is usually what you
+want when generating data to test image reconstruction.
+
+To apply real constraints, either filter first:
+
+```julia
+dates_ok, mask, report = observable_epochs(facility, target, dates;
+                                           min_elevation = 30.0,
+                                           pops = [1,3,5,2,4,1])   # from best_pop
+simulate(facility, target, combiner, wave, dates_ok, "sim.oifits"; flat_model=model)
+```
+
+or pass the same options through:
+
+```julia
+simulate(facility, target, combiner, wave, dates, "sim.oifits";
+         flat_model=model, observability=(min_elevation=30.0,))
+```
+
+POP configurations are never chosen for you — omit `pops` and no delay-line check is done at
+all; run [`best_pop`](@ref) yourself if you want a recommendation.
 
 ## Observation planning
 

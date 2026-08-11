@@ -1,8 +1,8 @@
 using OITOOLS
-using AstroTime
+using Dates
 #Simulate an observation using an analytic model of your target
 #In this example, observations start at UT 2018-08-13 at 3:00:00AM and last until 2018-08-13 8:30:00AM, with a period of 15 minutes
-dates = collect(from_utc(2018,8,13,3,0,0.0):15minutes:from_utc(2018,8,13,8,30,0.0))
+dates = collect(DateTime(2018,8,13,3,0,0):Minute(15):DateTime(2018,8,13,8,30,0))
 
 # Model info - here a simple limb-darkened disk
 param = Dict{String,Any}(
@@ -16,14 +16,14 @@ params = Float64[]
 # Target info
 target = read_obs_file("default_obs"); # read defaults (for OIFITS header)
 target.target = "AZ Cyg"
-target.raep0 =  [20, 57, 59.4437981]'*[1.0, 1/60., 1/3600] # set ra
-target.decep0 = [46, 28, 00.5731825]'*[1.0, 1/60., 1/3600] # set dec
+target.raep0 =  15*[20, 57, 59.4437981]'*[1.0, 1/60., 1/3600] # set ra  (hms -> degrees)
+target.decep0 =   [46, 28, 00.5731825]'*[1.0, 1/60., 1/3600] # set dec (dms -> degrees)
 
 
 # Simulation info
-facility    = read_facility_file("CHARA_new");
-combiner    = read_comb_file("MIRC");
-wavelength        = read_wave_file("MIRC_LOWH");
+facility    = read_facility_file("CHARA");
+combiner    = read_comb_file("MIRCX");
+wavelength        = read_wave_file("MIRCX_LOWH");
 
 # Output file
 out_file="./data/simulation-limb_darkened_disk.oifits";

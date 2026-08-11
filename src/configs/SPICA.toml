@@ -1,15 +1,32 @@
+# SPICA at CHARA.
+# Transcribed from ASPRO 2's aspro-conf CHARA.xml, instrument SPICA, setup SPICA_SETUP.
 name = "SPICA"
-int_trans = 1.0
-vis = 0.80
-n_pix_fringe = 600
-n_pix_photometry = 4
-flux_frac_photometry = 0.20
+
+# ASPRO: tinst * toa = ( 0.017*(0.95^4)*0.8*0.6 ) * 0.8. The 0.6 is the detector QE, which is
+# why quantum_efficiency below is 1.0 (ASPRO leaves <quantumEfficiency> unset, default 1.0).
+transmission = 0.00531710
+instrument_visibility = 0.8
+
+dit = 0.02                # 20 ms
+total_int_time = 600.0
+detector_saturation = 800000.0
+read_noise = 0.1          # EMCCD, gain 100/1000
+quantum_efficiency = 1.0
+
+n_pix_fringe = 600        # 300 spatial x 2 spectral
+n_pix_photometry = 4      # 2 spatial x 2 spectral
 flux_frac_fringes = 0.80
-throughput_photometry = 0.017
-throughput_fringes = 0.066
-n_splits = 6
-read_noise = 0.1
-quantum_efficiency = 0.80
-v2_cal_err = 0.005
+flux_frac_photometry = 0.20
+
+vis_cal_err = 0.01
 phase_cal_err = 1.0
-incoh_int_time = 100.0
+
+# NOTE: ASPRO marks SPICA as requiring the FT_SPICA fringe tracker, which lets it integrate
+# far longer than `dit`. That is not modelled here, so faint-end SPICA predictions are
+# pessimistic relative to ASPRO.
+
+# ASPRO's NoiseService ignores the AO model for SPICA and hardcodes the Strehl at
+# 0.25 (seeing <= 0.7"), 0.15 (<= 1.0"), 0.10 otherwise. Set strehl_model = "ao" to use the
+# physical AO model instead, which gives ~0.28 at 1" and matches ASPRO's own published
+# Strehl plots — ASPRO is internally inconsistent here.
+strehl_model = "fixed_spica"

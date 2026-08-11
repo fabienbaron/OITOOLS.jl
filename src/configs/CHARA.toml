@@ -2,9 +2,28 @@ name = "CHARA"
 lat = 34.2243836944
 lon = -118.0570313111
 alt = 1731.264
-throughput = 0.08
+throughput = 1.0
 wind_speed = 6.95
 r0 = 0.078
+
+# Atmosphere at Mount Wilson. seeing is at 500 nm at zenith; t0 is the coherence time.
+# r0 above is kept for backwards compatibility and is equivalent to seeing = 1.36".
+seeing = 1.0
+t0 = 3.2e-3
+
+# CHARA adaptive optics, all six telescopes. Values match ASPRO 2's AO_CHARA setup
+# (CHARA 2026A configuration). strehl_max = 0 selects the per-band default, it does NOT
+# mean "no ceiling".
+[ao]
+band = "V"
+n_subpupils = 36
+n_actuators = 24
+dit = 2.0e-3
+ron = 5.0
+qe = 0.7
+transmission = 0.0
+mag_offset = 0.0
+strehl_max = 0.0
 
 [[telescope]]
 name = "S1"

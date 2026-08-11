@@ -1,15 +1,20 @@
+# MYSTIC at CHARA.
+# Transcribed from ASPRO 2's aspro-conf CHARA.xml, instrument MIRCX-MYSTIC, setup MYSTIC_SETUP.
 name = "MYSTIC"
-int_trans = 1.0
-vis = 0.90
+
+transmission = 0.01
+instrument_visibility = 0.9
+
+dit = 0.025               # 25 ms
+total_int_time = 600.0
+detector_saturation = 50000.0
+read_noise = 1.5
+quantum_efficiency = 0.7
+
 n_pix_fringe = 100
 n_pix_photometry = 2
-flux_frac_photometry = 0.20
 flux_frac_fringes = 0.80
-throughput_photometry = 0.03
-throughput_fringes = 0.125
-n_splits = 4
-read_noise = 1.5
-quantum_efficiency = 0.70
-v2_cal_err = 0.005
+flux_frac_photometry = 0.20
+
+vis_cal_err = 0.01
 phase_cal_err = 1.0
-incoh_int_time = 100.0

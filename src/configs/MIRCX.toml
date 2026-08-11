@@ -1,15 +1,23 @@
+# MIRC-X at CHARA.
+# Transcribed from ASPRO 2's aspro-conf CHARA.xml, instrument MIRCX-MYSTIC, setup MIRCX_SETUP.
 name = "MIRCX"
-int_trans = 1.0
-vis = 0.90
-n_pix_fringe = 150
-n_pix_photometry = 2
-flux_frac_photometry = 0.20
-flux_frac_fringes = 0.80
-throughput_photometry = 0.03
-throughput_fringes = 0.125
-n_splits = 4
+
+# End-to-end transmission: CHARA beam train + instrument, EXCLUDING quantum efficiency,
+# Strehl and atmosphere (those are applied separately). ASPRO <transmission>.
+transmission = 0.01
+instrument_visibility = 0.9
+
+dit = 0.0028              # 2.8 ms, i.e. 350 Hz
+total_int_time = 600.0    # 10 min science acquisition
+detector_saturation = 50000.0
 read_noise = 1.0
-quantum_efficiency = 0.50
-v2_cal_err = 0.005
-phase_cal_err = 1.0
-incoh_int_time = 100.0
+quantum_efficiency = 0.5
+
+n_pix_fringe = 150        # prism R=50 uses a 320x17 window
+n_pix_photometry = 2
+flux_frac_fringes = 0.80
+flux_frac_photometry = 0.20
+
+# ASPRO instrumentVisibilityBias = 1 (percent) -> 0.01 relative on |V|, 0.02 on V^2.
+vis_cal_err = 0.01
+phase_cal_err = 1.0       # degrees, ASPRO instrumentPhaseBias

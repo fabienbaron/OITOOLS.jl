@@ -34,6 +34,7 @@ include("oichi2.jl")
 include("sparco_flat.jl")
 include("oiplot.jl")
 include("astrometry.jl")
+include("atmosphere.jl")     # bands, seeing, AO Strehl — used by simulate.jl
 include("vonmises.jl")
 include("simulate.jl")
 include("oifitslib.jl")
@@ -121,13 +122,15 @@ export auto_pixsize, gaussian_prior, gaussian_prior_cube
 # ── Simulation ───────────────────────────────────────────────────────────────
 export simulate, simulate_from_oifits, get_uv
 export read_facility_file, read_obs_file, read_comb_file, read_wave_file
-export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig
+export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig, AOConfig
+export strehl_ratio, coupling_efficiency, fried_parameter, seeing_from_r0, atm_transmission
+export PhotometricBand, PHOTOMETRIC_BANDS, band_for_wavelength, band_by_name, zero_point_flux
 export gantt_onenight
-export sunrise_sunset, alt_az, opd_limits
+export sunrise_sunset, alt_az, opd_limits, airmass, datetime_to_jd, datetime_to_mjd
 export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
-export night_observability, compute_delays, in_delay, best_pop
+export night_observability, compute_delays, in_delay, best_pop, observable_epochs
 export obs_plan, chara_plan, print_pop_results
 export moon_radec, moon_illumination, angular_separation
 

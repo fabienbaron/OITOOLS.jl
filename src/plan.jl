@@ -114,23 +114,8 @@ function angular_separation(ra1::Float64, dec1::Float64, ra2::Float64, dec2::Flo
     return acos(clamp(cos_sep, -1.0, 1.0)) * 180.0 / π
 end
 
-"""
-    datetime_to_jd(dt::DateTime)
-
-Convert a Julia DateTime to Julian Date.
-"""
-function datetime_to_jd(dt::DateTime)
-    Y = Dates.year(dt)
-    M = Dates.month(dt)
-    D = Dates.day(dt) + (Dates.hour(dt) + Dates.minute(dt)/60.0 + Dates.second(dt)/3600.0) / 24.0
-    if M <= 2
-        Y -= 1
-        M += 12
-    end
-    A = floor(Int, Y / 100)
-    B = 2 - A + floor(Int, A / 4)
-    return floor(Int, 365.25 * (Y + 4716)) + floor(Int, 30.6001 * (M + 1)) + D + B - 1524.5
-end
+# datetime_to_jd lives in astrometry.jl (included before this file) so that simulate.jl
+# can use it too.
 
 # ─── Night observability ──────────────────────────────────────────────────────
 
@@ -305,6 +290,91 @@ function in_delay(facility::FacilityConfig, dec::Float64, ha::Vector{Float32},
     return (delay_carts=delay_carts, has_delay=has_delay, good_delay=good_delay,
             nbaselines=nbaselines, baseline_names=baseline_names,
             baseline_stations=baseline_stations)
+end
+
+# ─── Observability filter for simulate() ─────────────────────────────────────
+
+"""
+    observable_epochs(facility, target, dates; min_elevation=nothing, max_elevation=nothing,
+                      pops=nothing, config=Int[], delay_length=nothing)
+
+Select the epochs in `dates` at which `target` is actually observable from `facility`.
+
+This is **opt-in and composable**: `simulate()` does not call it unless you ask. A simulation
+made to test image reconstruction usually wants the full uv coverage regardless of whether a
+real night could deliver it, so every constraint here is off by default and only switches on
+when you pass the corresponding keyword.
+
+- `min_elevation`, `max_elevation`: degrees. `nothing` (default) applies no elevation cut.
+- `pops`: a POP configuration, one entry per telescope, values in `1:5`. `nothing` (default)
+  applies **no delay-line check at all**. POPs are never chosen for you — run [`best_pop`](@ref)
+  first if you want a recommendation, then pass the result here.
+- `config`: telescope-use flags for the delay check (`1` use, `0` skip, `2` reference cart);
+  defaults to using every telescope, i.e. all `ntel*(ntel-1)/2` baselines must fit.
+- `delay_length`: override the per-telescope delay-line lengths with one uniform value (m).
+
+`target.raep0` / `target.decep0` are in degrees, as elsewhere in the OIFITS-facing API.
+
+Returns `(dates, mask, report)`:
+- `dates`: the surviving epochs, in input order
+- `mask::BitVector`: true where the epoch survived
+- `report`: `(n_in, n_out, n_dropped_elevation, n_dropped_delay, elevation)`, where
+  `elevation` is the altitude in degrees at every *input* epoch.
+
+```julia
+dates_ok, mask, rep = observable_epochs(facility, target, dates;
+                                        min_elevation = 30.0,
+                                        pops = [1,3,5,2,4,1])
+simulate(facility, target, combiner, wavelength, dates_ok, "sim.oifits"; flat_model=m)
+```
+"""
+function observable_epochs(facility::FacilityConfig, target::TargetConfig,
+                           dates::AbstractVector{DateTime};
+                           min_elevation::Union{Nothing,Real}=nothing,
+                           max_elevation::Union{Nothing,Real}=nothing,
+                           pops::Union{Nothing,AbstractVector{<:Integer}}=nothing,
+                           config::AbstractVector{<:Integer}=Int[],
+                           delay_length::Union{Nothing,Float64}=nothing)
+
+    isempty(dates) && return (dates=dates, mask=BitVector(), report=(n_in=0, n_out=0,
+                              n_dropped_elevation=0, n_dropped_delay=0, elevation=Float64[]))
+
+    _, ha_hours = hour_angle_calc(collect(dates), facility.lon, target.raep0/15)
+    alt, _ = alt_az(target.decep0, facility.lat, ha_hours)
+
+    n = length(dates)
+    keep = trues(n)
+
+    n_drop_elev = 0
+    if !isnothing(min_elevation) || !isnothing(max_elevation)
+        lo = isnothing(min_elevation) ? -Inf : Float64(min_elevation)
+        hi = isnothing(max_elevation) ?  Inf : Float64(max_elevation)
+        for i in 1:n
+            if alt[i] < lo || alt[i] > hi
+                keep[i] = false
+                n_drop_elev += 1
+            end
+        end
+    end
+
+    n_drop_delay = 0
+    if !isnothing(pops)
+        length(pops) == facility.ntel || throw(ArgumentError(
+            "pops has $(length(pops)) entries but facility has $(facility.ntel) telescopes"))
+        cfg = isempty(config) ? ones(Int, facility.ntel) : collect(Int, config)
+        dl = in_delay(facility, target.decep0, Float32.(ha_hours), cfg, collect(Int, pops);
+                      delay_length=delay_length)
+        for i in 1:n
+            if !dl.has_delay[i]
+                keep[i] && (n_drop_delay += 1)
+                keep[i] = false
+            end
+        end
+    end
+
+    report = (n_in=n, n_out=count(keep), n_dropped_elevation=n_drop_elev,
+              n_dropped_delay=n_drop_delay, elevation=collect(alt))
+    return (dates=dates[keep], mask=keep, report=report)
 end
 
 # ─── Best POP search ─────────────────────────────────────────────────────────
