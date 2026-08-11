@@ -169,11 +169,41 @@ Photons per telescope, per spectral channel, per frame:
 N = F0(λ) · 10^(-m(λ)/2.5) · A_tel · δλ · DIT
     · T_atm(λ)             atmospheric transmission (`atm_transmission`, 1.0 by default)
     · facility.throughput  telescopes and beam train only
-    · T_ins(λ)             combiner (`throughput_fringes` / `throughput_photometry`)
+    · combiner.transmission   end-to-end: array + instrument, excluding QE/Strehl/atmosphere
     · flux_frac            split between interferometric and photometric channels
     · QE
     · S(λ, elevation, m_ao)   Strehl ratio
 ```
+
+### Matching ASPRO
+
+The CHARA combiner configs (`MIRCX.toml`, `MYSTIC.toml`, `SPICA.toml`) are transcribed field
+for field from ASPRO 2's `aspro-conf/…/CHARA.xml`, and `CombinerConfig` mirrors ASPRO's
+`FocalInstrumentSetup`, so numbers can be copied across directly:
+
+| ASPRO XML | `CombinerConfig` | note |
+|---|---|---|
+| `transmission` | `transmission` | array **and** instrument, excluding QE/Strehl/atmosphere |
+| `instrumentVisibility` | `instrument_visibility` | |
+| `dit` | `dit` | fixed; shortened only to avoid saturation |
+| `defaultTotalIntegrationTime` | `total_int_time` | |
+| `detectorSaturation` | `detector_saturation` | |
+| `ron`, `quantumEfficiency` | `read_noise`, `quantum_efficiency` | QE defaults to 1.0 in both |
+| `nbPixInterferometry` / `nbPixPhotometry` | `n_pix_fringe` / `n_pix_photometry` | |
+| `fracFluxInInterferometry` / `…Photometry` | `flux_frac_fringes` / `flux_frac_photometry` | |
+| `instrumentVisibilityBias` | `vis_cal_err` | ASPRO stores **percent**: `1` → `0.01`; the V² systematic is twice this |
+| `instrumentPhaseBias` | `phase_cal_err` | degrees |
+
+Because `transmission` is end-to-end, `FacilityConfig.throughput` is 1.0 for CHARA.
+
+Two places where ASPRO cannot be reproduced exactly:
+
+- **SPICA's Strehl.** ASPRO's `NoiseService` ignores the AO model for SPICA and hardcodes
+  0.25 / 0.15 / 0.10 by seeing, even though its own published Strehl plots use the AO model —
+  ASPRO is internally inconsistent here. `SPICA.toml` sets `strehl_model = "fixed_spica"` to
+  match ASPRO's noise; set `strehl_model = "ao"` for the physical model (~0.28 at 1″).
+- **SPICA's fringe tracker.** ASPRO marks `FT_SPICA` as required, which permits much longer
+  integrations than `dit`. Not modelled, so faint-end SPICA is pessimistic here.
 
 `S` comes from [`strehl_ratio`](@ref), a port of JMMC's `Band.strehl`, and reproduces ASPRO 2's
 published CHARA Strehl curves to a median 0.7%. It needs an `[ao]` block in the facility

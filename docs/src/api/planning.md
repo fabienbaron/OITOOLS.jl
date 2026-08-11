@@ -22,7 +22,6 @@ obs_plan
 chara_plan
 compute_delays
 in_delay
-observable_epochs
 moon_illumination
 moon_radec
 angular_separation
@@ -60,3 +59,22 @@ angular_separation
 | `TargetConfig` | Target configuration (coordinates, proper motion) |
 | `CombinerConfig` | Beam combiner configuration (throughput, noise, calibration) |
 | `WaveConfig` | Wavelength/spectral configuration |
+
+```@docs
+observable_epochs
+AOConfig
+CombinerConfig
+strehl_ratio
+coupling_efficiency
+fried_parameter
+seeing_from_r0
+atm_transmission
+PhotometricBand
+PHOTOMETRIC_BANDS
+band_for_wavelength
+band_by_name
+zero_point_flux
+airmass
+datetime_to_jd
+datetime_to_mjd
+```

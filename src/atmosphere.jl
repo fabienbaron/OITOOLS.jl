@@ -10,6 +10,13 @@
 
 # ─── Photometric bands ────────────────────────────────────────────────────────
 
+"""
+    PhotometricBand
+
+One photometric band: its name, central wavelength and width in metres, the photon flux of a
+zero-magnitude star (`f0`, photons/s/m²/m), and the default Strehl ceiling jmal applies in
+that band. See [`PHOTOMETRIC_BANDS`](@ref).
+"""
 struct PhotometricBand
     name::String
     lambda::Float64      # central wavelength [m]
@@ -34,6 +41,15 @@ end
 # is independently confirmed here by the AO knee position: reproducing ASPRO's Strehl-vs-V-mag
 # curve requires ~17 photons per subaperture per WFS frame at V=10.5, which these values give
 # (17.0) and the old ones did not (6.2).
+"""
+    PHOTOMETRIC_BANDS
+
+The photometric bands known to OITOOLS, from U to Q, as [`PhotometricBand`](@ref) entries.
+
+Zero points are derived from the Bessell et al. (1998) / Cohen et al. (2003) `f_lambda`
+values for a 0-magnitude star, converted to photon flux. The V entry is the textbook
+"a zeroth-magnitude star delivers ~1000 photons/s/cm²/Å".
+"""
 const PHOTOMETRIC_BANDS = [
     PhotometricBand("U",    0.360e-6, 0.066e-6, 7.576e10 * 1e6, 0.40),
     PhotometricBand("B",    0.440e-6, 0.094e-6, 1.400e11 * 1e6, 0.45),
@@ -86,6 +102,14 @@ end
 const _F0_λ_μm = [b.lambda * 1e6 for b in PHOTOMETRIC_BANDS[3:end]]     # V .. Q
 const _F0_phot = [b.f0 * 1e-6    for b in PHOTOMETRIC_BANDS[3:end]]
 
+"""
+    zero_point_flux(λ)
+
+Photon flux of a zero-magnitude star at wavelength `λ` (metres), in photons/s/m²/µm.
+
+Interpolated log-linearly in `log(λ)` between the band centres of [`PHOTOMETRIC_BANDS`](@ref),
+and clamped to the V and Q endpoints outside that range.
+"""
 function zero_point_flux(λ_meters)
     λ_μm = clamp(λ_meters * 1e6, _F0_λ_μm[1], _F0_λ_μm[end])
     logλ = log.(_F0_λ_μm)
