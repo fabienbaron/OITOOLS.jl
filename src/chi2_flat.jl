@@ -14,13 +14,13 @@
 # Interface
 # ---------
 #   chi2_flat(model, x, data; weights, verb, vonmises)
-#       → Float64     (forward only — cheap, for initial checks or gradient-free optimizers)
+#       → T           (forward only — cheap, for initial checks or gradient-free optimizers)
 #
 #   chi2_flat_fg(model, x, data; weights, verb, vonmises)
-#       → (Float64, Vector{Float64})   (chi2 + gradient — for gradient-based optimizers)
+#       → (T, Vector{T})               (chi2 + gradient — for gradient-based optimizers)
 #
 #   chi2_flat_reduced(model, x, data; weights, vonmises)
-#       → Float64     (chi2 / ndof — for human-readable goodness-of-fit)
+#       → T           (chi2 / ndof — for human-readable goodness-of-fit)
 #
 # Polychromatic interface (data::Vector{<:OIdata}):
 #   chi2_flat(model, x, data_array; weights, verb, vonmises)
@@ -67,12 +67,24 @@ using LinearAlgebra, Printf
 
 _pad_weights(w::AbstractVector{<:Real}) = length(w) >= 7 ? w[1:7] : vcat(w, zeros(7 - length(w)))
 
+# Working precision for a chi2 evaluation: whatever the visibilities and the data promote to.
+# The default weights are a Float64 literal vector, so they are converted rather than allowed
+# to drag a Float32 pipeline up to Float64.
+_chi2_eltype(V::AbstractVector{<:Complex}, data::OIdata{T}) where {T} =
+    promote_type(real(eltype(V)), T)
+
+_pad_weights(w::AbstractVector{<:Real}, ::Type{T}) where {T<:AbstractFloat} =
+    convert(Vector{T}, _pad_weights(w))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # mod360: wrap phase residuals to [-180, 180]  (same as oichi2.jl)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_mod360(x) = mod.(mod.(x .+ 180.0, 360.0) .+ 360.0, 360.0) .- 180.0
+function _mod360(x)
+    T = float(eltype(x))
+    return mod.(mod.(x .+ T(180), T(360)) .+ T(360), T(360)) .- T(180)
+end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -85,13 +97,14 @@ function _chi2_terms(V::AbstractVector{<:Complex},
                      weights::AbstractVector{<:Real},
                      vonmises::Bool)
 
-    w = _pad_weights(weights)
+    T = _chi2_eltype(V, data)
+    w = _pad_weights(weights, T)
     w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi = w[1], w[2], w[3], w[4], w[5]
 
     # ── V2 ────────────────────────────────────────────────────────────────────
-    chi2_v2 = 0.0
-    r_v2    = zeros(Float64, 0)     # residual scale: (v2_model - v2) / err²
-    v2_model = Float64[]
+    chi2_v2 = zero(T)
+    r_v2    = T[]                   # residual scale: (v2_model - v2) / err²
+    v2_model = T[]
 
     if w_v2 > 0 && data.nv2 > 0
         v2_model = abs2.(V[data.indx_v2])
@@ -100,13 +113,13 @@ function _chi2_terms(V::AbstractVector{<:Complex},
     end
 
     # ── T3 products ───────────────────────────────────────────────────────────
-    chi2_t3amp = 0.0
-    chi2_t3phi = 0.0
-    r_t3amp    = zeros(Float64, 0)
-    r_t3phi    = zeros(Float64, 0)
-    t3amp_model = Float64[]
-    t3phi_model = Float64[]
-    V1 = ComplexF64[]; V2c = ComplexF64[]; V3 = ComplexF64[]  # per-leg cvis
+    chi2_t3amp = zero(T)
+    chi2_t3phi = zero(T)
+    r_t3amp    = T[]
+    r_t3phi    = T[]
+    t3amp_model = T[]
+    t3phi_model = T[]
+    V1 = Complex{T}[]; V2c = Complex{T}[]; V3 = Complex{T}[]  # per-leg cvis
 
     need_t3 = (w_t3amp > 0 && data.nt3amp > 0) || (w_t3phi > 0 && data.nt3phi > 0)
     if need_t3
@@ -115,51 +128,51 @@ function _chi2_terms(V::AbstractVector{<:Complex},
         V3  = V[data.indx_t3_3]
         t3  = V1 .* V2c .* V3
         t3amp_model = abs.(t3)
-        t3phi_model = angle.(t3) .* (180.0 / π)
+        t3phi_model = angle.(t3) .* T(180 / π)
     end
 
     if w_t3amp > 0 && data.nt3amp > 0
-        r_t3amp   = 2.0 .* (t3amp_model .- data.t3amp) ./ data.t3amp_err.^2
+        r_t3amp   = T(2) .* (t3amp_model .- data.t3amp) ./ data.t3amp_err.^2
         chi2_t3amp = sum(r_t3amp .* (t3amp_model .- data.t3amp)) / 2   # norm(...)^2
     end
 
     if w_t3phi > 0 && data.nt3phi > 0
         if !vonmises
             dphi       = _mod360(t3phi_model .- data.t3phi)
-            r_t3phi    = (360.0 / π) .* dphi ./ data.t3phi_err.^2
+            r_t3phi    = T(360 / π) .* dphi ./ data.t3phi_err.^2
             chi2_t3phi = sum(dphi .* dphi ./ data.t3phi_err.^2)
         else
-            dphi_rad   = (t3phi_model .- data.t3phi) .* (π / 180.0)
-            r_t3phi    = 2.0 .* data.t3phi_vonmises_err .* sin.(dphi_rad)
-            chi2_t3phi = sum(-2.0 .* data.t3phi_vonmises_err .* cos.(dphi_rad)
+            dphi_rad   = (t3phi_model .- data.t3phi) .* T(π / 180)
+            r_t3phi    = T(2) .* data.t3phi_vonmises_err .* sin.(dphi_rad)
+            chi2_t3phi = sum(T(-2) .* data.t3phi_vonmises_err .* cos.(dphi_rad)
                              .+ data.t3phi_vonmises_chi2_offset)
         end
     end
 
     # ── Absolute VISAMP / VISPHI ───────────────────────────────────────────────
-    chi2_visamp  = 0.0
-    chi2_visphi  = 0.0
-    r_visamp     = zeros(Float64, 0)
-    r_visphi     = zeros(Float64, 0)
-    Vvis         = ComplexF64[]
-    visamp_model = Float64[]
-    visphi_model = Float64[]
+    chi2_visamp  = zero(T)
+    chi2_visphi  = zero(T)
+    r_visamp     = T[]
+    r_visphi     = T[]
+    Vvis         = Complex{T}[]
+    visamp_model = T[]
+    visphi_model = T[]
 
     need_vis = (w_visamp > 0 && data.nvisamp > 0) || (w_visphi > 0 && data.nvisphi > 0)
     if need_vis
         Vvis         = V[data.indx_vis]
         visamp_model = abs.(Vvis)
-        visphi_model = angle.(Vvis) .* (180.0 / π)
+        visphi_model = angle.(Vvis) .* T(180 / π)
     end
 
     if w_visamp > 0 && data.nvisamp > 0
-        r_visamp    = 2.0 .* (visamp_model .- data.visamp) ./ data.visamp_err.^2
+        r_visamp    = T(2) .* (visamp_model .- data.visamp) ./ data.visamp_err.^2
         chi2_visamp = sum(r_visamp .* (visamp_model .- data.visamp)) / 2
     end
 
     if w_visphi > 0 && data.nvisphi > 0
         dphi        = _mod360(visphi_model .- data.visphi)
-        r_visphi    = (360.0 / π) .* dphi ./ data.visphi_err.^2
+        r_visphi    = T(360 / π) .* dphi ./ data.visphi_err.^2
         chi2_visphi = sum(dphi .* dphi ./ data.visphi_err.^2)
     end
 
@@ -205,7 +218,7 @@ end
 # _total_chi2: weighted sum of components
 # ─────────────────────────────────────────────────────────────────────────────
 
-function _total_chi2(t, weights; chi2_flux=0.0, chi2_diffphase=0.0)
+function _total_chi2(t, weights; chi2_flux=zero(eltype(weights)), chi2_diffphase=zero(eltype(weights)))
     w = _pad_weights(weights)
     return (w[1] * t.chi2_v2
           + w[2] * t.chi2_t3amp
@@ -235,7 +248,9 @@ function _accumulate_g_cvis!(g_cvis::AbstractVector{<:Complex},
                              weights::AbstractVector{<:Real})
     w = _pad_weights(weights)
     w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi = w[1], w[2], w[3], w[4], w[5]
-    ε = eps(Float64)
+    # Divide-safety floor at the working precision: eps(Float64) would be nine orders of
+    # magnitude below eps(Float32) and so no guard at all for a Float32 pipeline.
+    ε = eps(real(eltype(V)))
 
     # V2: g_cvis[k] += w_v2 * 4 * r_v2 * conj(V[k])
     if w_v2 > 0 && data.nv2 > 0
@@ -310,8 +325,36 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    cvis_to_chi2_fg(V, data; weights=[1,1,1,0,0,0,0], vonmises=false)
-        -> (Float64, Vector{ComplexF64})
+    cvis_to_chi2_f(V, data; weights=[1,1,1,0,0,0,0], vonmises=false, model_flux=NaN) -> chi2
+
+Chi-squared from complex visibilities `V` and interferometric data `data`, without the
+gradient.
+
+Handles the same per-channel observables as [`cvis_to_chi2_fg`](@ref) — V², T3amp, T3phi,
+visamp, visphi — and additionally the **flux** term: pass the model's zero-baseline flux as
+`model_flux` and give `weights[6] > 0`. (`cvis_to_chi2_fg` cannot do this, because the flux
+*gradient* needs the model Jacobian at zero baseline, which is not derivable from `V` alone.)
+
+Precision follows the inputs: `ComplexF32` visibilities against an `OIdata{Float32}` return a
+`Float32` chi². Accumulation is via `sum`, which is pairwise, so Float32 holds ~1e-8 relative
+accuracy even for millions of residuals.
+"""
+function cvis_to_chi2_f(V::AbstractVector{<:Complex}, data::OIdata;
+                        weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                        vonmises::Bool = false,
+                        model_flux::Real = NaN)
+    T = _chi2_eltype(V, data)
+    w = _pad_weights(weights, T)
+    t = _chi2_terms(V, data, w, vonmises)
+    chi2_fl = zero(T)
+    if w[6] > 0 && data.nflux > 0 && isfinite(model_flux)
+        chi2_fl = T(_chi2_flux(model_flux, data).chi2)
+    end
+    return _total_chi2(t, w; chi2_flux=chi2_fl)
+end
+
+"""
+    cvis_to_chi2_fg(V, data; weights=[1,1,1,0,0,0,0], vonmises=false) -> (chi2, g_cvis)
 
 Compute chi-squared and the complex adjoint source `g_cvis` from complex
 visibilities `V` and interferometric data `data`.
@@ -321,6 +364,11 @@ This is the core building block for all gradient-based chi² code paths
 It handles per-channel observables: V², T3amp, T3phi, visamp, visphi.
 It does **not** handle flux or differential phase (cross-channel observables).
 
+Precision follows the inputs rather than being forced: `ComplexF32` visibilities against an
+`OIdata{Float32}` return a `Float32` chi² and a `Vector{ComplexF32}` adjoint source, so a
+Float32 pipeline stays in Float32 end to end. See [`cvis_to_chi2_f`](@ref) if you do not
+need the gradient.
+
 The adjoint source `g_cvis` satisfies:
 - `g_params = real(Jᵀ · g_cvis)` for any model Jacobian J
 - `g_image  = real(DFTᵀ · g_cvis)` for DFT image reconstruction
@@ -329,10 +377,11 @@ The adjoint source `g_cvis` satisfies:
 function cvis_to_chi2_fg(V::AbstractVector{<:Complex}, data::OIdata;
                          weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
                          vonmises::Bool = false)
-    w = _pad_weights(weights)
+    T = _chi2_eltype(V, data)
+    w = _pad_weights(weights, T)
     t = _chi2_terms(V, data, w, vonmises)
     chi2 = _total_chi2(t, w)
-    g_cvis = zeros(ComplexF64, length(V))
+    g_cvis = zeros(Complex{T}, length(V))
     _accumulate_g_cvis!(g_cvis, V, t, data, w)
     return chi2, g_cvis
 end
@@ -344,7 +393,7 @@ end
 # If uncalibrated (CALSTAT=U), fit optimal scaling C = Σ(fm·fd·w) / Σ(fm²·w).
 # ─────────────────────────────────────────────────────────────────────────────
 
-function _chi2_flux(model_flux::Float64, data::OIdata)
+function _chi2_flux(model_flux::Real, data::OIdata)
     fm = fill(model_flux, data.nflux)
     if data.flux_calibrated
         residual = (fm .- data.flux) ./ data.flux_err.^2
@@ -366,8 +415,9 @@ end
 # Uncalibrated: single C_flux across all channels.
 # ─────────────────────────────────────────────────────────────────────────────
 
-function _chi2_flux_polychromatic(model_fluxes::Vector{Float64}, data::Vector{<:OIdata})
-    fm = Float64[]; fd = Float64[]; fe = Float64[]; chan_idx = Int[]
+function _chi2_flux_polychromatic(model_fluxes::AbstractVector{<:Real}, data::Vector{<:OIdata})
+    Tf = promote_type(float(eltype(model_fluxes)), eltype(first(data).flux))
+    fm = Tf[]; fd = Tf[]; fe = Tf[]; chan_idx = Int[]
     nwavs = length(data)
     for i in 1:nwavs
         d = data[i]; d.nflux > 0 || continue
@@ -376,14 +426,14 @@ function _chi2_flux_polychromatic(model_fluxes::Vector{Float64}, data::Vector{<:
         append!(fe, d.flux_err)
         append!(chan_idx, fill(i, d.nflux))
     end
-    isempty(fm) && return (; chi2=0.0, C=1.0, residual=Float64[], chan_idx=Int[])
+    isempty(fm) && return (; chi2=zero(Tf), C=one(Tf), residual=Tf[], chan_idx=Int[])
     calibrated = !isempty(data) && data[1].flux_calibrated
     if calibrated
         residual = (fm .- fd) ./ fe.^2
         chi2 = sum(((fm .- fd) ./ fe).^2)
-        C = 1.0
+        C = one(Tf)
     else
-        w = 1.0 ./ fe.^2
+        w = one(Tf) ./ fe.^2
         C = sum(fm .* fd .* w) / sum(fm.^2 .* w)
         residual = (C .* fm .- fd) ./ fe.^2
         chi2 = sum(((C .* fm .- fd) ./ fe).^2)
@@ -396,9 +446,9 @@ end
 # _verb_print: match the color-coded output format of oichi2.jl
 # ─────────────────────────────────────────────────────────────────────────────
 
-function _verb_print(t, data::OIdata, weights::AbstractVector{<:Real}, chi2_total::Float64;
-                     chi2_flux::Float64=0.0, C_flux::Float64=NaN,
-                     chi2_diffphase::Float64=0.0)
+function _verb_print(t, data::OIdata, weights::AbstractVector{<:Real}, chi2_total::Real;
+                     chi2_flux::Real=0.0, C_flux::Real=NaN,
+                     chi2_diffphase::Real=0.0)
     w = _pad_weights(weights)
     ndof = _ndof(data, weights)
     w[1] > 0 && data.nv2    > 0 && printstyled(@sprintf("V2: %.3f ",    t.chi2_v2    / data.nv2),    color=:red)
@@ -423,7 +473,7 @@ end
 
 """
     chi2_flat(model, x, data::OIdata; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
-        -> Float64
+        -> T
 
 Evaluate the weighted chi-squared for `model` at parameter vector `x` against
 interferometric data `data`.
@@ -439,7 +489,7 @@ function chi2_flat(model::FlatModel,
                    data::OIdata;
                    weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
                    verb::Bool = false,
-                   vonmises::Bool = false)::Float64
+                   vonmises::Bool = false)
 
     w = _pad_weights(weights)
     need_flux = w[6] > 0 && data.nflux > 0
@@ -460,17 +510,17 @@ function chi2_flat(model::FlatModel,
         model_flux = NaN
     end
 
-    t = _chi2_terms(V, data, w, vonmises)
+    chi2 = cvis_to_chi2_f(V, data; weights=w, vonmises=vonmises, model_flux=model_flux)
 
-    # Flux chi2
-    chi2_fl = 0.0; C_fl = NaN
-    if need_flux
-        fl = _chi2_flux(model_flux, data)
-        chi2_fl = fl.chi2; C_fl = fl.C
+    if verb
+        t = _chi2_terms(V, data, w, vonmises)
+        chi2_fl = 0.0; C_fl = NaN
+        if need_flux
+            fl = _chi2_flux(model_flux, data)
+            chi2_fl = fl.chi2; C_fl = fl.C
+        end
+        _verb_print(t, data, w, chi2; chi2_flux=chi2_fl, C_flux=C_fl)
     end
-
-    chi2 = _total_chi2(t, w; chi2_flux=chi2_fl)
-    verb && _verb_print(t, data, w, chi2; chi2_flux=chi2_fl, C_flux=C_fl)
     return chi2
 end
 
@@ -481,14 +531,14 @@ end
 
 """
     chi2_flat_fg(model, x, data::OIdata; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
-        -> (Float64, Vector{Float64})
+        -> (T, Vector{T})
 
 Evaluate chi-squared and its gradient w.r.t. `x`.
 
 The gradient is computed analytically via the Wirtinger chain rule applied to
 the complex visibility Jacobian J = ∂V/∂x from `eval_model_grad`.
 
-Returns `(chi2, grad)` where `grad` is a `Vector{Float64}` of length `length(x)`.
+Returns `(chi2, grad)`; the element type follows `x` and `data.uv`, so Float32 inputs give a Float32 gradient.
 """
 function chi2_flat_fg(model::FlatModel,
                       x::AbstractVector,
@@ -522,20 +572,21 @@ function chi2_flat_fg(model::FlatModel,
     chi2_obs, g_cvis = cvis_to_chi2_fg(V, data; weights=w, vonmises=vonmises)
 
     # ── Flux chi2 ───────────────────────────────────────────────────────────
-    chi2_fl = 0.0; C_fl = NaN; r_flux = Float64[]
+    Tc = typeof(chi2_obs)
+    chi2_fl = zero(Tc); C_fl = Tc(NaN); r_flux = Tc[]
     if need_flux
         fl = _chi2_flux(model_flux, data)
         chi2_fl = fl.chi2; C_fl = fl.C; r_flux = fl.residual
     end
 
-    chi2 = chi2_obs + w_flux * chi2_fl
+    chi2 = chi2_obs + Tc(w_flux) * chi2_fl
 
     # ── Gradient via single matrix-vector product ──────────────────────────
     g = real.(transpose(J) * g_cvis)
 
     # Flux gradient
     if need_flux
-        g .+= w_flux .* 2.0 .* C_fl .* sum(r_flux) .* real.(vec(J_zero))
+        g .+= w_flux .* 2 .* C_fl .* sum(r_flux) .* real.(vec(J_zero))
     end
 
     if verb
@@ -552,7 +603,7 @@ end
 
 """
     chi2_flat(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
-        -> Float64
+        -> T
 
 Polychromatic chi-squared.  Evaluates the model at each channel's UV points and
 computes per-channel V2/T3/visamp/visphi/flux plus cross-channel differential phase.
@@ -566,16 +617,18 @@ function chi2_flat(model::FlatModel,
                    data::Vector{<:OIdata};
                    weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
                    verb::Bool = false,
-                   vonmises::Bool = false)::Float64
+                   vonmises::Bool = false)
 
-    w = _pad_weights(weights)
     nwavs = length(data)
+    # Precision follows the caller, as in the monochromatic path.
+    Tp = promote_type(float(eltype(x)), eltype(first(data).uv))
+    w = _pad_weights(weights, Tp)
 
     # Evaluate model at each channel's UV points
     need_flux = w[6] > 0 && any(d.nflux > 0 for d in data)
     if need_flux
-        cvis = Vector{Vector{ComplexF64}}(undef, nwavs)
-        model_fluxes = Vector{Float64}(undef, nwavs)
+        cvis = Vector{Vector{Complex{Tp}}}(undef, nwavs)
+        model_fluxes = Vector{Tp}(undef, nwavs)
         for i in 1:nwavs
             _wl_i  = hasproperty(data[i], :uv_lam) ? data[i].uv_lam : nothing
             _mjd_i = hasproperty(data[i], :uv_mjd) ? data[i].uv_mjd : nothing
@@ -591,28 +644,28 @@ function chi2_flat(model::FlatModel,
                            wl  = hasproperty(data[i], :uv_lam) ? data[i].uv_lam : nothing,
                            mjd = hasproperty(data[i], :uv_mjd) ? data[i].uv_mjd : nothing)
                 for i in 1:nwavs]
-        model_fluxes = Float64[]
+        model_fluxes = Tp[]
     end
 
     # Per-channel V2, T3, visamp, visphi
-    chi2 = 0.0
+    chi2 = zero(Tp)
     for i in 1:nwavs
         t = _chi2_terms(cvis[i], data[i], w, vonmises)
         chi2 += _total_chi2(t, w)  # flux/diffphase weights handled separately below
     end
 
     # Flux across all channels (single C_flux)
-    chi2_fl = 0.0
+    chi2_fl = zero(Tp)
     if need_flux
         fl = _chi2_flux_polychromatic(model_fluxes, data)
-        chi2_fl = fl.chi2
+        chi2_fl = Tp(fl.chi2)
         chi2 += w[6] * chi2_fl
     end
 
     # Differential phase across channels
-    chi2_dp = 0.0
+    chi2_dp = zero(Tp)
     if w[7] > 0 && nwavs > 1
-        chi2_dp = _diffphase_chi2(cvis, data, nwavs)
+        chi2_dp = Tp(_diffphase_chi2(cvis, data, nwavs))
         chi2 += w[7] * chi2_dp
     end
 
@@ -650,7 +703,7 @@ end
 
 """
     chi2_flat_fg(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
-        -> (Float64, Vector{Float64})
+        -> (T, Vector{T})
 
 Polychromatic chi-squared and gradient.  Computes per-channel V2/T3/visamp/visphi/flux
 gradients plus cross-channel differential phase gradient.
@@ -662,19 +715,20 @@ function chi2_flat_fg(model::FlatModel,
                       verb::Bool = false,
                       vonmises::Bool = false)
 
-    w = _pad_weights(weights)
-    w_flux, w_dp = w[6], w[7]
     nwavs = length(data)
     nparams = length(x)
+    Tp = promote_type(float(eltype(x)), eltype(first(data).uv))
+    w = _pad_weights(weights, Tp)
+    w_flux, w_dp = w[6], w[7]
 
     need_flux = w_flux > 0 && any(d.nflux > 0 for d in data)
     need_dp   = w_dp > 0 && nwavs > 1
 
     # ── Evaluate model + Jacobian at all channels ──────────────────────────
-    cvis = Vector{Vector{ComplexF64}}(undef, nwavs)
-    Jac  = Vector{Matrix{ComplexF64}}(undef, nwavs)
-    model_fluxes = Vector{Float64}(undef, nwavs)
-    J_zeros = Vector{Vector{ComplexF64}}(undef, nwavs)
+    cvis = Vector{Vector{Complex{Tp}}}(undef, nwavs)
+    Jac  = Vector{Matrix{Complex{Tp}}}(undef, nwavs)
+    model_fluxes = Vector{Tp}(undef, nwavs)
+    J_zeros = Vector{Vector{Complex{Tp}}}(undef, nwavs)
 
     for i in 1:nwavs
         _wl_i  = hasproperty(data[i], :uv_lam) ? data[i].uv_lam : nothing
@@ -696,8 +750,8 @@ function chi2_flat_fg(model::FlatModel,
     end
 
     # ── Per-channel chi2 + gradient ────────────────────────────────────────
-    chi2 = 0.0
-    g = zeros(Float64, nparams)
+    chi2 = zero(Tp)
+    g = zeros(Tp, nparams)
 
     for i in 1:nwavs
         chi2_i, g_cvis_i = cvis_to_chi2_fg(cvis[i], data[i]; weights=w, vonmises=vonmises)
@@ -706,10 +760,10 @@ function chi2_flat_fg(model::FlatModel,
     end
 
     # ── Flux chi2 + gradient (across all channels) ─────────────────────────
-    chi2_fl = 0.0
+    chi2_fl = zero(Tp)
     if need_flux
         fl = _chi2_flux_polychromatic(model_fluxes, data)
-        chi2_fl = fl.chi2
+        chi2_fl = Tp(fl.chi2)
         chi2 += w_flux * chi2_fl
         # Gradient: for each channel, g += 2·C·Σ(r_flux for that channel)·Re(J_zero_i)
         for i in 1:nwavs
@@ -731,8 +785,8 @@ function chi2_flat_fg(model::FlatModel,
                 dphi = _mod360(diffphi_model .- data[i].visphi)
                 chi2 += w_dp * sum((dphi ./ data[i].visphi_err).^2)
                 # Gradient: leading-order through V_i only (following oichi2.jl)
-                ε = eps(Float64)
-                dT3 = -360.0 / π .* dphi ./ data[i].visphi_err.^2
+                ε = eps(real(eltype(cvis_vis)))
+                dT3 = -360 / π .* dphi ./ data[i].visphi_err.^2
                 safe = max.(abs2.(cvis_vis[:, i]), ε)
                 rhs = dT3 .* conj.(cvis_vis[:, i]) ./ safe
                 g .+= w_dp .* imag.(transpose(Jac[i][data[i].indx_vis, :]) * rhs)
@@ -805,7 +859,7 @@ function residuals_flat(model::FlatModel,
     # T3phi
     if w[3] > 0 && data.nt3phi > 0
         t3 = V[data.indx_t3_1] .* V[data.indx_t3_2] .* V[data.indx_t3_3]
-        t3phi_model = angle.(t3) .* (180.0 / π)
+        t3phi_model = angle.(t3) .* T(180 / π)
         append!(r, sqrt(w[3]) .* _mod360(t3phi_model .- data.t3phi) ./ data.t3phi_err)
     end
 
@@ -865,6 +919,7 @@ function residuals_flat_jac(model::FlatModel,
         model_flux = NaN
     end
 
+    # LsqFit consumes these, so they stay Float64 (see fit_model.jl).
     r_parts = Vector{Float64}[]
     J_parts = Matrix{Float64}[]
     ε = eps(Float64)
@@ -901,7 +956,7 @@ function residuals_flat_jac(model::FlatModel,
     if w_t3phi > 0 && data.nt3phi > 0
         V1 = V[data.indx_t3_1]; V2c = V[data.indx_t3_2]; V3 = V[data.indx_t3_3]
         t3 = V1 .* V2c .* V3
-        t3phi_model = angle.(t3) .* (180.0 / π)
+        t3phi_model = angle.(t3) .* T(180 / π)
         dphi = _mod360(t3phi_model .- data.t3phi)
         r_t3p = sqrt(w_t3phi) .* dphi ./ data.t3phi_err
         # ∂angle(T3)/∂x = Im(conj(T3)/|T3|² · ∂T3/∂x) · 180/π
@@ -929,7 +984,7 @@ function residuals_flat_jac(model::FlatModel,
     if w_visphi > 0 && data.nvisphi > 0
         idx = data.indx_vis
         Vvis = V[idx]
-        visphi_model = angle.(Vvis) .* (180.0 / π)
+        visphi_model = angle.(Vvis) .* T(180 / π)
         dphi = _mod360(visphi_model .- data.visphi)
         r_vp = sqrt(w_visphi) .* dphi ./ data.visphi_err
         safe_amp2 = max.(abs2.(Vvis), ε)
@@ -960,7 +1015,7 @@ end
 
 """
     chi2_flat_reduced(model, x, data; weights=[1,1,1,0,0,0,0], vonmises=false)
-        -> Float64
+        -> T
 
 Return chi2 / ndof (reduced chi-squared).  Useful for assessing goodness of fit.
 Works with both monochromatic (OIdata) and polychromatic (Vector{<:OIdata}) data.
@@ -969,7 +1024,7 @@ function chi2_flat_reduced(model::FlatModel,
                            x::AbstractVector,
                            data::Union{OIdata, Vector{<:OIdata}};
                            weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                           vonmises::Bool = false)::Float64
+                           vonmises::Bool = false)
     chi2 = chi2_flat(model, x, data; weights, vonmises)
     return chi2 / _ndof(data, weights)
 end

@@ -263,14 +263,14 @@ struct AzMode
     phi_idx  ::Int     # index into resolver output for phase (degrees)
 end
 
-struct HankelSpec <: AbstractComponentSpec
+struct HankelSpec{T<:AbstractFloat} <: AbstractComponentSpec
     comp_name        ::String
     f_idx            ::Int
     profile_fn       ::Function         # (r, mu, profile_params...) -> I
     profile_param_idx::Vector{Int}      # indices in resolver output
-    r_grid           ::Vector{Float64}
-    mu_grid          ::Vector{Float64}  # sqrt(1-(r/r_max)^2)
-    workspace        ::HankelWorkspace
+    r_grid           ::Vector{T}
+    mu_grid          ::Vector{T}        # sqrt(1-(r/r_max)^2)
+    workspace        ::HankelWorkspace{T}
     az_modes         ::Vector{AzMode}   # azimuthal variation modes (empty = none)
     incl_idx         ::Int
     pa_idx           ::Int
@@ -497,7 +497,8 @@ Example
 """
 function dict_to_model(model_dict::Dict{String},
                       list_free_params::Vector{String};
-                      nB_workspace::Int = 100)::FlatModel
+                      nB_workspace::Int = 100,
+                      T::Type{<:AbstractFloat} = Float64)::FlatModel
 
     comp_names = _component_names(model_dict)
 
@@ -569,10 +570,10 @@ function dict_to_model(model_dict::Dict{String},
             r_min = _hankel_r_min(cn, pd)
             r_max = _hankel_r_max(cn, pd)
             Nr    = _hankel_Nr(cn, pd)
-            r     = collect(range(r_min, r_max; length=Nr))
-            mu    = @. sqrt(max(0.0, 1.0 - (r / r_max)^2))
+            r     = collect(T, range(r_min, r_max; length=Nr))
+            mu    = @. sqrt(max(zero(T), one(T) - (r / T(r_max))^2))
 
-            ws = HankelWorkspace(Nr, nB_workspace, length(prof_idx))
+            ws = HankelWorkspace(Nr, nB_workspace, length(prof_idx); T=T)
 
             # Detect azimuthal variation modes: "cn,az amp1", "cn,az projang1", etc.
             az_modes = AzMode[]
@@ -644,7 +645,7 @@ const parse_model = dict_to_model
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    eval_model(model, x, uv; wl=nothing, mjd=nothing, n=0) -> Vector{ComplexF64}
+    eval_model(model, x, uv; wl=nothing, mjd=nothing, n=0) -> Vector{Complex{T}}
 
 Evaluate the model visibility at the given parameter vector `x` and baselines `uv`.
 
@@ -680,10 +681,15 @@ function eval_model(model::FlatModel,
     ρ  = @. sqrt(u_raw^2 + v_raw^2)   # cycles/rad
     B  = ρ ./ _MAS2RAD_PM             # cycles/mas (for Hankel)
 
-    # eltype(pv) may be Any for chromatic models (mix of scalars and vectors);
-    # always use Float64 for the visibility accumulator — broadcasting handles
-    # scalar/vector f and Vi correctly.
-    T  = eltype(x) <: Real ? promote_type(eltype(x), Float64) : Float64
+    # Accumulator precision follows the caller: the parameters and the uv coordinates.
+    # Float32 parameters against Float32 uv give a Float32 result, Float64 gives Float64, and
+    # a ForwardDiff Dual parameter vector promotes to Dual so gradients still flow.
+    #
+    # eltype(pv) may be Any for chromatic models (mix of scalars and vectors), and the
+    # per-component f/Vi may be Float64 regardless (model constants are parsed as Float64).
+    # That is fine: V is preallocated and every component is accumulated with an in-place
+    # `@. V += ...`, so the accumulator's element type governs the result.
+    T  = eltype(x) <: Real ? promote_type(eltype(x), float(eltype(uv))) : Float64
     V  = zeros(Complex{T}, nB)
 
     for comp in model.components
@@ -785,7 +791,7 @@ Evaluate model visibility and its Jacobian w.r.t. `x`.
 Returns
 -------
 V : complex visibility vector (length nB)
-J : Jacobian, Matrix{ComplexF64} of shape (nB, length(x))
+J : Jacobian, Matrix{Complex{T}} of shape (nB, length(x)); T follows x and uv
 
 Uses ForwardDiff for the resolver and analytic components; for Hankel
 components uses the cached-K chain rule via hankel_vis_fwd! + pullback.
@@ -813,10 +819,12 @@ function eval_model_grad(model::FlatModel,
 
     function eval_real(x_)
         V = eval_model(model, x_, uv; wl, mjd, n)
-        return [real.(V); imag.(V)]   # 2nB-vector of Float64
+        return [real.(V); imag.(V)]   # 2nB-vector, eltype follows x and uv
     end
 
-    J_ri = ForwardDiff.jacobian(eval_real, collect(Float64, x))  # (2nB, n_par)
+    # Seed the dual numbers in the caller's precision so the Jacobian comes back in it too;
+    # Float64 here would silently force the whole gradient path to double.
+    J_ri = ForwardDiff.jacobian(eval_real, collect(float(eltype(x)), x))  # (2nB, n_par)
     J_re = J_ri[1:nB, :]
     J_im = J_ri[nB+1:end, :]
     J    = complex.(J_re, J_im)

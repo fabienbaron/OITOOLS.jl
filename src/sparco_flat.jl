@@ -71,18 +71,21 @@ function _resolve_w_idx(model::FlatModel, w_name::String)
 end
 
 """
-    _eval_W(model, x, wl, w_idx) -> Vector{Float64}
+    _eval_W(model, x, wl, w_idx) -> Vector{T}
 
 Evaluate the image chromatic weight W at each UV-point wavelength.
 """
 function _eval_W(model::FlatModel, x::AbstractVector, wl, w_idx::Int)
     pv = model.resolver.fn(x, wl, NaN)
     W = pv[w_idx]
-    return W isa Number ? fill(Float64(W), length(wl)) : collect(Float64, W)
+    # Model constants resolve to Float64; bring W to the wavelength grid's precision so a
+    # Float32 pipeline is not promoted back to double through the chromatic image weight.
+    Tw = float(eltype(wl))
+    return W isa Number ? fill(convert(Tw, W), length(wl)) : collect(Tw, W)
 end
 
 """
-    _jacobian_W(model, x, wl, w_idx) -> Matrix{Float64}  (nUV × nparams)
+    _jacobian_W(model, x, wl, w_idx) -> Matrix{T}  (nUV × nparams)
 
 Jacobian ∂W/∂x via ForwardDiff through the resolver.
 """
@@ -95,7 +98,7 @@ function _jacobian_W(model::FlatModel, x::AbstractVector, wl, w_idx::Int)
         # Must preserve Dual type for ForwardDiff — no Float64 conversion
         return W isa Number ? fill(T(W), nUV) : Vector{T}(W)
     end
-    return ForwardDiff.jacobian(f, collect(Float64, x))
+    return ForwardDiff.jacobian(f, collect(float(eltype(x)), x))
 end
 
 
@@ -139,7 +142,8 @@ function chi2_sparco_flat_f(x_img::AbstractMatrix{<:AbstractFloat},
     v2_model = vis_to_v2(m.V_total, data.indx_v2)
     _, t3amp_model, t3phi_model = vis_to_t3(m.V_total, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
 
-    chi2_v2 = 0.0; chi2_t3amp = 0.0; chi2_t3phi = 0.0
+    Ts = promote_type(float(eltype(x_img)), eltype(data.v2))
+    chi2_v2 = zero(Ts); chi2_t3amp = zero(Ts); chi2_t3phi = zero(Ts)
     if (weights[1] > 0) && (data.nv2 > 0)
         chi2_v2 = norm((v2_model - data.v2) ./ data.v2_err)^2
     end
@@ -159,7 +163,7 @@ function chi2_sparco_flat_f(x_img::AbstractMatrix{<:AbstractFloat},
         printstyled(@sprintf("T3P: %.2f ", chi2_t3phi / data.nt3phi), color=:green)
         printstyled(@sprintf("Flux: %.4f ", sum(x_img)), color=:normal)
     end
-    return weights[1] * chi2_v2 + weights[2] * chi2_t3amp + weights[3] * chi2_t3phi
+    return Ts(weights[1]) * chi2_v2 + Ts(weights[2]) * chi2_t3amp + Ts(weights[3]) * chi2_t3phi
 end
 
 
@@ -368,8 +372,9 @@ function model_and_image_to_chi2_fg(
     cvis_image = image_to_vis(image, ft[1])
 
     w_idx = _resolve_w_idx(model, w_name)
-    chi2 = 0.0
-    g_params = zeros(Float64, length(x_params))
+    Ts = promote_type(float(eltype(x_params)), eltype(first(data).uv))
+    chi2 = zero(Ts)
+    g_params = zeros(Ts, length(x_params))
     g_image .= 0
 
     for i in 1:nwavs

@@ -441,7 +441,7 @@ end
 const plot_multi = plot_obs
 
 # Overloaded uvplot functions
-function uvplot(uv::Array{Float64,2})
+function uvplot(uv::AbstractMatrix{<:Real})
     u = uv[1,:]/1e6
     v = uv[2,:]/1e6
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
@@ -1332,15 +1332,15 @@ and rendered with the same formatting as [`imdisp`](@ref).
 - `beamsize`      — if `> 0`, draw a beam circle on each panel.
 - `beamlocation`  — `[x, y]` fractional position for the beam circle.
 """
-function imdisp_multi(cube::Array{Float64,3};
+function imdisp_multi(cube::AbstractArray{<:Real,3};
         labels::Vector{String} = String[],
         figtitle::String       = "OITOOLS images",
         colormap::String       = "gist_heat",
-        pixsize::Float64       = -1.0,
-        tickinterval::Float64  = 0.5,
+        pixsize::Real          = -1.0,
+        tickinterval::Real     = 0.5,
         use_colorbar::Bool     = false,
-        beamsize::Float64      = -1.0,
-        beamlocation::Vector{Float64} = Float64[])
+        beamsize::Real         = -1.0,
+        beamlocation::AbstractVector{<:Real} = Float64[])
 
     nx, ny, nslices = size(cube)
     nside = ceil(Int64, sqrt(nslices))

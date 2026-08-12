@@ -87,21 +87,30 @@ Then in the chi2 loop:
     hankel_vis_pullback!(ws.dI, ȳ, ws.V, ws.K, N, ws.w, r)
     dL_dp = ws.dI_dp' * ws.dI    # after filling ws.dI_dp via ForwardDiff
 """
-mutable struct HankelWorkspace
-    V    ::Vector{Float64}   # nB — normalised visibility
-    K    ::Matrix{Float64}   # nB × Nr — Bessel kernel
-    dI   ::Vector{Float64}   # Nr — ∂L/∂I from pullback
-    dI_dp::Matrix{Float64}   # Nr × n_params — ∂I/∂p from ForwardDiff on profile
-    w    ::Vector{Float64}   # Nr — trapezoid weights (fixed, cached)
+mutable struct HankelWorkspace{T<:AbstractFloat}
+    V    ::Vector{T}   # nB — normalised visibility
+    K    ::Matrix{T}   # nB × Nr — Bessel kernel
+    dI   ::Vector{T}   # Nr — ∂L/∂I from pullback
+    dI_dp::Matrix{T}   # Nr × n_params — ∂I/∂p from ForwardDiff on profile
+    w    ::Vector{T}   # Nr — trapezoid weights (fixed, cached)
 end
 
-function HankelWorkspace(Nr::Int, nB::Int, n_params::Int=1)
-    HankelWorkspace(
-        zeros(nB),
-        zeros(nB, Nr),
-        zeros(Nr),
-        zeros(Nr, n_params),
-        zeros(Nr),             # w filled by first call to hankel_vis_fwd!
+"""
+    HankelWorkspace(Nr, nB, n_params=1; T=Float64)
+
+Allocate the Hankel buffers at precision `T`. The transform functions themselves
+(`hankel_vis_fwd!`, `hankel_vis_pullback!`, ...) are generic over `AbstractVector`/
+`AbstractMatrix`, so the buffer element type is what sets the working precision of a Hankel
+component.
+"""
+function HankelWorkspace(Nr::Int, nB::Int, n_params::Int=1;
+                         T::Type{<:AbstractFloat}=Float64)
+    HankelWorkspace{T}(
+        zeros(T, nB),
+        zeros(T, nB, Nr),
+        zeros(T, Nr),
+        zeros(T, Nr, n_params),
+        zeros(T, Nr),          # w filled by first call to hankel_vis_fwd!
     )
 end
 
@@ -220,10 +229,10 @@ the pullback, at the cost of a single Bessel evaluation per (B[j], r[k]) pair.
 
 Returns
 -------
-V  : normalised visibility, Vector{Float64} of length nB
-K  : Bessel kernel matrix,  Matrix{Float64} of size nB × Nr
+V  : normalised visibility, Vector{T} of length nB
+K  : Bessel kernel matrix,  Matrix{T} of size nB × Nr
      K[j,k] = w[k] · r[k] · Jₙ(2π B[j] r[k])
-N  : normalisation constant ∫ I r dr, Float64
+N  : normalisation constant ∫ I r dr
 
 The pullback is:  dI = (K'ȳ  −  dot(ȳ,V) · (w .* r)) / N
 """

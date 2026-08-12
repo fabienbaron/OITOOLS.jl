@@ -66,7 +66,7 @@ export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
        model_to_image, model_to_sed, model_to_flux
-export cvis_to_chi2_fg, model_and_image_to_chi2_fg
+export cvis_to_chi2_f, cvis_to_chi2_fg, model_and_image_to_chi2_fg
 
 # ── Uncertainty estimation by resampling ─────────────────────────────────────
 export bootstrap_fit, bootstrap_driver, BootstrapResult

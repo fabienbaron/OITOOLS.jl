@@ -88,8 +88,11 @@ function hankel_transform(I::AbstractVector, r::AbstractVector,
     function _ht_single(Bj)
         T   = promote_type(eltype(I), typeof(Bj))
         acc = zero(T)
+        # T(2π), not 2π: the latter is Int*Irrational => Float64, which would promote the
+        # whole transform (and every Hankel component downstream) out of Float32.
+        twoπ = T(2π)
         @inbounds for k in 1:Nr
-            arg = 2π * Bj * r[k]
+            arg = twoπ * Bj * r[k]
             Jn  = (n == 0) ? besselj0(arg) :
                   (n == 1) ? besselj1(arg) :
                              besselj(n, arg)
@@ -102,7 +105,7 @@ function hankel_transform(I::AbstractVector, r::AbstractVector,
 end
 
 """
-    hankel_norm(I, r) -> Float64
+    hankel_norm(I, r) -> T
 
 Compute the normalisation constant N = ∫ I(r) r dr = H₀(B=0).
 """
@@ -164,7 +167,7 @@ end
 
 """
     hankel_vis_full(I, r, B, PA; n_orders=Int[], amps=Float64[], phis=Float64[],
-                    Nr_coarse=40) -> Vector{ComplexF64}
+                    nB_coarse=40) -> Vector{Complex{T}}
 
 Full complex visibility including azimuthal variation terms.
 
@@ -177,13 +180,18 @@ PA       : position angles (radians), same length as B
 n_orders : azimuthal orders (integer list)
 amps     : amplitudes of each azimuthal term (same length as n_orders)
 phis     : phase offsets in radians for each term (same length as n_orders)
+
+The element type follows `I`, `r` and `B`: Float32 inputs give a `Vector{ComplexF32}`.
+
+`nB_coarse` is accepted for signature compatibility with `hankel_vis_interp` but is not
+used here — this routine evaluates the transform directly on `B`.
 """
 function hankel_vis_full(I::AbstractVector, r::AbstractVector,
                           B::AbstractVector, PA::AbstractVector;
-                          n_orders::Vector{Int}   = Int[],
-                          amps::Vector{Float64}   = Float64[],
-                          phis::Vector{Float64}   = Float64[],
-                          nB_coarse::Int          = 40)
+                          n_orders::AbstractVector{<:Integer} = Int[],
+                          amps::AbstractVector{<:Real}       = Float64[],
+                          phis::AbstractVector{<:Real}       = Float64[],
+                          nB_coarse::Int                     = 40)
     N    = hankel_norm(I, r)
     V    = complex.(hankel_transform(I, r, B; n=0) ./ N)   # H₀/N, real→complex
 
