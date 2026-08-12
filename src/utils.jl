@@ -31,7 +31,7 @@ Recenter an image by circular shifting so the centroid (or peak if `max=true`)
 is at the image center. Works on 1D (vectorized square image) or 2D arrays.
 If `mask` is provided, the centroid is computed from the mask instead.
 """
-function recenter(x::Union{Array{Float64,1},Array{Float64,2}}; mask=[], max=false)
+function recenter(x::AbstractArray{<:Real}; mask=[], max=false)
     if ndims(x)==1 # assume square array
         n=Int(sqrt(length(x)))
         xtemp=reshape(x,(n,n))
@@ -100,7 +100,7 @@ function magnitudes_from_simbad(targetname)
     return mags
 end
 
-function meshgrid(xx::Union{Vector{Float32}, Vector{Float64}}) #example: meshgrid([-N/2:N/2-1;]*δ);
+function meshgrid(xx::AbstractVector{<:Real}) #example: meshgrid([-N/2:N/2-1;]*δ);
     x = [j for i=xx, j=xx];
     return x,x'
 end
@@ -110,7 +110,7 @@ function meshgrid(xx::Int64) #example: meshgrid(N);
     return x,x'
 end
 
-function meshrad(xx::Union{Vector{Float32}, Vector{Float64}})
+function meshrad(xx::AbstractVector{<:Real})
     x = [j for i=xx, j=xx];
     return hypot.(x,x')
 end
@@ -120,7 +120,7 @@ function meshrad(xx::Int64)
     return hypot.(x,x')
 end
 
-function meshpol(xx::Union{Vector{Float32}, Vector{Float64}})
+function meshpol(xx::AbstractVector{<:Real})
     x = [j for i=1:xx, j=1:xx];
     return hypot.(x,x'), atan.(x', x)
 end

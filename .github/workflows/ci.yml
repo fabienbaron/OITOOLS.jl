@@ -7,9 +7,6 @@ on:
     branches:
       - main
     tags: '*'
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
@@ -36,11 +33,11 @@ jobs:
             version: '1'
     steps:
       - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: Add Emmt Registry
         run: julia -e 'using Pkg; Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))'
       - uses: julia-actions/julia-buildpkg@v1
@@ -63,10 +60,10 @@ jobs:
       statuses: write
     steps:
       - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: '1'
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: Add Emmt Registry
         run: julia -e 'using Pkg; Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))'
       - uses: julia-actions/julia-buildpkg@v1
