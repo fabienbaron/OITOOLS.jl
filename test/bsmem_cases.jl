@@ -52,13 +52,21 @@ Environment a bit-for-bit baseline is only valid under.
 planning strategy — MEASURE vs ESTIMATE differ at ~1e-15 from nx=128 up — and this solver
 amplifies that into a different trajectory. Recording it means switching strategy reports
 itself as an environment change rather than masquerading as a broken refactor.
+
+`cpu` (`Sys.CPU_NAME`, the LLVM microarchitecture target) is included because the baseline is
+hardware-specific and nothing else here captures that. FMA contraction and vector width differ
+between microarchitectures, and this solver amplifies a one-ULP difference in an early
+reduction into a different trajectory — in practice 1e-16 to 1e-4 in the final image, and
+sometimes a different iteration count. Without this field a workstation and a CI runner look
+"comparable" while disagreeing, so a baseline cut on one silently fails on the other.
 """
 codegen_env() = (; check_bounds = Int(Base.JLOptions().check_bounds),
                    opt_level    = Int(Base.JLOptions().opt_level),
                    nthreads     = Threads.nthreads(),
                    blas_threads = BLAS.get_num_threads(),
                    fft_flags    = string(GATE_FFTFLAGS),
-                   julia        = string(VERSION))
+                   julia        = string(VERSION),
+                   cpu          = String(Sys.CPU_NAME))
 
 const BSMEM_CASES = (
     (name = "mono_default_m4", file = "2004-data1.oifits", nx = 64, pixsize = 0.2, nwav = 1,
@@ -131,8 +139,12 @@ function compare_bsmem(ref, got; rtol = 0.0)
     # A bit-for-bit baseline is only meaningful under the codegen it was captured with
     # (see the header): report the mismatch rather than a misleading numeric failure.
     if rtol == 0 && hasproperty(ref, :env) && ref.env != got.env
-        diff = [string(k, ": ", getfield(ref.env, k), " -> ", getfield(got.env, k))
-                for k in keys(ref.env) if getfield(ref.env, k) != getfield(got.env, k)]
+        # Field sets can differ when the env gains a field (e.g. `cpu`), so compare on the
+        # union and report absent fields rather than throwing on a missing key.
+        _fld(nt, k) = hasproperty(nt, k) ? getfield(nt, k) : "<absent>"
+        allk = unique(vcat(collect(keys(ref.env)), collect(keys(got.env))))
+        diff = [string(k, ": ", _fld(ref.env, k), " -> ", _fld(got.env, k))
+                for k in allk if _fld(ref.env, k) != _fld(got.env, k)]
         return (; pass = false, comparable = false,
             msg = "codegen/threading mismatch, baseline not comparable — " * join(diff, ", ") *
                   ". Re-run under the baseline's settings (Pkg.test() uses --check-bounds=yes), " *

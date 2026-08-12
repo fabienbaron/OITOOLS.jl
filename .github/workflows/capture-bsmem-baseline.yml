@@ -1,0 +1,80 @@
+# Re-cut the BSMEM bit-for-bit baselines ON A RUNNER.
+#
+# Why this exists: the baselines are hardware-specific. `codegen_env()` records the CPU
+# microarchitecture (Sys.CPU_NAME) precisely because FMA contraction and vector width differ
+# between machines, and this solver amplifies a one-ULP difference into a different iterate
+# trajectory — 1e-16 to 1e-4 in the final image, sometimes a different iteration count.
+# A baseline cut on a developer workstation therefore passes locally and fails every case on
+# CI. Cut them here, where the gate actually runs.
+#
+# Usage: Actions -> "Capture BSMEM baseline" -> Run workflow. Download the `bsmem-baseline`
+# artifact, unzip into test/references/, and commit. This workflow deliberately does NOT
+# commit for you — re-cutting the reference is a decision that should be reviewed, and the
+# capture script keeps a "Baseline history" comment that should get a new entry each time.
+#
+# The environment below must match what test/test_bsmem_regression.jl runs under, i.e. what
+# Pkg.test() gives: --check-bounds=yes, one Julia thread, one BLAS thread (pinned by the
+# capture script itself).
+
+name: Capture BSMEM baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      julia-version:
+        description: 'Julia version to capture under (must match the CI test job)'
+        required: true
+        default: '1.12'
+
+jobs:
+  capture:
+    name: Capture on ubuntu-latest x64
+    runs-on: ubuntu-latest
+    env:
+      JULIA_PKG_PRECOMPILE_AUTO: 0
+      JULIA_NUM_THREADS: '1'          # baseline records nthreads; the gate compares it
+    steps:
+      - uses: actions/checkout@v5
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ inputs.julia-version }}
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - name: Add Emmt Registry
+        run: julia -e 'using Pkg; Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))'
+      - uses: julia-actions/julia-buildpkg@v1
+        env:
+          PYTHON: ''
+
+      - name: Report capture environment
+        run: |
+          julia --check-bounds=yes --project=. -e '
+            using OITOOLS, LinearAlgebra, FFTW
+            BLAS.set_num_threads(1)
+            include("test/bsmem_cases.jl")
+            println("capture env: ", codegen_env())'
+        env:
+          PYTHON: ''
+
+      - name: Remove existing baselines
+        run: rm -f test/references/bsmem_baseline_*.jls
+
+      - name: Capture
+        run: julia --check-bounds=yes --project=. test/capture_bsmem_baseline.jl
+        env:
+          PYTHON: ''
+
+      - name: Verify the fresh baselines pass their own gate
+        run: |
+          julia --check-bounds=yes --project=. -e '
+            using OITOOLS, Test, LinearAlgebra
+            BLAS.set_num_threads(1)
+            include("test/test_bsmem_regression.jl")'
+        env:
+          PYTHON: ''
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bsmem-baseline
+          path: test/references/bsmem_baseline_*.jls
+          if-no-files-found: error

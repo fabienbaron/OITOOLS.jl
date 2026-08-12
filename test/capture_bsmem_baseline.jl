@@ -16,9 +16,23 @@
 #      only mono_default_m4_nx128 moved (16 vs 17 iterations) — every nx<=64 case stayed
 #      bit-identical, exactly as predicted. Motivation: ~1.3-1.6x on Float64 alone, and it
 #      turns Float32 from a regression into a win at nx>=128. See FFT_FLAGS in oichi2.jl.
+#   3. Re-cut on a developer workstation, then REVERTED. The new baselines matched that
+#      machine but not the CI runner, so CI failed all 8 cases (max|Δ| 1e-16 to 8e-5, and
+#      mono_default_m4 took 17 iterations instead of 16). The lesson is the warning below:
+#      these files encode the capture hardware, so they must be cut where CI runs.
 #
 # BLAS threading is pinned because _bidiag_svd calls LAPACK and reductions can
 # reassociate with thread count, which would make the baseline machine-dependent.
+#
+# WARNING — the baseline is HARDWARE-specific, and `env` does not record that.
+# `codegen_env()` captures check_bounds/opt_level/nthreads/blas_threads/fft_flags/julia, but
+# NOT the CPU. Two machines with identical Julia settings therefore look "comparable" while
+# producing images that differ at 1e-16 to 1e-4 (this solver is chaotic; a one-ULP difference
+# in an early reduction changes the iterate trajectory and even the iteration count).
+#
+# Consequence: capture on hardware matching CI (a GitHub linux x86_64 runner), NOT on a
+# developer workstation. Re-cutting these on a different machine makes the gate pass locally
+# and fail on CI for all 8 cases — which is exactly what happened once; see history entry 3.
 #
 # Storage format: the Serialization stdlib (.jls), chosen only because it adds no
 # dependency. Its format is NOT guaranteed stable across Julia versions, so a Julia
