@@ -43,8 +43,6 @@ jobs:
       - name: Add Emmt Registry
         run: julia -e 'using Pkg; Pkg.Registry.add(RegistrySpec(url = "https://github.com/emmt/EmmtRegistry"))'
       - uses: julia-actions/julia-buildpkg@v1
-        env:
-          PYTHON: ''
 
       - name: Report capture environment
         run: |
@@ -53,16 +51,12 @@ jobs:
             BLAS.set_num_threads(1)
             include("test/bsmem_cases.jl")
             println("capture env: ", codegen_env())'
-        env:
-          PYTHON: ''
 
       - name: Remove existing baselines
         run: rm -f test/references/bsmem_baseline_*.jls
 
       - name: Capture
         run: julia --check-bounds=yes --project=. test/capture_bsmem_baseline.jl
-        env:
-          PYTHON: ''
 
       - name: Verify the fresh baselines pass their own gate
         run: |
@@ -70,8 +64,6 @@ jobs:
             using OITOOLS, Test, LinearAlgebra
             BLAS.set_num_threads(1)
             include("test/test_bsmem_regression.jl")'
-        env:
-          PYTHON: ''
 
       - uses: actions/upload-artifact@v4
         with:

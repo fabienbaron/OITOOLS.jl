@@ -1,4 +1,4 @@
-using OITOOLS, PyPlot
+using OITOOLS, PythonPlot
 
 datadir = joinpath(@__DIR__, "..", "demos", "data")
 
@@ -60,4 +60,4 @@ println("--- plot_t3phi_residuals color=mjd ---")
 plot_t3phi_residuals(data2, obs2.t3phi; color="mjd")
 
 println("\nAll plot_residuals tests passed.")
-PyPlot.close("all")
+PythonPlot.close("all")

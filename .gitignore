@@ -22,3 +22,7 @@ docs/site/
 # Python bytecode (demos/bootstrap_validation/stubs)
 __pycache__/
 *.pyc
+
+# CondaPkg's resolved Python environment (like Manifest.toml, it is machine-specific and
+# regenerated from CondaPkg.toml). CondaPkg.toml itself IS committed.
+.CondaPkg/

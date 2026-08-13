@@ -3,7 +3,7 @@
 #
 
 # gather common display tasks
-using PyPlot,PyCall, LaTeXStrings, Statistics
+using PythonPlot, PythonCall, LaTeXStrings, Statistics
 
 # ── Styling globals (set by set_oiplot_defaults) ──────────────────────────────
 global oiplot_markersize    = 3.0
@@ -18,6 +18,24 @@ global oiplot_show_title    = true
 global oiplot_compact       = false
 global oiplot_figsize       = (12, 6)
 
+# ── Python axes arrays → 1-based Julia arrays ────────────────────────────────
+# matplotlib's `subplots` returns a numpy array of Axes. PyCall auto-converted that to a
+# Julia array, so the rest of this file indexes it 1-based. PythonCall leaves it a `Py`,
+# whose indexing passes straight through to Python and is 0-based — so `axes[n]` on n panels
+# raises IndexError. Convert once, at each subplots call, and everything downstream is
+# unchanged.
+function _axes_to_julia(a)
+    pyhasattr(a, "shape") || return a          # already a single Axes object
+    sh = pyconvert(Tuple, a.shape)
+    if length(sh) == 1
+        return [a[i] for i in 0:(sh[1] - 1)]
+    elseif length(sh) == 2
+        return [a[i, j] for i in 0:(sh[1] - 1), j in 0:(sh[2] - 1)]
+    else
+        return a
+    end
+end
+
 """
     set_oiplot_defaults(; compact=oiplot_compact)
 
@@ -27,7 +45,7 @@ preserves the current compact state.
 """
 function set_oiplot_defaults(; compact::Bool=oiplot_compact)
     global oiplot_compact = compact
-    rc = PyDict(pyimport("matplotlib")."rcParams")
+    rc = pyimport("matplotlib").rcParams
     rc["font.family"] = ["serif"]
     rc["legend.numpoints"] = 1
     rc["legend.handletextpad"] = 0.3
@@ -201,7 +219,7 @@ function setup_mjd_colorbar(sc; fig=nothing, ax_list=nothing)
                         pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
     end
     cbar_label_right!(cbar, "MJD")
-    mjdvals = sc.get_array()
+    mjdvals = pyconvert(Vector{Float64}, sc.get_array())
     mjds = sort(unique(mjdvals))
     if length(mjds) < 5
         ticks = round.(mjds; digits=2)
@@ -223,7 +241,9 @@ function setup_wav_colorbar(sc; fig=nothing, ax_list=nothing)
                         pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
     end
     cbar_label_right!(cbar, "λ (μm)")
-    wavvals = sc.get_array()
+    # get_array() is a numpy (masked) array; PythonCall leaves it a `Py`, and Julia's
+    # minimum/range then need arithmetic on Py. Convert to Julia values first.
+    wavvals = pyconvert(Vector{Float64}, sc.get_array())
     cbar_range = floor.(collect(range(minimum(wavvals), maximum(wavvals), length=7))*100)/100
     cbar.set_ticks(cbar_range)
     return cbar
@@ -339,7 +359,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
     if standalone
         ax.set_xlabel(xlabel_str)
         tight_layout()
-        show(block=false)
+        plotshow(block=false)
     end
     return (ax, scatter_obj)
 end
@@ -383,7 +403,7 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
 
     fig = figure(string(figtitle, "Multi-observable"), figsize=figsize, facecolor="White")
     fig.clear()
-    axes = fig.subplots(nrows=npanels, ncols=1, sharex=true)
+    axes = _axes_to_julia(fig.subplots(nrows=npanels, ncols=1, sharex=true))
     # When npanels==1, axes is not an array
     if npanels == 1
         axes = [axes]
@@ -435,7 +455,7 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
         end
     end
 
-    show(block=false)
+    plotshow(block=false)
     return fig
 end
 const plot_multi = plot_obs
@@ -572,10 +592,16 @@ function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="base
     end
     if square==true
         if minuv<-1e98
-            minuv = minimum([ax.get_xlim()[1],ax.get_ylim()[1]] )
+            # get_xlim/get_ylim return a Python 2-tuple. Convert before indexing: a bare
+            # `Py` indexes through to Python and is 0-based, so [2] is out of range.
+            _xl = pyconvert(Tuple{Float64,Float64}, ax.get_xlim())
+            _yl = pyconvert(Tuple{Float64,Float64}, ax.get_ylim())
+            minuv = minimum([_xl[1], _yl[1]])
         end
         if maxuv>1e98
-            maxuv = maximum([ax.get_xlim()[2],ax.get_ylim()[2]])
+            _xl2 = pyconvert(Tuple{Float64,Float64}, ax.get_xlim())
+            _yl2 = pyconvert(Tuple{Float64,Float64}, ax.get_ylim())
+            maxuv = maximum([_xl2[2], _yl2[2]])
         end     
         ax.set_xlim((minuv,maxuv))
         ax.set_ylim((minuv,maxuv))
@@ -592,7 +618,7 @@ function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="base
         savefig(filename)
     end
     tight_layout();
-    show(block=false)
+    plotshow(block=false)
 end
 
 
@@ -787,8 +813,8 @@ function _plot_single_residual(data, model_vec, spec;
     set_oiplot_defaults()
     fig = figure(spec.label * " residuals", figsize=figsize, facecolor="White")
     fig.clear()
-    axes = fig.subplots(2, 1; sharex=true,
-        gridspec_kw=Dict("height_ratios" => [3, 1], "hspace" => 0.05))
+    axes = _axes_to_julia(fig.subplots(2, 1; sharex=true,
+        gridspec_kw=Dict("height_ratios" => [3, 1], "hspace" => 0.05)))
     sc = _plot_residual_panel(data, model_vec, spec;
         ax_data=axes[1], ax_res=axes[2], logplot=logplot,
         y_range=y_range, res_range=res_range, color=color)
@@ -808,7 +834,7 @@ function _plot_single_residual(data, model_vec, spec;
         cc == "wav" ? setup_wav_colorbar(sc; fig, ax_list=ax_vec) :
                       setup_mjd_colorbar(sc; fig, ax_list=ax_vec)
     end
-    show(block=false)
+    plotshow(block=false)
 end
 
 function plot_v2_residuals(data::OIdata, v2_model::AbstractVector; kwargs...)
@@ -895,8 +921,8 @@ function plot_residuals(data::OIdata, obs::NamedTuple;
     ratios = repeat([3, 1], npanels)
     fig = figure("Residuals", figsize=figsize, facecolor="White")
     fig.clear()
-    axes = fig.subplots(nrows, 1;
-        gridspec_kw=Dict("height_ratios" => ratios, "hspace" => 0.08))
+    axes = _axes_to_julia(fig.subplots(nrows, 1;
+        gridspec_kw=Dict("height_ratios" => ratios, "hspace" => 0.08)))
     if nrows == 2
         axes = [axes[1], axes[2]]  # ensure indexable
     end
@@ -939,7 +965,7 @@ function plot_residuals(data::OIdata, obs::NamedTuple;
         end
     end
 
-    show(block=false)
+    plotshow(block=false)
 end
 
 # Image-domain convenience
@@ -1055,11 +1081,12 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
             page_rows = ceil(Int, npanels / ncols)
             page_label = npages > 1 ? " ($page/$npages)" : ""
 
-            fig, axes = plt.subplots(
+            fig, axes = pyplot.subplots(
                 num=string(figtitle, "Diff. phase", page_label),
                 nrows=page_rows, ncols=ncols, sharex=true, sharey=true,
                 figsize=(fig_w, fig_h * page_rows / nrows),
                 facecolor="White", squeeze=false)
+            axes = _axes_to_julia(axes)          # 2-D grid, indexed axes[row, col] below
             if oiplot_show_title
                 fig.suptitle("Diff. phase" * page_label)
             end
@@ -1093,7 +1120,7 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
                 axes[row, col].set_visible(false)
             end
             tight_layout()
-            show(block=false)
+            plotshow(block=false)
         end
     else
         # ── Absolute phase layout: delegate to generic engine ──
@@ -1228,7 +1255,7 @@ function plot_v2_multifile(data::AbstractVector{<:OIdata}; logplot = false, remo
     if filename !=""
         savefig(filename)
     end
-    show(block=false)
+    plotshow(block=false)
 end
 
 
@@ -1310,7 +1337,7 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixsize
         ax.add_artist(c)
     end
     tight_layout()
-    show(block=false)
+    plotshow(block=false)
 end
 
 """
@@ -1405,7 +1432,7 @@ function imdisp_multi(cube::AbstractArray{<:Real,3};
         end
     end
     tight_layout()
-    show(block=false)
+    plotshow(block=false)
 end
 
 
@@ -1453,7 +1480,7 @@ function plot_facility(facility)
 end
     
 function imshow2(img1, img2)
-    fig,ax = subplots(nrows=1, ncols=2)
+    fig, ax = subplots(nrows=1, ncols=2); ax = _axes_to_julia(ax)
     ax[1].imshow(img1)
     ax[2].imshow(img2)
 end

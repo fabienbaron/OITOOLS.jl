@@ -13,28 +13,35 @@
 | LsqFit | Levenberg–Marquardt least-squares fitting |
 | UltraNest | Bayesian model selection via nested sampling |
 | SpecialFunctions | Bessel functions for visibility calculations |
-| PyCall / PyPlot | Matplotlib-based plotting |
+| PythonCall / PythonPlot | Matplotlib-based plotting |
 | Crayons | Coloured terminal output |
 
 ## Step 1: Python packages
 
-OITOOLS uses a Julia-managed Conda environment for UltraNest and Astroquery.
-Paste the following into the Julia REPL:
+Nothing to do — this step used to require setting `ENV["PYTHON"]`, adding `Conda`, and
+installing packages by hand. OITOOLS now declares its Python dependencies in `CondaPkg.toml`
+and [PythonCall](https://github.com/JuliaPy/PythonCall.jl) provisions them automatically into
+a project-local environment the first time you `using OITOOLS`:
+
+| Package | Used by |
+|---|---|
+| matplotlib | all plotting (`oiplot.jl`) |
+| astroquery | `magnitudes_from_simbad`, `ra_dec_from_simbad` |
+| ultranest | `fit_model_ultranest` |
+
+To pick a non-interactive plotting backend (for scripts or CI), set `MPLBACKEND` before
+loading OITOOLS:
 
 ```julia
-ENV["PYTHON"] = ""
-ENV["MPLBACKEND"] = "qt5agg"
-using Pkg
-Pkg.add("Conda")
-using Conda
-Conda.add("ultranest",  channel="conda-forge")
-Conda.add("astroquery", channel="astropy")
+ENV["MPLBACKEND"] = "Agg"     # or "qt5agg" for an interactive window
+using OITOOLS
 ```
 
-!!! tip
+!!! tip "Reusing an existing Python"
 
-    If you already have a Python installation you want to use, omit the two
-    `ENV[...]` lines so Julia reuses your existing Python.
+    Set `JULIA_PYTHONCALL_EXE` to your interpreter to reuse an existing installation. Note
+    that doing so opts out of `CondaPkg`, so you become responsible for keeping matplotlib,
+    astroquery and ultranest installed and mutually consistent.
 
 ## Step 2: Julia packages
 
@@ -49,7 +56,7 @@ Pkg.add([
     "AstroTime", "CFITSIO", "Crayons", "Dates", "DelimitedFiles",
     "FFTW", "FITSIO", "Glob", "LaTeXStrings", "LinearAlgebra",
     "LsqFit", "Match", "NFFT", "NLopt", "NearestNeighbors",
-    "Parameters", "PyCall", "PyPlot", "Random", "SparseArrays",
+    "Parameters", "Random", "SparseArrays",
     "SpecialFunctions", "Statistics", "UltraNest",
     "ArrayTools", "LazyAlgebra", "OptimPackNextGen", "OIFITS",
 ])

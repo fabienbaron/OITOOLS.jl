@@ -10,5 +10,6 @@ BLAS.set_num_threads(1)
     include("test_bootstrap.jl")         # resampling / uncertainty estimation
     include("test_oifits_tdim.jl")       # OIFITS writing interoperability
     include("test_simulate.jl")          # simulate(): geometry, noise model, observability
+    include("test_python_boundary.jl")   # Julia<->Python crossings (plots, UltraNest, SIMBAD)
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end

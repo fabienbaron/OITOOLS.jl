@@ -567,7 +567,7 @@ are needed.
 
 `fit_model_ultranest` performs nested sampling via
 [UltraNest](https://johannesbuchner.github.io/UltraNest/) (Python, called
-through PyCall). It returns the Bayesian log-evidence for model comparison:
+through PythonCall). It returns the Bayesian log-evidence for model comparison:
 
 ```julia
 result = fit_model_ultranest(model_dict, list_free_params, data;

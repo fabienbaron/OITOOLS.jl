@@ -2,7 +2,7 @@
 # This file includes general purpose functions
 #
 
-using LinearAlgebra,SparseArrays, PyCall
+using LinearAlgebra,SparseArrays, PythonCall
 
 function x_start_from_V2_dft(data, dft; λ = 1e7 , μ = 1e6 )
 # estimate V and 1/sigma_V^2 from V2 and V2_err using equation 3.98a in Data Analysis (Sivia/Skilling)
@@ -57,8 +57,8 @@ end
 
 function ra_dec_from_simbad(targetname)
     res = query_target_from_simbad(targetname)
-    ra = [parse(Float64, i) for i in split(get(get(res, "RA"),0))]
-    dec = [parse(Float64, i) for i in split(get(get(res, "DEC"),0))]
+    ra  = [parse(Float64, i) for i in split(pyconvert(String, res["RA"][0]))]
+    dec = [parse(Float64, i) for i in split(pyconvert(String, res["DEC"][0]))]
     return ra, dec
 end
 
@@ -83,14 +83,18 @@ function magnitudes_from_simbad(targetname)
         WHERE i.id = '$(replace(targetname, "'" => "''"))'
         """
         result = Simbad.query_tap(query)
-        if result !== nothing
-            nrows = length(get(result, "filter"))
-            for row in 0:(nrows-1)
-                filt = uppercase(strip(string(get(get(result, "filter"), row))))
+        # PyCall turned Python None into Julia nothing; PythonCall keeps it as a Py, so the
+        # emptiness test has to ask Python.
+        if !pyis(result, pybuiltins.None)
+            filters = result["filter"]
+            fluxes  = result["flux"]
+            nrows   = pylen(filters)
+            for row in 0:(nrows-1)          # Python row index, passed through by Py getindex
+                filt = uppercase(strip(pyconvert(String, filters[row])))
                 for b in bands
                     if filt == b
                         try
-                            mags[b] = Float64(get(get(result, "flux"), row))
+                            mags[b] = pyconvert(Float64, fluxes[row])
                         catch; end
                     end
                 end

@@ -2,4 +2,3 @@
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"

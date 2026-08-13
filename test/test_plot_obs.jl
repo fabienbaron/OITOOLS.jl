@@ -1,4 +1,4 @@
-using OITOOLS, PyPlot
+using OITOOLS, PythonPlot
 
 datadir = joinpath(@__DIR__, "..", "demos", "data")
 
@@ -37,4 +37,4 @@ println("--- plot_obs(data2, logplot=true) ---")
 plot_obs(data2, logplot=true)
 
 println("\nAll plot_obs tests passed.")
-PyPlot.close("all")
+PythonPlot.close("all")

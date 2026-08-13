@@ -17,7 +17,7 @@
 #   fit_model(model_dict, list_free_params, data; lb, ub, weights, priors, method, ...)
 #       → FitResult
 
-using NLopt, LsqFit, ForwardDiff, Printf, PyCall, FFTW
+using NLopt, LsqFit, ForwardDiff, Printf, PythonCall, FFTW
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -429,7 +429,7 @@ struct UltraNestResult
     logz        ::Float64           # log-evidence
     logzerr     ::Float64           # log-evidence uncertainty
     posterior   ::Matrix{Float64}   # (n_samples, n_params) posterior samples
-    result      ::Any               # raw UltraNest result dict (PyObject)
+    result      ::Any               # raw UltraNest result dict (a PythonCall `Py`)
     model       ::FlatModel
 end
 
@@ -456,7 +456,7 @@ end
 
 Fit a parametric model to interferometric data using UltraNest nested sampling.
 
-Requires PyCall and the Python `ultranest` package.
+Requires the Python `ultranest` package (declared in CondaPkg.toml).
 
 # Arguments
 - `model_dict::Dict{String}` — flat parameter dictionary
@@ -514,8 +514,16 @@ function fit_model_ultranest(model_dict   ::Dict{String},
         u .* Δx .+ lbounds
     end
 
+    # UltraNest calls this with a numpy array. PythonCall wraps it as a zero-copy
+    # `PyArray`, which is already an `AbstractMatrix`, so this annotation matches and no
+    # copy is made — unlike PyCall, which converted numpy to a fresh Julia Matrix per call.
+    #
+    # The RETURN value does need help: a bare Julia array reaches Python as a
+    # `juliacall.VectorValue`, and UltraNest calls numpy methods (`.transpose`) on it.
+    # `.to_numpy()` hands back a real ndarray.
     prior_transform_vectorized = let trafo = prior_transform
-        (U::AbstractMatrix{<:Real}) -> reduce(vcat, (u -> trafo(u)').(eachrow(U)))
+        (U::AbstractMatrix{<:Real}) ->
+            Py(reduce(vcat, (u -> trafo(u)').(eachrow(U)))).to_numpy()
     end
 
     # ── 4. Log-likelihood: -0.5 * chi2 ─────────────────────────────────────
@@ -525,13 +533,15 @@ function fit_model_ultranest(model_dict   ::Dict{String},
     end
 
     loglikelihood_vectorized = let loglikelihood = loglikelihood
-        (X::AbstractMatrix{<:Real}) -> loglikelihood.(eachrow(X))
+        (X::AbstractMatrix{<:Real}) -> Py(loglikelihood.(eachrow(X))).to_numpy()
     end
 
     # ── 5. Run UltraNest ───────────────────────────────────────────────────
     ultranest = pyimport("ultranest")
 
-    param_names = list_free_params  # UltraNest wants a list of strings
+    # UltraNest concatenates this with a Python list (`names + [...]`), so it must be a
+    # real list: a Julia Vector arrives as a juliacall.VectorValue and `+` fails on it.
+    param_names = pylist(list_free_params)
 
     if !verb
         log_interval = 1_000_000
@@ -560,7 +570,7 @@ function fit_model_ultranest(model_dict   ::Dict{String},
     )
 
     # ── 6. Extract results ─────────────────────────────────────────────────
-    minx = Float64.(result["maximum_likelihood"]["point"])
+    minx = pyconvert(Vector{Float64}, result["maximum_likelihood"]["point"])
     minf = chi2_flat(fm, minx, data; weights, vonmises)
 
     if verb
@@ -570,9 +580,10 @@ function fit_model_ultranest(model_dict   ::Dict{String},
 
     # ── 7. Corner plot ─────────────────────────────────────────────────────
     if cornerplot
-        PyDict(pyimport("matplotlib")."rcParams")["font.size"] = [8]
+        pyimport("matplotlib").rcParams["font.size"] = 8
         histogram_color = "black"
-        contour_colors = py"{'colors': ['#0072B2','#56B4E9','#009E73','#F0E442'], 'linestyles': ['-', '-', '-', '-']}"
+        contour_colors = Dict("colors"      => ["#0072B2","#56B4E9","#009E73","#F0E442"],
+                              "linestyles"  => ["-", "-", "-", "-"])
         pyimport("ultranest.plot").cornerplot(result;
             contour_kwargs = contour_colors,
             color          = histogram_color,
@@ -581,10 +592,10 @@ function fit_model_ultranest(model_dict   ::Dict{String},
 
     # ── 8. Build posterior matrix ──────────────────────────────────────────
     samples_py = result["samples"]
-    posterior  = convert(Matrix{Float64}, samples_py)
+    posterior  = pyconvert(Matrix{Float64}, samples_py)
 
-    logz    = Float64(result["logz"])
-    logzerr = Float64(result["logzerr"])
+    logz    = pyconvert(Float64, result["logz"])
+    logzerr = pyconvert(Float64, result["logzerr"])
     ndof    = _ndof(data, weights)
 
     return UltraNestResult(
@@ -633,8 +644,16 @@ function fit_model_ultranest(model        ::FlatModel,
         u .* Δx .+ lbounds
     end
 
+    # UltraNest calls this with a numpy array. PythonCall wraps it as a zero-copy
+    # `PyArray`, which is already an `AbstractMatrix`, so this annotation matches and no
+    # copy is made — unlike PyCall, which converted numpy to a fresh Julia Matrix per call.
+    #
+    # The RETURN value does need help: a bare Julia array reaches Python as a
+    # `juliacall.VectorValue`, and UltraNest calls numpy methods (`.transpose`) on it.
+    # `.to_numpy()` hands back a real ndarray.
     prior_transform_vectorized = let trafo = prior_transform
-        (U::AbstractMatrix{<:Real}) -> reduce(vcat, (u -> trafo(u)').(eachrow(U)))
+        (U::AbstractMatrix{<:Real}) ->
+            Py(reduce(vcat, (u -> trafo(u)').(eachrow(U)))).to_numpy()
     end
 
     # ── Log-likelihood: -0.5 * chi2 ─────────────────────────────────────────
@@ -644,7 +663,7 @@ function fit_model_ultranest(model        ::FlatModel,
     end
 
     loglikelihood_vectorized = let loglikelihood = loglikelihood
-        (X::AbstractMatrix{<:Real}) -> loglikelihood.(eachrow(X))
+        (X::AbstractMatrix{<:Real}) -> Py(loglikelihood.(eachrow(X))).to_numpy()
     end
 
     # ── Run UltraNest ────────────────────────────────────────────────────────
@@ -677,7 +696,7 @@ function fit_model_ultranest(model        ::FlatModel,
     )
 
     # ── Extract results ──────────────────────────────────────────────────────
-    minx = Float64.(result["maximum_likelihood"]["point"])
+    minx = pyconvert(Vector{Float64}, result["maximum_likelihood"]["point"])
     minf = chi2_flat(fm, minx, data; weights, vonmises)
 
     if verb
@@ -686,9 +705,10 @@ function fit_model_ultranest(model        ::FlatModel,
     end
 
     if cornerplot
-        PyDict(pyimport("matplotlib")."rcParams")["font.size"] = [8]
+        pyimport("matplotlib").rcParams["font.size"] = 8
         histogram_color = "black"
-        contour_colors = py"{'colors': ['#0072B2','#56B4E9','#009E73','#F0E442'], 'linestyles': ['-', '-', '-', '-']}"
+        contour_colors = Dict("colors"      => ["#0072B2","#56B4E9","#009E73","#F0E442"],
+                              "linestyles"  => ["-", "-", "-", "-"])
         pyimport("ultranest.plot").cornerplot(result;
             contour_kwargs = contour_colors,
             color          = histogram_color,
@@ -696,9 +716,9 @@ function fit_model_ultranest(model        ::FlatModel,
     end
 
     samples_py = result["samples"]
-    posterior  = convert(Matrix{Float64}, samples_py)
-    logz    = Float64(result["logz"])
-    logzerr = Float64(result["logzerr"])
+    posterior  = pyconvert(Matrix{Float64}, samples_py)
+    logz    = pyconvert(Float64, result["logz"])
+    logzerr = pyconvert(Float64, result["logzerr"])
     ndof    = _ndof(data, weights)
 
     return UltraNestResult(
