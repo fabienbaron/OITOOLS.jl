@@ -65,7 +65,8 @@ jobs:
             BLAS.set_num_threads(1)
             include("test/test_bsmem_regression.jl")'
 
-      - uses: actions/upload-artifact@v4
+      # v6 is the release that moved off Node 20; v4/v5 both still default to it.
+      - uses: actions/upload-artifact@v7
         with:
           name: bsmem-baseline
           path: test/references/bsmem_baseline_*.jls

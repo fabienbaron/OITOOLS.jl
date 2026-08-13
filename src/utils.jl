@@ -83,8 +83,8 @@ function magnitudes_from_simbad(targetname)
         WHERE i.id = '$(replace(targetname, "'" => "''"))'
         """
         result = Simbad.query_tap(query)
-        # PyCall turned Python None into Julia nothing; PythonCall keeps it as a Py, so the
-        # emptiness test has to ask Python.
+        # query_tap returns Python None when there is no match; ask Python rather than
+        # comparing against Julia's nothing.
         if !pyis(result, pybuiltins.None)
             filters = result["filter"]
             fluxes  = result["flux"]

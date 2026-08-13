@@ -37,8 +37,11 @@ Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 using OITOOLS
 ```
 
-See the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for
-Python dependencies (UltraNest, Astroquery).
+Python dependencies (matplotlib for plotting, astroquery for SIMBAD queries, ultranest for
+nested sampling) are provisioned automatically by
+[CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time you load the package. See
+the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for details,
+including how to reuse an existing Python instead.
 
 ## Quick start
 
@@ -163,10 +166,8 @@ using Pkg
 pkg"registry add General"
 pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.develop(url="https://github.com/fabienbaron/OITOOLS.jl.git")
-# Python dependencies (optional, for UltraNest and Astroquery)
-ENV["PYTHON"] = ""
-Pkg.build("PyCall")
-using Conda
-Conda.add("ultranest", channel="conda-forge")
-Conda.add("astroquery", channel="astropy")
 ```
+
+Python dependencies (matplotlib, astroquery, ultranest) are declared in `CondaPkg.toml` and
+installed automatically into a project-local environment on first `using OITOOLS` — there is
+nothing to set up by hand.

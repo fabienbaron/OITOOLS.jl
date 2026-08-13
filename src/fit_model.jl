@@ -420,6 +420,27 @@ end
 # UltraNest result
 # ─────────────────────────────────────────────────────────────────────────────
 
+"""
+    UltraNestResult
+
+Result of [`fit_model_ultranest`](@ref).
+
+| field | type | meaning |
+|---|---|---|
+| `x_opt` | `Vector{Float64}` | maximum-likelihood parameter values |
+| `list_free_params` | `Vector{String}` | parameter names, same order as `x_opt` |
+| `chi2`, `chi2r`, `ndof` | `Float64`, `Float64`, `Int` | chi² at `x_opt`, reduced chi², degrees of freedom |
+| `logz`, `logzerr` | `Float64` | Bayesian log-evidence and its uncertainty |
+| `posterior` | `Matrix{Float64}` | `(n_samples, n_params)` posterior samples |
+| `result` | `Any` | the raw UltraNest result object, passed through unconverted |
+| `model` | `FlatModel` | the compiled model that was fitted |
+
+!!! note "`result` is a Python object"
+
+    `result` is a `PythonCall.Py` wrapping UltraNest's result dict, passed through without
+    conversion. Index it with `result["key"]` and convert explicitly with `pyconvert(T, …)`.
+    Every other field is a concrete Julia type — prefer those where they suffice.
+"""
 struct UltraNestResult
     x_opt       ::Vector{Float64}   # maximum-likelihood parameter values
     list_free_params  ::Vector{String}    # parameter names, same order as x_opt
@@ -514,9 +535,8 @@ function fit_model_ultranest(model_dict   ::Dict{String},
         u .* Δx .+ lbounds
     end
 
-    # UltraNest calls this with a numpy array. PythonCall wraps it as a zero-copy
-    # `PyArray`, which is already an `AbstractMatrix`, so this annotation matches and no
-    # copy is made — unlike PyCall, which converted numpy to a fresh Julia Matrix per call.
+    # UltraNest calls this with a numpy array, which arrives as a zero-copy `PyArray` and so
+    # already satisfies `AbstractMatrix` — no conversion, no copy.
     #
     # The RETURN value does need help: a bare Julia array reaches Python as a
     # `juliacall.VectorValue`, and UltraNest calls numpy methods (`.transpose`) on it.
@@ -539,8 +559,8 @@ function fit_model_ultranest(model_dict   ::Dict{String},
     # ── 5. Run UltraNest ───────────────────────────────────────────────────
     ultranest = pyimport("ultranest")
 
-    # UltraNest concatenates this with a Python list (`names + [...]`), so it must be a
-    # real list: a Julia Vector arrives as a juliacall.VectorValue and `+` fails on it.
+    # UltraNest concatenates this with a Python list (`names + [...]`), so it must be a real
+    # list: a Julia Vector arrives as a juliacall.VectorValue, which does not support `+`.
     param_names = pylist(list_free_params)
 
     if !verb
@@ -644,9 +664,8 @@ function fit_model_ultranest(model        ::FlatModel,
         u .* Δx .+ lbounds
     end
 
-    # UltraNest calls this with a numpy array. PythonCall wraps it as a zero-copy
-    # `PyArray`, which is already an `AbstractMatrix`, so this annotation matches and no
-    # copy is made — unlike PyCall, which converted numpy to a fresh Julia Matrix per call.
+    # UltraNest calls this with a numpy array, which arrives as a zero-copy `PyArray` and so
+    # already satisfies `AbstractMatrix` — no conversion, no copy.
     #
     # The RETURN value does need help: a bare Julia array reaches Python as a
     # `juliacall.VectorValue`, and UltraNest calls numpy methods (`.transpose`) on it.

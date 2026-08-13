@@ -68,6 +68,7 @@ apply_block_weights
 perturb_data
 resample_data
 BootstrapResult
+UltraNestResult
 DataBlocks
 ```
 
@@ -75,7 +76,7 @@ DataBlocks
 |------|-------------|
 | `FitResult` | Result from `fit_model` (fields: `x_opt`, `chi2r`, `model`, ...) |
 | `LsqFitResult` | Result from `fit_model_lsqfit` (adds `stderror`, `covar`, `converged`) |
-| `UltraNestResult` | Result from `fit_model_ultranest` (adds `logz`, `logzerr`, `posterior`) |
+| `UltraNestResult` | Result from `fit_model_ultranest` (adds `logz`, `logzerr`, `posterior`, `result`) |
 | `BootstrapResult` | Result from `bootstrap_fit` (adds `samples`, `median`, `sigma_minus`, `sigma_plus`, `covar`) |
 | `DataBlocks` | Partition of an `OIdata` into resampling blocks |
 

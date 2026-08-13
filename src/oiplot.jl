@@ -19,11 +19,9 @@ global oiplot_compact       = false
 global oiplot_figsize       = (12, 6)
 
 # ── Python axes arrays → 1-based Julia arrays ────────────────────────────────
-# matplotlib's `subplots` returns a numpy array of Axes. PyCall auto-converted that to a
-# Julia array, so the rest of this file indexes it 1-based. PythonCall leaves it a `Py`,
-# whose indexing passes straight through to Python and is 0-based — so `axes[n]` on n panels
-# raises IndexError. Convert once, at each subplots call, and everything downstream is
-# unchanged.
+# matplotlib's `subplots` returns a numpy array of Axes as a `Py`, whose indexing passes
+# straight through to Python and is therefore 0-based — `axes[n]` on n panels raises
+# IndexError. Convert once at each subplots call so the rest of this file can index 1-based.
 function _axes_to_julia(a)
     pyhasattr(a, "shape") || return a          # already a single Axes object
     sh = pyconvert(Tuple, a.shape)
@@ -241,8 +239,7 @@ function setup_wav_colorbar(sc; fig=nothing, ax_list=nothing)
                         pad=oiplot_cbar_pad, fraction=oiplot_cbar_fraction)
     end
     cbar_label_right!(cbar, "λ (μm)")
-    # get_array() is a numpy (masked) array; PythonCall leaves it a `Py`, and Julia's
-    # minimum/range then need arithmetic on Py. Convert to Julia values first.
+    # get_array() is a numpy (masked) array; convert before Julia arithmetic on it.
     wavvals = pyconvert(Vector{Float64}, sc.get_array())
     cbar_range = floor.(collect(range(minimum(wavvals), maximum(wavvals), length=7))*100)/100
     cbar.set_ticks(cbar_range)
@@ -592,8 +589,8 @@ function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="base
     end
     if square==true
         if minuv<-1e98
-            # get_xlim/get_ylim return a Python 2-tuple. Convert before indexing: a bare
-            # `Py` indexes through to Python and is 0-based, so [2] is out of range.
+            # get_xlim/get_ylim return a Python 2-tuple; a bare `Py` indexes 0-based, so
+            # convert before using Julia's 1-based [1]/[2].
             _xl = pyconvert(Tuple{Float64,Float64}, ax.get_xlim())
             _yl = pyconvert(Tuple{Float64,Float64}, ax.get_ylim())
             minuv = minimum([_xl[1], _yl[1]])

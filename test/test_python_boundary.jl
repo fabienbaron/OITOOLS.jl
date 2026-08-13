@@ -1,10 +1,9 @@
 # test_python_boundary.jl — exercise every Julia↔Python crossing.
 #
-# Why this exists: before it was added, `runtests.jl` made zero plotting calls, zero UltraNest
-# runs and zero SIMBAD queries. The suite only proved that the Python stack *loaded* — so the
-# entire plotting layer could be broken and CI would stay green. That is exactly the failure
-# mode a PyCall→PythonCall migration produces, because PythonCall converts far less
-# automatically than PyCall and the breakage surfaces at call time, not compile time.
+# Why this exists: without it the suite only proves that the Python stack *loads*. Nothing
+# else calls a plotting function, runs UltraNest, or queries SIMBAD, so the entire plotting
+# layer could break and CI would stay green. Julia<->Python breakage surfaces at call time,
+# not compile time, so it has to be called to be caught.
 #
 # The assertions therefore care about two things:
 #   1. the call completes and produces a non-trivial figure file (not just "no exception"),
@@ -16,24 +15,20 @@ ENV["MPLBACKEND"] = "Agg"          # must be set before the plotting stack initi
 
 using OITOOLS, Test, Statistics
 
-# Threading note, kept because it is a real difference between the two Python stacks:
-# under PyCall this file segfaulted reliably at JULIA_NUM_THREADS=16 (its `pydecref`
-# finalizer running on a non-main task) and was clean only at 1 thread. PythonCall is
-# GIL-aware and passes at any thread count — verified at 16. The guard below is therefore
-# inert on the current stack; it stays so that a regression to a thread-unsafe bridge is
-# reported rather than dumping core.
-const _ON_PYCALL     = isdefined(OITOOLS, :PyCall)
-const _THREAD_UNSAFE = _ON_PYCALL && Threads.nthreads() > 1
+# These tests run at any thread count on the current Python bridge (verified at 16). The
+# guard below only trips if the package is ever built against a thread-unsafe bridge, so a
+# regression is reported rather than dumping core mid-run.
+const _THREAD_UNSAFE = isdefined(OITOOLS, :PyCall) && Threads.nthreads() > 1
 if _THREAD_UNSAFE
-    @warn "Skipping Python boundary tests: PyCall + $(Threads.nthreads()) threads segfaults."
+    @warn "Skipping Python boundary tests: this Python bridge is not thread-safe " *
+          "($(Threads.nthreads()) threads). Re-run with JULIA_NUM_THREADS=1."
 end
 
 const _PYDIR  = mktempdir()
 const _DATA   = joinpath(@__DIR__, "..", "demos", "data")
 const _ONCI   = get(ENV, "CI", nothing) == "true"
 
-# Which plotting stack are we on? Kept generic so this file works before and after the
-# migration and can be diffed across the two.
+# Resolve the plotting module without hard-coding it, so the file is not tied to one bridge.
 @static if isdefined(OITOOLS, :PythonPlot)
     const _PLT = OITOOLS.PythonPlot
 else
@@ -97,9 +92,36 @@ else
         set_oiplot_defaults(compact = false)
     end
 
+    # ── the numpy array protocol, which CondaPkg.toml's `numpy = ">=2"` guards ──
+    # PythonCall's `juliacall.ArrayValue.__array__` forwards `copy=None` to `numpy.array`,
+    # which is numpy-2-only spelling; under numpy 1.x it raises
+    # `ValueError: NoneType copy mode not allowed.`
+    #
+    # numpy only reaches `__array__` when it cannot use `__array_interface__`, so the
+    # breakage is data-dependent: dense arrays are fine and every other test here would stay
+    # green. The cases below are exactly the ones that fall through, so a re-pin to numpy < 2
+    # fails here instead of silently in a downstream that plots polygons.
+    @testset "numpy array protocol" begin
+        np = OITOOLS.PythonCall.pyimport("numpy")
+        @test parse(Int, OITOOLS.PythonCall.pyconvert(String, np.__version__.split(".")[0])) >= 2
+
+        Py = OITOOLS.PythonCall.Py
+        A  = rand(3, 3)
+        for (what, x) in ("dense"         => A,
+                          "adjoint view"  => A',
+                          "nested vector" => [rand(3, 2), rand(3, 2)],
+                          "Vector{Any}"   => Any[1.0, 2.0])
+            @testset "$what" begin
+                @test np.asarray(Py(x)) isa OITOOLS.PythonCall.Py
+            end
+        end
+        # the protocol method itself, called the way a copy-aware numpy does
+        @test Py(A).__array__() isa OITOOLS.PythonCall.Py
+    end
+
     # ── values coming back from Python must be Julia types ───────────────────
-    # This is the assertion class that catches a PythonCall migration: under PyCall these
-    # convert automatically, under PythonCall they arrive as `Py` unless explicitly converted.
+    # Values crossing back from Python must be Julia types: they arrive as `Py` unless
+    # explicitly converted, and nothing else in the suite would notice.
     @testset "UltraNest conversions" begin
         md = Dict{String,Any}("s,ud" => 3.0, "s,f" => 1.0)
         r = fit_model_ultranest(md, ["s,ud"], data;
@@ -115,7 +137,7 @@ else
         @test size(r.posterior, 2) == 1
         @test isfinite(r.logz) && isfinite(r.logzerr)
 
-        # The known answer for this dataset/model (baselined on the PyCall stack).
+        # Known answer for this dataset and model.
         @test 6.0 < r.x_opt[1] < 7.5
     end
 

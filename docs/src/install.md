@@ -18,10 +18,9 @@
 
 ## Step 1: Python packages
 
-Nothing to do — this step used to require setting `ENV["PYTHON"]`, adding `Conda`, and
-installing packages by hand. OITOOLS now declares its Python dependencies in `CondaPkg.toml`
-and [PythonCall](https://github.com/JuliaPy/PythonCall.jl) provisions them automatically into
-a project-local environment the first time you `using OITOOLS`:
+Nothing to do. OITOOLS declares its Python dependencies in `CondaPkg.toml`, and
+[PythonCall](https://github.com/JuliaPy/PythonCall.jl) provisions them automatically into a
+project-local environment the first time you `using OITOOLS`:
 
 | Package | Used by |
 |---|---|

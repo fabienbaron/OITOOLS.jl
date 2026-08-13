@@ -1,31 +1,37 @@
-# Python dependencies, declared.
+# Python dependencies.
 #
-# Before this file existed these six imports were undeclared, so whether they worked depended
-# on whatever happened to be in the user's Conda.jl environment:
-#
-#   matplotlib, mpl_toolkits.axes_grid1   -> oiplot.jl (a HARD load-time dependency: without
-#                                            matplotlib, `using OITOOLS` fails outright)
+#   matplotlib, mpl_toolkits.axes_grid1   -> oiplot.jl (required to load the package: all
+#                                            plotting goes through matplotlib)
 #   astroquery.simbad                     -> utils.jl, magnitudes_from_simbad
 #   ultranest, ultranest.plot,
 #   ultranest.stepsampler                 -> fit_model.jl, fit_model_ultranest
 #
-# That was not hypothetical: the previous unmanaged environment had drifted to numpy 2.5.2
-# alongside astropy 6.1.4, and astropy still calls `np.in1d`, which numpy removed in 2.0. The
-# result was that `magnitudes_from_simbad` raised AttributeError on every call. Declaring the
-# dependencies lets the solver keep them mutually consistent.
+# numpy must be >= 2. PythonCall's `juliacall.ArrayValue.__array__` (JlWrap/array.jl) ends in
 #
-# numpy is pinned below 2 because astropy/astroquery in the versions we need still use APIs
-# numpy removed in 2.0. Revisit once astroquery's astropy requirement moves past that.
+#     return numpy.array(arr, dtype=dtype, copy=copy)
+#
+# with `copy=None` as the default — the numpy-2 spelling of "copy only if needed". numpy 1.x
+# requires a bool there and raises `ValueError: NoneType copy mode not allowed.`
+#
+# numpy reaches that method only when it cannot use `__array_interface__`, so the breakage is
+# data-dependent and easy to miss: dense arrays convert fine, while lazy adjoints, nested
+# `Vector{Matrix}` (e.g. per-polygon vertex lists handed to PolyCollection/Poly3DCollection)
+# and `Vector{Any}` all fail. Plotting a dense image works; plotting polygons does not.
+#
+# An earlier revision pinned numpy < 2 for astroquery's sake. That is obsolete: astropy 7
+# guards the numpy-2 removals it used to call unconditionally (`if NUMPY_LT_2_4: def in1d`),
+# and declares `numpy<2.7,>=1.24` itself. Leave the upper bound to astropy rather than
+# duplicating it here, so a future astropy relaxation does not need an edit in this file.
 
 channels = ["conda-forge"]
 
 [deps]
 python = ">=3.9,<4"
 matplotlib = ">=3.5"
-numpy = ">=1.23,<2"
+numpy = ">=2"
 
-# astroquery and ultranest are pip-installed: ultranest is not on conda-forge for all
-# platforms, and pip resolves both against the conda-provided numpy above.
+# astroquery and ultranest come from pip: ultranest is not on conda-forge for every platform,
+# and pip resolves both against the conda-provided numpy above.
 [pip.deps]
 astroquery = ">=0.4.6"
 ultranest = ">=3.6"
