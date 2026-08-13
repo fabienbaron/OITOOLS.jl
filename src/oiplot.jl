@@ -18,6 +18,10 @@ global oiplot_show_title    = true
 global oiplot_compact       = false
 global oiplot_figsize       = (12, 6)
 
+# Physical gap, in inches, between the bottom of the axes and a legend placed below it.
+# Enough to clear the x tick labels and the x-axis label at either font size.
+const _LEGEND_GAP_IN = 0.75
+
 # ── Python axes arrays → 1-based Julia arrays ────────────────────────────────
 # matplotlib's `subplots` returns a numpy array of Axes as a `Py`, whose indexing passes
 # straight through to Python and is therefore 0-based — `axes[n]` on n panels raises
@@ -34,17 +38,35 @@ function _axes_to_julia(a)
     end
 end
 
+# Tracks whether the OITOOLS style has been installed into matplotlib's rcParams yet.
+# The plotting functions apply the style once (via `_ensure_oiplot_defaults`) rather than on
+# every call, so rcParams you set yourself survive the next plot instead of being reset.
+const _oiplot_defaults_applied = Ref(false)
+
 """
     set_oiplot_defaults(; compact=oiplot_compact)
 
 Apply consistent matplotlib style settings. When `compact=true`, all sizes are
 reduced for stacking multiple plots in a single figure. Calling without arguments
 preserves the current compact state.
+
+The plotting functions install these once, on the first plot of a session. After that your
+own `matplotlib.rcParams` edits are left alone, so you can restyle freely:
+
+```julia
+using OITOOLS, PythonCall
+plot_v2(data)                                        # style installed here
+pyimport("matplotlib").rcParams["font.family"] = ["serif"]
+plot_v2(data)                                        # serif is honoured
+```
+
+Call this function directly to reapply the OITOOLS style and discard such overrides.
 """
 function set_oiplot_defaults(; compact::Bool=oiplot_compact)
     global oiplot_compact = compact
+    _oiplot_defaults_applied[] = true
     rc = pyimport("matplotlib").rcParams
-    rc["font.family"] = ["serif"]
+    rc["font.family"] = ["sans-serif"]
     rc["legend.numpoints"] = 1
     rc["legend.handletextpad"] = 0.3
     rc["lines.markeredgewidth"]  = 0
@@ -91,28 +113,23 @@ function set_oiplot_defaults(; compact::Bool=oiplot_compact)
     end
 end
 
-# matplotlib tab20 palette — 20 distinct colours for categorical data
+# Apply the OITOOLS style only if it has not been installed yet. Used by the plotting
+# functions so that a user's own rcParams edits are not clobbered on every call; an explicit
+# `set_oiplot_defaults()` still reapplies unconditionally.
+_ensure_oiplot_defaults() = _oiplot_defaults_applied[] || set_oiplot_defaults()
+
+# Saturated categorical palette. tab20 was tried instead, but half of it is pastel "light"
+# variants that wash out at the small marker sizes used here — with many baselines the plot
+# stopped being readable. These are the strongly-saturated named colours used historically.
+#
+# 28 entries, indexed with mod1, so a dataset with more baselines than colours repeats rather
+# than erroring. Note the historical list named "blue" twice, which silently gave two
+# baselines the same colour; the second is "navy" here.
 const global oiplot_colors = [
-    "#1f77b4",  # blue
-    "#ff7f0e",  # orange
-    "#2ca02c",  # green
-    "#d62728",  # red
-    "#9467bd",  # purple
-    "#8c564b",  # brown
-    "#e377c2",  # pink
-    "#7f7f7f",  # grey
-    "#bcbd22",  # olive
-    "#17becf",  # cyan
-    "#aec7e8",  # light blue
-    "#ffbb78",  # light orange
-    "#98df8a",  # light green
-    "#ff9896",  # light red
-    "#c5b0d5",  # light purple
-    "#c49c94",  # light brown
-    "#f7b6d2",  # light pink
-    "#c7c7c7",  # light grey
-    "#dbdb8d",  # light olive
-    "#9edae5",  # light cyan
+    "black", "gold", "chartreuse", "blue", "red", "pink", "lightgray", "darkorange",
+    "darkgreen", "aqua", "fuchsia", "saddlebrown", "dimgray", "darkslateblue", "violet",
+    "indigo", "navy", "dodgerblue", "sienna", "olive", "purple", "darkorchid", "tomato",
+    "darkturquoise", "steelblue", "seagreen", "darkgoldenrod", "darkseagreen",
 ]
 
 const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
@@ -200,10 +217,45 @@ function canonical_color(color::String)
 end
 
 # Place colorbar label to the right instead of below
+"""
+    _cbar_ticks(values, n; digits)
+
+Evenly spaced, rounded colorbar ticks that stay inside the mapped data range.
+
+Rounding a tick can move it past the end of the range it came from — flooring the first tick
+always does. matplotlib then widens the colorbar axis to fit the stray tick, which paints an
+unmapped strip (a white block) at the end of the bar and leaves the outermost label sitting
+beside the colours rather than under them. Clamping keeps every tick on the bar.
+"""
+function _cbar_ticks(values::AbstractVector{<:Real}, n::Integer; digits::Integer = 2)
+    lo, hi = extrema(values)
+    lo == hi && return [round(lo; digits = digits)]
+    ticks = clamp.(round.(collect(range(lo, hi, length = n)); digits = digits), lo, hi)
+    return unique(ticks)
+end
+
+"""
+    _legend_drop(ax)
+
+`bbox_to_anchor` y offset, in axes coordinates, for a legend placed below `ax`.
+
+A fixed axes-fraction offset cannot work across aspect ratios: the same -0.2 that looks right
+under a short wide panel opens a huge gap under uvplot's square one, because axes coordinates
+scale with panel height. Converting a fixed physical gap into axes units keeps the spacing
+visually constant whatever the figure size.
+"""
+function _legend_drop(ax)
+    h_in = pyconvert(Float64, ax.get_position().height) *
+           pyconvert(Float64, ax.figure.get_figheight())
+    return -_LEGEND_GAP_IN / max(h_in, 0.5)
+end
+
 function cbar_label_right!(cbar, label::String)
     fs = oiplot_compact ? 9 : 14
+    # No `family` here on purpose: it must inherit rcParams["font.family"] like every other
+    # label, otherwise this one string renders in a different face from the whole figure.
     cbar.ax.text(1.02, 0.5, label, transform=cbar.ax.transAxes,
-                 va="center", ha="left", fontsize=fs, family="serif")
+                 va="center", ha="left", fontsize=fs)
 end
 
 # Set up MJD colorbar ticks
@@ -219,11 +271,7 @@ function setup_mjd_colorbar(sc; fig=nothing, ax_list=nothing)
     cbar_label_right!(cbar, "MJD")
     mjdvals = pyconvert(Vector{Float64}, sc.get_array())
     mjds = sort(unique(mjdvals))
-    if length(mjds) < 5
-        ticks = round.(mjds; digits=2)
-    else
-        ticks = round.(collect(range(minimum(mjdvals), maximum(mjdvals), length=5)); digits=2)
-    end
+    ticks = length(mjds) < 5 ? round.(mjds; digits=2) : _cbar_ticks(mjdvals, 5; digits=2)
     cbar.set_ticks(ticks)
     cbar.ax.set_xticklabels([string(Int(round(t))) for t in ticks])
     return cbar
@@ -241,8 +289,7 @@ function setup_wav_colorbar(sc; fig=nothing, ax_list=nothing)
     cbar_label_right!(cbar, "λ (μm)")
     # get_array() is a numpy (masked) array; convert before Julia arithmetic on it.
     wavvals = pyconvert(Vector{Float64}, sc.get_array())
-    cbar_range = floor.(collect(range(minimum(wavvals), maximum(wavvals), length=7))*100)/100
-    cbar.set_ticks(cbar_range)
+    cbar.set_ticks(_cbar_ticks(wavvals, 7; digits = 2))
     return cbar
 end
 
@@ -251,7 +298,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
                   figtitle::String="", markopt::Bool=false, legend_below::Bool=false,
                   plot_title::String=spec.plot_title, ylabel_str::String=spec.ylabel,
                   xlabel_str::String=spec.xlabel, ax=nothing)
-    set_oiplot_defaults()
+    _ensure_oiplot_defaults()
     data = as_datavec(data)
 
     standalone = isnothing(ax)
@@ -313,7 +360,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
             if legend_below
                 ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
                           ncol=oiplot_legend_ncol_below,
-                          loc="upper center", bbox_to_anchor=(0.5, -0.15))
+                          loc="upper center", bbox_to_anchor=(0.5, _legend_drop(ax)))
             else
                 ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
                           ncol=oiplot_legend_ncol, loc="best")
@@ -380,7 +427,7 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
                     obs::Vector{String}=["V2", "T3PHI", "T3AMP"],
                     color::String="baseline", logplot::Bool=false, figsize=nothing,
                     figtitle::String="", markopt::Bool=false)
-    set_oiplot_defaults()
+    _ensure_oiplot_defaults()
     dvec = as_datavec(data)
 
     # Count field for each spec to skip empty panels
@@ -400,10 +447,22 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
 
     fig = figure(string(figtitle, "Multi-observable"), figsize=figsize, facecolor="White")
     fig.clear()
-    axes = _axes_to_julia(fig.subplots(nrows=npanels, ncols=1, sharex=true))
+    # NOT sharex=true across the board: the panels do not all use the same abscissa. V2/T3/VIS
+    # are plotted against baseline in Mlambda, FLUX against wavelength in microns. Sharing one
+    # axis between them squeezes a 1.5-5 um flux spectrum onto a 0-200 Mlambda axis and labels
+    # every panel with whichever unit the bottom one happened to use. Panels are grouped by
+    # their spec's xlabel and only share within a group.
+    axes = _axes_to_julia(fig.subplots(nrows=npanels, ncols=1, sharex=false))
     # When npanels==1, axes is not an array
     if npanels == 1
         axes = [axes]
+    end
+
+    xgroup = [OBS_PLOT_SPECS[k].xlabel for k in active]
+    for i in 2:npanels
+        # link to the first panel above that plots the same quantity
+        j = findfirst(==(xgroup[i]), xgroup[1:(i - 1)])
+        isnothing(j) || axes[i].sharex(axes[j])
     end
 
     last_sc = nothing
@@ -415,8 +474,16 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
         end
     end
 
-    # Shared x-axis label on bottom panel only
-    axes[npanels].set_xlabel(OBS_PLOT_SPECS[active[npanels]].xlabel)
+    # Label the bottom panel of each x-group. Only panels that have another panel below them
+    # on the same axis hide their tick labels — `sharex` applied after `subplots` does not
+    # hide them automatically the way `subplots(sharex=true)` does.
+    for i in 1:npanels
+        if any(xgroup[j] == xgroup[i] for j in (i + 1):npanels)
+            axes[i].tick_params(labelbottom=false)
+        else
+            axes[i].set_xlabel(xgroup[i])
+        end
+    end
 
     cc = canonical_color(color)
     # If wav/mjd was requested but fell back to baseline (single value), show legend
@@ -432,8 +499,14 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
         bot_pad = 0.0
     end
 
-    subplots_adjust(hspace=0.05)
     tight_layout(rect=(0, bot_pad, 1, 1))
+    # Tighten panels only when they all share one abscissa; a panel carrying its own x label
+    # needs the vertical room tight_layout allocated for it.
+    length(unique(xgroup)) == 1 && subplots_adjust(hspace=0.05)
+    # Stacked panels have y labels of different widths, so each sits at its own x
+    # position and the column of labels looks ragged. Align them into one column.
+    fig.align_ylabels()
+
 
     # Add legend or colorbar after layout is computed
     if use_colorbar
@@ -446,9 +519,11 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
     elseif use_legend
         handles, labels = axes[1].get_legend_handles_labels()
         if length(handles) > 0
+            bb = axes[npanels].get_position()
+            xc = pyconvert(Float64, bb.x0 + bb.width / 2)
             fig.legend(handles, labels, fontsize=oiplot_legend_fontsize,
                        fancybox=true, shadow=true, ncol=oiplot_legend_ncol_below,
-                       loc="lower center", bbox_to_anchor=(0.5, 0.0))
+                       loc="lower center", bbox_to_anchor=(xc, 0.0))
         end
     end
 
@@ -462,7 +537,7 @@ function uvplot(uv::AbstractMatrix{<:Real})
     u = uv[1,:]/1e6
     v = uv[2,:]/1e6
     fig = figure("UV plot",figsize=(8,8),facecolor="White")
-    set_oiplot_defaults()
+    _ensure_oiplot_defaults()
     clf();
     ax = gca()
     markeredgewidth=0.1
@@ -501,7 +576,7 @@ always shown. Accepts a single `OIdata`, a vector, or the 2-D array returned by
 - `filename` — save to file if non-empty.
 """
 function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="baseline",filename="", figsize=(10,10), minuv= -1e99, maxuv= 1e99, square = true, legend_below = true, figtitle = "", windowtitle="", cmap="Spectral_r", flipx = false)
-    set_oiplot_defaults()
+    _ensure_oiplot_defaults()
     if data isa OIdata
         data = [data]
     end
@@ -514,7 +589,7 @@ function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="base
         windowtitle = string("Mean MJD: $(round(mean_mjd*100)/100), nuv: $(nuv)")
     end
     fig = figure(windowtitle,figsize=figsize,facecolor="White")
-    set_oiplot_defaults()
+    _ensure_oiplot_defaults()
     clf();
     ax = gca()
     ax.locator_params(axis ="y", nbins=10)
@@ -540,7 +615,8 @@ function uvplot(data::Union{OIdata, AbstractArray{<:OIdata}};color::String="base
         if legend_below == false
             ax.legend(fontsize=10, fancybox=true, shadow=true, ncol=3, loc="upper right")
         else
-            ax.legend(fontsize=10, fancybox=true, shadow=true, ncol=5, loc="upper center", bbox_to_anchor=(0.5, -0.10));
+            ax.legend(fontsize=10, fancybox=true, shadow=true, ncol=5,
+                      loc="upper center", bbox_to_anchor=(0.5, _legend_drop(ax)));
             tight_layout();
         end
     elseif (color == "wavelength" || color == "wav" || color =="wavs" || color =="wavelengths")
@@ -796,7 +872,7 @@ function _plot_residual_panel(data, model_vec, spec;
         end
 
         ax_res.set_xlabel(spec.xlabel)
-        ax_res.set_ylabel("Residuals (σ)")
+        ax_res.set_ylabel("Res. (σ)")
         res_range != [] && ax_res.set_ylim(res_range)
         ax_res.grid(true, which="both", color="LightGrey", linestyle=":", linewidth=0.5)
     end
@@ -807,7 +883,7 @@ end
 
 function _plot_single_residual(data, model_vec, spec;
         figsize=(12,7), logplot=false, y_range=[], res_range=[], color="baseline")
-    set_oiplot_defaults()
+    _ensure_oiplot_defaults()
     fig = figure(spec.label * " residuals", figsize=figsize, facecolor="White")
     fig.clear()
     axes = _axes_to_julia(fig.subplots(2, 1; sharex=true,
@@ -826,6 +902,10 @@ function _plot_single_residual(data, model_vec, spec;
     end
     bot_pad = use_colorbar ? 0.10 : 0.0
     tight_layout(rect=(0, bot_pad, 1, 1))
+    # Stacked panels have y labels of different widths, so each sits at its own x
+    # position and the column of labels looks ragged. Align them into one column.
+    fig.align_ylabels()
+
     if use_colorbar
         ax_vec = [axes[1], axes[2]]
         cc == "wav" ? setup_wav_colorbar(sc; fig, ax_list=ax_vec) :
@@ -900,7 +980,7 @@ Also accepts image-domain `plot_residuals(x, ft, data)` or model-domain
 """
 function plot_residuals(data::OIdata, obs::NamedTuple;
         figsize=(14,10), color="baseline", logplot=false)
-    set_oiplot_defaults()
+    _ensure_oiplot_defaults()
 
     # Determine which observables have data
     panels = NamedTuple[]
@@ -952,6 +1032,10 @@ function plot_residuals(data::OIdata, obs::NamedTuple;
 
     bot_pad = use_colorbar ? 0.07 : 0.0
     tight_layout(rect=(0, bot_pad, 1, 1))
+    # Stacked panels have y labels of different widths, so each sits at its own x
+    # position and the column of labels looks ragged. Align them into one column.
+    fig.align_ylabels()
+
 
     if use_colorbar
         ax_vec = [axes[i] for i in 1:nrows]
@@ -1057,7 +1141,7 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
     if is_diff
         # ── Differential phase layout: grid of subplots, one per baseline ──
         # Compact: 8 rows × 2 cols (16 per page), Normal: 4 rows × 4 cols (16 per page)
-        set_oiplot_defaults()
+        _ensure_oiplot_defaults()
         baseline_list_vis = [get_baseline_names(dvec[n].sta_name, dvec[n].vis_sta_index) for n in eachindex(dvec)]
         baselines = sort(unique(vcat(baseline_list_vis...)))
         nbase = length(baselines)
@@ -1117,6 +1201,7 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
                 axes[row, col].set_visible(false)
             end
             tight_layout()
+            fig.align_ylabels()
             plotshow(block=false)
         end
     else
@@ -1183,9 +1268,10 @@ function plot_v2_multifile(data::AbstractVector{<:OIdata}; logplot = false, remo
     global clicklam=[]
     global clickdlam=[]
     global clickfile=[]
-    axiscount=0
-    testaxis=0
-    fig = figure("V2 data",figsize=(10,5),facecolor="White");
+    _ensure_oiplot_defaults()
+    spec = OBS_PLOT_SPECS["V2"]
+    labelled = Set{String}()          # one legend entry per baseline, not one per file
+    fig = figure("V2 data", figsize=oiplot_figsize, facecolor="White");
     if clean == true
         clf();
     end
@@ -1228,22 +1314,29 @@ function plot_v2_multifile(data::AbstractVector{<:OIdata}; logplot = false, remo
         for j=1:length(unique(baseline_list))
             baseline=unique(baseline_list)[j]
             loc=findall(baseline_list->baseline_list==baseline,baseline_list)
-            errorbar(baseline_v2[loc]/1e6,v2_data[loc],yerr=v2_data_err[loc],fmt="o",marker=oiplot_markers[mod1(j, length(oiplot_markers))], markeredgecolor="none",color=oiplot_colors[mod1(i, length(oiplot_colors))],markersize=3,ecolor="Gainsboro",elinewidth=1.0,label=baseline)
-            if axiscount==0
-                if (length(unique(baseline_list)))==15
-                    ax.legend(fontsize=8, fancybox=true, shadow=true, ncol=8,loc="upper center", bbox_to_anchor=(0.5, -0.10));
-                    testaxis=1
-                end
-            end
-        end
-        if testaxis ==1
-            axiscount=1
+            lbl = baseline in labelled ? "_nolegend_" : (push!(labelled, baseline); baseline)
+            errorbar(baseline_v2[loc]/1e6, v2_data[loc], yerr=v2_data_err[loc], fmt="o",
+                     marker=oiplot_markers[mod1(i, length(oiplot_markers))],
+                     markeredgecolor="none",
+                     color=oiplot_colors[mod1(j, length(oiplot_colors))],
+                     markersize=oiplot_markersize, ecolor="Gainsboro",
+                     elinewidth=oiplot_elinewidth, label=lbl)
         end
     end
-    title("Squared Visibility Amplitude Data")
-    xlabel(L"Baseline (M$\lambda$)")
-    ylabel("Squared Visibility Amplitudes")
-    ax.grid(true,which="both",color="Grey",linestyle=":")
+    if !isempty(labelled)
+        if legend_below
+            ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
+                      ncol=oiplot_legend_ncol_below,
+                      loc="upper center", bbox_to_anchor=(0.5, _legend_drop(ax)))
+        else
+            ax.legend(fontsize=oiplot_legend_fontsize, fancybox=true, shadow=true,
+                      ncol=oiplot_legend_ncol, loc="best")
+        end
+    end
+    oiplot_show_title && title(spec.plot_title * " data")
+    xlabel(spec.xlabel)
+    ylabel(spec.ylabel)
+    ax.grid(true, which="both", color="Grey", linestyle=":")
     tight_layout()
     
     #if idpoint==true
