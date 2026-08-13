@@ -1118,7 +1118,7 @@ end
 Plot visibility phases (degrees). The layout is chosen automatically from the
 `PHITYP` header stored in `data.phityp`:
 
-- **differential** (`phityp == "differential"`) — one subplot per baseline with
+- **differential** (`phityp` is `"differential"`, matched case-insensitively) — one subplot per baseline with
   wavelength (nm) on the x-axis.
 - **absolute** (default) — single panel with baseline (Mλ) on the x-axis, coloured
   by baseline, wavelength, or MJD.
@@ -1136,7 +1136,7 @@ Accepts a single `OIdata`, vector, or 2-D array.
 function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
                      color::String="baseline", markopt=false, legend_below=false, figtitle="")
     dvec = as_datavec(data)
-    is_diff = any(d.phityp == "differential" for d in dvec)
+    is_diff = any(_is_obstype(d.phityp, "differential") for d in dvec)
 
     if is_diff
         # ── Differential phase layout: grid of subplots, one per baseline ──
@@ -1231,10 +1231,10 @@ function plot_visamp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
                      legend_below=false, figtitle="")
     dvec = as_datavec(data)
     amptyp = dvec[1].amptyp
-    if amptyp == "correlated flux"
+    if _is_obstype(amptyp, "correlated flux")
         amp_title  = "Correlated flux"
         amp_ylabel = "Correlated flux"
-    elseif amptyp == "differential"
+    elseif _is_obstype(amptyp, "differential")
         amp_title  = "Diff. visamp"
         amp_ylabel = "Diff. visamp"
     else

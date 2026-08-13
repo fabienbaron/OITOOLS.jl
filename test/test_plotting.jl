@@ -495,10 +495,18 @@ yscale_of(ax) = _pystr(ax.get_yscale())
             _close()
         end
 
-        @testset "visamp title tracks amptyp" begin
+        # AMPTYP/PHITYP casing is not fixed by the OIFITS standard and files disagree —
+        # ASPRO writes "DIFFERENTIAL", the spec's examples are lower case — so every spelling
+        # must select the same behaviour.
+        @testset "visamp title tracks amptyp, whatever the case" begin
             for (typ, expected) in ("correlated flux" => "Correlated flux",
+                                    "CORRELATED FLUX" => "Correlated flux",
+                                    "Correlated Flux" => "Correlated flux",
                                     "differential"    => "Diff. visamp",
-                                    "absolute"        => "Visamp")
+                                    "DIFFERENTIAL"    => "Diff. visamp",
+                                    "  differential " => "Diff. visamp",
+                                    "absolute"        => "Visamp",
+                                    "ABSOLUTE"        => "Visamp")
                 d = deepcopy(poly); d.amptyp = typ
                 _close(); plot_visamp(d)
                 @test ylabel_of(axes_of()[1]) == expected
@@ -506,26 +514,39 @@ yscale_of(ax) = _pystr(ax.get_yscale())
             end
         end
 
-        # plot_visphi switches to a per-baseline grid on phityp. The comparison in
-        # oiplot.jl is exact and lower-case, and OIFITS files in the wild carry both
-        # spellings, so both are pinned here: a future case-insensitive fix will flip the
-        # "DIFFERENTIAL" assertion and should be a deliberate edit, not a surprise.
-        @testset "visphi layout tracks phityp" begin
-            abs_d  = deepcopy(poly); abs_d.phityp  = "absolute"
-            _close(); plot_visphi(abs_d)
-            n_abs = length(axes_of())
-            @test n_abs == 1
-            _close()
+        # plot_visphi switches to a per-baseline grid on phityp. Every spelling of
+        # "differential" must reach the grid, and every spelling of "absolute" the single
+        # panel — the file's capitalisation must not change which plot you get.
+        @testset "visphi layout tracks phityp, whatever the case" begin
+            n_abs = 0
+            for typ in ("absolute", "ABSOLUTE", "Absolute")
+                d = deepcopy(poly); d.phityp = typ
+                _close(); plot_visphi(d)
+                n = length(axes_of())
+                n_abs == 0 && (n_abs = n)
+                @test n == n_abs
+                @test n == 1
+                _close()
+            end
+            for typ in ("differential", "DIFFERENTIAL", "Differential", " differential ")
+                d = deepcopy(poly); d.phityp = typ
+                _close(); plot_visphi(d)
+                @test length(axes_of()) > n_abs      # one panel per baseline
+                _close()
+            end
+        end
 
-            diff_d = deepcopy(poly); diff_d.phityp = "differential"
-            _close(); plot_visphi(diff_d)
-            @test length(axes_of()) > 1          # one panel per baseline
-            _close()
-
-            upper_d = deepcopy(poly); upper_d.phityp = "DIFFERENTIAL"
-            _close(); plot_visphi(upper_d)
-            @test length(axes_of()) == n_abs     # case-sensitive: takes the absolute branch
-            _close()
+        # The canonicalisation itself, including the read path that previously kept the
+        # file's own casing.
+        @testset "obstype canonicalisation" begin
+            for s in ("differential", "DIFFERENTIAL", "Differential", " differential\t")
+                @test OITOOLS._canon_obstype(s) == "differential"
+                @test OITOOLS._is_obstype(s, "differential")
+                @test !OITOOLS._is_obstype(s, "absolute")
+            end
+            @test OITOOLS._is_obstype("CORRELATED FLUX", "correlated flux")
+            @test OITOOLS._canon_obstype("") == ""
+            @test !OITOOLS._is_obstype("", "absolute")
         end
     end
 

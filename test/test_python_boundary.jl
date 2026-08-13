@@ -141,6 +141,32 @@ else
         @test 6.0 < r.x_opt[1] < 7.5
     end
 
+    # ── the corner plot, which is what `fit_model_ultranest` does BY DEFAULT ──
+    # This ran with `cornerplot = false` above so the conversion assertions stay fast, which
+    # is exactly how the default path stayed broken unnoticed: `ultranest.plot` does
+    # `import scipy.stats` at module level while ultranest's metadata requires only numpy,
+    # cython, matplotlib and corner. The sampler ran, the plotting did not, and nothing in
+    # the suite called it. CondaPkg.toml declares scipy for that reason; this is the test
+    # that would notice if the declaration were dropped.
+    @testset "UltraNest corner plot" begin
+        # Asserted separately from the fit so a missing transitive dependency reports itself
+        # as such, instead of as a failure somewhere inside fit_model_ultranest.
+        @test OITOOLS.PythonCall.pyimport("ultranest.plot") isa OITOOLS.PythonCall.Py
+
+        md = Dict{String,Any}("s,ud" => 3.0, "s,f" => 1.0)
+        _closeall()
+        r = fit_model_ultranest(md, ["s,ud"], data;
+                                lb = Dict("s,ud" => 0.5), ub = Dict("s,ud" => 10.0),
+                                min_num_live_points = 120, verb = false, cornerplot = true)
+        @test r.x_opt isa Vector{Float64}
+        # cornerplot draws into a new figure; an empty figure list means it silently no-oped
+        @test OITOOLS.PythonCall.pyconvert(Int,
+                  OITOOLS.PythonCall.pylen(_PLT.get_fignums())) > 0
+        p = _savefig("ultranest_corner")
+        _closeall()
+        @test filesize(p) > 3000
+    end
+
     # ── SIMBAD: network + a notoriously version-sensitive Python stack ───────
     # Skipped on CI (network) and tolerated locally if the Python env is inconsistent —
     # astroquery/astropy/numpy drift breaks this independently of anything Julia does.

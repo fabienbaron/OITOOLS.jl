@@ -25,10 +25,17 @@
 
 channels = ["conda-forge"]
 
+# scipy is an undeclared dependency of `ultranest.plot`, which does `import scipy.stats` at
+# module level (plot.py:18) while ultranest's own metadata requires only numpy, cython,
+# matplotlib and corner. pip therefore never installs it, and `ultranest.plot` — the corner
+# plot that `fit_model_ultranest` draws by default (`cornerplot = true`) — is unimportable in
+# a fresh environment even though the sampler itself runs fine. Declared here rather than
+# waiting on upstream; drop it once ultranest lists scipy itself.
 [deps]
 python = ">=3.9,<4"
 matplotlib = ">=3.5"
 numpy = ">=2"
+scipy = ">=1.9"
 
 # astroquery and ultranest come from pip: ultranest is not on conda-forge for every platform,
 # and pip resolves both against the conda-provided numpy above.

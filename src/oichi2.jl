@@ -1141,9 +1141,9 @@ function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
         nwav_t = nwav
         amptyp = data[1,t].amptyp
         phityp = data[1,t].phityp
-        udp = use_diffphases || phityp == "differential"
-        udva = amptyp == "differential"
-        uava = amptyp == "absolute"
+        udp = use_diffphases || _is_obstype(phityp, "differential")
+        udva = _is_obstype(amptyp, "differential")
+        uava = _is_obstype(amptyp, "absolute")
 
         cvis = fill(Complex{T}[], nwav_t)
         need_cvis = udp || udva || uava
@@ -1232,9 +1232,9 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
         nwav_t = nwav
         amptyp = data[1,t].amptyp
         phityp = data[1,t].phityp
-        udp = use_diffphases || phityp == "differential"
-        udva = amptyp == "differential"
-        uava = amptyp == "absolute"
+        udp = use_diffphases || _is_obstype(phityp, "differential")
+        udva = _is_obstype(amptyp, "differential")
+        uava = _is_obstype(amptyp, "absolute")
 
         cvis = fill(Complex{T}[], nwav_t)
         need_cvis = udp || udva || uava
@@ -1499,9 +1499,9 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
     amptyp = !isempty(data) ? data[1].amptyp : ""
     phityp = !isempty(data) ? data[1].phityp : ""
     # Auto-enable differential phases if PHITYP says so
-    use_diffphases = use_diffphases || phityp == "differential"
-    use_diffvisamp = amptyp == "differential"
-    use_abs_visamp = amptyp == "absolute"
+    use_diffphases = use_diffphases || _is_obstype(phityp, "differential")
+    use_diffvisamp = _is_obstype(amptyp, "differential")
+    use_abs_visamp = _is_obstype(amptyp, "absolute")
 
     Tc = Complex{oi_eltype(data)}
     cvis = fill((Tc[]), nwavs);
@@ -1568,9 +1568,9 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
     # Determine VIS observable types from data metadata
     amptyp = !isempty(data) ? data[1].amptyp : ""
     phityp = !isempty(data) ? data[1].phityp : ""
-    use_diffphases = use_diffphases || phityp == "differential"
-    use_diffvisamp = amptyp == "differential"
-    use_abs_visamp = amptyp == "absolute"
+    use_diffphases = use_diffphases || _is_obstype(phityp, "differential")
+    use_diffvisamp = _is_obstype(amptyp, "differential")
+    use_abs_visamp = _is_obstype(amptyp, "absolute")
 
     Tc = Complex{oi_eltype(data)}
     cvis = fill((Tc[]), nwavs);
@@ -2158,9 +2158,9 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
 
     amptyp = !isempty(data) ? data[1].amptyp : ""
     phityp = !isempty(data) ? data[1].phityp : ""
-    use_diffphases = use_diffphases || phityp == "differential"
-    use_diffvisamp = amptyp == "differential"
-    use_abs_visamp = amptyp == "absolute"
+    use_diffphases = use_diffphases || _is_obstype(phityp, "differential")
+    use_diffvisamp = _is_obstype(amptyp, "differential")
+    use_abs_visamp = _is_obstype(amptyp, "absolute")
 
     Tc = Complex{oi_eltype(data)}
     cvis = fill((Tc[]), nwavs)
@@ -2199,9 +2199,9 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
 
     amptyp = !isempty(data) ? data[1].amptyp : ""
     phityp = !isempty(data) ? data[1].phityp : ""
-    use_diffphases = use_diffphases || phityp == "differential"
-    use_diffvisamp = amptyp == "differential"
-    use_abs_visamp = amptyp == "absolute"
+    use_diffphases = use_diffphases || _is_obstype(phityp, "differential")
+    use_diffvisamp = _is_obstype(amptyp, "differential")
+    use_abs_visamp = _is_obstype(amptyp, "absolute")
 
     Tc = Complex{oi_eltype(data)}
     cvis = fill((Tc[]), nwavs)

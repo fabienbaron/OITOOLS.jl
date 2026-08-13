@@ -619,6 +619,17 @@ function load_oifits(filename)
 end
 
 # ---------------------------------------------------------------------------
+# AMPTYP / PHITYP (OIFITSv2 §6) name the flavour of OI_VIS data: "absolute",
+# "differential" or "correlated flux". The standard does not fix their case and files in the
+# wild disagree — ASPRO writes "DIFFERENTIAL", the spec's own examples are lower case — so
+# every comparison against them has to fold case. `_canon_obstype` normalises on the way in;
+# `_is_obstype` is the comparison to use everywhere, because these fields are also assignable
+# by hand and by `simulate`, which are not funnelled through the reader.
+# ---------------------------------------------------------------------------
+_canon_obstype(s) = lowercase(strip(String(s)))
+_is_obstype(s, want::AbstractString) = _canon_obstype(s) == want
+
+# ---------------------------------------------------------------------------
 # _read_vis_header_keywords: read AMPTYP / PHITYP from OI_VIS FITS headers.
 # OIFITS.jl may not populate these fields (e.g. when OI_REVN = 1), so we
 # fall back to reading the raw FITS headers with FITSIO.
@@ -863,8 +874,10 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
     for (itable, db) in enumerate(vistables)
         # Read AMPTYP / PHITYP (OIFITSv2 §6).  OIFITS.jl may leave these
         # undefined for REVN=1 tables, so fall back to empty string.
-        _at = isdefined(db, :amptyp) ? string(db.amptyp) : ""
-        _pt = isdefined(db, :phityp) ? string(db.phityp) : ""
+        # Normalised here as well as in _read_vis_header_keywords: both paths must yield
+        # the same canonical form, or the flavour depends on which one populated the field.
+        _at = isdefined(db, :amptyp) ? _canon_obstype(db.amptyp) : ""
+        _pt = isdefined(db, :phityp) ? _canon_obstype(db.phityp) : ""
         if !isempty(_at) && isempty(amptyp_all); amptyp_all = _at; end
         if !isempty(_pt) && isempty(phityp_all); phityp_all = _pt; end
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
