@@ -304,13 +304,38 @@ end
 #   ∂J_ν/∂ν = log(x/2)·J_ν(x)
 #             - Σ_{k≥0} (-1)^k (x/2)^{ν+2k} ψ(ν+k+1) / [k! Γ(ν+k+1)]
 #
-# Convergence is fast for ν ∈ [1,3] and moderate x (< 20).
-# For large x one should switch to asymptotic expansions; the stellar
-# diameters in a GC are ≲ 5 mas and baselines ≲ 100 m/λ, so
-# ζ = π·θ·ρ/C is typically well below 10.
+# The series is only usable for small x, and it fails *silently and catastrophically*
+# rather than gracefully. Its terms alternate in sign and peak near k ≈ x/2 at a
+# magnitude of order (x/2)^x, so the answer is the residue of a cancellation that costs
+# more digits than Float64 has. Measured absolute error against the true derivative,
+# with 30 terms:
+#
+#     x       1      10      15      20        30        60       120
+#     err  1e-13   2e-12   3e-11   1.4e-6     1.6e+5    1e+24     4e+42
+#
+# and adding terms does not help — at x = 30 it is 6e-5 with 60 terms or with 500,
+# because the limit is cancellation, not truncation. The original comment here assumed
+# ζ = πθρ/C stays below 10 ("diameters ≲ 5 mas and baselines ≲ 100 m/λ"), which holds
+# for the α Cen PIONIER data (ζ ≤ 11) but not in general: 8.5 mas on a 330 m CHARA
+# baseline in H reaches ζ ≈ 26, and a 43 mas supergiant on the VLTI reaches ζ ≈ 39.
+# There the series returns garbage, the power-law gradient follows it, and the fit
+# fails without any warning.
+#
+# Above x = 15 we therefore differentiate the library Bessel in ν directly, with a
+# 5-point central stencil. That is uniformly accurate (≤ 2e-11 for x from 1 to 300)
+# but ~2.6x slower than the series, so the series keeps the common small-x case where
+# it is both faster and slightly more accurate.
+const _DBESSEL_SERIES_XMAX = 15.0
 
 function _dbesselj_dnu(ν::Real, x::Real; nterms::Int=30)
     x == 0.0 && return zero(x)
+
+    if x > _DBESSEL_SERIES_XMAX
+        h = 1e-3
+        return (besselj(ν-2h, x) - 8*besselj(ν-h, x) +
+                8*besselj(ν+h, x) - besselj(ν+2h, x)) / (12h)
+    end
+
     lhalf = log(x/2)
     half_x = x/2
     # accumulate the digamma series
@@ -359,11 +384,16 @@ function ChainRulesCore.rrule(::typeof(vis_ldpow), θ::VisParam, α::VisParam, �
     dJν_dν = map((z,s) -> s ? _dbesselj_dnu(ν, z) : 0.0, ζ, safe)
 
     # ∂/∂ν [Γ(ν+1)] = ψ(ν+1)·Γ(ν+1)
-    # ∂V/∂ν = ψ(ν+1)·V + Γ(ν+1)·2^ν·[dJν_dν/ζ^ν - log(ζ)·Jν/ζ^ν]
+    # ∂V/∂ν = ψ(ν+1)·V + Γ(ν+1)·(ζ/2)^{-ν}·[dJν_dν - log(ζ/2)·Jν]
+    #
+    # The log is log(ζ/2), NOT log(ζ): it comes from ∂/∂ν (ζ/2)^{-ν} =
+    # -log(ζ/2)·(ζ/2)^{-ν}. Using log(ζ) makes ∂V/∂α too small by exactly
+    # log(2)·V/2, which is enough to stop a gradient-based fit ~0.015 short in α
+    # while every derivative-free method converges correctly. See the gradient
+    # test in test/test_model_gradients.jl.
     ψν1 = @. digamma(ν+1)
-    log2ν = log(2)^ν   # 2^ν
     dV_dν = @. ifelse(safe,
-        ψν1*V + Gν1 * 2^ν * (dJν_dν - log(ζ_safe)*Jν) / ζ_safe^ν,
+        ψν1*V + Gν1 * 2^ν * (dJν_dν - log(ζ_safe/2)*Jν) / ζ_safe^ν,
         zero(ζ))
     # dν/dα = 1/2
     dV_dα = dV_dν ./ 2

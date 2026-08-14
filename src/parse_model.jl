@@ -142,10 +142,12 @@ function _vis_ldpow(params::AbstractVector{D}, ρ::AbstractVector) where {T, V, 
     dV_dθ  = @. dV_dζ * π * ρ / MAS2RAD
 
     # ∂V/∂α per baseline (chain rule through ν = α/2 + 1)
+    # log(ζ/2), not log(ζ) — see the note on the matching expression in the
+    # vis_ldpow rrule in model_chainrules.jl.
     dJν_dν = map((z, s) -> s ? _dbesselj_dnu(ν, z) : 0.0, ζ, safe)
     ψν1    = digamma(ν + 1)
     dV_dν  = @. ifelse(safe,
-        ψν1 * V_val + Gν1 * 2^ν * (dJν_dν - log(ζ_safe) * Jν) / ζ_safe^ν,
+        ψν1 * V_val + Gν1 * 2^ν * (dJν_dν - log(ζ_safe/2) * Jν) / ζ_safe^ν,
         zero(ζ))
     dV_dα  = dV_dν ./ 2
 
