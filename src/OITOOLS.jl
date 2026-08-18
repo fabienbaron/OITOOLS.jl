@@ -42,6 +42,7 @@ include("maximent.jl")
 include("oimem.jl")
 include("proximal_operators.jl")
 include("bsdmm.jl")
+include("squeeze.jl")
 include("plan.jl")
 include("pmoired_compat.jl")
 
@@ -66,7 +67,7 @@ export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
        model_to_image, model_to_sed, model_to_flux
-export cvis_to_chi2_f, cvis_to_chi2_fg, model_and_image_to_chi2_fg
+export cvis_to_chi2_f, cvis_to_chi2_fg, cvis_to_chi2_noalloc, model_and_image_to_chi2_fg
 
 # ── Uncertainty estimation by resampling ─────────────────────────────────────
 export bootstrap_fit, bootstrap_driver, BootstrapResult
@@ -104,6 +105,7 @@ export chi2_sparco_multi_f, optimize_sparco_multi_parameters
 
 # ── BSDMM reconstruction ──────────────────────────────────────────────────
 export reconstruct_bsdmm
+export reconstruct_squeeze, reconstruct_squeeze_tempered, SqueezeSparco, default_nelements
 export prox_tv, prox_l2smooth, prox_centering!
 export tv_norm, l2smooth_norm
 export prox_group_sparsity, group_sparsity_norm

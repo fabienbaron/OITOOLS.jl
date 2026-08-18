@@ -28,6 +28,7 @@ makedocs(;
             "Hybrid (Model + Image)" => "examples/hybrid.md",
             "Maximum Entropy"        => "examples/maxent.md",
             "BSDMM Reconstruction"   => "examples/bsdmm.md",
+            "SQUEEZE (MCMC)"         => "examples/squeeze.md",
         ],
         "API Reference" => [
             "OIFITS Handling"            => "api/oifits.md",

@@ -24,6 +24,10 @@
 # `julia --project=docs docs/make.jl` (a second project, with its own 1.5 GB .CondaPkg),
 # while the repo root kept working from its existing lock and hid the problem.
 #
+# The user-visible symptom is severe: PythonCall initialises CondaPkg at import, so a
+# failed resolve makes `using OITOOLS` itself unloadable, not merely the Python-facing
+# functions.
+#
 # Taking the pip layer out removes the mapping fetch and with it the whole failure mode.
 # Both packages are on conda-forge for every platform CI builds on (linux-64, osx-64,
 # osx-arm64, win-64). The cost is that conda-forge's ultranest can lag PyPI slightly
