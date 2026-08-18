@@ -250,6 +250,12 @@ return UT_rise, UT_set
 end
 
 
+
+# matplotlib wants a bar width on a date axis as a number of *days*. PyCall used to coerce a
+# Julia Period on the way through; PythonCall passes it as an opaque object and Python then
+# fails with "no method matching iterate(::Millisecond)". Convert explicitly.
+_mpl_days(p::Dates.Period) = Dates.value(Dates.Millisecond(p)) / 86_400_000
+
 # Aspro-type plot
 function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, good_alt, good_delay;
                         good_twilight::Vector{Int}=Int[],
@@ -280,28 +286,28 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
     fig.autofmt_xdate(bottom=0.2, rotation=30, ha="right")
     ax.xaxis_date()
     grid()
-    plt.axvline(x=hours_to_date(obsdate, lst_mid), color=:red)
+    pyplot.axvline(x=hours_to_date(obsdate, lst_mid), color="red")
 
     # Twilight bands
     start_date = hours_to_date(obsdate, lst[1]+1.5)
     end_date   = hours_to_date(obsdate, lst[end]-1.5)
-    ax.barh(5, end_date - start_date, left=start_date, height=10, align="center",
-            color=:lightgray, alpha=0.75)
+    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
+            color="lightgray", alpha=0.75)
     start_date = hours_to_date(obsdate, lst[1]+2)
     end_date   = hours_to_date(obsdate, lst[end]-2)
-    ax.barh(5, end_date - start_date, left=start_date, height=10, align="center",
-            color=:lightgray, alpha=0.75)
+    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
+            color="lightgray", alpha=0.75)
     start_date = hours_to_date(obsdate, lst[1]+3)
     end_date   = hours_to_date(obsdate, lst[end]-3)
-    ax.barh(5, end_date - start_date, left=start_date, height=10, align="center",
-            color=:gray, alpha=0.75)
+    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
+            color="gray", alpha=0.75)
 
     # Altitude bar (optional)
     if show_alt && !isempty(good_alt)
         start_date = hours_to_date(obsdate, lst[good_alt[1]])
         end_date   = hours_to_date(obsdate, lst[good_alt[end]])
-        ax.barh(5, end_date - start_date, left=start_date, height=1.5, align="center",
-                color=:orange, label="Altitude", zorder=3)
+        ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=1.5, align="center",
+                color="orange", label="Altitude", zorder=3)
     end
 
     # Delay bar — when Details is off, show only the intersection (observable AND in delay AND twilight)
@@ -318,20 +324,20 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
     if !isempty(show_indices)
         start_date = hours_to_date(obsdate, lst[show_indices[1]])
         end_date   = hours_to_date(obsdate, lst[show_indices[end]])
-        ax.barh(2, end_date - start_date, left=start_date, height=2, align="center",
-                color=:blue, label=bar_label, zorder=3)
+        ax.barh(2, _mpl_days(end_date - start_date), left=start_date, height=2, align="center",
+                color="blue", label=bar_label, zorder=3)
         text(start_date, 2, Dates.format(start_date, dateformat"H:M"),
-             rotation=90, va="center", ha="right", color=:black)
+             rotation=90, va="center", ha="right", color="black")
         text(end_date, 2, Dates.format(end_date, dateformat"H:M"),
-             rotation=90, va="center", ha="left", color=:black)
+             rotation=90, va="center", ha="left", color="black")
         text(start_date, 3.3, round(Int64, az[show_indices[1]]),
-             va="top", ha="center", color=:black)
+             va="top", ha="center", color="black")
         text(start_date, 0.7, round(Int64, alt[show_indices[1]]),
-             va="bottom", ha="center", color=:black)
+             va="bottom", ha="center", color="black")
         text(end_date, 3.3, round(Int64, az[show_indices[end]]),
-             va="top", ha="right", color=:black)
+             va="top", ha="right", color="black")
         text(end_date, 0.7, round(Int64, alt[show_indices[end]]),
-             va="bottom", ha="right", color=:black)
+             va="bottom", ha="right", color="black")
     end
 
     yticks([2], [targetname])

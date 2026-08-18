@@ -55,7 +55,8 @@ pmoired_to_julia_file
 |----------|-------------|
 | `recenter(x; mask, max)` | Recenter an image by circular shift to centroid or peak |
 | `query_target_from_simbad(name)` | Query SIMBAD for target information |
-| `ra_dec_from_simbad(name)` | Get RA/Dec from SIMBAD |
+| `ra_dec_from_simbad(name)` | Resolve a target through SIMBAD; returns RA and Dec in **decimal degrees** |
+| `sexagesimal_to_degrees(s)` | Parse `"-46 28 00.5"` or `"12:34:56"` to decimal degrees (sign applies to the whole value) |
 | `magnitudes_from_simbad(name)` | Query SIMBAD for photometric magnitudes (V, J, H, K, L, M, N) |
 
 ```@docs

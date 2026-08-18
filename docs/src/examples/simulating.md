@@ -61,9 +61,13 @@ target = read_obs_file("default_obs")
 You can also query SIMBAD directly:
 
 ```julia
-ra, dec = ra_dec_from_simbad("Vega")
+ra, dec = ra_dec_from_simbad("Vega")   # decimal degrees, matching TargetConfig.raep0
 target = TargetConfig(target="Vega", raep0=ra, decep0=dec)
 ```
+
+!!! note "Changed in 0.11"
+    `ra_dec_from_simbad` used to return two vectors of sexagesimal components, so the
+    snippet above could not actually run. It now returns degrees directly.
 
 **Combiner** — beam combiner properties (throughput, read noise, calibration errors):
 
