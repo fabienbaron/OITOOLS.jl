@@ -213,7 +213,12 @@ end
 end
 
 @testset "live monitoring" begin
-    ENV["MPLBACKEND"] = "Agg"
+    # matplotlib is already imported by the time this runs (OITOOLS loads oiplot.jl
+    # at package load), so setting ENV["MPLBACKEND"] here would do nothing — the
+    # backend has to be switched at runtime, and restored afterwards so an
+    # interactive session is not left headless.
+    _oldbackend = string(pyplot.get_backend())
+    pyplot.switch_backend("Agg")
     data = readoifits(SQ_DATAFILE; T=Float64, verbose=false, warn=false)[1,1]
     ft = setup_dft(data, nx, pixsize)
 
@@ -236,6 +241,9 @@ end
     @test mon.iters == [10]
     @test mon.chi2r == [1.5]
     @test length(mon.params) == 1
+
+    plotclose("all")
+    pyplot.switch_backend(_oldbackend)
 end
 
 @testset "geometry comes from ft, as in reconstruct_bsmem" begin

@@ -37,8 +37,19 @@ matplotlib = ">=3.5"
 numpy = ">=2"
 scipy = ">=1.9"
 
-# astroquery and ultranest come from pip: ultranest is not on conda-forge for every platform,
-# and pip resolves both against the conda-provided numpy above.
-[pip.deps]
+# astroquery and ultranest used to come from pip, because ultranest was not on conda-forge
+# for every platform. That is obsolete: conda-forge now ships ultranest 4.4.0 for linux-64,
+# osx-64, osx-arm64 and win-64, and astroquery 0.4.11 including noarch — every platform this
+# package is tested on.
+#
+# Taking them from conda-forge instead of pip is not cosmetic. Mixing [pip.deps] with conda
+# packages forces pixi to download a conda->PyPI name mapping at every resolve, and when that
+# download fails the whole environment fails to build with
+#
+#     failed to map conda packages to their PyPI equivalents
+#     failed to fetch conda-pypi mapping from remote source: io error: unexpected end of file
+#
+# which makes `using OITOOLS` unloadable, since PythonCall initialises CondaPkg at import.
+# With no [pip.deps] at all, pixi never fetches that mapping and the failure cannot occur.
 astroquery = ">=0.4.6"
 ultranest = ">=3.6"

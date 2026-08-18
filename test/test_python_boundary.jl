@@ -141,6 +141,52 @@ else
         @test 6.0 < r.x_opt[1] < 7.5
     end
 
+    # ── the threaded batch likelihood ────────────────────────────────────────
+    # `_batch_loglike` threads over the rows of an UltraNest batch, sharing one FlatModel
+    # across the threads. Three things have to hold, and none of them is visible in the fit
+    # result: the threshold has to gate on batch size, the threaded and serial paths have to
+    # agree exactly, and evaluation must not write to the model.
+    @testset "batch loglikelihood" begin
+        md = Dict{String,Any}("s,ud"=>3.0, "s,f"=>0.8, "p,x"=>1.0, "p,y"=>1.0, "p,f"=>0.2)
+        free = ["s,ud","p,x","p,y","p,f"]
+        fm = OITOOLS.parse_model(md, free; nB_workspace = size(data.uv, 2))
+        f = p -> -0.5 * OITOOLS.chi2_flat(fm, p, data)
+
+        X = [3.0 1.0 1.0 0.2; 4.0 -2.0 3.0 0.5; 2.0 0.0 0.0 0.1;
+             5.0 2.0 -1.0 0.9; 1.0 -1.0 2.0 0.3; 6.0 3.0 3.0 0.7]
+
+        # identical to the serial broadcast, above and below the threshold, and Float64 out
+        for n in (1, 2, OITOOLS._MIN_THREADED_BATCH, size(X, 1))
+            Xn = X[1:n, :]
+            got = OITOOLS._batch_loglike(f, Xn)
+            @test got == f.(eachrow(Xn))          # exact, not approximate
+            @test got isa Vector{Float64}
+            @test length(got) == n
+        end
+
+        # a PyArray batch — what UltraNest actually passes — must work, and must not be
+        # read from a worker thread, so the values still have to match the serial path
+        Xpy = OITOOLS.PythonCall.PyArray(
+                  OITOOLS.PythonCall.pyimport("numpy").asarray(OITOOLS.PythonCall.Py(X)))
+        @test Xpy isa AbstractMatrix
+        @test OITOOLS._batch_loglike(f, Xpy) == f.(eachrow(X))
+
+        # TRIPWIRE. The threading above is only safe while evaluation leaves the model
+        # alone. HankelSpec.workspace is allocated but unused today; if the cached-K
+        # gradient is ever wired up it becomes shared mutable state and _batch_loglike
+        # becomes a race. This fails at that moment.
+        hm = OITOOLS.parse_model(
+                 Dict{String,Any}("r,profile"=>"exp(-(\$R/\$r,s)^2)", "r,udout"=>10.0,
+                                  "r,f"=>1.0, "r,s"=>2.0),
+                 ["r,s"]; nB_workspace = size(data.uv, 2))
+        ws = hm.components[1].workspace
+        snap = (copy(ws.V), copy(ws.K), copy(ws.dI), copy(ws.dI_dp), copy(ws.w))
+        for v in (1.0, 2.0, 3.0)
+            OITOOLS.chi2_flat(hm, [v], data)
+        end
+        @test (ws.V, ws.K, ws.dI, ws.dI_dp, ws.w) == snap
+    end
+
     # ── the corner plot, which is what `fit_model_ultranest` does BY DEFAULT ──
     # This ran with `cornerplot = false` above so the conversion assertions stay fast, which
     # is exactly how the default path stayed broken unnoticed: `ultranest.plot` does

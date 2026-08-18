@@ -21,6 +21,65 @@ using NLopt, LsqFit, ForwardDiff, Printf, PythonCall, FFTW
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Vectorized likelihood evaluation for UltraNest
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+Batch size below which evaluating the rows serially beats threading them.
+
+`Threads.@threads` costs a few µs to spawn and join, which a one-row batch cannot amortise.
+Measured on a 4-parameter analytic model against `2004-data1.oifits` (≈85 µs per χ²
+evaluation, 16 threads), speedup of the threaded batch over the serial one:
+
+    batch      1     2     5    15    20    50   128   400
+    speedup 0.77  1.33  2.99  6.15  7.18  8.40  8.88  9.46
+
+so the break-even sits between 1 and 2. The threshold is set above that rather than at it,
+because the curve shifts right for cheaper likelihoods and the points lost to it are few:
+UltraNest's batches are small but rarely 2 or 3 (median 15 without a step sampler).
+"""
+const _MIN_THREADED_BATCH = 4
+
+"""
+    _batch_loglike(f, X) -> Vector
+
+Apply `f` to each row of the batch `X`, threading over rows when that is worth it.
+
+`vectorized = true` only means UltraNest hands over a whole batch per call; evaluating it is
+still up to us, and a serial broadcast leaves every thread but one idle. Note the batch is
+one row per call whenever a step sampler is active (`StepSampler.__next__` evaluates a single
+reshaped point), so the guard below is what keeps `use_stepsampler = true` from paying for
+threading it cannot use.
+
+`X` arrives as a `PyArray`: a zero-copy view onto numpy's memory, not a Julia array. Only the
+thread holding the GIL may touch Python, so the batch is copied here, on the calling thread,
+before any worker looks at it. At these batch sizes that copy is a few hundred bytes against
+`n` χ² evaluations. Nothing inside `f` reaches Python.
+
+The rows share one `FlatModel`, which is safe because evaluation does not write to it:
+`eval_model` allocates its accumulator per call and never touches `HankelSpec.workspace` —
+those buffers are allocated but currently unused, since `eval_model_grad` goes through
+ForwardDiff rather than the cached-K chain rule they were meant for. Wiring that up would
+make the workspace shared mutable state and this loop a race; `test_python_boundary.jl`
+asserts the buffers stay untouched so that change fails loudly here rather than silently
+corrupting a posterior. `bootstrap.jl` gives each worker its own model for the same reason.
+"""
+function _batch_loglike(f, X::AbstractMatrix)
+    n = size(X, 1)
+    (Threads.nthreads() == 1 || n < _MIN_THREADED_BATCH) && return f.(eachrow(X))
+
+    Xj = Matrix{eltype(X)}(X)          # off the PyArray before the threads start
+    v1 = f(view(Xj, 1, :))             # fixes the element type without assuming Float64
+    out = Vector{typeof(v1)}(undef, n)
+    out[1] = v1
+    Threads.@threads for k in 2:n
+        @inbounds out[k] = f(view(Xj, k, :))
+    end
+    return out
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # display_model — inspect model setup before fitting
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -553,7 +612,7 @@ function fit_model_ultranest(model_dict   ::Dict{String},
     end
 
     loglikelihood_vectorized = let loglikelihood = loglikelihood
-        (X::AbstractMatrix{<:Real}) -> Py(loglikelihood.(eachrow(X))).to_numpy()
+        (X::AbstractMatrix{<:Real}) -> Py(_batch_loglike(loglikelihood, X)).to_numpy()
     end
 
     # ── 5. Run UltraNest ───────────────────────────────────────────────────
@@ -682,7 +741,7 @@ function fit_model_ultranest(model        ::FlatModel,
     end
 
     loglikelihood_vectorized = let loglikelihood = loglikelihood
-        (X::AbstractMatrix{<:Real}) -> Py(loglikelihood.(eachrow(X))).to_numpy()
+        (X::AbstractMatrix{<:Real}) -> Py(_batch_loglike(loglikelihood, X)).to_numpy()
     end
 
     # ── Run UltraNest ────────────────────────────────────────────────────────
