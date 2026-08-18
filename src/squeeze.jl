@@ -583,9 +583,10 @@ end
 # (~40 ms per update), so keep `monitor` large enough that updates are rare
 # compared with a sweep.
 #
-# PyCall is not thread-safe, so anything that draws must run on the main thread.
-# Both drivers force serial execution when monitoring is enabled rather than
-# risk a segfault.
+# Anything that draws must run on the main thread: a Python call from a spawned
+# task segfaults inside PythonCall. `reconstruct_squeeze` therefore pins the one
+# monitored chain to the calling thread and spawns the rest;
+# `reconstruct_squeeze_tempered` has no such split and runs single-threaded.
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
@@ -1418,9 +1419,9 @@ geometry is taken *from the Fourier operator*, not from keywords.
 - `print_every`: C-format text diagnostic line every n sweeps.
 - `monitor`: if > 0, redraw a live image and trace display every `monitor`
   sweeps (chain 1 only).  Off by default, and free when off — one integer
-  comparison per sweep.  Enabling it forces **serial** chains, because PyCall is
-  not thread-safe; use `monitor=0` for the threaded path.  `monitor_colormap`
-  selects the image colour map.
+  comparison per sweep.  Enabling it pins chain 1 to the calling thread, because
+  drawing must happen on the main thread; the other chains still run in parallel.
+  `monitor_colormap` selects the image colour map.
 - `seed`: per-chain streams are a pure function of `(seed, chain)`, so results
   are reproducible regardless of thread scheduling.
 
@@ -1510,11 +1511,21 @@ function reconstruct_squeeze(x_start, data::OIdata{T}, ft;
 
     results = Vector{Any}(undef, nchains)
     nw = min(Threads.nthreads(), nchains)
-    # PyCall is not thread-safe, so a live display must draw from the main thread.
-    # Rather than risk a segfault, monitored runs go serial.
-    if monitor > 0 && nw > 1
-        @info "reconstruct_squeeze: monitoring enabled, running chains serially " *
-              "(PyCall is not thread-safe). Set monitor=0 for the threaded path."
+
+    # Only chain 1 ever builds a monitor (see `run_one` below), so drawing is never
+    # concurrent. What it must not be is *off the main thread*: a Python call from a
+    # `Threads.@spawn`ed task segfaults inside PythonCall's `PyTuple_New`, with or without
+    # an interactive backend. This is a property of calling CPython from a non-main thread,
+    # not of any one bridge — PythonCall behaves exactly as PyCall did here.
+    #
+    # So a monitored run keeps chain 1 on the calling thread and spawns the others, instead
+    # of dropping every chain to serial as it used to.
+    monitored_inline = monitor > 0 && nw > 1
+    if monitored_inline && Threads.threadid() != 1
+        @info "reconstruct_squeeze: monitoring is enabled but this call is not on the " *
+              "main thread, so the live display cannot be pinned there; running chains " *
+              "serially. Set monitor=0 for the fully threaded path."
+        monitored_inline = false
         nw = 1
     end
 
@@ -1548,6 +1559,15 @@ function reconstruct_squeeze(x_start, data::OIdata{T}, ft;
 
     if nw <= 1
         for c in 1:nchains; run_one(c); end
+    elseif monitored_inline
+        # Chain 1 owns the display, so it runs here on the main thread while the rest are
+        # spawned. That recovers nchains-1 chains of parallelism versus going serial.
+        rest   = collect(2:nchains)
+        nwk    = min(nw, length(rest))
+        chunks = [rest[k:nwk:end] for k in 1:nwk]
+        tasks  = [Threads.@spawn (for c in chunks[k]; run_one(c); end) for k in 1:nwk]
+        run_one(1)
+        foreach(wait, tasks)
     else
         chunks = [c:nw:nchains for c in 1:nw]
         tasks = [Threads.@spawn (for c in chunks[k]; run_one(c); end) for k in 1:nw]

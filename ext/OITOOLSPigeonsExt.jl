@@ -227,7 +227,8 @@ function OITOOLS.reconstruct_squeeze_tempered(
         mon.ndf = ndf
         if multithreaded
             @info "reconstruct_squeeze_tempered: monitoring enabled, disabling " *
-                  "multithreading (PyCall is not thread-safe). Set monitor=0 to " *
+                  "multithreading — the live display has to draw from the main thread, " *
+                  "and a Python call from a worker thread segfaults. Set monitor=0 to " *
                   "restore the threaded path."
             multithreaded = false
         end
