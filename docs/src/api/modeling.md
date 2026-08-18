@@ -47,6 +47,7 @@ model_to_vis
 eval_model
 eval_model_grad
 display_model
+default_bounds
 fit_model
 fit_model_lsqfit
 fit_model_ultranest

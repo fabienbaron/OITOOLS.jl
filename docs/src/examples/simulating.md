@@ -265,22 +265,36 @@ all; run [`best_pop`](@ref) yourself if you want a recommendation.
 OITOOLS provides tools for checking delay-line feasibility and producing
 Gantt charts for a given target and night:
 
+The high-level entry point is `obs_plan`, which computes the night and renders the
+Gantt chart in one call:
+
 ```julia
-gantt_onenight(facility, target, date)
+facility = read_facility_file("CHARA")
+ra, dec  = ra_dec_from_simbad("Vega")        # decimal degrees
+config   = [1, 1, 1, 1, 1, 2]                # 0=unused, 1=use, 2=reference cart
+pop      = [1, 1, 1, 1, 1, 1]                # one POP per telescope, 1:5
+
+obs_plan("Vega", facility, ra, dec, DateTime(2026, 6, 3), pop, config;
+         alt_limit = 30.0, savefile = "vega.png")
 ```
 
-Additional planning utilities:
+The pieces underneath, if you want them separately:
 
 ```julia
-# Sunrise/sunset times
-rise, set = sunrise_sunset(facility, date)
+# Dark window, in decimal UT hours. `zenith` is in degrees: 102 is nautical twilight.
+dusk_rise, dusk_set = sunrise_sunset(DateTime(2026, 6, 3), facility.lat, facility.lon)
 
-# Hour angle and altitude for observability
-ha = jd_to_hour_angle(jd, target.raep0, facility.lon)
-altitude, azimuth = alt_az(ha, target.decep0, facility.lat)
+# Everything for one night: LST, hour angle, altitude, azimuth, Moon separation
+obs = night_observability(facility, ra, dec, DateTime(2026, 6, 3); alt_limit = 30.0)
 
-# Delay-line limits
-opd_min, opd_max = opd_limits(facility, target, ha)
+# Altitude/azimuth directly — note the argument order (dec, lat, ha) and that `ha` is in hours
+altitude, azimuth = alt_az(dec, facility.lat, obs.ha)
+
+# Delay-line feasibility. An arbitrary POP choice often yields no usable time at all --
+# that is what best_pop is for.
+d = in_delay(facility, dec, obs.ha, config, pop)
+results = best_pop(facility, dec, obs.ha, config; n_best = 5)
+print_pop_results(facility, config, results)
 ```
 
 See `example_chara_plan.jl`.

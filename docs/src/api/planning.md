@@ -2,13 +2,13 @@
 
 | Function | Description |
 |----------|-------------|
-| `night_observability(facility, ra, dec, date)` | Compute observability windows, moon separation, etc. |
+| `night_observability(facility, ra, dec, date)` | Observability windows, Moon separation, etc. `ra` and `dec` in **decimal degrees** |
 | `best_pop(facility, dec, ha, config)` | Find best POP configurations for a target |
 | `print_pop_results(facility, config, results)` | Pretty-print `best_pop` results |
 | `obs_plan(target, facility, ra, dec, date, pop, config)` | Gantt-style observability plot |
 | `chara_plan(target, facility, ra, dec, date, pop, config)` | CHARA-plan style delay plot |
-| `compute_delays(facility, dec, ha, pop, config)` | Compute OPD delays for given POP/config |
-| `in_delay(facility, dec, ha, pop, config)` | Check which baselines are within delay limits |
+| `compute_delays(facility, dec, ha, config, pop)` | Compute OPD delays for a given config/POP. `config`: 0=unused, 1=use, 2=reference cart; `pop`: one entry per telescope in 1:5 |
+| `in_delay(facility, dec, ha, config, pop)` | Check which baselines are within delay limits (same argument order as `compute_delays`) |
 | `observable_epochs(facility, target, dates)` | Filter epochs on elevation and (optionally) delay lines — opt-in, used by `simulate` |
 | `moon_illumination(jd)` | Fractional lunar illumination for a Julian Date |
 | `moon_radec(jd)` | Approximate lunar RA/Dec for a Julian Date |
@@ -33,7 +33,7 @@ angular_separation
 |----------|-------------|
 | `simulate(facility, target, combiner, wave, dates, outfile)` | Simulate observations from array geometry |
 | `simulate_from_oifits(infile, outfile)` | Simulate using UV coverage of an existing OIFITS file |
-| `get_uv(facility, target, combiner, wave, dates)` | Compute UV coordinates for a given setup |
+| `get_uv(l, h, λ, δ, baselines)` | UV coordinates from latitude `l` (rad), hour angles `h` (rad, row vector), wavelengths `λ` (m), declination `δ` (rad) and a 3×n baseline matrix (m). Returns `(nuv, uv, u_M, v_M, w_M)`; `uv` is in cycles/rad |
 | `read_facility_file(file)` | Read facility configuration (TOML) |
 | `read_obs_file(file)` | Read target configuration (TOML) |
 | `read_comb_file(file)` | Read combiner configuration (TOML) |
@@ -48,10 +48,10 @@ angular_separation
 | `zero_point_flux(λ)` | Zero-magnitude photon flux, ph/s/m²/µm |
 | `airmass(alt_deg)` | Plane-parallel airmass from altitude |
 | `datetime_to_jd(dt)` / `datetime_to_mjd(dt)` | Julian and Modified Julian Date |
-| `gantt_onenight(facility, target, date)` | Observation planning Gantt chart |
-| `sunrise_sunset(facility, date)` | Sunrise/sunset times for a facility |
-| `alt_az(ha, dec, lat)` | Hour angle to altitude/azimuth |
-| `opd_limits(facility, target, ha)` | Delay-line OPD limits |
+| `gantt_onenight(targetname, obsdate, lst, lst_midnight, az, alt, good_alt, good_delay; good_twilight, figsize, savefile, show_alt)` | Gantt chart from precomputed `night_observability` output. Usually reached through `obs_plan` |
+| `sunrise_sunset(obsdate, latitude, longitude; zenith=102.0)` | Rise/set times in decimal UT hours. `zenith` in degrees: 90°50′ sunrise/sunset, 96° civil, 102° nautical (default), 108° astronomical twilight |
+| `alt_az(dec_deg, lat_deg, ha_hours)` | Altitude/azimuth in degrees. Note the argument order: declination first, then latitude, then hour angle **in hours** |
+| `opd_limits(base, alt, az)` | Projected optical path for a baseline vector. `alt`/`az` in **radians** — note `alt_az` returns degrees, so they do not compose directly |
 
 | Type | Description |
 |------|-------------|

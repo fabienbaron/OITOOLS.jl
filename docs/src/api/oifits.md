@@ -42,11 +42,15 @@ oifits_fix_tdim
 | `pmoired_to_dict(s)` | Convert a PMOIRED model string directly to a Julia `Dict` |
 | `pmoired_to_julia(s)` | Convert a PMOIRED model string to Julia source code (returns `String`) |
 | `pmoired_to_julia_file(infile, outfile)` | Convert a PMOIRED notebook snippet file |
+| `dict_to_pmoired(d)` | Render an OITOOLS model dict as PMOIRED source (returns `String`) |
+| `dict_to_pmoired_file(d, outfile)` | Write an OITOOLS model dict out as PMOIRED source |
 
 ```@docs
 pmoired_to_dict
 pmoired_to_julia
 pmoired_to_julia_file
+dict_to_pmoired
+dict_to_pmoired_file
 ```
 
 ## Utilities
@@ -62,4 +66,6 @@ pmoired_to_julia_file
 ```@docs
 recenter
 magnitudes_from_simbad
+ra_dec_from_simbad
+sexagesimal_to_degrees
 ```

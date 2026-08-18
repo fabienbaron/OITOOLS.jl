@@ -213,13 +213,23 @@ model_dict = Dict{String,Any}(
 
 ### Implicit variables
 
-Three implicit variables are available in expressions:
+These implicit variables are available in expressions:
 
-| Variable | Description |
-|----------|-------------|
-| `\$WL` | Wavelength in metres (set per data point during fitting) |
-| `\$MJD` | Modified Julian date (set per data point during fitting) |
-| `\$B` | Baseline length in metres |
+| Variable | Where | Description |
+|----------|-------|-------------|
+| `\$WL` | any expression | Wavelength in metres, one value per uv point during fitting |
+| `\$MJD` | any expression | Modified Julian date, one value per uv point |
+| `\$R` | `profile` expressions only | Radius in mas, on the component's radial grid |
+| `\$MU` | `profile` expressions only | `sqrt(1 - (R/r_max)^2)`, for limb-darkening-style profiles |
+
+!!! warning "No `\$B`"
+    A `\$B` (baseline length) variable is **not** implemented. It is absent from
+    `IMPLICIT_VARS` and from the compiled resolver signature, so an expression referring to
+    it fails with an undefined-name error rather than a helpful message.
+
+Referencing `\$WL` or `\$MJD` in *any* derived expression makes the resolver broadcast **all**
+derived expressions, so every parameter becomes a per-uv-point vector — chromatic diameters
+and position angles work exactly like chromatic fluxes.
 
 These enable chromatic and time-variable models:
 
@@ -534,11 +544,21 @@ The 7-element `weights` vector controls per-observable weighting:
 lb = Dict("star,ud" => 0.1)   # lower bounds
 ub = Dict("star,ud" => 20.0)  # upper bounds
 
-# Gaussian priors: Dict of (mean, sigma)
-priors = Dict("star,ud" => (8.5, 0.5))
+# Gaussian priors: a Vector of (expression, target, sigma) tuples.
+# The first element is an *expression* over model parameters, not just a parameter name,
+# so a prior can constrain a derived quantity:
+priors = [("star,ud",           8.5, 0.5),      # prior on one parameter
+          ("star,f + disk,f",   1.0, 0.01)]     # prior on their sum
 
 result = fit_model(model_dict, list_free_params, data; lb, ub, priors)
 ```
+
+Each prior adds `(value - target)^2 / sigma^2` to the objective. Priors are supported by the
+`Dict`-based `fit_model` method only — the `FlatModel` method rejects them, since the
+expressions have to be compiled into the model.
+
+`default_bounds(model_dict, list_free_params)` suggests bounds for every free parameter if you
+do not want to write them out by hand; `display_model` then validates values against them.
 
 ## Fitting with LsqFit (Levenberg-Marquardt)
 

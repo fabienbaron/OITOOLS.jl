@@ -5,6 +5,32 @@
 #   astroquery.simbad                     -> utils.jl, magnitudes_from_simbad
 #   ultranest, ultranest.plot,
 #   ultranest.stepsampler                 -> fit_model.jl, fit_model_ultranest
+#   scipy                                 -> imported at module level by ultranest.plot
+#
+# EVERYTHING IS A CONDA DEPENDENCY ON PURPOSE — there is no [pip.deps] section.
+#
+# astroquery and ultranest used to come from pip. Mixing pip and conda dependencies makes
+# pixi fetch a conda->PyPI name mapping from a remote service before it can solve, and that
+# fetch fails here:
+#
+#     × failed to map conda packages to their PyPI equivalents. This mapping is
+#     ├─▶ failed to fetch conda-pypi mapping from remote source
+#     ╰─▶ io error: unexpected end of file
+#
+# The failure is not specific to this project's manifest — the identical manifest resolves
+# standalone — but it is reliable whenever CondaPkg resolves a *fresh* environment from
+# Julia. That happens for every project except the one whose environment is already built,
+# so it broke `Pkg.test()` (which runs in a temporary sandbox project) and
+# `julia --project=docs docs/make.jl` (a second project, with its own 1.5 GB .CondaPkg),
+# while the repo root kept working from its existing lock and hid the problem.
+#
+# Taking the pip layer out removes the mapping fetch and with it the whole failure mode.
+# Both packages are on conda-forge for every platform CI builds on (linux-64, osx-64,
+# osx-arm64, win-64). The cost is that conda-forge's ultranest can lag PyPI slightly
+# (4.4.0 vs 4.5.0 at the time of writing); the API OITOOLS uses — ReactiveNestedSampler,
+# stepsampler.RegionSliceSampler(adaptive_nsteps=...), plot.cornerplot — is present and
+# verified in 4.4.0. There is no conda-forge build for linux-aarch64; add a [pip.deps]
+# section back only if that platform is ever needed, knowing what it costs.
 #
 # numpy must be >= 2. PythonCall's `juliacall.ArrayValue.__array__` (JlWrap/array.jl) ends in
 #
@@ -17,28 +43,13 @@
 # data-dependent and easy to miss: dense arrays convert fine, while lazy adjoints, nested
 # `Vector{Matrix}` (e.g. per-polygon vertex lists handed to PolyCollection/Poly3DCollection)
 # and `Vector{Any}` all fail. Plotting a dense image works; plotting polygons does not.
-#
-# An earlier revision pinned numpy < 2 for astroquery's sake. That is obsolete: astropy 7
-# guards the numpy-2 removals it used to call unconditionally (`if NUMPY_LT_2_4: def in1d`),
-# and declares `numpy<2.7,>=1.24` itself. Leave the upper bound to astropy rather than
-# duplicating it here, so a future astropy relaxation does not need an edit in this file.
 
 channels = ["conda-forge"]
 
-# scipy is an undeclared dependency of `ultranest.plot`, which does `import scipy.stats` at
-# module level (plot.py:18) while ultranest's own metadata requires only numpy, cython,
-# matplotlib and corner. pip therefore never installs it, and `ultranest.plot` — the corner
-# plot that `fit_model_ultranest` draws by default (`cornerplot = true`) — is unimportable in
-# a fresh environment even though the sampler itself runs fine. Declared here rather than
-# waiting on upstream; drop it once ultranest lists scipy itself.
 [deps]
 python = ">=3.9,<4"
 matplotlib = ">=3.5"
 numpy = ">=2"
 scipy = ">=1.9"
-
-# astroquery and ultranest come from pip: ultranest is not on conda-forge for every platform,
-# and pip resolves both against the conda-provided numpy above.
-[pip.deps]
 astroquery = ">=0.4.6"
 ultranest = ">=3.6"

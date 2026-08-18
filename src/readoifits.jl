@@ -224,18 +224,22 @@ vectors of length `nobs`; UV coordinates are stored in a `2×nuv` matrix.
 
 # Observable arrays
 - `v2`, `v2_err` — squared visibilities and errors
-- `v2_baseline`, `v2_lam`, `v2_dlam`, `v2_mjd`, `v2_flag` — baseline (m), λ (m), Δλ (m), MJD, flag
+- `v2_baseline`, `v2_lam`, `v2_dlam`, `v2_mjd`, `v2_flag` — spatial frequency B/λ
+  (cycles/rad), λ (m), Δλ (m), MJD, flag
 - `t3phi`, `t3phi_err`, `t3amp`, `t3amp_err` — closure phases (deg) and triple amplitudes
-- `t3_baseline` — geometric-mean baseline (m); `t3_maxbaseline` — longest side (m)
+- `t3_baseline` — geometric mean of the three legs' B/λ (cycles/rad);
+  `t3_maxbaseline` — longest leg, same units
 - `t3_lam`, `t3_dlam`, `t3_mjd`, `t3_flag`
 - `visamp`, `visamp_err`, `visphi`, `visphi_err` — complex visibility amplitude and phase (deg)
-- `vis_baseline`, `vis_lam`, `vis_dlam`, `vis_mjd`, `vis_flag`
+- `vis_baseline` (B/λ, cycles/rad), `vis_lam`, `vis_dlam`, `vis_mjd`, `vis_flag`
 - `flux`, `flux_err`, `flux_lam`, `flux_dlam`, `flux_mjd`, `flux_flag`
 - `flux_sta_index` — station index for each flux point; `0` means calibrated (OI_FLUX CALSTAT=C)
 - `flux_calibrated` — `true` if OI_FLUX has CALSTAT="C" (calibrated source spectrum / SED)
 
 # UV plane
-- `uv` — `2×nuv` matrix of (u, v) spatial frequencies in cycles/m (i.e. baseline/λ)
+- `uv` — `2×nuv` matrix of (u, v) spatial frequencies as baseline/λ. This is
+  **dimensionless — cycles per radian**, not cycles/m. Plots divide by 1e6 and label Mλ;
+  multiply by λ to recover the projected baseline in metres.
 - `uv_lam`, `uv_dlam`, `uv_mjd`, `uv_baseline`
 - `indx_v2`, `indx_vis` — index of each V²/vis point into the UV array
 - `indx_t3_1`, `indx_t3_2`, `indx_t3_3` — UV indices for the three legs of each triangle
@@ -388,7 +392,8 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `wav_range` — wavelength window(s) in metres, e.g. `[1.6e-6, 1.8e-6]` or a vector of
   windows `[[1.6e-6,1.8e-6],[2.0e-6,2.4e-6]]`. Default: keep all.
 - `mjd_range` — MJD window(s), same format. Default: keep all.
-- `baseline_range` — `[min, max]` baseline in cycles/m. Default: keep all.
+- `baseline_range` — `[min, max]` spatial frequency B/λ in cycles/rad (the same units as
+  `uv_baseline`, so e.g. `[5e6, 300e6]` is 5–300 Mλ). Default: keep all.
 - `filter_bad_data` — apply quality cuts (flags, NaN, SNR, amplitude range). Default: `false`.
 - `filter_vis`, `filter_v2`, `filter_t3amp`, `filter_t3phi`, `filter_flux` — enable cuts per observable type.
 - `cutoff_minv2`, `cutoff_maxv2` — V² range cut. Default: `(-1, 2.0)`.
@@ -507,9 +512,11 @@ pruned automatically and all index arrays are remapped.
 idx = set_data_filter(data[1,1]; filter_bad_data=true, baseline_range=[5e6, 300e6])
 clean = filter_data(data[1,1], idx)
 ```
+
+The default discards nothing. (Before 0.11 the default was `Int64[]`, which raised a
+`BoundsError` on `indexes_to_discard[2]` for any dataset containing observables, so it could
+never actually be used.)
 """
-# Default = discard nothing. The previous default of `Int64[]` raised a BoundsError on
-# `indexes_to_discard[2]` for any dataset with observables, so it could never be used.
 function filter_data(data_in::OIdata{T},
                      indexes_to_discard = [Int64[], Int64[], Int64[], Int64[], Int64[]]) where T
     data = deepcopy(data_in)
@@ -1496,7 +1503,7 @@ data in a single bin.
 
 ## Output
 - `warn` — print warnings about non-standard files. Default: `true`.
-- `verbose` — print summary of loaded tables. Default: `false`.
+- `verbose` — print summary of loaded tables. Default: `true`.
 
 # Example
 ```julia

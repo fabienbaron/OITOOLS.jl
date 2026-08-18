@@ -9,6 +9,7 @@
 #    which no tool reports. summarysize ratios catch the array-level version of that.
 
 using Test, OITOOLS, NFFT, LinearAlgebra
+using Random          # seeded RNG: see the reductions testset below
 
 const _MEM = OITOOLS
 
@@ -57,15 +58,28 @@ end
 end
 
 @testset "Float64-accumulating reductions" begin
+    # Seeded. This used to call randn() unseeded and assert that naive Float32 accumulation
+    # was *inaccurate enough* (relative error > 1e-8) to make the point. That threshold sits
+    # inside the lower tail of the distribution: measured over 40 draws of 200_000 elements,
+    # the error ranged 6.7e-9 to 3.4e-7 with a median of 1.1e-7, so the assertion failed on
+    # about 8% of runs. A file feeding a bit-for-bit gate has no business being random.
+    rng = Xoshiro(20260818)
+
     # Float64 methods must forward to the original calls, or the bit-gate breaks.
-    x = randn(1000); y = randn(1000)
+    x = randn(rng, 1000); y = randn(rng, 1000)
     @test _MEM._dot64(x, y) === dot(x, y)
     @test _MEM._sum64(x) === sum(x)
+
     # ...and the Float32 methods must beat naive Float32 accumulation by orders.
-    x64 = randn(200_000); x32 = Float32.(x64)
-    exact = dot(x64, x64)
-    @test abs(_MEM._dot64(x32, x32) - exact) / exact < 1e-9   # Float64 accumulation
-    @test abs(Float64(dot(x32, x32)) - exact) / exact > 1e-8  # naive Float32, for contrast
+    x64 = randn(rng, 200_000); x32 = Float32.(x64)
+    exact  = dot(x64, x64)
+    err_64 = abs(_MEM._dot64(x32, x32) - exact) / exact   # Float64 accumulation
+    err_32 = abs(Float64(dot(x32, x32)) - exact) / exact  # naive Float32, for contrast
+    @test err_64 < 1e-9
+    # Compare the two against each other rather than against an absolute floor: "Float64
+    # accumulation wins by orders of magnitude" is the actual claim, and stating it as a
+    # ratio holds for any draw or vector length.
+    @test err_32 > 100 * err_64
 end
 
 @testset "precision flows to plan, scratch and state" begin
