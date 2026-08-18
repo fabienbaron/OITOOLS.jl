@@ -173,3 +173,72 @@ function pmoired_to_julia_file(infile::AbstractString, outfile::AbstractString)
         end
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Julia -> PMOIRED
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Geometry keys OITOOLS understands that PMOIRED does not. A model using these is still
+# written out, but it will not mean the same thing on the other side, so exporting warns.
+const _PMOIRED_UNSUPPORTED_SUFFIXES = ["ldlin", "ldquad", "ldpow", "resolved"]
+
+_pmoired_value(v::Bool)            = v ? "True" : "False"
+_pmoired_value(::Nothing)          = "None"
+_pmoired_value(v::Integer)         = string(v)
+_pmoired_value(v::Real)            = string(float(v))
+_pmoired_value(v::AbstractString)  = "'" * replace(v, "'" => "\\'") * "'"
+_pmoired_value(v)                  = string(v)
+
+"""
+    dict_to_pmoired(model_dict; check=true) -> String
+
+Render an OITOOLS model dictionary as PMOIRED source — the inverse of
+[`pmoired_to_dict`](@ref).
+
+Keys are emitted in sorted order so the output is reproducible and diffable. Julia `true`,
+`false` and `nothing` become `True`, `False` and `None`; string values are quoted with
+single quotes, so `\$`-expressions survive unchanged (both packages use the same syntax).
+
+With `check=true` (the default) a warning is emitted for keys that have no PMOIRED
+equivalent — the `ldlin`/`ldquad`/`ldpow`/`resolved` geometries are OITOOLS additions. The
+model is still written; the warning exists because the failure is otherwise silent on the
+PMOIRED side.
+
+!!! warning "Azimuthal-mode convention"
+    OITOOLS uses `+π/2` in the azimuthal-mode phase where PMOIRED uses `−π/2`, so
+    `az projang<N>` values do not transfer literally. See the note in `parse_model.jl`.
+
+See also [`pmoired_to_dict`](@ref), [`dict_to_pmoired_file`](@ref).
+"""
+function dict_to_pmoired(model_dict::AbstractDict; check::Bool = true)
+    if check
+        bad = String[]
+        for k in keys(model_dict)
+            i = findfirst(==(','), k)
+            suffix = i === nothing ? k : k[nextind(k, i):end]
+            (suffix in _PMOIRED_UNSUPPORTED_SUFFIXES) && push!(bad, k)
+        end
+        isempty(bad) || @warn "These keys have no PMOIRED equivalent and will not be " *
+                              "interpreted the same way after import" keys=sort(bad)
+        if any(occursin("az projang", k) for k in keys(model_dict))
+            @warn "Model uses azimuthal modes: OITOOLS and PMOIRED differ by pi/2 in the " *
+                  "az projang convention, so those angles need adjusting by hand."
+        end
+    end
+    ks = sort(collect(keys(model_dict)))
+    body = join(("    '$(k)': $(_pmoired_value(model_dict[k]))" for k in ks), ",\n")
+    return "{\n" * body * ",\n}"
+end
+
+"""
+    dict_to_pmoired_file(model_dict, outfile; check=true)
+
+Write `model_dict` to `outfile` as PMOIRED source. Returns `outfile`.
+Inverse of [`pmoired_to_julia_file`](@ref).
+"""
+function dict_to_pmoired_file(model_dict::AbstractDict, outfile::AbstractString; check::Bool = true)
+    open(outfile, "w") do io
+        println(io, dict_to_pmoired(model_dict; check = check))
+    end
+    return outfile
+end

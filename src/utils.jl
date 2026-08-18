@@ -55,11 +55,68 @@ function query_target_from_simbad(targetname)
     return pyimport("astroquery.simbad").Simbad.query_object(targetname)
 end
 
+"""
+    sexagesimal_to_degrees(s) -> Float64
+
+Parse a sexagesimal coordinate string into a single decimal value. Fields may be separated
+by whitespace or colons, and one, two or three of them may be given.
+
+The sign applies to the **whole** quantity, not just the leading field: `"-00 30 00"` is
+`-0.5`, and `"-46 28 00.57"` is `-46.4668`. Reducing the parsed fields with a dot product
+against `[1, 1/60, 1/3600]` — which is what callers used to do — gets both of those wrong,
+because it negates only the degrees term.
+
+```jldoctest
+julia> sexagesimal_to_degrees("-46 28 00.5731825")
+-46.46682588402778
+```
+"""
+function sexagesimal_to_degrees(s::AbstractString)
+    t = strip(s)
+    isempty(t) && throw(ArgumentError("empty coordinate string"))
+    neg = startswith(t, '-')
+    if startswith(t, '-') || startswith(t, '+')
+        t = t[nextind(t, 1):end]
+    end
+    parts = split(t, r"[\s:]+"; keepempty = false)
+    isempty(parts) && throw(ArgumentError("cannot parse coordinate string: \"$s\""))
+    value = 0.0
+    scale = 1.0
+    for p in parts
+        value += parse(Float64, p) * scale
+        scale /= 60
+    end
+    return neg ? -value : value
+end
+
+"""
+    ra_dec_from_simbad(targetname) -> (ra_deg, dec_deg)
+
+Resolve a target name through SIMBAD and return its J2000 right ascension and declination
+in **decimal degrees**.
+
+Both astroquery layouts are handled: releases up to ~0.4.7 return sexagesimal strings in
+`RA`/`DEC` columns (RA in hours), newer ones return decimal degrees in `ra`/`dec`.
+
+!!! note "Changed in 0.11"
+    This used to return two `Vector{Float64}` of sexagesimal components, leaving the
+    conversion to the caller. Every caller did it with a dot product that mishandled the
+    sign of southern declinations. It now returns degrees directly.
+"""
 function ra_dec_from_simbad(targetname)
     res = query_target_from_simbad(targetname)
-    ra  = [parse(Float64, i) for i in split(pyconvert(String, res["RA"][0]))]
-    dec = [parse(Float64, i) for i in split(pyconvert(String, res["DEC"][0]))]
-    return ra, dec
+    pyis(res, pybuiltins.None) && error("SIMBAD returned no match for \"$targetname\"")
+    cols = Set(pyconvert(Vector{String}, res.colnames))
+    if ("ra" in cols) && ("dec" in cols)            # astroquery >= 0.4.8: decimal degrees
+        return pyconvert(Float64, res["ra"][0]), pyconvert(Float64, res["dec"][0])
+    elseif ("RA" in cols) && ("DEC" in cols)        # older: sexagesimal strings, RA in hours
+        ra_h = sexagesimal_to_degrees(pyconvert(String, res["RA"][0]))
+        dec  = sexagesimal_to_degrees(pyconvert(String, res["DEC"][0]))
+        return 15 * ra_h, dec
+    else
+        error("SIMBAD result for \"$targetname\" has no recognised coordinate columns; " *
+              "got $(sort(collect(cols)))")
+    end
 end
 
 """

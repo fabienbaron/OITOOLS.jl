@@ -222,17 +222,17 @@ cosDec_set = cos(asin(sinDec_set))
 
 
 #7a. calculate the Sun's local hour angle
-cosH_rise = (cos(zenith) - (sinDec_rise * sin(dtr*latitude))) / (cosDec_rise * cos(dtr*latitude))
+cosH_rise = (cos(dtr*zenith) - (sinDec_rise * sin(dtr*latitude))) / (cosDec_rise * cos(dtr*latitude))
 #if (cosH_rise >  1)
 #  print("the sun never rises on this location");
 #elseif (cosH_rise < -1)
 #  print("the sun never sets on this location");
 #end
-cosH_set = (cos(zenith) - (sinDec_set * sin(dtr*latitude))) / (cosDec_set * cos(dtr*latitude))
+cosH_set = (cos(dtr*zenith) - (sinDec_set * sin(dtr*latitude))) / (cosDec_set * cos(dtr*latitude))
 
 #7b. finish calculating H and convert into hours
-H_rise = (360 - rtd*acos(dtr*cosH_rise))/15
-H_set = rtd*acos(dtr*cosH_set)/15
+H_rise = (360 - rtd*acos(clamp(cosH_rise, -1.0, 1.0)))/15
+H_set = rtd*acos(clamp(cosH_set, -1.0, 1.0))/15
 
 #8. calculate local mean time of rising/setting
 T_rise = H_rise + RA_rise - 0.06571 * t_rise - 6.622

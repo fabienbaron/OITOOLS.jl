@@ -158,7 +158,10 @@ function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64
     lat, lon = facility.lat, facility.lon
 
     # LST at local midnight (next day, 7h UT ≈ midnight at CHARA longitude)
-    lst_midnight, _ = hour_angle_calc(obsdate + Dates.Day(1) + Dates.Hour(7), lon, ra)
+    # `ra` is in degrees (see the docstring and TargetConfig.raep0); hour_angle_calc wants
+    # hours. Before 0.11 `ra` was passed through unconverted, so callers had to supply hours
+    # -- which then made the angular_separation() call below, which needs degrees, wrong.
+    lst_midnight, _ = hour_angle_calc(obsdate + Dates.Day(1) + Dates.Hour(7), lon, ra/15)
     lst_midnight = lst_midnight[1]
 
     # Dark window
@@ -168,7 +171,7 @@ function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64
 
     # LST and hour angle — compute in Float64 then convert
     dates = hours_to_date(obsdate, utc)
-    lst64, ha64 = hour_angle_calc(dates, lon, ra)
+    lst64, ha64 = hour_angle_calc(dates, lon, ra/15)
     lst = Float32.(lst64)
     ha  = Float32.(ha64)
 

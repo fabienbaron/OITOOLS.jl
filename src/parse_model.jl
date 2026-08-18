@@ -87,6 +87,70 @@ const _ANALYTIC_PARAM_SUFFIXES = Dict{Symbol,Vector{String}}(
 )
 
 
+# Default bounds by parameter suffix, for the dict interface.
+#
+# `init_bounds` in vis_functions.jl is keyed by *function object* and belongs to the legacy
+# (param, uv) API, so it cannot answer "what are sensible bounds for the key `star,ud`?".
+# This table can. The values are deliberately generous starting points, not physics: their
+# job is to give a fit somewhere sane to begin and to satisfy samplers that require finite
+# bounds (`fit_model_ultranest` errors without them), not to encode prior knowledge.
+const _DEFAULT_PARAM_BOUNDS = Dict{String,Tuple{Float64,Float64}}(
+    # angular sizes, mas
+    "ud"      => (0.0, 1e3),  "fwhm"    => (0.0, 1e3),
+    "ldlin"   => (0.0, 1e3),  "ldquad"  => (0.0, 1e3),  "ldpow"   => (0.0, 1e3),
+    "diamin"  => (0.0, 1e3),  "diamout" => (0.0, 1e3),  "diam"    => (0.0, 1e3),
+    "fwhmin"  => (0.0, 1e3),  "fwhmout" => (0.0, 1e3),
+    "crin"    => (0.0, 1e3),  "crout"   => (0.0, 1e3),  "udout"   => (0.0, 1e3),
+    "r_max"   => (0.0, 1e3),  "spatial_kernel" => (0.0, 1e3),
+    # limb darkening
+    "u"       => (-1.0, 1.0), "w"       => (-1.0, 1.0), "alpha"   => (0.0, 3.0),
+    # position and orientation
+    "x"       => (-1e3, 1e3), "y"       => (-1e3, 1e3), "croff"   => (-1e3, 1e3),
+    "pa"      => (-180.0, 180.0), "projang" => (-180.0, 180.0),
+    "crprojang" => (-180.0, 180.0),
+    "incl"    => (0.0, 90.0),
+    # flux and shape fractions
+    "f"       => (0.0, 1.0),  "thick"   => (0.0, 1.0),
+)
+
+"""
+    default_bounds(model_dict, list_free_params) -> (lb, ub)
+
+Suggest lower and upper bounds for each free parameter, as two `Dict{String,Float64}` ready
+to pass to any fitter's `lb`/`ub` keyword.
+
+Bounds are chosen from the parameter's suffix — the part after the first comma, so
+`"star,ud"` is looked up as `"ud"`. Azimuthal-mode keys (`"c,az amp1"`, `"c,az projang1"`)
+are recognised by prefix. Anything unrecognised, including bare global names, gets
+`(-Inf, Inf)`; callers that need finite bounds (nested sampling) should check for that.
+
+These are generous starting points, not physics — a 1 arcsec ceiling on angular sizes, for
+instance. Narrow them once you know your source.
+
+See also [`display_model`](@ref), which validates values against whatever bounds you end up
+with.
+"""
+function default_bounds(model_dict::Dict{String}, list_free_params::AbstractVector{<:AbstractString})
+    lb = Dict{String,Float64}()
+    ub = Dict{String,Float64}()
+    for p in list_free_params
+        i = findfirst(==(','), p)
+        suffix = i === nothing ? p : p[nextind(p, i):end]
+        b = if haskey(_DEFAULT_PARAM_BOUNDS, suffix)
+                _DEFAULT_PARAM_BOUNDS[suffix]
+            elseif startswith(suffix, "az amp")
+                (0.0, 1.0)
+            elseif startswith(suffix, "az projang")
+                (-180.0, 180.0)
+            else
+                (-Inf, Inf)
+            end
+        lb[p], ub[p] = b
+    end
+    return lb, ub
+end
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Analytic visibility functions
 # ─────────────────────────────────────────────────────────────────────────────
@@ -465,6 +529,58 @@ end
 # dict_to_model
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+"""
+Warn about `component,key` pairs the parser never consumes.
+
+A misspelt geometry key does not error — it changes what the component *is*. Writing
+`"ring,gaussian_ring"` alongside `"ring,fwhm"` yields a plain Gaussian, silently, because
+`_identify_kind` matches on `fwhm` and the unknown key is ignored. Two shipped demos did
+exactly this and fitted the wrong model for as long as they existed.
+
+Keys referenced from a `\$`-expression anywhere in the dict are always legitimate (that is
+how radial-profile parameters and shared globals work), so they are never reported.
+"""
+function _warn_unrecognised_keys(pd::Dict{String})
+    referenced = Set{String}()
+    for v in values(pd)
+        v isa AbstractString || continue
+        union!(referenced, extract_refs(v))
+    end
+
+    universal = Set(["f", "x", "y", "incl", "pa", "projang"])
+    sugar     = Set(["diam", "thick", "spectrum"])
+    hankel_ok = Set(["profile", "r_max", "nr", "udout", "diamin", "diamout"])
+
+    unknown = String[]
+    for cn in _component_names(pd)
+        kind = _identify_kind(cn, pd)
+        ok = union(Set{String}(universal), sugar,
+                   Set{String}(get(_ANALYTIC_PARAM_SUFFIXES, kind, String[])))
+        kind === :hankel && union!(ok, hankel_ok)
+        gk = get(_KIND_GEOMETRY, kind, "")
+        isempty(gk) || push!(ok, gk)
+
+        prefix = cn * ","
+        for k in keys(pd)
+            startswith(k, prefix) || continue
+            suffix = k[(length(prefix) + 1):end]
+            suffix in ok && continue
+            startswith(suffix, "az amp") && continue
+            startswith(suffix, "az projang") && continue
+            (suffix in referenced || k in referenced) && continue
+            push!(unknown, k)
+        end
+    end
+
+    if !isempty(unknown)
+        @warn "Model keys not used by the parser — check for typos. An unrecognised " *
+              "geometry key does not error, it silently changes the component type." *
+              "" keys = sort(unknown)
+    end
+    return unknown
+end
+
 """
     dict_to_model(model_dict, list_free_params; nB_workspace=100) -> FlatModel
 
@@ -506,6 +622,9 @@ function dict_to_model(model_dict::Dict{String},
 
     # ── Expand sugar (diam+thick → diamin+diamout) ───────────────────────────
     pd = _preprocess_sugar(model_dict, comp_names)
+
+    # ── Report keys the parser will ignore ───────────────────────────────────
+    _warn_unrecognised_keys(pd)
 
     # ── Build resolver dict (numeric params only) ────────────────────────────
     res_dict = _resolver_dict(pd, comp_names)

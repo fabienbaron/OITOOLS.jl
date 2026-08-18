@@ -125,9 +125,7 @@ function run_plan(interp::TclInterp, args::TclObj)
             ra, dec, mags = simbad_cache[key]
         else
             set_status!(interp, "Querying SIMBAD for $(targetname)...")
-            radec = ra_dec_from_simbad(targetname)
-            ra  = radec[1]' * [1.0, 1/60.0, 1/3600.0]
-            dec = radec[2]' * [1.0, 1/60.0, 1/3600.0]
+            ra, dec = ra_dec_from_simbad(targetname)   # decimal degrees
             mags = magnitudes_from_simbad(targetname)
             simbad_cache[key] = (ra, dec, mags)
         end

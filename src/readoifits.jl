@@ -508,7 +508,10 @@ idx = set_data_filter(data[1,1]; filter_bad_data=true, baseline_range=[5e6, 300e
 clean = filter_data(data[1,1], idx)
 ```
 """
-function filter_data(data_in::OIdata{T}, indexes_to_discard = Int64[]) where T
+# Default = discard nothing. The previous default of `Int64[]` raised a BoundsError on
+# `indexes_to_discard[2]` for any dataset with observables, so it could never be used.
+function filter_data(data_in::OIdata{T},
+                     indexes_to_discard = [Int64[], Int64[], Int64[], Int64[], Int64[]]) where T
     data = deepcopy(data_in)
     good_uv_vis = Int64[]; good_uv_v2 = Int64[]
     good_uv_t3_1 = Int64[]; good_uv_t3_2 = Int64[]; good_uv_t3_3 = Int64[]

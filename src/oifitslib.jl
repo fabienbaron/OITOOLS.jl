@@ -118,23 +118,23 @@ function oifits_filter(;outfile::String="", infile::String="", arrname::String="
             options = string(options, " --target-id=$(target_id)")
         end
 
-        if (mjd_min !=0) || (mjd_max !=199)
+        if (mjd_min != 0) || (mjd_max != 1e99)
             options = string(options, " --mjd-min=$mjd_min --mjd-max=$mjd_max")
         end
 
-        if (wave_min !=0) || (wave_max !=199)
+        if (wave_min != 0) || (wave_max != 1e99)
             options = string(options, " --wave-min=$wave_min --wave-max=$wave_max")
         end
 
-        if (bas_min !=0) || (bas_max !=199)
+        if (bas_min != 0) || (bas_max != 1e99)
             options = string(options, " --bas-min=$bas_min --bas-max=$bas_max")
         end
 
-        if (uvrad_min !=0) || (uvrad_min !=199)
+        if (uvrad_min != 0) || (uvrad_max != 1e99)
             options = string(options, " --uvrad-min=$uvrad_min --uvrad-max=$uvrad_max")
         end
 
-        if (snr_min !=0) || (snr_max !=199)
+        if (snr_min != 0) || (snr_max != 1e99)
             options = string(options, " --snr-min=$snr_min --snr-max=$snr_max")
         end
 

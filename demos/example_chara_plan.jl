@@ -2,12 +2,11 @@
 # CHARA observation planning — demonstrates the functions in plan.jl
 #
 using OITOOLS, Dates
-using PyPlot
+using PythonPlot
 
 # ── Target ────────────────────────────────────────────────────────────────────
 targetname = "AZ Cyg"
-radec = ra_dec_from_simbad(targetname)
-ra, dec = (radec[1]'*[1.0, 1/60., 1/3600], radec[2]'*[1.0, 1/60., 1/3600])
+ra, dec = ra_dec_from_simbad(targetname)   # decimal degrees
 
 # ── Facility & night ──────────────────────────────────────────────────────────
 facility = read_facility_file("CHARA")

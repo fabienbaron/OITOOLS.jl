@@ -61,7 +61,7 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
        imdisp, imdisp_multi, plot_facility
 
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
-export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model
+export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model, default_bounds
 export fit_model, fit_model_lsqfit, fit_model_ultranest
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
@@ -76,7 +76,7 @@ export perturb_data
 export resample_data          # deprecated alias for perturb_data
 
 # ── Visibility functions ─────────────────────────────────────────────────────
-export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_alt,
+export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_tri,
        visibility_ldpow, visibility_ldsquareroot,
        visibility_annulus, visibility_ellipse_uniform, visibility_ellipse_quad,
        visibility_thin_ring, visibility_Gaussian_ring, visibility_Gaussian_ring_az,
@@ -127,7 +127,7 @@ export strehl_ratio, coupling_efficiency, fried_parameter, seeing_from_r0, atm_t
 export PhotometricBand, PHOTOMETRIC_BANDS, band_for_wavelength, band_by_name, zero_point_flux
 export gantt_onenight
 export sunrise_sunset, alt_az, opd_limits, airmass, datetime_to_jd, datetime_to_mjd
-export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad
+export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad, sexagesimal_to_degrees
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
 export night_observability, compute_delays, in_delay, best_pop, observable_epochs
@@ -138,7 +138,7 @@ export moon_radec, moon_illumination, angular_separation
 export oifits_check, oifits_merge, oifits_filter, oifits_fix_tdim
 
 # ── PMOIRED compatibility ────────────────────────────────────────────────────
-export pmoired_to_julia, pmoired_to_julia_file, pmoired_to_dict
+export pmoired_to_julia, pmoired_to_julia_file, pmoired_to_dict, dict_to_pmoired, dict_to_pmoired_file
 
 # ── Precompilation workload ──────────────────────────────────────────────────
 include("precompile.jl")

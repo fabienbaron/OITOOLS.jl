@@ -2131,6 +2131,13 @@ function _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regulariz
                 tf = trans_polychromatic_polyfit(x, tg; degree=deg, λ=λ)
                 f += μ * tf;  g[:,:,:] += μ * tg
                 verb && printstyled(@sprintf(" ts_poly(d=%d): %.3f", deg, μ * tf), color=:yellow)
+            else
+                # Spatial regularizers error on an unknown name; transspectral ones used to
+                # be dropped in silence, so a typo cost you the regularization without any
+                # sign that it had happened. Match the spatial behaviour.
+                error("Unknown transspectral regularizer: \"$rname\". Valid names are " *
+                      "transspectral_tv, transspectral_tvsq, transspectral_structnorm, " *
+                      "transspectral_l1l2, transspectral_grouptv, transspectral_poly.")
             end
         end
         verb && printstyled(@sprintf("\nPost trans -- Crit: %.2f Crit/dof: %.2f\n", f, f/ndof), color=:blue)

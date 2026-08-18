@@ -261,7 +261,7 @@ if visfunc == visibility_ldquad
  hbounds = [1e9, 2.0, 1.0]
 end
 
-if visfunc == visibility_ldquad_alt
+if visfunc == visibility_ldquad_tri
  lbounds = [0.0, 0.0, 0.0]
  hbounds = [1e9, 1.0, 1.0]
 end
@@ -287,7 +287,7 @@ end
 
 if visfunc == visibility_ellipse_quad
  lbounds = [0.0, -1.0, -1.0, 0.0, -180.0]
- hbounds = [1e9, 1.0, 1.0, 0.0, 180.0]
+ hbounds = [1e9, 1.0, 1.0, 1.0, 180.0]
 end
 
 return lbounds, hbounds
