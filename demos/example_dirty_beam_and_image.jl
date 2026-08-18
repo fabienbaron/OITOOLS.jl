@@ -1,4 +1,4 @@
-using OITOOLS,PyPlot,NFFT
+using OITOOLS,PythonPlot,NFFT
 set_oiplot_defaults()
 oifitsfile = "./data/2004-data1.oifits";
 data = (readoifits(oifitsfile))[1,1]; # data can be split by wavelength, time, etc.

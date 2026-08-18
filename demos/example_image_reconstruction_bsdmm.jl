@@ -38,7 +38,7 @@ println("\nStandard final:")
 image_to_chi2(x_ref, ft, data; verb=true)
 
 # ── Side-by-side comparison ───────────────────────────────────────────────
-using PyPlot
+using PythonPlot
 cube = cat(x_bsdmm, x_ref; dims=3)
 imdisp_multi(cube; labels=["BSDMM", "Standard"], pixsize=pixsize,
              figtitle="BSDMM vs Standard reconstruction")

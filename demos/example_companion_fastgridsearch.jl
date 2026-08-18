@@ -4,7 +4,7 @@
 #                 - this is for a fast search where the visibilities are computed for the entire field at once! No for loops. 
 #                 - a parallel implementation (splitting the grid into smaller chunks) would be an easy extension for better performance
 #                 - not very useful in practice: see example_companion_gridsearch for a more flexible and reliable method
-using OITOOLS, LinearAlgebra, PyPlot
+using OITOOLS, LinearAlgebra, PythonPlot
 
 function binary_dirac_primary_centered(flux_ratio::Float64, side::Array{Float64,1}, uv::Array{Float64,2} )  # flux ratio is primary/secondary
 # Note: we use the fact the grid is a circulant matrix to compute for all the field

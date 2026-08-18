@@ -1,7 +1,7 @@
 #
 # Demonstrating different types of classic regularizations
 #
-using OITOOLS, PyPlot
+using OITOOLS, PythonPlot
 set_oiplot_defaults()
 oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.1 # size of a pixel in milliarcseconds

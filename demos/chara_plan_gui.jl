@@ -3,7 +3,7 @@
 #
 include("../src/OITOOLS.jl")
 using .OITOOLS, Dates
-using PyPlot
+using PythonPlot
 using TclTk
 
 # ── CHARA combiner choices ────────────────────────────────────────────────────

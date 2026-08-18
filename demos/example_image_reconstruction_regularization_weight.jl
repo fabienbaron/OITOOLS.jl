@@ -1,7 +1,7 @@
 #
 # Very Basic Image reconstruction code
 #
-using OITOOLS,PyPlot
+using OITOOLS,PythonPlot
 oifitsfile = "./data/2004-data1.oifits"
 pixsize = 0.101 # size of a pixel in milliarcseconds
 nx = 128 # width of image (number of pixels)

@@ -434,7 +434,7 @@ println("\nV2+T3phi+TV final:")
 image_to_chi2(x_tv, ft_nfft, data; verb=true)
 
 # Save ADMM result as PNG
-using PyPlot
+using PythonPlot
 imdisp(x_tv, pixsize=pixsize, figtitle="ADMM reconstruction")
 savefig("admm_result.png", dpi=150, bbox_inches="tight")
 println("Saved admm_result.png")

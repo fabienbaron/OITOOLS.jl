@@ -3,7 +3,7 @@
 # Example with Polaris MIRCX data
 #
 using OITOOLS
-using PyPlot
+using PythonPlot
 set_oiplot_defaults();
 oifitsfile = "./data/polaris.oifits"
 data = readoifits(oifitsfile);

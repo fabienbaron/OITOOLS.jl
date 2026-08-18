@@ -86,10 +86,10 @@ u    = boot.samples[boot.mask, 2]
         median(θ_ud) - quantile(θ_ud, 0.16))
 
 # ── Corner plot of the bootstrap samples ────────────────────────────────────
-using PyPlot
+using PythonPlot
 figure("Bootstrap", figsize=(6,6)); clf()
-subplot(2,2,1); PyPlot.hist(boot.samples[boot.mask,1], 40); xlabel(free_params[1])
-subplot(2,2,4); PyPlot.hist(boot.samples[boot.mask,2], 40); xlabel(free_params[2])
+subplot(2,2,1); PythonPlot.hist(boot.samples[boot.mask,1], 40); xlabel(free_params[1])
+subplot(2,2,4); PythonPlot.hist(boot.samples[boot.mask,2], 40); xlabel(free_params[2])
 subplot(2,2,3); plot(boot.samples[boot.mask,1], boot.samples[boot.mask,2], ".", ms=2)
 xlabel(free_params[1]); ylabel(free_params[2])
 tight_layout()

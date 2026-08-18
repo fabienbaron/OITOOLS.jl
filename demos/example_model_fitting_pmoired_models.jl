@@ -14,7 +14,7 @@
 ##############################################################################
 
 using OITOOLS
-using PyPlot, Printf
+using PythonPlot, Printf
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: show model image with parameter overlay
