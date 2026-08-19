@@ -71,14 +71,23 @@ end
     @test _MEM._sum64(x) === sum(x)
 
     # ...and the Float32 methods must beat naive Float32 accumulation by orders.
+    #
+    # The contrast is a hand-written sequential Float32 loop, not `dot(x32, x32)`. BLAS is
+    # free to accumulate a Float32 dot product however it likes, and implementations differ:
+    # measured on the same input, OpenBLAS on x86 gives a relative error of 1.07e-7 while
+    # Apple's BLAS on aarch64 gives 2.90e-8. The claim being tested is about accumulation
+    # WIDTH, so the comparison has to be against an accumulation this file controls.
+    naive32(v) = (s = 0.0f0; for a in v; s += a * a; end; s)
+
     x64 = randn(rng, 200_000); x32 = Float32.(x64)
     exact  = dot(x64, x64)
-    err_64 = abs(_MEM._dot64(x32, x32) - exact) / exact   # Float64 accumulation
-    err_32 = abs(Float64(dot(x32, x32)) - exact) / exact  # naive Float32, for contrast
+    err_64 = abs(_MEM._dot64(x32, x32) - exact) / exact      # Float64 accumulation
+    err_32 = abs(Float64(naive32(x32)) - exact) / exact      # Float32 accumulation
     @test err_64 < 1e-9
     # Compare the two against each other rather than against an absolute floor: "Float64
     # accumulation wins by orders of magnitude" is the actual claim, and stating it as a
-    # ratio holds for any draw or vector length.
+    # ratio holds for any draw or vector length. The measured ratio is ~1.4e5, so the
+    # threshold has three orders of headroom.
     @test err_32 > 100 * err_64
 end
 
