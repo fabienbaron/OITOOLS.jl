@@ -28,7 +28,10 @@ function _initial_folder(session::Session)
 end
 
 "Tab names, in the order Main.qml lists them."
-const TAB_NAMES = ("explore", "observe", "model", "image")
+const TAB_NAMES = ("exploring", "observing", "modeling", "imaging")
+
+"The bare noun for each tab, accepted as well: nobody types the gerund from memory."
+const TAB_ALIASES = ("explore", "observe", "model", "image")
 
 """
 Which perspective the window opens on, from `\$OITOOLSGUI_TAB` (default Explore).
@@ -41,9 +44,9 @@ typo would otherwise look like the setting having no effect.
 function _initial_tab()
     want = lowercase(strip(get(ENV, "OITOOLSGUI_TAB", "")))
     isempty(want) && return 0
-    i = findfirst(==(want), TAB_NAMES)
+    i = something(findfirst(==(want), TAB_NAMES), findfirst(==(want), TAB_ALIASES), nothing)
     if i === nothing
-        @warn "OITOOLSGUI_TAB is not a tab name; opening on Explore" got = want options = TAB_NAMES
+        @warn "OITOOLSGUI_TAB is not a tab name; opening on Exploring" got = want options = TAB_NAMES
         return 0
     end
     return i - 1        # QML indexes from zero

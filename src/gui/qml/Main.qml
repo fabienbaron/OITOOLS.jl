@@ -109,6 +109,11 @@ ApplicationWindow {
             }
             Button {
                 text: "Open OIFITS…"
+                // A dialog already on screen must not be opened a second time. Under the XDG
+                // portal the dialog arrives over D-Bus and takes a visible moment, which is
+                // precisely when a second click happens; the extra dialog then outlives the
+                // one that was answered and reads as a picker that would not close.
+                enabled: !openDialog.visible
                 onClicked: openDialog.open()
             }
             Label { text: win.status; elide: Text.ElideMiddle; Layout.fillWidth: true }
@@ -165,6 +170,10 @@ ApplicationWindow {
             datasetBox.currentIndex = datasetBox.model.length - 1
             win.afterAction()
             busy.running = false; taskLabel.text = "idle"
+            // The load holds the GUI thread for seconds, so by the time it returns the window
+            // manager has had every chance to put focus somewhere else. Claim it back rather
+            // than leaving the user to hunt for the window.
+            win.raise(); win.requestActivate()
         }
     }
 
@@ -205,10 +214,10 @@ ApplicationWindow {
             // it would otherwise never render: a tab that is never current is constructed but
             // never laid out, so its layout warnings never appear.
             currentIndex: initialTab
-            TabButton { text: "Explore" }
-            TabButton { text: "Observe" }
-            TabButton { text: "Model" }
-            TabButton { text: "Image" }
+            TabButton { text: "Exploring" }
+            TabButton { text: "Observing" }
+            TabButton { text: "Modeling" }
+            TabButton { text: "Imaging" }
         }
 
         StackLayout {
@@ -338,7 +347,7 @@ ApplicationWindow {
                     }
                     Button {
                         text: "Export script…"
-                        enabled: logToggle.checked
+                        enabled: logToggle.checked && !saveDialog.visible
                         onClicked: saveDialog.open()
                     }
                 }

@@ -26,6 +26,10 @@ module OITOOLSGUIExt
 
 using OITOOLS
 using OITOOLS: OIdata, OBS_PLOT_SPECS, oiplot_colors, canonical_color, as_datavec
+# Not exported by the parent, and both are needed by src/gui/imaging.jl: the precision
+# cast that keeps a starting image loadable by the Fourier plan, and the criterion the
+# panel reports before and after a run.
+using OITOOLS: to_ft_precision, image_to_chi2
 using Printf, Dates
 using Makie
 using QML, QMLMakie, GLMakie
@@ -40,6 +44,8 @@ export baseline_color_map, style_axis!, add_baseline_legend!
 export LiveCanvas, build_canvas, update_canvas!, canvas_data
 export ParamRow, ParamMode, PARAM_FIXED, PARAM_FREE, PARAM_EXPR
 export model_rows, model_inspection, ComponentInfo, free_parameter_vector
+export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
+       start_image, reconstruct_image
 export GLOBAL_COMPONENT
 export ShellState, check_qt_conflict, ui_scale_override
 
@@ -50,6 +56,7 @@ include(joinpath(GUIDIR, "commandlog.jl"))
 include(joinpath(GUIDIR, "session.jl"))
 include(joinpath(GUIDIR, "actions_data.jl"))
 include(joinpath(GUIDIR, "model.jl"))       # Model perspective: parameter table, parser inspection
+include(joinpath(GUIDIR, "imaging.jl"))     # Image perspective: geometry, start image, reconstruct
 include(joinpath(GUIDIR, "plots.jl"))
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
 include(joinpath(GUIDIR, "shell.jl"))

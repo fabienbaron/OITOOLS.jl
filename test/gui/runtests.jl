@@ -638,6 +638,7 @@ end
     end
 
     include(joinpath(@__DIR__, "test_model.jl"))   # Model perspective data layer
+    include(joinpath(@__DIR__, "test_imaging.jl")) # Image perspective data layer
 
     @testset "the shell path and the figure builders agree" begin
         # Same implementation, so the harness result for uv_figure applies to the shell too.

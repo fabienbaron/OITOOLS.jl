@@ -77,8 +77,17 @@ Item {
     property bool pigeonsAvailable: false
     property bool oiviAvailable:    false
 
-    readonly property bool stochastic:
-        engine === "squeeze" || engine === "tempering" || engine === "vi"
+    // The three SQUEEZE rows share a sampler, so almost every branch wants "is this SQUEEZE"
+    // rather than a list of keys. Naming it once is what keeps a new variant from having to be
+    // added in six places.
+    readonly property bool isSqueeze:
+        engine === "squeeze" || engine === "tempering" || engine === "squeeze_sparco"
+
+    // The SPARCO row IS the annealing sampler with a parametric component sampled beside the
+    // image, so the panel follows the engine instead of a separate tick box.
+    readonly property bool squeezeUseSparco: engine === "squeeze_sparco"
+
+    readonly property bool stochastic: isSqueeze || engine === "vi"
 
     function engineReasonFor(key) {
         if (key === "tempering" && !pigeonsAvailable) return "needs Pigeons"
@@ -99,7 +108,7 @@ Item {
     // differs by engine — hiding it in the regulariser list would misrepresent both facts.
     readonly property bool positivity: true
     readonly property string positivityNote:
-          (engine === "squeeze" || engine === "tempering")
+          isSqueeze
             ? "exact by construction: the image is a bag of flux quanta, so total flux is conserved too"
         : engine === "bsmem"
             ? "structural: the entropy term is undefined for a negative pixel"
@@ -186,7 +195,6 @@ Item {
     property bool sparcoFreeEnvIndx: false
     property bool sparcoFreeFBg: false
     property bool sparcoFreeBgIndx: false
-    property bool squeezeUseSparco: false
 
     // VI (OIVI): there are no regularisers at all — the correlated-field prior IS the
     // regularisation, so that panel shows prior hyperparameters where the others show μ.
@@ -285,7 +293,7 @@ Item {
               state: !hasDiagnostics ? "unknown" : (Math.abs(diagLogZDelta) > 0.1 ? "warn" : "ok"),
               tip: "must stabilise across rounds. Once stable it also gives model comparison between two reconstructions." }
           ]
-        : engine === "squeeze" ? [
+        : isSqueeze ? [
             { label: "chain acceptance",
               value: hasDiagnostics ? "min " + fmt(diagAcceptMin, 2) + " · mean " + fmt(diagAcceptMean, 2) : "—",
               state: !hasDiagnostics ? "unknown" : (diagAcceptMin < 0.05 ? "bad" : (diagAcceptMin < 0.2 ? "warn" : "ok")),
@@ -361,8 +369,9 @@ Item {
         switch (key) {
         case "bsmem":     return 1
         case "bsdmm":     return 2
-        case "squeeze":   return 3
-        case "tempering": return 3
+        case "squeeze":        return 3
+        case "tempering":      return 3
+        case "squeeze_sparco": return 3
         case "vi":        return 4
         case "sparco":    return 5
         default:          return 0
@@ -427,8 +436,16 @@ Item {
         ListElement { key: "bsmem";     name: "MaxEnt / BSMEM";                        entry: "reconstruct_bsmem" }
         ListElement { key: "bsdmm";     name: "ADMM / BSDMM";                          entry: "reconstruct_bsdmm" }
         ListElement { key: "sparco";    name: "SPARCO hybrid";                         entry: "reconstruct_hybrid" }
-        ListElement { key: "squeeze";   name: "Simulated annealing (SQUEEZE)";         entry: "reconstruct_squeeze" }
-        ListElement { key: "tempering"; name: "Parallel tempering (SQUEEZE + Pigeons)"; entry: "reconstruct_squeeze_tempered" }
+        // SQUEEZE appears three times because the three are used as three different
+        // engines, not as one engine with settings: annealing and tempering are separate
+        // entry points, and the SPARCO variant additionally samples a parametric component
+        // alongside the image. Sharing one row and a checkbox would bury that.
+        ListElement { key: "squeeze";        name: "Squeeze (Annealing)";
+                      entry: "reconstruct_squeeze" }
+        ListElement { key: "tempering";      name: "Squeeze (Tempering)";
+                      entry: "reconstruct_squeeze_tempered" }
+        ListElement { key: "squeeze_sparco"; name: "Squeeze (Annealing + SPARCO)";
+                      entry: "reconstruct_squeeze  (model = SqueezeSparco)" }
         ListElement { key: "vi";        name: "Variational inference (OIVI)";          entry: "reconstruct_map / mgvi / geovi" }
     }
 
@@ -1188,10 +1205,10 @@ Item {
                                         Item { Layout.fillWidth: true }
                                     }
 
-                                    CheckBox {
+                                    Label {
+                                        visible: root.squeezeUseSparco
                                         text: "SPARCO model (SqueezeSparco)"
-                                        checked: root.squeezeUseSparco
-                                        onToggled: root.squeezeUseSparco = checked
+                                        font.bold: true
                                     }
                                     Loader {
                                         Layout.fillWidth: true
@@ -1484,7 +1501,7 @@ Item {
             // for a sampler, and a tempering run fails in ways no χ² trace can show.
             GroupBox {
                 title: root.engine === "tempering" ? "Tempering diagnostics"
-                     : root.engine === "squeeze"   ? "Annealing diagnostics"
+                     : root.isSqueeze              ? "Annealing diagnostics"
                                                    : "Inference diagnostics"
                 Layout.fillWidth: true
                 visible: root.stochastic
