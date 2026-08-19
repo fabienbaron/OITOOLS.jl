@@ -17,6 +17,7 @@ BLAS.set_num_threads(1)
     include("test_model_gradients.jl")   # analytic model gradients vs finite differences
     include("test_vis_functions.jl")     # legacy (param, uv) visibility function API
     include("test_bootstrap.jl")         # resampling / uncertainty estimation
+    include("test_constraints.jl")       # fit constraints + TOML model files
     include("test_oifits_tdim.jl")       # OIFITS writing interoperability
     include("test_simulate.jl")          # simulate(): geometry, noise model, observability
     include("test_planning.jl")          # astrometry, twilight, observability conventions

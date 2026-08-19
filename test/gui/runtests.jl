@@ -345,7 +345,9 @@ end
     # tested is the guard logic — each condition that switches the workaround OFF — plus the
     # driver search, which is made reachable by pointing LIBGL_DRIVERS_PATH at a temp dir.
     @testset "graphics environment" begin
-        G = GUI
+        # Core, not the extension: `configure_graphics!` has to be callable before GLMakie is
+        # loaded, so it cannot live somewhere GLMakie's arrival creates.
+        G = OITOOLS
         touched = ["OITOOLSGUI_NO_GPU_SETUP", "GALLIUM_DRIVER", "LIBGL_ALWAYS_SOFTWARE",
                    "LIBGL_DRIVERS_PATH", "MESA_D3D12_DEFAULT_ADAPTER_NAME"]
         saved = Dict(k => get(ENV, k, nothing) for k in touched)
@@ -634,6 +636,8 @@ end
             @test lo != hi                                          # and a real range is not
         end
     end
+
+    include(joinpath(@__DIR__, "test_model.jl"))   # Model perspective data layer
 
     @testset "the shell path and the figure builders agree" begin
         # Same implementation, so the harness result for uv_figure applies to the shell too.

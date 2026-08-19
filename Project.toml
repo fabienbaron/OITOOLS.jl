@@ -48,11 +48,20 @@ QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
 QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
 
 [extensions]
-OITOOLSGUIExt = ["GLFW_jll", "GLMakie", "Makie", "QML", "QMLMakie"]
+OITOOLSGUIExt = ["GLMakie", "Makie", "QML", "QMLMakie"]
+OITOOLSGLFWExt = "GLFW_jll"        # prefer_native_wayland! only; must load before GLMakie
 OITOOLSPigeonsExt = "Pigeons"
 OITOOLSPythonPlotExt = "PythonPlot"
 
 [compat]
+# The GUI stack. These are weak dependencies: `using OITOOLS` loads none of them, and the
+# bounds only matter to whoever opens the GUI. Pinned to the minor version each was developed
+# against, because Makie and QML both break API across minors.
+GLFW_jll = "3.4"
+GLMakie = "0.13"
+Makie = "0.24"
+QML = "0.13"
+QMLMakie = "0.3"
 Pigeons = "0.4"
 ADTypes = "1.21.0"
 FiniteDifferences = "0.12.33"

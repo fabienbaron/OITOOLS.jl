@@ -278,14 +278,13 @@ ApplicationWindow {
             }
 
             // ── Observe ──────────────────────────────────────────────────────
-            Item {
-                Label {
-                    anchors.centerIn: parent
-                    horizontalAlignment: Text.AlignHCenter
-                    color: "#666"
-                    text: "Observe — target resolution, array and instrument, observability.\n" +
-                          "Blocked on the twilight and RA-convention fixes; see the plan."
-                }
+            // Sibling .qml files in this directory resolve as types without an import.
+            // The three scale values are passed rather than reached for: a tab is a plain
+            // component, so it cannot see `win`.
+            ObserveTab {
+                uiScale:    win.uiScale
+                fontScale:  win.fontScale
+                baseFontPt: win.baseFontPt
             }
 
             // ── Model ────────────────────────────────────────────────────────
@@ -300,14 +299,10 @@ ApplicationWindow {
             }
 
             // ── Image ────────────────────────────────────────────────────────
-            Item {
-                Label {
-                    anchors.centerIn: parent
-                    horizontalAlignment: Text.AlignHCenter
-                    color: "#666"
-                    text: "Image — engine (VMLMB / MaxEnt / ADMM / SPARCO / SQUEEZE / VI),\n" +
-                          "engine-dependent regularisation, live reconstruction."
-                }
+            ImageTab {
+                uiScale:    win.uiScale
+                fontScale:  win.fontScale
+                baseFontPt: win.baseFontPt
             }
         }
 

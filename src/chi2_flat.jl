@@ -859,7 +859,7 @@ function residuals_flat(model::FlatModel,
     # T3phi
     if w[3] > 0 && data.nt3phi > 0
         t3 = V[data.indx_t3_1] .* V[data.indx_t3_2] .* V[data.indx_t3_3]
-        t3phi_model = angle.(t3) .* T(180 / π)
+        t3phi_model = angle.(t3) .* (180.0 / π)
         append!(r, sqrt(w[3]) .* _mod360(t3phi_model .- data.t3phi) ./ data.t3phi_err)
     end
 
@@ -956,7 +956,7 @@ function residuals_flat_jac(model::FlatModel,
     if w_t3phi > 0 && data.nt3phi > 0
         V1 = V[data.indx_t3_1]; V2c = V[data.indx_t3_2]; V3 = V[data.indx_t3_3]
         t3 = V1 .* V2c .* V3
-        t3phi_model = angle.(t3) .* T(180 / π)
+        t3phi_model = angle.(t3) .* (180.0 / π)
         dphi = _mod360(t3phi_model .- data.t3phi)
         r_t3p = sqrt(w_t3phi) .* dphi ./ data.t3phi_err
         # ∂angle(T3)/∂x = Im(conj(T3)/|T3|² · ∂T3/∂x) · 180/π
@@ -984,7 +984,7 @@ function residuals_flat_jac(model::FlatModel,
     if w_visphi > 0 && data.nvisphi > 0
         idx = data.indx_vis
         Vvis = V[idx]
-        visphi_model = angle.(Vvis) .* T(180 / π)
+        visphi_model = angle.(Vvis) .* (180.0 / π)
         dphi = _mod360(visphi_model .- data.visphi)
         r_vp = sqrt(w_visphi) .* dphi ./ data.visphi_err
         safe_amp2 = max.(abs2.(Vvis), ε)

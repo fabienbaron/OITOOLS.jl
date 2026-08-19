@@ -313,6 +313,10 @@ Fit a parametric model to interferometric data using NLopt.
 - `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds per parameter (default: ±Inf)
 - `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
 - `priors` — Vector of `(expr_str, target, sigma)` tuples for Gaussian penalties
+- `constraints` — relations between parameters that bounds cannot express, as
+  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples. Handed to NLopt as real
+  nonlinear constraints, so they hold at the optimum; a `method` that cannot take them is
+  wrapped in `:AUGLAG` rather than replaced. The reported `chi2` is the data χ², unaffected
 - `method` — NLopt algorithm (default `:LD_LBFGS`; use `:LN_NELDERMEAD` for gradient-free)
 - `maxeval` — maximum function evaluations (default 2000)
 - `ftol_rel`, `xtol_rel` — convergence tolerances
@@ -327,6 +331,7 @@ function fit_model(model_dict   ::Dict{String},
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     priors       = [],
+    constraints  = [],
     method       = :LD_LBFGS,
     maxeval      = 2000,
     ftol_rel     = 1e-8,
@@ -335,7 +340,10 @@ function fit_model(model_dict   ::Dict{String},
     nB_workspace = nothing,
     verb         = false,
 )
-    # ── 1. Augment model_dict with prior expressions ─────────────────────────
+    # ── 1. Augment model_dict with prior and constraint expressions ──────────
+    # Both reach the optimiser as extra parameters of the compiled model: the resolver is the
+    # only thing that can evaluate an expression over parameter names, so anything needing such
+    # a value has to be compiled alongside the model rather than beside it.
     augmented = copy(model_dict)
     prior_keys = String[]
     for (i, (expr, _, _)) in enumerate(priors)
@@ -343,13 +351,16 @@ function fit_model(model_dict   ::Dict{String},
         augmented[key] = _dollarify(expr)
         push!(prior_keys, key)
     end
+    cons = parse_constraints(constraints)
+    constraint_keys = augment_constraints!(augmented, cons)
 
     # ── 2. Compile the model (once) ──────────────────────────────────────────
     nB = something(nB_workspace, size(data.uv, 2))
     fm = parse_model(augmented, list_free_params; nB_workspace=nB)
 
-    # ── 3. Resolve prior indices ─────────────────────────────────────────────
-    prior_idx = [findfirst(==(k), fm.all_names) for k in prior_keys]
+    # ── 3. Resolve prior and constraint indices ──────────────────────────────
+    prior_idx      = [findfirst(==(k), fm.all_names) for k in prior_keys]
+    constraint_idx = [findfirst(==(k), fm.all_names) for k in constraint_keys]
 
     # ── 4. Detect gradient need ──────────────────────────────────────────────
     use_grad = startswith(string(method), "LD_")
@@ -361,7 +372,9 @@ function fit_model(model_dict   ::Dict{String},
         if use_grad
             chi2, grad = chi2_flat_fg(fm, x, data; weights, vonmises, verb)
             chi2 += prior_penalty_and_grad!(grad, x, priors, fm, prior_idx)
-            g .= grad
+            # NLopt hands back a zero-length array when it wants the value without the
+            # gradient, which AUGLAG does at some of its evaluations.
+            length(g) > 0 && (g .= grad)
         else
             chi2 = chi2_flat(fm, x, data; weights, vonmises, verb)
             chi2 += prior_penalty(x, priors, fm, prior_idx)
@@ -370,16 +383,21 @@ function fit_model(model_dict   ::Dict{String},
     end
 
     # ── 6. Configure NLopt ───────────────────────────────────────────────────
-    opt = Opt(method, length(list_free_params))
+    # Constraints go to NLopt itself rather than into the objective as a penalty, so that
+    # `diamout > diamin` holds at the optimum instead of merely being encouraged there. When
+    # the chosen algorithm cannot take them, `constrained_opt` wraps it in AUGLAG rather than
+    # substituting an algorithm the caller did not ask for.
+    x0 = Float64[model_dict[p] for p in list_free_params]
+    opt, wrapped = constrained_opt(method, length(list_free_params), cons;
+                                   ftol_rel, xtol_rel, maxeval)
     min_objective!(opt, objective)
-    ftol_rel!(opt, ftol_rel)
-    xtol_rel!(opt, xtol_rel)
-    maxeval!(opt, maxeval)
     lower_bounds!(opt, [get(lb, p, -Inf) for p in list_free_params])
     upper_bounds!(opt, [get(ub, p,  Inf) for p in list_free_params])
+    add_nlopt_constraints!(opt, cons, fm, constraint_idx, x0)
+    wrapped && @info "$(length(cons)) constraint(s) with $method, which takes none directly: " *
+                     "wrapped in AUGLAG with $method as the local optimiser." maxlog = 1
 
     # ── 7. Run ───────────────────────────────────────────────────────────────
-    x0 = Float64[model_dict[p] for p in list_free_params]
     local minf, minx, ret
     try
         minf, minx, ret = optimize(opt, x0)
@@ -394,6 +412,12 @@ function fit_model(model_dict   ::Dict{String},
     end
 
     # ── 8. Return result ─────────────────────────────────────────────────────
+    # A constraint the optimiser could not satisfy is a fact about the fit. Reporting it beats
+    # a silently infeasible answer, which looks exactly like a feasible one.
+    for (c, v) in zip(cons, constraint_violations(minx, cons, fm, constraint_idx))
+        v > 1 && @warn "Fit ended outside a constraint" constraint = c violation_in_tol_units = v
+    end
+
     ndof = _ndof(data, weights)
     return FitResult(minx, list_free_params, minf, minf / ndof, ndof, n_evals[], ret, fm)
 end
@@ -416,6 +440,7 @@ function fit_model(model        ::FlatModel,
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     priors       = [],
+    constraints  = [],
     method       = :LD_LBFGS,
     maxeval      = 2000,
     ftol_rel     = 1e-8,
@@ -426,10 +451,12 @@ function fit_model(model        ::FlatModel,
     list_free_params = model.list_free_params
     fm = model
 
-    # ── Prior support ────────────────────────────────────────────────────────
-    # When priors are used, we would need to augment and recompile the model.
-    # For now, only the Dict method supports priors.
+    # ── Priors and constraints ───────────────────────────────────────────────
+    # Both are evaluated as extra parameters of the compiled model, so both need the model dict
+    # to augment and recompile. A FlatModel is already compiled, and silently dropping them
+    # would return a fit that ignores what the caller asked for.
     !isempty(priors) && error("Priors are only supported with the Dict form of fit_model; pass model_dict instead of FlatModel")
+    !isempty(constraints) && error("Constraints are only supported with the Dict form of fit_model; pass model_dict instead of FlatModel")
 
     # ── Detect gradient need ─────────────────────────────────────────────────
     use_grad = startswith(string(method), "LD_")
@@ -440,7 +467,8 @@ function fit_model(model        ::FlatModel,
         n_evals[] += 1
         if use_grad
             chi2, grad = chi2_flat_fg(fm, x, data; weights, vonmises, verb)
-            g .= grad
+            # NLopt hands back a zero-length array when it wants the value without the gradient.
+            length(g) > 0 && (g .= grad)
         else
             chi2 = chi2_flat(fm, x, data; weights, vonmises, verb)
         end
@@ -554,6 +582,10 @@ Requires the Python `ultranest` package (declared in CondaPkg.toml).
 - `use_stepsampler` — use RegionSliceSampler (default false)
 - `nsteps` — steps per slice for stepsampler (default 400)
 - `frac_remain` — termination fraction (default 0.001)
+- `constraints` — relations between parameters that bounds cannot express, as
+  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples. They enter the log-likelihood as
+  `-penalty/2`, so the posterior is the constrained one and `logz` is the evidence under that
+  constraint
 - `log_interval` — logging interval (default 100)
 - `verb` — print progress (default true)
 - `cornerplot` — show corner plot (default true)
@@ -564,6 +596,7 @@ function fit_model_ultranest(model_dict   ::Dict{String},
     lb                       = Dict{String,Float64}(),
     ub                       = Dict{String,Float64}(),
     weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    constraints              = [],
     vonmises                 = false,
     nB_workspace             = nothing,
     min_num_live_points      = 400,
@@ -584,9 +617,13 @@ function fit_model_ultranest(model_dict   ::Dict{String},
     lbounds = Float64[lb[p] for p in list_free_params]
     ubounds = Float64[ub[p] for p in list_free_params]
 
-    # ── 2. Compile the model (once) ─────────────────────────────────────────
+    # ── 2. Compile the model (once), with the constraint expressions ────────
     nB = something(nB_workspace, size(data.uv, 2))
-    fm = parse_model(model_dict, list_free_params; nB_workspace=nB)
+    cons      = parse_constraints(constraints)
+    augmented = copy(model_dict)
+    constraint_keys = augment_constraints!(augmented, cons)
+    fm = parse_model(augmented, list_free_params; nB_workspace=nB)
+    constraint_idx  = [findfirst(==(k), fm.all_names) for k in constraint_keys]
 
     # ── 3. Prior transform: uniform [0,1]^n → [lb, ub] ─────────────────────
     Δx = ubounds .- lbounds
@@ -605,10 +642,15 @@ function fit_model_ultranest(model_dict   ::Dict{String},
             Py(reduce(vcat, (u -> trafo(u)').(eachrow(U)))).to_numpy()
     end
 
-    # ── 4. Log-likelihood: -0.5 * chi2 ─────────────────────────────────────
-    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises
-        param::AbstractVector{<:Real} -> -0.5 * chi2_flat(fm, param, data;
-                                                           weights, vonmises)
+    # ── 4. Log-likelihood: -0.5 * (chi2 + constraint penalty) ──────────────
+    # A soft constraint states which parameter combinations are admissible, so it belongs in
+    # the density being sampled; the posterior and the evidence are then both the constrained
+    # ones.
+    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises,
+                        cons=cons, constraint_idx=constraint_idx
+        param::AbstractVector{<:Real} ->
+            -0.5 * (chi2_flat(fm, param, data; weights, vonmises) +
+                    constraint_penalty(param, cons, fm, constraint_idx))
     end
 
     loglikelihood_vectorized = let loglikelihood = loglikelihood
@@ -670,6 +712,8 @@ function fit_model_ultranest(model_dict   ::Dict{String},
 
     # ── 6. Extract results ─────────────────────────────────────────────────
     minx = pyconvert(Vector{Float64}, result["maximum_likelihood"]["point"])
+    # The data chi2, without the constraint penalty that shaped the sampling — the convention
+    # the other fitters report.
     minf = chi2_flat(fm, minx, data; weights, vonmises)
 
     if verb
@@ -714,6 +758,7 @@ function fit_model_ultranest(model        ::FlatModel,
     lb                       = Dict{String,Float64}(),
     ub                       = Dict{String,Float64}(),
     weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    constraints              = [],
     vonmises                 = false,
     min_num_live_points      = 400,
     cluster_num_live_points  = 100,
@@ -727,6 +772,11 @@ function fit_model_ultranest(model        ::FlatModel,
 )
     list_free_params = model.list_free_params
     fm = model
+
+    # A constraint is evaluated as an extra parameter of the compiled model, so it needs the
+    # model dict to augment and recompile. Accepting it here and dropping it would sample a
+    # posterior that ignores what the caller asked for.
+    !isempty(constraints) && error("Constraints are only supported with the Dict form of fit_model_ultranest; pass model_dict instead of FlatModel")
 
     # ── Validate bounds ─────────────────────────────────────────────────────
     lbounds = _bounds_vec(lb, list_free_params, NaN)
@@ -894,6 +944,11 @@ through the complex visibility Jacobian), so no finite-difference overhead.
 - `vonmises` — use von Mises statistic for T3phi
 - `nB_workspace` — Hankel workspace size
 - `maxIter` — maximum iterations (default 200)
+- `constraints` — relations between parameters that bounds cannot express, as
+  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples. They enter as extra rows of the
+  residual vector, which is exactly where Levenberg-Marquardt can act on them — and so also
+  enter the Jacobian, meaning `covar` and `stderror` account for them. The reported `chi2`
+  excludes them, so it stays comparable with what every other fitter reports
 - `verb` — print per-evaluation chi2 breakdown
 """
 function fit_model_lsqfit(model_dict   ::Dict{String},
@@ -902,14 +957,19 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     lb           = Dict{String,Float64}(),
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    constraints  = [],
     vonmises     = false,
     nB_workspace = nothing,
     maxIter      = 200,
     verb         = false,
 )
-    # ── 1. Compile the model (once) ──────────────────────────────────────────
+    # ── 1. Compile the model (once), with the constraint expressions ─────────
     nB = something(nB_workspace, size(data.uv, 2))
-    fm = parse_model(model_dict, list_free_params; nB_workspace=nB)
+    cons      = parse_constraints(constraints)
+    augmented = copy(model_dict)
+    constraint_keys = augment_constraints!(augmented, cons)
+    fm = parse_model(augmented, list_free_params; nB_workspace=nB)
+    constraint_idx  = [findfirst(==(k), fm.all_names) for k in constraint_keys]
     nparams = length(list_free_params)
 
     # ── 2. Build the model function and Jacobian for LsqFit ─────────────────
@@ -917,18 +977,23 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     # We use xdata = [1] as a dummy — the data is captured in the closure.
     # The "ydata" is zeros (we want residuals = predicted - 0 = residuals).
 
+    # Constraints append rows. Their count is fixed for a given model — one per constraint, or
+    # one per wavelength where the resolver broadcasts — which is what `curve_fit` requires of a
+    # residual vector whose length it fixes from the first call.
     function model_fn(_, p)
-        residuals_flat(fm, p, data; weights, vonmises)
+        r = residuals_flat(fm, p, data; weights, vonmises)
+        isempty(cons) ? r : vcat(r, constraint_residuals(p, cons, fm, constraint_idx))
     end
 
     function jacobian_fn(_, p)
         _, J = residuals_flat_jac(fm, p, data; weights, vonmises)
-        return J
+        isempty(cons) ? J : vcat(J, constraint_jacobian(p, cons, fm, constraint_idx))
     end
 
     # ── 3. Initial parameter vector and bounds ───────────────────────────────
     x0 = Float64[model_dict[p] for p in list_free_params]
     xdata = [1]  # dummy
+    ndata = length(residuals_flat(fm, x0, data; weights, vonmises))
     ydata = zeros(length(model_fn(xdata, x0)))  # target = 0 (residuals)
 
     # Build lower/upper bound vectors
@@ -942,7 +1007,9 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
 
     # ── 5. Extract results ───────────────────────────────────────────────────
     minx = fit.param
-    r_final = fit.resid
+    # The data rows only: a chi2 carrying the constraint penalty would not be comparable with
+    # what any other fitter reports, nor with the chi2r read off a published table.
+    r_final = view(fit.resid, 1:ndata)
     chi2_val = dot(r_final, r_final)
     ndof = _ndof(data, weights)
 
@@ -975,6 +1042,7 @@ function fit_model_lsqfit(model        ::FlatModel,
     lb           = Dict{String,Float64}(),
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    constraints  = [],
     vonmises     = false,
     maxIter      = 200,
     verb         = false,
@@ -982,6 +1050,11 @@ function fit_model_lsqfit(model        ::FlatModel,
     list_free_params = model.list_free_params
     fm = model
     nparams = length(list_free_params)
+
+    # A constraint is evaluated as an extra parameter of the compiled model, so it needs the
+    # model dict to augment and recompile. Accepting it here and dropping it would return a fit
+    # that ignores what the caller asked for.
+    !isempty(constraints) && error("Constraints are only supported with the Dict form of fit_model_lsqfit; pass model_dict instead of FlatModel")
 
     function model_fn(_, p)
         residuals_flat(fm, p, data; weights, vonmises)

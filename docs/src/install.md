@@ -108,3 +108,79 @@ Observable metadata — `OBS_PLOT_SPECS`, `oiplot_colors`, `canonical_color` —
 package, so a front-end that draws with something other than matplotlib can share the axis
 labels, groupings and palette without loading Python at all.
 
+
+## [Step 4: The GUI (optional)](@id gui-install)
+
+The GUI is a separate stack — GLMakie for drawing, Qt/QML for the window — and none of it is
+loaded by `using OITOOLS`. It costs about 6.4 s of load time against the package's own 1.7 s,
+so it is gated behind its own dependencies and no script, reduction or CI run pays for it.
+
+From a clone of the repository:
+
+```bash
+julia --project=bin -e 'using Pkg; Pkg.instantiate()'   # first time only
+julia --project=bin bin/oitoolsgui.jl                   # every time
+```
+
+An OIFITS file given on the command line is opened at startup:
+
+```bash
+julia --project=bin bin/oitoolsgui.jl demos/data/2004-data1.oifits
+```
+
+Three things about that command are deliberate.
+
+**`--project=bin`, not `--project=.`.** GLMakie, QMLMakie and QML are *weak* dependencies of
+OITOOLS, and weak dependencies are not loadable from the package's own environment.
+`bin/Project.toml` declares them as ordinary ones. Under `--project=.` they either fail to load
+or, worse, resolve from your default environment at whatever versions happen to be there.
+
+**Run it from the repository root.** `bin/Project.toml` reaches the package with
+`[sources] OITOOLS = {path = ".."}`, which is relative to `bin/`.
+
+**`bin/Manifest.toml` is not in the repository.** The first `instantiate` resolves the GL and
+Qt stack itself, within the bounds `Project.toml` declares (`GLMakie 0.13`, `Makie 0.24`,
+`QML 0.13`, `QMLMakie 0.3`, `GLFW_jll 3.4`). Keep the resulting manifest if you want the same
+versions back later.
+
+### Starting it from your own session
+
+```julia
+using OITOOLS
+configure_graphics!()            # before the first OpenGL context exists
+
+using GLFW_jll
+prefer_native_wayland!()         # before `using GLMakie`
+
+using GLMakie, QMLMakie, QML     # these activate the GUI extension
+gui()
+```
+
+The order is not stylistic. Mesa reads its driver variables, and GLFW its platform hint, when
+the first OpenGL context is created — so both calls have to happen above `using GLMakie`.
+That is also why neither function lives in the GUI extension: loading GLMakie is what creates
+that extension, so anything inside it would already be too late. `configure_graphics!` is in
+the core package and needs nothing; `prefer_native_wayland!` needs only `libglfw` and lives in
+a one-function extension that `GLFW_jll` alone activates.
+
+Both are no-ops where they do not apply. `configure_graphics!` acts only on WSL, where there is
+no `/dev/dri` render node and Mesa would otherwise fall through to software rendering;
+`prefer_native_wayland!` acts only in a Wayland session, where GLFW.jl's hard-coded X11 default
+would otherwise put GLMakie on XWayland while Qt runs native Wayland — two windowing systems in
+one process. Either can be switched off:
+
+```bash
+OITOOLSGUI_NO_GPU_SETUP=1   # skip the Mesa setup
+OITOOLSGUI_GLFW_X11=1       # keep GLMakie on XWayland
+QSG_INFO=1                  # make Qt report which GL renderer it actually got
+```
+
+The GUI's own types (`Session`, `LiveCanvas`, `ShellState`) are defined inside the extension,
+since a function can be declared in the core package and given methods later but a type cannot.
+`gui()` builds its own `Session`, so most callers never need to name one; scripts that do reach
+them through the extension module:
+
+```julia
+const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
+using .GUI
+```

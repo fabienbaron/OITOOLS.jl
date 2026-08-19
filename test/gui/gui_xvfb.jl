@@ -26,6 +26,11 @@
 # compositor -- two windowing systems, which is not what it is meant to be checking.
 using OITOOLS, GLMakie, QMLMakie, QML, Test
 
+# The GUI is an extension, so its types are not `OITOOLS.Session`; reach them the way
+# test/gui/runtests.jl does.
+const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
+using .GUI
+
 const DATA = joinpath(@__DIR__, "data")
 const MONO = joinpath(DATA, "2004-data1.oifits")   # nwav=1: the degenerate colour case
 const POLY = joinpath(DATA, "v1295Aql.oifits")     # nwav=5, 4932 uv points

@@ -558,7 +558,80 @@ Each prior adds `(value - target)^2 / sigma^2` to the objective. Priors are supp
 expressions have to be compiled into the model.
 
 `default_bounds(model_dict, list_free_params)` suggests bounds for every free parameter if you
-do not want to write them out by hand; `display_model` then validates values against them.
+do not want to write them out by hand; `display_model` then validates values against them. Pass
+`data` and the angular-size ceiling comes from the coverage itself — `2 λ/B_min`, the largest
+scale the shortest baseline senses — rather than from a constant:
+
+```julia
+lb, ub = default_bounds(model_dict, list_free_params; data)
+```
+
+### Constraints
+
+A bound is a box, one parameter at a time. A *relation* between parameters is not, and needs a
+`ModelConstraint`:
+
+```julia
+constraints = [ModelConstraint("ring,fwhmout", ">", "ring,fwhmin"),   # a ring has an outside
+               ModelConstraint("star,f + disk,f", "=", 1.0)]          # fluxes sum to one
+
+result = fit_model(model_dict, list_free_params, data; lb, ub, constraints)
+```
+
+`op` is one of `<`, `<=`, `>`, `>=`, `=`. Either side may be an expression, and the right may
+be a number. `tol` (default `1e-3`) is how much violation counts as none.
+
+`fit_model` hands these to NLopt as real nonlinear constraints, so they hold at the optimum; an
+algorithm that cannot take them — including the default `:LD_LBFGS` — is wrapped in `:AUGLAG`
+rather than replaced. `fit_model_lsqfit` and `fit_model_ultranest` have no such machinery and
+use a one-sided quadratic penalty instead, which is **soft**: a steep enough χ² surface can
+overrule it. Use `fit_model` when a constraint must hold.
+
+`check_constraints(constraints, model_dict)` says which ones the starting model already
+satisfies, and warns about the rest — a constraint written backwards looks exactly like a bad
+starting guess otherwise.
+
+### Saving a model and its fit settings
+
+A model dict does not describe a fit on its own: the free list, the bounds, the constraints and
+the priors all change the answer. A TOML model file carries all five.
+
+```julia
+write_model_file("binary.toml", model_dict; free = list_free_params, lb, ub, constraints, priors)
+
+m = read_model_file("binary.toml")
+result = fit_model(m.model, m.free, data; m.lb, m.ub, m.constraints, m.priors)
+```
+
+```toml
+free = ["star,ud", "disk,pa"]
+
+[model]
+"star,ud"   = 6.5
+"disk,fwhm" = "$star,ud * 3"
+
+[bounds]
+"star,ud" = [0.0, 20.0]
+
+[[constraints]]
+param = "disk,fwhm"
+op    = ">"
+value = "star,ud"
+tol   = 0.001
+
+[[priors]]
+expr   = "star,ud"
+target = 6.0
+sigma  = 0.5
+```
+
+Keys are written sorted, so the same model always produces the same bytes and two model files
+can be diffed. To save a *fitted* model, merge the result back in first:
+
+```julia
+fitted = merge(model_dict, Dict(zip(result.list_free_params, result.x_opt)))
+write_model_file("binary_fitted.toml", fitted; free = result.list_free_params, lb, ub)
+```
 
 ## Fitting with LsqFit (Levenberg-Marquardt)
 

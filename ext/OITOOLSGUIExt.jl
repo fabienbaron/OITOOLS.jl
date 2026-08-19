@@ -8,10 +8,15 @@
 # session that never opens a window should not pay that. Gating the GUI behind its own stack
 # means they do not.
 #
-# The trigger lists five packages, but a caller only ever names three: GLMakie pulls in Makie
-# and GLFW_jll, so `using GLMakie, QMLMakie, QML` loads all five and fires this extension. Makie
-# and GLFW_jll are named because the sources below use them directly, and an extension may only
-# `using` the parent's dependencies and its own triggers.
+# The trigger lists four packages, but a caller only ever names three: GLMakie pulls in Makie,
+# so `using GLMakie, QMLMakie, QML` loads all four and fires this extension. Makie is named
+# because the sources below use it directly, and an extension may only `using` the parent's
+# dependencies and its own triggers.
+#
+# `configure_graphics!` and `prefer_native_wayland!` are NOT here. Both must run before the
+# first GL context exists, which is before `using GLMakie` — and therefore before this
+# extension can exist at all. The first lives in the core package (`src/graphics.jl`), the
+# second in `ext/OITOOLSGLFWExt.jl`, triggered by GLFW_jll alone.
 #
 # Sources live in `src/gui/` and are included from here. `Session`, `ShellState` and
 # `LiveCanvas` are therefore extension types: functions can be forward-declared in the parent
@@ -23,7 +28,6 @@ using OITOOLS
 using OITOOLS: OIdata, OBS_PLOT_SPECS, oiplot_colors, canonical_color, as_datavec
 using Printf, Dates
 using Makie
-using GLFW_jll                    # prefer_native_wayland! only; needs no display to load
 using QML, QMLMakie, GLMakie
 
 # Exported so tests and scripts can `using .GUI` after fetching the module with
@@ -34,16 +38,18 @@ export uv_figure, observable_figure, point_info, uv_point_labels, plot_into!
 export OBS_SPECS, group_names, baseline_names, triplet_names, station_names
 export baseline_color_map, style_axis!, add_baseline_legend!
 export LiveCanvas, build_canvas, update_canvas!, canvas_data
-export ShellState, check_qt_conflict, configure_graphics!, ui_scale_override
-export prefer_native_wayland!
+export ParamRow, ParamMode, PARAM_FIXED, PARAM_FREE, PARAM_EXPR
+export model_rows, model_inspection, ComponentInfo, free_parameter_vector
+export GLOBAL_COMPONENT
+export ShellState, check_qt_conflict, ui_scale_override
 
 const GUIDIR = joinpath(pkgdir(OITOOLS), "src", "gui")
 
-include(joinpath(GUIDIR, "graphics.jl"))      # WSL OpenGL setup; before any GL context
 include(joinpath(GUIDIR, "scaling.jl"))       # UI scale policy; QML does the detecting
 include(joinpath(GUIDIR, "commandlog.jl"))
 include(joinpath(GUIDIR, "session.jl"))
 include(joinpath(GUIDIR, "actions_data.jl"))
+include(joinpath(GUIDIR, "model.jl"))       # Model perspective: parameter table, parser inspection
 include(joinpath(GUIDIR, "plots.jl"))
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
 include(joinpath(GUIDIR, "shell.jl"))

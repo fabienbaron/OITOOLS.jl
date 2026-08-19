@@ -94,18 +94,30 @@ const _ANALYTIC_PARAM_SUFFIXES = Dict{Symbol,Vector{String}}(
 # This table can. The values are deliberately generous starting points, not physics: their
 # job is to give a fit somewhere sane to begin and to satisfy samplers that require finite
 # bounds (`fit_model_ultranest` errors without them), not to encode prior knowledge.
+"""
+Default upper bound on an angular size, in mas, when no data is supplied.
+
+Long-baseline interferometry senses scales between roughly λ/2B_max and λ/B_min. Measured on
+three real datasets, that is 0.5–1.2 mas at the fine end and 18–41 mas at the coarse end: a
+source much larger than λ/B_min is fully resolved out and its size is not constrained at all.
+100 mas therefore leaves generous headroom over anything an array can measure, while staying a
+real bound. Pass `data` to `default_bounds` to size this from the actual uv coverage instead.
+"""
+const DEFAULT_MAX_SIZE_MAS = 100.0
+
+const _SIZE_KEYS = ("ud", "fwhm", "ldlin", "ldquad", "ldpow", "diamin", "diamout", "diam",
+                    "fwhmin", "fwhmout", "crin", "crout", "udout", "r_max", "spatial_kernel")
+const _OFFSET_KEYS = ("x", "y", "croff")
+
 const _DEFAULT_PARAM_BOUNDS = Dict{String,Tuple{Float64,Float64}}(
     # angular sizes, mas
-    "ud"      => (0.0, 1e3),  "fwhm"    => (0.0, 1e3),
-    "ldlin"   => (0.0, 1e3),  "ldquad"  => (0.0, 1e3),  "ldpow"   => (0.0, 1e3),
-    "diamin"  => (0.0, 1e3),  "diamout" => (0.0, 1e3),  "diam"    => (0.0, 1e3),
-    "fwhmin"  => (0.0, 1e3),  "fwhmout" => (0.0, 1e3),
-    "crin"    => (0.0, 1e3),  "crout"   => (0.0, 1e3),  "udout"   => (0.0, 1e3),
-    "r_max"   => (0.0, 1e3),  "spatial_kernel" => (0.0, 1e3),
+    (k => (0.0, DEFAULT_MAX_SIZE_MAS) for k in _SIZE_KEYS)...,
+    # positions, mas: a companion can sit outside the largest scale the array resolves, so
+    # these are looser than the sizes
+    (k => (-DEFAULT_MAX_SIZE_MAS, DEFAULT_MAX_SIZE_MAS) for k in _OFFSET_KEYS)...,
     # limb darkening
     "u"       => (-1.0, 1.0), "w"       => (-1.0, 1.0), "alpha"   => (0.0, 3.0),
-    # position and orientation
-    "x"       => (-1e3, 1e3), "y"       => (-1e3, 1e3), "croff"   => (-1e3, 1e3),
+    # orientation
     "pa"      => (-180.0, 180.0), "projang" => (-180.0, 180.0),
     "crprojang" => (-180.0, 180.0),
     "incl"    => (0.0, 90.0),
@@ -114,7 +126,25 @@ const _DEFAULT_PARAM_BOUNDS = Dict{String,Tuple{Float64,Float64}}(
 )
 
 """
-    default_bounds(model_dict, list_free_params) -> (lb, ub)
+    max_angular_scale(data) -> Float64
+
+Largest angular scale the uv coverage is sensitive to, in mas: λ/B_min, from the shortest
+baseline present. A source larger than this is fully resolved and its size is unconstrained,
+which makes it the natural ceiling for a size bound.
+"""
+function max_angular_scale(data)
+    B = Float64[]
+    for d in (data isa AbstractArray ? vec(data) : [data])
+        u = Float64.(d.uv[1, :]); v = Float64.(d.uv[2, :])
+        append!(B, sqrt.(u .^ 2 .+ v .^ 2))
+    end
+    filter!(b -> b > 0 && isfinite(b), B)
+    isempty(B) && return DEFAULT_MAX_SIZE_MAS
+    return (1 / minimum(B)) / MAS      # uv is in cycles/rad
+end
+
+"""
+    default_bounds(model_dict, list_free_params; data = nothing, max_size = nothing) -> (lb, ub)
 
 Suggest lower and upper bounds for each free parameter, as two `Dict{String,Float64}` ready
 to pass to any fitter's `lb`/`ub` keyword.
@@ -124,19 +154,45 @@ Bounds are chosen from the parameter's suffix — the part after the first comma
 are recognised by prefix. Anything unrecognised, including bare global names, gets
 `(-Inf, Inf)`; callers that need finite bounds (nested sampling) should check for that.
 
-These are generous starting points, not physics — a 1 arcsec ceiling on angular sizes, for
-instance. Narrow them once you know your source.
+Angular sizes and offsets are the only bounds worth tuning, and they are the ones the data can
+tune. Pass `data` and the ceiling becomes `2 λ/B_min` from the actual uv coverage — the array
+cannot constrain a source larger than the scale its shortest baseline senses. Without `data`
+the ceiling is [`DEFAULT_MAX_SIZE_MAS`](@ref); `max_size` overrides both.
+
+```julia
+lb, ub = default_bounds(model_dict, free)              # 100 mas ceiling
+lb, ub = default_bounds(model_dict, free; data = data) # sized to this uv coverage
+```
+
+Everything else is physical rather than instrumental — flux fractions in `[0,1]`, inclination
+in `[0,90]`, position angles in `[-180,180]` — and does not depend on the data.
 
 See also [`display_model`](@ref), which validates values against whatever bounds you end up
-with.
+with, and [`max_angular_scale`](@ref).
 """
-function default_bounds(model_dict::Dict{String}, list_free_params::AbstractVector{<:AbstractString})
+function default_bounds(model_dict::Dict{String}, list_free_params::AbstractVector{<:AbstractString};
+                        data = nothing, max_size = nothing)
+    # Size the angular bounds from the data when it is available: the coverage says what can
+    # be constrained far better than any constant can. Twice λ/B_min leaves room for a
+    # marginally-resolved source without admitting sizes the array cannot measure.
+    smax = if max_size !== nothing
+        Float64(max_size)
+    elseif data !== nothing
+        max(2 * max_angular_scale(data), 1.0)
+    else
+        DEFAULT_MAX_SIZE_MAS
+    end
+
     lb = Dict{String,Float64}()
     ub = Dict{String,Float64}()
     for p in list_free_params
         i = findfirst(==(','), p)
         suffix = i === nothing ? p : p[nextind(p, i):end]
-        b = if haskey(_DEFAULT_PARAM_BOUNDS, suffix)
+        b = if suffix in _SIZE_KEYS
+                (0.0, smax)
+            elseif suffix in _OFFSET_KEYS
+                (-smax, smax)
+            elseif haskey(_DEFAULT_PARAM_BOUNDS, suffix)
                 _DEFAULT_PARAM_BOUNDS[suffix]
             elseif startswith(suffix, "az amp")
                 (0.0, 1.0)

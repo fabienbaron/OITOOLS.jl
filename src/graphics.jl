@@ -1,5 +1,14 @@
 # Graphics-environment setup.
 #
+# This lives in the core package, not in the GUI extension, because of a hard ordering
+# constraint: Mesa reads its driver variables when it dlopens the driver, at first GL context
+# creation, so `configure_graphics!` has to run BEFORE `using GLMakie`. Anything defined in the
+# GUI extension only exists AFTER that, since loading GLMakie is what triggers the extension.
+#
+# `prefer_native_wayland!` has the same ordering constraint but needs `GLFW_jll` for its ccall,
+# so it lives in `ext/OITOOLSGLFWExt.jl` — a separate, one-function extension triggered by
+# GLFW_jll alone, which a launcher can therefore load on its own.
+#
 # Exactly one platform needs help: WSL. There is no /dev/dri render node there — the GPU is
 # reached through /dev/dxg and D3D12 — so Mesa's usual probe fails, falls through to zink,
 # finds no Vulkan driver installed, and quietly lands on llvmpipe. Nothing errors out. The
@@ -115,69 +124,4 @@ function configure_graphics!(; verbose::Bool = true)
 
     verbose && @info "WSL detected: routing OpenGL through D3D12 instead of llvmpipe" driver vars
     return (applied = true, reason = "WSL with a D3D12 GPU", vars = vars)
-end
-
-# ── native Wayland for GLMakie ───────────────────────────────────────────────
-
-"Environment variable that keeps GLMakie on XWayland (the GLFW.jl default)."
-const FORCE_X11 = "OITOOLSGUI_GLFW_X11"
-
-"""
-    prefer_native_wayland!(; verbose = true) -> NamedTuple
-
-On a Wayland session, make GLMakie use Wayland rather than XWayland.
-
-GLFW.jl hard-codes X11 on Linux -- `Init(; platform = Sys.islinux() ? PLATFORM_X11 : ...)` --
-so under a Wayland compositor `using GLMakie` either fails with "X11: The DISPLAY environment
-variable is missing", or, if DISPLAY happens to be set, silently runs on **XWayland**.
-
-The second case is the one that matters here. Qt picks native Wayland while GLMakie is on
-XWayland, so the application is running two windowing systems at once, with two EGL display
-connections and two surface lifetimes, and Qt Quick popups become `xdg_popup` surfaces whose
-create/destroy sequence differs from the X11 child-window equivalent. That is a bad place to
-be for a GUI whose plot surface already had one GL-context bug.
-
-`glfwInit` is idempotent, so initialising it here with the Wayland hint makes GLFW.jl's later
-`Init()` a no-op and its X11 hint irrelevant. **Must run before `using GLMakie`.**
-
-Set `\$FORCE_X11=1` to skip it and get the XWayland behaviour back -- the A/B switch for
-deciding whether a bug is the split's fault.
-"""
-function prefer_native_wayland!(; verbose::Bool = true)
-    no(reason) = (applied = false, reason = reason)
-    Sys.islinux()             || return no("not Linux")
-    haskey(ENV, "WAYLAND_DISPLAY") || return no("not a Wayland session; GLFW's X11 default is right")
-    _isset(FORCE_X11)         && return no("$FORCE_X11 is set; leaving GLMakie on XWayland")
-
-    # GLFW_jll is a direct dependency: loading it only dlopens libglfw, which needs no display
-    # (glfwInit is the part that does), so this stays safe on a headless machine. The library
-    # is named directly in the ccall because a ccall cannot take it from a local variable.
-    # Silence xkbcommon's Compose-file complaint, which this function causes.
-    #
-    #   xkbcommon: ERROR: [XKB-679] No Compose file for locale "en_US.UTF-8"
-    #
-    # GLFW's Wayland path uses xkbcommon for keyboard handling; its X11 path does not. So the
-    # error appears the moment we switch to Wayland and never before, which makes it look like
-    # a new fault rather than what it is: xkbcommon_jll's artifact ships no X11 locale data, so
-    # it cannot find a Compose table. Keyboard input works regardless -- Compose sequences are
-    # for typing accented characters, which nothing here does. Point it at the system table
-    # when there is one, and leave any existing setting alone.
-    if !haskey(ENV, "XCOMPOSEFILE")
-        for f in ("/usr/share/X11/locale/en_US.UTF-8/Compose", "/usr/share/X11/locale/C/Compose")
-            if isfile(f)
-                ENV["XCOMPOSEFILE"] = f
-                break
-            end
-        end
-    end
-
-    PLATFORM = Cint(0x00050003)   # GLFW_PLATFORM
-    WAYLAND  = Cint(0x00060003)   # GLFW_PLATFORM_WAYLAND
-    ccall((:glfwInitHint, GLFW_jll.libglfw), Cvoid, (Cint, Cint), PLATFORM, WAYLAND)
-    if ccall((:glfwInit, GLFW_jll.libglfw), Cint, ()) == 1
-        verbose && @info "GLFW pre-initialised on native Wayland; GLMakie will not use XWayland"
-        return (applied = true, reason = "GLFW forced to native Wayland")
-    end
-    verbose && @warn "forced-Wayland glfwInit failed; GLFW.jl will fall back to X11"
-    return no("forced-Wayland glfwInit failed")
 end

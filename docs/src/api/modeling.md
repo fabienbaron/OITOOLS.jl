@@ -19,6 +19,64 @@
 | `model_to_sed(model, x, wl_grid)` | Compute spectral energy distribution |
 | `model_to_flux(model, x; wl)` | Total flux at zero baseline: `real(V(0,0))` |
 
+## Bounds, constraints and model files
+
+`lb`/`ub` describe a box, one parameter at a time. A relation *between* parameters — a ring's
+outer diameter exceeding its inner one, two flux fractions summing to one — is not a box, and
+needs [`ModelConstraint`](@ref).
+
+| Function | Description |
+|----------|-------------|
+| `default_bounds(model_dict, free; data, max_size)` | Suggested `lb`/`ub` per free parameter; pass `data` and angular sizes are capped at `2 λ/B_min` from the actual uv coverage |
+| `max_angular_scale(data)` | The largest angular scale the shortest baseline senses, in mas |
+| `ModelConstraint(lhs, op, rhs; tol)` | A relation between parameters, with `op` one of `<`, `<=`, `>`, `>=`, `=` |
+| `parse_constraints(specs)` | Accept constraints as `ModelConstraint`s, `(lhs, op, rhs[, tol])` tuples (the PMOIRED layout) or dicts |
+| `check_constraints(constraints, model_dict)` | Which constraints the starting model already satisfies |
+| `read_model_file(path)` | Read a TOML model file into `(; model, free, lb, ub, constraints, priors, name)` |
+| `write_model_file(path, model_dict; free, lb, ub, constraints, priors)` | Write all of that back out |
+
+`fit_model` hands constraints to NLopt as real nonlinear constraints, so they hold at the
+optimum rather than being encouraged there; an algorithm that cannot take them (including the
+default `:LD_LBFGS`) is wrapped in `:AUGLAG` rather than replaced. `fit_model_lsqfit` and
+`fit_model_ultranest` have no such machinery and use a one-sided quadratic penalty on the
+normalised violation, matching PMOIRED's `prior` list — soft, and so able to lose to a steep
+χ². The distinction is worth knowing before choosing a fitter for a constrained model.
+
+A model dict alone does not describe a fit: the free list, the bounds, the constraints and the
+priors all change the answer and none of them lived in a file before. A TOML model file carries
+all five.
+
+```toml
+free = ["star,ud", "disk,pa"]
+
+[model]
+"star,ud"   = 6.5
+"disk,fwhm" = "$star,ud * 3"
+
+[bounds]
+"star,ud" = [0.0, 20.0]
+
+[[constraints]]
+param = "disk,diamout"
+op    = ">"
+value = "disk,diamin"
+tol   = 0.001
+
+[[priors]]
+expr   = "star,ud"
+target = 6.0
+sigma  = 0.5
+```
+
+```julia
+m = read_model_file("binary.toml")
+res = fit_model(m.model, m.free, data; m.lb, m.ub, m.constraints, m.priors)
+```
+
+`free` is a top-level key rather than a member of `[model]` so that `[model]` mirrors the model
+dict exactly — a model may hold a bare global key, and one named `free` would otherwise be
+eaten by the free-parameter list.
+
 ## Uncertainty estimation by resampling
 
 | Function | Description |
@@ -48,6 +106,14 @@ eval_model
 eval_model_grad
 display_model
 default_bounds
+DEFAULT_MAX_SIZE_MAS
+max_angular_scale
+ModelConstraint
+parse_constraints
+check_constraints
+DEFAULT_CONSTRAINT_TOL
+read_model_file
+write_model_file
 fit_model
 fit_model_lsqfit
 fit_model_ultranest
@@ -80,6 +146,7 @@ DataBlocks
 | `UltraNestResult` | Result from `fit_model_ultranest` (adds `logz`, `logzerr`, `posterior`, `result`) |
 | `BootstrapResult` | Result from `bootstrap_fit` (adds `samples`, `median`, `sigma_minus`, `sigma_plus`, `covar`) |
 | `DataBlocks` | Partition of an `OIdata` into resampling blocks |
+| `ModelConstraint` | One relation between model parameters, enforced during fitting |
 
 ## Visibility functions
 

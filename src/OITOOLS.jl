@@ -16,6 +16,7 @@ using PrecompileTools
 
 version() = println("OITOOLS v$(pkgversion(OITOOLS))")
 
+include("graphics.jl")           # GL driver environment; must be callable before GLMakie
 include("readoifits.jl")
 include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
 include("vis_functions.jl")
@@ -26,6 +27,8 @@ include("resolvers.jl")          # SharedUtils, RGF, HandRolled, Symbolic
 include("hankel.jl")             # Hankel transform + chainrules + profile compiler
 include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
 include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
+include("constraints.jl")        # ModelConstraint: NLopt constraints, and penalties elsewhere
+include("model_file.jl")         # TOML model files: model + free + bounds + constraints + priors
 include("fit_model.jl")          # fit_model (NLopt), fit_model_ultranest, display_model
 include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
 
@@ -93,6 +96,12 @@ function gui end
 function uvplot end
 function empty_night end
 
+# Native Wayland for GLMakie. Defined by OITOOLSGLFWExt, which loads with GLFW_jll alone —
+# deliberately, because this has to be callable BEFORE `using GLMakie`. See src/graphics.jl.
+function prefer_native_wayland! end
+
+export configure_graphics!, prefer_native_wayland!, is_wsl
+
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
 export readoifits, readoifits_multiepochs, list_oifits_targets
@@ -110,8 +119,10 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
        imdisp, imdisp_multi, plot_facility
 
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
-export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model, default_bounds
+export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
 export fit_model, fit_model_lsqfit, fit_model_ultranest
+export ModelConstraint, parse_constraints, check_constraints, DEFAULT_CONSTRAINT_TOL
+export read_model_file, write_model_file
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
        model_to_image, model_to_sed, model_to_flux

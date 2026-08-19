@@ -9,9 +9,16 @@
 # dependencies and are not loadable at all; if they resolve anyway it is from your default
 # environment, at whatever versions happen to be there.
 #
-# The one ordering constraint here is `configure_graphics!()`: Mesa reads its driver
-# variables when the first OpenGL context is created, so the call has to happen above
-# `using GLMakie`. See src/graphics.jl.
+# The ordering below is the whole point of this file, and it is forced by one fact: Mesa and
+# GLFW both read their configuration when the first OpenGL context is created, so both hints
+# have to be set above `using GLMakie`. That is why neither function lives in the GUI
+# extension — loading GLMakie is what creates it, so anything inside it is already too late:
+#
+#   configure_graphics!    core package,          src/graphics.jl      (needs nothing)
+#   prefer_native_wayland! GLFW_jll extension,    ext/OITOOLSGLFWExt.jl (needs libglfw only)
+#
+# The GUI's own types (Session, load_dataset!) do live in OITOOLSGUIExt, so they are reached
+# after the fact through `Base.get_extension`.
 #
 # MPLBACKEND does not need forcing here: OITOOLS keeps matplotlib in an extension
 # (OITOOLSPythonPlotExt), so importing it starts no backend probe and maps no second Qt.
@@ -39,10 +46,18 @@ end
 
 using OITOOLS
 
-configure_graphics!()        # before the first GL context — see src/graphics.jl
-prefer_native_wayland!()     # before `using GLMakie` — GLFW.jl would otherwise pick XWayland
+configure_graphics!()          # before the first GL context — see src/graphics.jl
+
+using GLFW_jll                 # activates OITOOLSGLFWExt; dlopens libglfw, needs no display
+prefer_native_wayland!()       # before `using GLMakie` — GLFW.jl would otherwise pick XWayland
 
 using GLMakie, QMLMakie, QML   # these three activate OITOOLSGUIExt, which defines gui()
+
+# An extension's exports do not reach the caller on their own, so name the module and pull them
+# in. This is the same route test/gui/runtests.jl uses.
+const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
+GUI === nothing && error("OITOOLSGUIExt did not load; GLMakie, QMLMakie and QML are all needed")
+using .GUI
 
 session = Session()
 for f in ARGS
