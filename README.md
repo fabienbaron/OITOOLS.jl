@@ -34,11 +34,17 @@ using Pkg
 pkg"registry add General"
 pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
+Pkg.add("PythonPlot")          # for plotting; see below
 using OITOOLS
 ```
 
-Python dependencies (matplotlib for plotting, astroquery for SIMBAD queries, ultranest for
-nested sampling) are provisioned automatically by
+**Plotting needs PythonPlot.** `uvplot`, `plot_v2`, `imdisp` and the rest live in a package
+extension, so they exist only once PythonPlot is loaded alongside OITOOLS. This keeps
+`using OITOOLS` free of matplotlib and of Qt, which matters on headless machines and beside
+other Qt applications.
+
+Python dependencies (matplotlib-base, astroquery for SIMBAD queries, ultranest for nested
+sampling) are provisioned automatically by
 [CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time you load the package. See
 the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for details,
 including how to reuse an existing Python instead.
@@ -46,7 +52,7 @@ including how to reuse an existing Python instead.
 ## Quick start
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot      # PythonPlot activates the plotting extension
 data = readoifits("mydata.oifits")
 uvplot(data)
 plot_v2(data)
@@ -168,6 +174,6 @@ pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.develop(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 ```
 
-Python dependencies (matplotlib, astroquery, ultranest) are declared in `CondaPkg.toml` and
-installed automatically into a project-local environment on first `using OITOOLS` — there is
-nothing to set up by hand.
+Python dependencies (matplotlib-base, astroquery, ultranest) are declared in `CondaPkg.toml`
+and installed automatically into a project-local environment on first `using OITOOLS` — there
+is nothing to set up by hand. Add `PythonPlot` as well if you want the plotting functions.

@@ -55,7 +55,7 @@ variation or plan to add custom non-differentiable constraints.
 ## Quick start
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 
 data = readoifits("data/2004-data1.oifits")
 nx      = 64

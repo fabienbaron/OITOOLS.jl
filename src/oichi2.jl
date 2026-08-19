@@ -2,8 +2,155 @@ using Statistics, LinearAlgebra, SparseArrays, SpecialFunctions, NFFT, FFTW, Pri
 
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Fourier transform plan sets
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `setup_ft` produces one transform per (wavelength, epoch) channel, in one of two modes, and
+# these types describe what it produced. Three properties they must have:
+#
+#   * No cost in the criterion. `image_to_vis` and the gradient run once per evaluation, so
+#     every field is concretely typed and every accessor forwards directly. A field typed as a
+#     bare `NFFTPlan` would make each `mul!` a dynamic dispatch.
+#   * No new dispatch burden. Each type subtypes what the existing signatures already accept —
+#     `NFFTCell` is an `AbstractVector` of plans, `DFTCell` an `AbstractMatrix{Complex{T}}`,
+#     `OIft` an `AbstractMatrix` of cells — so methods written against those keep matching and
+#     positional access keeps working.
+#   * They answer questions instead of being interrogated. Mode, image size and pixel size are
+#     recorded at construction rather than recovered by inspecting a plan's internals.
+
+"""
+    NFFTCell{T}
+
+One channel's NFFT plans: the full uv transform and one per observable index set.
+
+Named access (`cell.v2`, `cell.t3_1`) says which transform is meant. Positional access is
+kept, and `AbstractVector` is the supertype, so the six plans can still be indexed `1:6` in
+the order `setup_nfft` has always produced them.
+"""
+struct NFFTCell{T,P<:NFFTPlan{T,2,1}} <: AbstractVector{P}
+    uv   :: P     # every uv point
+    vis  :: P     # indx_vis
+    v2   :: P     # indx_v2
+    t3_1 :: P     # indx_t3_1
+    t3_2 :: P     # indx_t3_2
+    t3_3 :: P     # indx_t3_3
+end
+
+Base.size(::NFFTCell) = (6,)
+Base.IndexStyle(::Type{<:NFFTCell}) = IndexLinear()
+Base.@propagate_inbounds function Base.getindex(c::NFFTCell, i::Int)
+    i == 1 && return c.uv
+    i == 2 && return c.vis
+    i == 3 && return c.v2
+    i == 4 && return c.t3_1
+    i == 5 && return c.t3_2
+    i == 6 && return c.t3_3
+    throw(BoundsError(c, i))
+end
+
+"""
+    DFTCell{T}
+
+One channel's dense DFT kernel, `nuv × nx²`.
+
+A DFT covers every uv point in a single matrix, so unlike [`NFFTCell`](@ref) it has no
+per-observable sub-transforms: the observables are selected by indexing the result. Asking for
+`cell.v2` therefore raises, rather than returning something that looks usable.
+"""
+struct DFTCell{T} <: AbstractMatrix{Complex{T}}
+    kernel :: Matrix{Complex{T}}
+end
+
+Base.size(c::DFTCell) = size(c.kernel)
+Base.IndexStyle(::Type{<:DFTCell}) = IndexLinear()
+Base.@propagate_inbounds Base.getindex(c::DFTCell, i::Int) = c.kernel[i]
+Base.@propagate_inbounds Base.getindex(c::DFTCell, i::Int, j::Int) = c.kernel[i, j]
+
+function Base.getproperty(c::DFTCell, name::Symbol)
+    if name in (:uv, :vis, :v2, :t3_1, :t3_2, :t3_3)
+        error("a DFT cell has no per-observable transforms: it holds one kernel covering " *
+              "every uv point, and observables are selected by indexing the result. " *
+              "Use the cell itself, or build the plan set with mode=\"nfft\".")
+    end
+    return getfield(c, name)
+end
+
+"""
+    FTCellLike{T}
+
+Either kind of channel transform: an [`NFFTCell`](@ref) or a [`DFTCell`](@ref).
+
+A union rather than a shared abstract supertype, because Julia has single inheritance and both
+cells must subtype the array type their existing call signatures dispatch on — `AbstractVector`
+of plans for NFFT, `AbstractMatrix{Complex{T}}` for DFT. That dispatch matters more than the
+hierarchy.
+"""
+const FTCellLike{T} = Union{NFFTCell{T}, DFTCell{T}}
+
+"""
+    OIft{T,C}
+
+Fourier transform plans for a `(nwav, nepoch)` grid of channels, as built by [`setup_ft`](@ref).
+
+Indexes like the matrix it wraps — `ft[w, t]` is one channel's [`NFFTCell`](@ref) or
+[`DFTCell`](@ref) — and additionally records what was built:
+
+| field | |
+|---|---|
+| `mode` | `:nfft` or `:dft` |
+| `nx` | image size in pixels |
+| `pixsize` | pixel size in mas |
+
+Deliberately does **not** hold the `OIdata` it was built from: that would double the data's
+lifetime and let the two drift apart once the data is filtered. Callers pass both.
+"""
+struct OIft{T,C<:FTCellLike{T}} <: AbstractMatrix{C}
+    cells   :: Matrix{C}
+    mode    :: Symbol
+    nx      :: Int
+    pixsize :: Float64
+end
+
+Base.size(f::OIft) = size(f.cells)
+Base.IndexStyle(::Type{<:OIft}) = IndexLinear()
+Base.@propagate_inbounds Base.getindex(f::OIft, i::Int) = f.cells[i]
+Base.@propagate_inbounds Base.getindex(f::OIft, i::Int, j::Int) = f.cells[i, j]
+
+
+"""
+Summarise an `OIft` at the REPL.
+
+`show` with a `MIME"text/plain"`, not `display`: the REPL calls `display`, which routes here,
+and defining `show` for a type this package owns is ordinary practice rather than piracy.
+"""
+function Base.show(io::IO, ::MIME"text/plain", f::OIft{T}) where T
+    nwav, nepoch = size(f)
+    label = f.mode === :nfft ? "NFFT plans" : "DFT kernels"
+    println(io, nwav, "×", nepoch, " OIft{", T, "}: ", label,
+                ", ", f.nx, "×", f.nx, " image, ", f.pixsize, " mas/pixel")
+    println(io, "  channels: ", nwav, " wavelength(s) × ", nepoch, " epoch(s)")
+    isempty(f) && (println(io, "  (no channels)"); return nothing)
+    nuv = [_ft_cell_info(f[i])[3] for i in eachindex(f)]
+    if length(nuv) == 1
+        print(io, "  uv points: ", nuv[1])
+    else
+        print(io, "  uv points: ", minimum(nuv), "–", maximum(nuv),
+                  " per channel (", sum(nuv), " total)")
+    end
+    return nothing
+end
+
+Base.show(io::IO, f::OIft{T}) where T =
+    print(io, size(f, 1), "×", size(f, 2), " OIft{", T, "}(", f.mode, ", nx=", f.nx, ")")
+
+
 function _ft_cell_info(cell)
-    if cell isa AbstractVector{<:NFFTPlan}
+    if cell isa NFFTCell
+        return "NFFT", cell.uv.N[1], size(cell.uv.k, 2)
+    elseif cell isa DFTCell
+        return "DFT", round(Int, sqrt(size(cell, 2))), size(cell, 1)
+    elseif cell isa AbstractVector{<:NFFTPlan}
         plan = cell[1]  # fftplan_uv has all UV points
         nx = plan.N[1]
         nuv = size(plan.k, 2)
@@ -32,6 +179,8 @@ Named rather than a `Base.display` method: `display` and `AbstractMatrix` both b
 so a method on them would change how every matrix in the session displays, including in
 unrelated packages.
 """
+ft_info(ft::OIft) = (show(stdout, MIME"text/plain"(), ft); println(); nothing)
+
 function ft_info(ft::AbstractVector)
     nmulti = length(ft)
     println("OITOOLS NFFT transform for $nmulti channels")
@@ -73,7 +222,7 @@ function setup_dft(uv::Matrix{T}, nx, pixsize) where T<:AbstractFloat
     xvals = reshape(span, 1, nx, 1)
     yvals = reshape(span, 1, 1, nx)
     dft = Complex{T}.(reshape(cis.(.-((uv[1, :] .* xvals) .+ (uv[2, :] .* yvals))), nuv, nx^2))
-    return dft
+    return DFTCell{T}(dft)
 end
 
 # Convenience: dispatch on OIdata{T} so the eltype flows through automatically.
@@ -130,7 +279,7 @@ function setup_nfft(data::OIdata{T}, nx, pixsize; fftflags = FFT_FLAGS) where T
     fftplan_t3_1 = plan_nfft(scale_rad[:, data.indx_t3_1],(nx,nx), m=4, σ=2.0; fftflags)
     fftplan_t3_2 = plan_nfft(scale_rad[:, data.indx_t3_2],(nx,nx), m=4, σ=2.0; fftflags)
     fftplan_t3_3 = plan_nfft(scale_rad[:, data.indx_t3_3],(nx,nx), m=4, σ=2.0; fftflags)
-    return [fftplan_uv, fftplan_vis, fftplan_v2, fftplan_t3_1, fftplan_t3_2, fftplan_t3_3]
+    return NFFTCell(fftplan_uv, fftplan_vis, fftplan_v2, fftplan_t3_1, fftplan_t3_2, fftplan_t3_3)
 end
 
 # Raw-uv overload: caller must pass Matrix{T} explicitly typed.
@@ -143,7 +292,7 @@ function setup_nfft(uv::Matrix{T}, indx_vis, indx_v2, indx_t3_1, indx_t3_2, indx
     fftplan_t3_1 = plan_nfft(scale_rad[:, indx_t3_1],(nx,nx), m=4, σ=2.0; fftflags)
     fftplan_t3_2 = plan_nfft(scale_rad[:, indx_t3_2],(nx,nx), m=4, σ=2.0; fftflags)
     fftplan_t3_3 = plan_nfft(scale_rad[:, indx_t3_3],(nx,nx), m=4, σ=2.0; fftflags)
-    return [fftplan_uv, fftplan_vis, fftplan_v2, fftplan_t3_1, fftplan_t3_2, fftplan_t3_3]
+    return NFFTCell(fftplan_uv, fftplan_vis, fftplan_v2, fftplan_t3_1, fftplan_t3_2, fftplan_t3_3)
 end
 
 # function setup_nfft_multi(data, nx, pixsize)
@@ -162,7 +311,7 @@ end
 function setup_nfft_multiepochs(data::AbstractVector{<:OIdata}, nx, pixsize)
     Base.depwarn("`setup_nfft_multiepochs` is deprecated, use `setup_ft(data, nx, pixsize)` instead.", :setup_nfft_multiepochs)
     nepochs = length(data)
-    fftplan_multi = Vector{Vector{NFFTPlan}}(undef, nepochs)
+    fftplan_multi = Vector{NFFTCell}(undef, nepochs)
     for i in 1:nepochs
         fftplan_multi[i] = setup_nfft(data[i], nx, pixsize)
     end
@@ -172,7 +321,7 @@ end
 function setup_nfft_polychromatic(data::AbstractVecOrMat{<:OIdata}, nx, pixsize)
     Base.depwarn("`setup_nfft_polychromatic` is deprecated, use `setup_ft(data, nx, pixsize)` instead.", :setup_nfft_polychromatic)
     nwavs = size(data, 1)
-    fftplan_multi = Vector{Vector{NFFTPlan}}(undef, nwavs)
+    fftplan_multi = Vector{NFFTCell}(undef, nwavs)
     for i in 1:nwavs
         fftplan_multi[i] = setup_nfft(data[i], nx, pixsize)
     end
@@ -182,7 +331,7 @@ end
 function setup_dft_polychromatic(data::AbstractVecOrMat{<:OIdata{T}}, nx, pixsize) where T
     Base.depwarn("`setup_dft_polychromatic` is deprecated, use `setup_ft(data, nx, pixsize; mode=\"dft\")` instead.", :setup_dft_polychromatic)
     nwavs = size(data, 1)
-    fftplan_multi = Vector{Matrix{Complex{T}}}(undef, nwavs)
+    fftplan_multi = Vector{DFTCell{T}}(undef, nwavs)
     for i in 1:nwavs
         fftplan_multi[i] = setup_dft(data[i], nx, pixsize)
     end
@@ -209,9 +358,11 @@ function setup_ft(data::AbstractMatrix{<:OIdata}, nx, pixsize; mode::String="nff
     nwav, nepoch = size(data)
     T = oi_eltype(data)   # errors on mixed precision; plans below inherit T from data.uv
     if mode == "nfft"
-        return [setup_nfft(data[w,t], nx, pixsize; fftflags) for w in 1:nwav, t in 1:nepoch]
+        cells = [setup_nfft(data[w,t], nx, pixsize; fftflags) for w in 1:nwav, t in 1:nepoch]
+        return OIft{T,eltype(cells)}(cells, :nfft, nx, Float64(pixsize))
     elseif mode == "dft"
-        return Matrix{Complex{T}}[setup_dft(data[w,t], nx, pixsize) for w in 1:nwav, t in 1:nepoch]
+        cells = [setup_dft(data[w,t], nx, pixsize) for w in 1:nwav, t in 1:nepoch]
+        return OIft{T,eltype(cells)}(cells, :dft, nx, Float64(pixsize))
     else
         error("Unknown mode \"$mode\" — use \"nfft\" or \"dft\"")
     end
@@ -973,9 +1124,9 @@ function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Compl
 end
 
 # NFFT version
-function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
+function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
     flux = sum(x);
-    cvis_model = image_to_vis(x, ftplan[1]);
+    cvis_model = image_to_vis(x, ftplan.uv);
     if length(cvis)>0
         #Note: cvis_model includes all the complex visibilities needed to compute V2, T3, etc.
         #      while the cvis variable is used to export visibility observables (e.g. diff vis or diff phi)
@@ -1062,9 +1213,9 @@ function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstra
 end
 
 #NFFT version
-function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::AbstractVector{<:NFFT.NFFTPlan}, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
+function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
     flux = sum(x);
-    cvis_model = image_to_vis(x, ftplan[1]);
+    cvis_model = image_to_vis(x, ftplan.uv);
     if length(cvis)>0
         #Note: cvis_model includes all the complex visibilities needed to compute V2, T3, etc.
         #      while the cvis variable is used to export visibility observables (e.g. diff vis or diff phi)
@@ -1081,24 +1232,24 @@ function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstra
     g_t3phi = zero(T)
     if (weights[1]>0)&&(data.nv2>0)
         chi2_v2 = norm((v2_model - data.v2)./data.v2_err)^2;
-        g_v2 = real(adjoint(ftplan[3])*(4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2]));
+        g_v2 = real(adjoint(ftplan.v2)*(4*((v2_model-data.v2)./data.v2_err.^2).*cvis_model[data.indx_v2]));
     end
 
     if (weights[2]>0)&&(data.nt3amp>0)
         chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
         dT3 = 2*(t3amp_model-data.t3amp)./(data.t3amp_err.^2)
-        g_t3amp = real(adjoint(ftplan[4])*(dT3.*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]))) + real(adjoint(ftplan[5])*(dT3.*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]))) + real(adjoint(ftplan[6])*(dT3.*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
+        g_t3amp = real(adjoint(ftplan.t3_1)*(dT3.*cvis_model[data.indx_t3_1]./abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_3]))) + real(adjoint(ftplan.t3_2)*(dT3.*cvis_model[data.indx_t3_2]./abs.(cvis_model[data.indx_t3_2]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_3]))) + real(adjoint(ftplan.t3_3)*(dT3.*cvis_model[data.indx_t3_3]./abs.(cvis_model[data.indx_t3_3]).*abs.(cvis_model[data.indx_t3_1]).*abs.(cvis_model[data.indx_t3_2])))
     end
 
     if (weights[3]>0)&&(data.nt3phi>0)
         if vonmises == false
             chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
             dT3 = T(-360/pi)*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
-            g_t3phi = imag(adjoint(ftplan[4])*(dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1])+adjoint(ftplan[5])*(dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2])+ adjoint(ftplan[6])*(dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
+            g_t3phi = imag(adjoint(ftplan.t3_1)*(dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1])+adjoint(ftplan.t3_2)*(dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2])+ adjoint(ftplan.t3_3)*(dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
         else
             chi2_t3phi =  sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi).*T(pi/180)) + data.t3phi_vonmises_chi2_offset)
             dT3 = -2*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi).*T(pi/180))
-            g_t3phi = imag(adjoint(ftplan[4])*(dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1]) + adjoint(ftplan[5])*(dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2]) + adjoint(ftplan[6])*(dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
+            g_t3phi = imag(adjoint(ftplan.t3_1)*(dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1]) + adjoint(ftplan.t3_2)*(dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2]) + adjoint(ftplan.t3_3)*(dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
         end
     end
 

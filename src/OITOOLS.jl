@@ -125,7 +125,7 @@ export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_tri
        visibility_Lorentzian_ring, visibility_GaussianLorentzian_ring_az
 
 # ── Image reconstruction ─────────────────────────────────────────────────────
-export setup_ft, setup_dft, setup_nfft, ft_info
+export setup_ft, setup_dft, setup_nfft, ft_info, OIft, NFFTCell, DFTCell
 export image_to_vis,
        image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs,
        image_to_residuals, image_to_chi2, image_to_chi2_fg

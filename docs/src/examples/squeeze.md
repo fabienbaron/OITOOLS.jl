@@ -34,7 +34,7 @@ The geometry comes from the Fourier operator, exactly as in
 [`reconstruct_bsmem`](@ref) — there are no `nx`/`pixsize` keywords:
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 
 data = readoifits("2004-data1.oifits")
 ft   = setup_ft(data, 64, 0.2; mode = "dft")

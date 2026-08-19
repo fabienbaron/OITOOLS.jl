@@ -1,5 +1,17 @@
 # Plotting OIFITS data
 
+!!! note "PythonPlot is required"
+
+    These functions live in a package extension. Load PythonPlot alongside OITOOLS, or they
+    exist with no methods and every call raises a `MethodError`:
+
+    ```julia
+    using Pkg; Pkg.add("PythonPlot")
+    using OITOOLS, PythonPlot
+    ```
+
+    See [Step 3: Plotting](@ref plotting-install).
+
 All plot functions accept either a single `OIdata` or an array `AbstractArray{<:OIdata}`
 (e.g., the 2D output of `readoifits`, a polychromatic array, or a multi-epoch vector).
 Call `set_oiplot_defaults()` to apply consistent matplotlib style settings.

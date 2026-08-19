@@ -7,7 +7,7 @@ forward model uses the NFFT for speed or the exact DFT for accuracy.
 ## Basic monochromatic reconstruction
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 data = readoifits("data/2004-data1.oifits")
 
 nx      = 64       # image size (pixels per side)

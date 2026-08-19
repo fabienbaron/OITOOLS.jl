@@ -24,5 +24,6 @@ BLAS.set_num_threads(1)
     include("test_plotting.jl")          # every figure: renders, plotted values, options
     include("test_squeeze.jl")           # SQUEEZE MCMC sampler
     include("test_squeeze_tempering.jl") # SQUEEZE + Pigeons (skipped if absent)
+    include("test_ft_plans.jl")          # OIft/NFFTCell/DFTCell, and the plan naming
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end

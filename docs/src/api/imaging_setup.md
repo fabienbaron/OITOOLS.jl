@@ -5,12 +5,28 @@
 | Function | Description |
 |----------|-------------|
 | `setup_ft(data, nx, pixsize; mode="nfft")` | Set up Fourier transform plans (NFFT or DFT) for any `Matrix{OIdata}` |
+| `ft_info(ft)` | Print a plan set's mode, image size, channel count and uv counts |
+
+The plans themselves are typed. `setup_ft` returns an [`OIft`](@ref) — a matrix of channel
+transforms that also records the mode, image size and pixel size — and each channel is an
+[`NFFTCell`](@ref) (six named plans, one per observable index set) or a [`DFTCell`](@ref) (one
+dense kernel). Typing `ft` at the REPL summarises it.
+
+| Type | |
+|---|---|
+| `OIft` | the plan set over `(nwav, nepoch)`; indexes like a matrix |
+| `NFFTCell` | one channel's NFFT plans: `.uv`, `.vis`, `.v2`, `.t3_1`, `.t3_2`, `.t3_3` |
+| `DFTCell` | one channel's dense DFT kernel, `nuv × nx²` |
 | `setup_dft(data, nx, pixsize)` | Build a DFT matrix for a single `OIdata` |
 | `setup_nfft(data, nx, pixsize)` | Build an NFFT plan for a single `OIdata` |
 | `gaussian2d(nx, ny, sigma)` | Generate a 2D Gaussian starting image |
 
 ```@docs
 setup_ft
+ft_info
+OIft
+NFFTCell
+DFTCell
 gaussian2d
 ```
 

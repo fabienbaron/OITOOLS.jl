@@ -6,7 +6,7 @@ stellar point source. The high-level `reconstruct_sparco` takes physical
 parameters directly:
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 data = readoifits("data/2019_v1295Aql.WL_SMOOTH.A.oifits";
                   polychromatic=true, filter_bad_data=true)
 nx      = 64

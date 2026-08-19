@@ -8,7 +8,7 @@ OITOOLS integration).
 ## Quick start
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 data    = readoifits("data/2004-data1.oifits")
 nx      = 128
 pixsize = 0.05   # mas/pixel
@@ -67,7 +67,7 @@ its own flux constraint and imaging operators; spectral smoothness is enforced
 through the prior cube.
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 data = readoifits("data/polychromatic.oifits", filter_bad_data=true)
 nwav = size(data, 1)
 nx   = 64

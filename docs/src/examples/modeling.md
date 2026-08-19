@@ -41,7 +41,7 @@ Then pass `model` and `x0` to fitting and evaluation functions.
 Parameters use flat keys of the form `"component,parameter"`:
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 data = readoifits("data/AlphaCenA.oifits")[1]
 
 model_dict = Dict{String,Any}(
@@ -489,7 +489,7 @@ fitOnly = ['star,ud', 'star,f', 'ring,udout', 'ring,f']
 Convert and use in Julia:
 
 ```julia
-using OITOOLS
+using OITOOLS, PythonPlot
 
 # Option 1: inline conversion
 model_dict = pmoired_to_dict("{'star,ud': 3.2, 'star,f': 0.7, 'ring,udout': '\$star,ud * 8', 'ring,f': '1 - \$star,f', 'ring,incl': 30.0}")
