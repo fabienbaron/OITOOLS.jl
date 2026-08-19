@@ -1,0 +1,25 @@
+# The launcher environment.
+#
+# Running the GUI needs GLMakie, QMLMakie and QML, which OITOOLS keeps as WEAK dependencies so
+# that `using OITOOLS` costs 1.69 s instead of 8 and maps no Qt. Weak dependencies are not
+# loadable from `--project=.`, so this environment declares them as ordinary ones and pins the
+# whole GL and Qt stack in its Manifest.
+#
+#     julia --project=bin bin/oitoolsgui.jl [file.oifits]
+#
+# `julia --project=bin -e 'using Pkg; Pkg.instantiate()'` reproduces the exact versions.
+#
+# No name/uuid: this is an environment, not a package.
+
+[deps]
+GLFW_jll = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
+# PythonPlot is here for test/gui/, whose port harness compares Makie output against oiplot's
+# matplotlib originals. The launcher never loads it, so it costs the GUI nothing at run time.
+PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
+QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
+QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
+
+[sources]
+OITOOLS = {path = ".."}
