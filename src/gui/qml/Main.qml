@@ -200,7 +200,11 @@ ApplicationWindow {
             // Explore first, and so the default. It is the only perspective that does
             // anything yet, and opening on a placeholder makes the application look broken
             // before it has done a thing.
-            currentIndex: 0
+            //
+            // `initialTab` overrides it, which is how an automated run reaches a perspective
+            // it would otherwise never render: a tab that is never current is constructed but
+            // never laid out, so its layout warnings never appear.
+            currentIndex: initialTab
             TabButton { text: "Explore" }
             TabButton { text: "Observe" }
             TabButton { text: "Model" }
@@ -288,14 +292,10 @@ ApplicationWindow {
             }
 
             // ── Model ────────────────────────────────────────────────────────
-            Item {
-                Label {
-                    anchors.centerIn: parent
-                    horizontalAlignment: Text.AlignHCenter
-                    color: "#666"
-                    text: "Model — component tree, parameter table (fixed / free / expression),\n" +
-                          "sky canvas, optimiser and uncertainty selectors."
-                }
+            ModelTab {
+                uiScale:    win.uiScale
+                fontScale:  win.fontScale
+                baseFontPt: win.baseFontPt
             }
 
             // ── Image ────────────────────────────────────────────────────────

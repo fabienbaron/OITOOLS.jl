@@ -27,6 +27,28 @@ function _initial_folder(session::Session)
     return "file://" * pwd()
 end
 
+"Tab names, in the order Main.qml lists them."
+const TAB_NAMES = ("explore", "observe", "model", "image")
+
+"""
+Which perspective the window opens on, from `\$OITOOLSGUI_TAB` (default Explore).
+
+Its reason for existing is testing: a tab that is never current is constructed but never laid
+out, so any layout warning it would emit never appears. Naming a tab is what makes an
+automated run render it. An unknown name is reported rather than silently ignored, since a
+typo would otherwise look like the setting having no effect.
+"""
+function _initial_tab()
+    want = lowercase(strip(get(ENV, "OITOOLSGUI_TAB", "")))
+    isempty(want) && return 0
+    i = findfirst(==(want), TAB_NAMES)
+    if i === nothing
+        @warn "OITOOLSGUI_TAB is not a tab name; opening on Explore" got = want options = TAB_NAMES
+        return 0
+    end
+    return i - 1        # QML indexes from zero
+end
+
 function OITOOLS.gui(session::Session = Session();
                         qmlfile::AbstractString = joinpath(pkgdir(OITOOLS), "src", "gui", "qml", "Main.qml"),
                         autoquit_ms::Integer = 0,
@@ -76,6 +98,7 @@ function OITOOLS.gui(session::Session = Session();
     QML.loadqml(qmlfile;
                 plot            = fig,
                 autoQuitMs      = Int(autoquit_ms),
+                initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,
                 initialFolder   = _initial_folder(session),
                 fullscreenOnStart = get(ENV, "OITOOLSGUI_FULLSCREEN", "") == "1",
