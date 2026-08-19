@@ -38,6 +38,8 @@ angular_separation
 | `read_obs_file(file)` | Read target configuration (TOML) |
 | `read_comb_file(file)` | Read combiner configuration (TOML) |
 | `read_wave_file(file)` | Read wavelength configuration (TOML) |
+| `list_configs([dir])` | Enumerate available facility / combiner / wavelength / target configs, classified by content, plus the wavelength→combiner map |
+| `predict_errors(facility, combiner, wavelength; mag, visamp, elevation_deg)` | Predicted per-channel σ(V²), σ(CP), σ(visamp), σ(visphi), Strehl, DIT and photon counts — the noise model without simulating to a file |
 | `observable_epochs(facility, target, dates; min_elevation, pops)` | Opt-in observability filter for `simulate` |
 | `strehl_ratio(λ, D, seeing, t0, mag_ao, ao)` | AO Strehl ratio (port of JMMC `Band.strehl`) |
 | `coupling_efficiency(λ, D, seeing, t0, mag_ao, ao)` | Strehl, or seeing-limited coupling when `ao === nothing` |
@@ -77,4 +79,10 @@ zero_point_flux
 airmass
 datetime_to_jd
 datetime_to_mjd
+read_facility_file
+read_obs_file
+read_comb_file
+read_wave_file
+list_configs
+predict_errors
 ```

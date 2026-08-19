@@ -18,8 +18,11 @@
     # BC2026 OBJECT1_N has OI_VIS, OI_VIS2, OI_T3, OI_FLUX across multiple channels
     oifitsfile = joinpath(@__DIR__, "..", "demos", "data", "BC2026", "OBJECT1_N.oifits")
     if isfile(oifitsfile)
+        # warn=false as well as verbose=false: OBJECT1_N has station indices absent from its
+        # OI_ARRAY, so without it every fresh precompile prints a dozen warnings that have
+        # nothing to do with the user's own data.
         data = readoifits(oifitsfile, filter_bad_data=true, polychromatic=true,
-                          verbose=false, merge_oi_wavelength=true)
+                          verbose=false, warn=false, merge_oi_wavelength=true)
         nx = 32
         pixsize = 0.25
         ft = setup_ft(data, nx, pixsize)

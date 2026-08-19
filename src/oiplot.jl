@@ -711,10 +711,10 @@ vector, or 2-D array.
 """
 function plot_v2(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
                  logplot=false, color::String="baseline", markopt=false,
-                 legend_below=false, figtitle="")
+                 legend_below=false, figtitle="", ax=nothing)
     _plot_obs(data, OBS_PLOT_SPECS["V2"]; color=color, logplot=logplot,
              figsize=figsize, figtitle=figtitle, markopt=markopt,
-             legend_below=legend_below)
+             legend_below=legend_below, ax=ax)
 end
 
 
@@ -734,10 +734,10 @@ Accepts a single `OIdata`, vector, or 2-D array.
 """
 function plot_t3phi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
                     color::String="baseline", markopt=false, legend_below=false,
-                    t3base="geom", figtitle="")
+                    t3base="geom", figtitle="", ax=nothing)
     spec = t3base == "max" ? OBS_PLOT_SPECS["T3PHI_MAX"] : OBS_PLOT_SPECS["T3PHI"]
     _plot_obs(data, spec; color=color, figsize=figsize, figtitle=figtitle,
-             markopt=markopt, legend_below=legend_below)
+             markopt=markopt, legend_below=legend_below, ax=ax)
 end
 
 # ── Residual plot helper ──────────────────────────────────────────────────────
@@ -1083,10 +1083,10 @@ Accepts a single `OIdata`, vector, or 2-D array.
 """
 function plot_t3amp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
                     color::String="baseline", markopt=false, legend_below=false,
-                    t3base="geom", logplot=false, figtitle="")
+                    t3base="geom", logplot=false, figtitle="", ax=nothing)
     spec = t3base == "max" ? OBS_PLOT_SPECS["T3AMP_MAX"] : OBS_PLOT_SPECS["T3AMP"]
     _plot_obs(data, spec; color=color, logplot=logplot, figsize=figsize,
-             figtitle=figtitle, markopt=markopt, legend_below=legend_below)
+             figtitle=figtitle, markopt=markopt, legend_below=legend_below, ax=ax)
 end
 
 """
@@ -1107,9 +1107,9 @@ Plot flux spectra vs wavelength (μm). Accepts a single `OIdata`, vector, or 2-D
 - `legend_below` — place legend below the plot. Default: `false`.
 """
 function plot_flux(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
-                   color::String="wav", markopt=false, legend_below=false, figtitle="")
+                   color::String="wav", markopt=false, legend_below=false, figtitle="", ax=nothing)
     _plot_obs(data, OBS_PLOT_SPECS["FLUX"]; color=color, figsize=figsize,
-             figtitle=figtitle, markopt=markopt, legend_below=legend_below)
+             figtitle=figtitle, markopt=markopt, legend_below=legend_below, ax=ax)
 end
 
 """
@@ -1134,7 +1134,7 @@ Accepts a single `OIdata`, vector, or 2-D array.
 - `legend_below` — place legend below the plot. Default: `false`.
 """
 function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
-                     color::String="baseline", markopt=false, legend_below=false, figtitle="")
+                     color::String="baseline", markopt=false, legend_below=false, figtitle="", ax=nothing)
     dvec = as_datavec(data)
     is_diff = any(_is_obstype(d.phityp, "differential") for d in dvec)
 
@@ -1207,7 +1207,7 @@ function plot_visphi(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
     else
         # ── Absolute phase layout: delegate to generic engine ──
         _plot_obs(data, OBS_PLOT_SPECS["VISPHI"]; color=color, figsize=figsize,
-                 figtitle=figtitle, markopt=markopt, legend_below=legend_below)
+                 figtitle=figtitle, markopt=markopt, legend_below=legend_below, ax=ax)
     end
 end
 
@@ -1228,7 +1228,7 @@ in `data.amptyp` (`"absolute"`, `"differential"`, `"correlated flux"`, or generi
 """
 function plot_visamp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplot_figsize,
                      logplot=false, color::String="baseline", markopt=false,
-                     legend_below=false, figtitle="")
+                     legend_below=false, figtitle="", ax=nothing)
     dvec = as_datavec(data)
     amptyp = dvec[1].amptyp
     if _is_obstype(amptyp, "correlated flux")
@@ -1243,7 +1243,7 @@ function plot_visamp(data::Union{OIdata, AbstractArray{<:OIdata}}; figsize=oiplo
     end
     _plot_obs(data, OBS_PLOT_SPECS["VISAMP"]; color=color, logplot=logplot,
              figsize=figsize, figtitle=figtitle, markopt=markopt,
-             legend_below=legend_below, plot_title=amp_title, ylabel_str=amp_ylabel)
+             legend_below=legend_below, plot_title=amp_title, ylabel_str=amp_ylabel, ax=ax)
 end
 
 """

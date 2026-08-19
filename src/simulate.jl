@@ -339,21 +339,236 @@ end
 
 # ─── Public API: auto-detect format by extension ─────────────────────────────
 
+"""
+    list_configs([dir]) -> (; facilities, combiners, wavelengths, targets, unknown, wave_combiner)
+
+Enumerate the configuration files that [`read_facility_file`](@ref), [`read_comb_file`](@ref),
+[`read_wave_file`](@ref) and [`read_obs_file`](@ref) can load, classified by what they
+actually contain. `dir` defaults to the configs shipped with OITOOLS.
+
+Nothing about a filename says what kind of config it is, so the classification reads each
+file: a **facility** has a site (`lat`), a **wavelength setup** has `lambda` and names its
+`combiner`, a **target** has `raep0`, and anything else carrying `transmission`/`read_noise`
+is a **combiner**. Files that parse but match nothing land in `unknown`, and so do files that
+fail to parse — enumerating a directory should never throw.
+
+`wave_combiner` maps each wavelength setup to the combiner it belongs to. That link exists
+only inside the file, so it is the only way to offer, say, MIRC-X's spectral modes without
+hard-coding them.
+
+```jldoctest
+julia> c = list_configs();
+
+julia> c.facilities
+5-element Vector{String}:
+ "CHARA"
+ "VLTI_AT_large"
+ "VLTI_AT_medium"
+ "VLTI_AT_small"
+ "VLTI_UT"
+
+julia> c.wave_combiner["MIRCX_LOWH"]
+"MIRCX"
+```
+"""
+function list_configs(dir::AbstractString = _CONFIGS_DIR)
+    facilities  = String[]
+    combiners   = String[]
+    wavelengths = String[]
+    targets     = String[]
+    unknown     = String[]
+    wave_combiner = Dict{String,String}()
+
+    isdir(dir) || return (; facilities, combiners, wavelengths, targets, unknown, wave_combiner)
+
+    for f in sort(readdir(dir))
+        endswith(f, ".toml") || continue
+        name = f[1:end-5]
+        d = try
+            TOML.parsefile(joinpath(dir, f))
+        catch
+            push!(unknown, name); continue
+        end
+        # Order matters: CHARA.toml carries a throughput/transmission key as well as a site,
+        # so the facility test has to come before the combiner test.
+        if haskey(d, "lat")
+            push!(facilities, name)
+        elseif haskey(d, "lambda") && haskey(d, "combiner")
+            push!(wavelengths, name)
+            wave_combiner[name] = string(d["combiner"])
+        elseif haskey(d, "raep0") || haskey(d, "decep0")
+            push!(targets, name)
+        elseif any(haskey(d, k) for k in ("transmission", "read_noise", "int_trans"))
+            push!(combiners, name)
+        else
+            push!(unknown, name)
+        end
+    end
+    return (; facilities, combiners, wavelengths, targets, unknown, wave_combiner)
+end
+
+
+"""
+    predict_errors(facility, combiner, wavelength; mag, visamp=1.0, elevation_deg=90.0,
+                   mag_ao=nothing, channel=nothing) -> NamedTuple
+
+Predicted per-channel uncertainties for one setup, **without running a simulation or writing
+a file**.
+
+`simulate` returns the result of writing an OIFITS and keeps nothing in memory, so the only
+way to ask "what SNR would I get?" used to be to simulate to disk and read it back. This
+runs the same noise model directly.
+
+Returns, one entry per spectral channel of `wavelength`:
+
+| field | meaning |
+|---|---|
+| `λ`, `δλ` | channel centre and width, m |
+| `strehl` | coupling efficiency actually used |
+| `dit` | integration time per frame, s (possibly shortened for saturation) |
+| `nframes` | frames coadded |
+| `nphot` | photons per telescope per DIT, fringe channel |
+| `sigma_v2` | σ(V²), including the `vis_cal_err` systematic |
+| `sigma_cp` | σ(closure phase), degrees, including `phase_cal_err` |
+| `sigma_visamp` | σ of the visibility amplitude |
+| `sigma_visphi` | σ(visibility phase), degrees |
+
+`mag` follows the same rules as `simulate`: a scalar, a `Dict` of band ⇒ magnitude, or one
+value per channel. `visamp` is the visibility amplitude at which to evaluate the errors —
+errors depend on it, so the default of 1.0 gives the unresolved (best) case.
+
+Mirrors `simulate`'s internals exactly; see `demos/validate_noise_model.jl`, which checks
+this model against ASPRO 2's published curves.
+"""
+function predict_errors(facility::FacilityConfig, combiner::CombinerConfig,
+                        wavelength::WaveConfig;
+                        mag = 2.0, visamp::Real = 1.0, elevation_deg::Real = 90.0,
+                        mag_ao::Union{Nothing,Real} = nothing)
+    λ, δλ = wavelength.λ, wavelength.δλ
+    nw    = length(λ)
+    nw > 0 || throw(ArgumentError("wavelength config has no channels"))
+    mags  = resolve_magnitudes(mag, λ)
+    m_ao  = mag_ao === nothing ? _default_mag_ao(mags, λ, facility) : Float64(mag_ao)
+    elev  = [Float64(elevation_deg)]
+
+    N,  dit, nframes = photons_per_telescope(mags, λ, δλ, facility, combiner, elev, m_ao;
+                                             channel = :fringes)
+    Np, _,   _       = photons_per_telescope(mags, λ, δλ, facility, combiner, elev, m_ao;
+                                             channel = :photometry)
+
+    ntel  = facility.ntel
+    v2st  = hcat([[i, j] for i in 1:ntel for j in (i+1):ntel]...)
+    sq, vc, vk, vp = correlated_flux_coefficients(N, Np, combiner, ntel, v2st)
+
+    strehl   = Vector{Float64}(undef, nw)
+    nphot    = Vector{Float64}(undef, nw)
+    sigma_v2 = Vector{Float64}(undef, nw)
+    sigma_cp = Vector{Float64}(undef, nw)
+    sigma_va = Vector{Float64}(undef, nw)
+    sigma_vp = Vector{Float64}(undef, nw)
+
+    for w in 1:nw
+        σc = complex_vis_error(visamp, sq[1, 1, w], vc[1, 1, w], vk[1, 1, w], vp[1, 1, w],
+                               nframes)
+        v2 = visamp^2
+        s2 = vis2_error_from_sigma(v2, σc)
+        sigma_v2[w] = _with_systematics(s2, 2 * combiner.vis_cal_err * abs(v2))
+        sigma_va[w] = _with_systematics(σc, combiner.vis_cal_err * abs(visamp))
+        sigma_vp[w] = _with_systematics(min(180 / π * σc / max(abs(visamp), eps()), 180.0),
+                                        combiner.phase_cal_err)
+        # Closure phase: three baselines' statistical phase errors in quadrature, then the
+        # calibration systematic added ONCE (not once per baseline). Same expression as
+        # demos/validate_noise_model.jl, which is the form checked against ASPRO 2.
+        σφ_stat     = 180 / π * sigma_v2[w] / 2
+        sigma_cp[w] = _with_systematics(sqrt(3) * σφ_stat, combiner.phase_cal_err)
+        strehl[w]   = combiner.strehl_model == "fixed_spica" ?
+                      _spica_fixed_strehl(facility.seeing) :
+                      coupling_efficiency(λ[w], _tel_diam(facility), facility.seeing,
+                                          facility.t0, m_ao, facility.ao;
+                                          elevation_deg = elevation_deg)
+        nphot[w] = N[1, 1, w]
+    end
+
+    return (; λ, δλ, strehl, dit, nframes, nphot,
+              sigma_v2, sigma_cp, sigma_visamp = sigma_va, sigma_visphi = sigma_vp)
+end
+
+# Mean telescope diameter, or 1 m when a config omits them.
+_tel_diam(f::FacilityConfig) = isempty(f.tel_diams) ? 1.0 : sum(f.tel_diams) / length(f.tel_diams)
+
+# simulate derives the AO guide magnitude from `mag` and the AO band when mag_ao is absent.
+function _default_mag_ao(mags::AbstractVector, λ::AbstractVector, facility::FacilityConfig)
+    facility.ao === nothing && return mags[cld(length(mags), 2)]
+    b = band_by_name(facility.ao.band)
+    b === nothing && return mags[cld(length(mags), 2)]
+    return resolve_magnitudes_at(mags, λ, b.lambda)
+end
+
+# Value of the per-channel magnitude vector nearest a given wavelength.
+function resolve_magnitudes_at(mags::AbstractVector, λ::AbstractVector, λ0::Real)
+    _, i = findmin(abs.(λ .- λ0))
+    return mags[i]
+end
+
+"""
+    read_facility_file(path) -> FacilityConfig
+
+Read an interferometric array: site coordinates, telescopes, station positions, delay-line
+lengths, seeing and AO parameters.
+
+`path` may be a bare name (`"CHARA"`), a name with extension, or a full path. Bare names are
+looked up in OITOOLS' own `src/configs` directory, so the shipped configs work without a
+path; see [`list_configs`](@ref) for what is available. A `.toml` file is read with the
+current schema, anything else with the legacy whitespace-delimited reader.
+"""
 function read_facility_file(path)
     p = _resolve_config(path)
     endswith(p, ".toml") ? _read_facility_toml(p) : _read_facility_txt(p)
 end
 
+"""
+    read_obs_file(path) -> TargetConfig
+
+Read a target definition (name, RA/Dec in degrees, proper motion, spectral type) — the
+OI_TARGET header `simulate` writes.
+
+`path` may be a bare name (`"CHARA"`), a name with extension, or a full path. Bare names are
+looked up in OITOOLS' own `src/configs` directory, so the shipped configs work without a
+path; see [`list_configs`](@ref) for what is available. A `.toml` file is read with the
+current schema, anything else with the legacy whitespace-delimited reader.
+"""
 function read_obs_file(path)
     p = _resolve_config(path)
     endswith(p, ".toml") ? _read_target_toml(p) : _read_target_txt(p)
 end
 
+"""
+    read_comb_file(path) -> CombinerConfig
+
+Read a beam combiner: transmission, detector properties, integration time and the
+calibration error floors used by the noise model.
+
+`path` may be a bare name (`"CHARA"`), a name with extension, or a full path. Bare names are
+looked up in OITOOLS' own `src/configs` directory, so the shipped configs work without a
+path; see [`list_configs`](@ref) for what is available. A `.toml` file is read with the
+current schema, anything else with the legacy whitespace-delimited reader.
+"""
 function read_comb_file(path)
     p = _resolve_config(path)
     endswith(p, ".toml") ? _read_combiner_toml(p) : _read_combiner_txt(p)
 end
 
+"""
+    read_wave_file(path) -> WaveConfig
+
+Read a spectral setup: per-channel wavelengths and bandwidths, plus the name of the
+combiner it belongs to.
+
+`path` may be a bare name (`"CHARA"`), a name with extension, or a full path. Bare names are
+looked up in OITOOLS' own `src/configs` directory, so the shipped configs work without a
+path; see [`list_configs`](@ref) for what is available. A `.toml` file is read with the
+current schema, anything else with the legacy whitespace-delimited reader.
+"""
 function read_wave_file(path)
     p = _resolve_config(path)
     endswith(p, ".toml") ? _read_wave_toml(p) : _read_wave_txt(p)

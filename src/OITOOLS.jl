@@ -124,6 +124,8 @@ export auto_pixsize, gaussian_prior, gaussian_prior_cube
 # ── Simulation ───────────────────────────────────────────────────────────────
 export simulate, simulate_from_oifits, get_uv
 export read_facility_file, read_obs_file, read_comb_file, read_wave_file
+export list_configs
+export predict_errors
 export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig, AOConfig
 export strehl_ratio, coupling_efficiency, fried_parameter, seeing_from_r0, atm_transmission
 export PhotometricBand, PHOTOMETRIC_BANDS, band_for_wavelength, band_by_name, zero_point_flux
