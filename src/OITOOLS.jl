@@ -83,6 +83,13 @@ function plot_visphi end
 function plot_visphi_residuals end
 function set_oiplot_defaults end
 function plot_ultranest_corner end
+
+# The GUI. Defined by OITOOLSGUIExt, which loads with GLMakie + QMLMakie + QML:
+#     using OITOOLS, GLMakie, QMLMakie, QML
+#     gui()
+# A function can be declared here and given methods by an extension; the GUI's types
+# (Session, ShellState, LiveCanvas) cannot, and stay inside the extension.
+function gui end
 function uvplot end
 function empty_night end
 
@@ -95,7 +102,7 @@ export filter_data, set_data_filter
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
-       plot_ultranest_corner,
+       plot_ultranest_corner, gui,
        plot_visamp, plot_visphi, plot_diffphi, plot_flux, plot_obs, plot_multi,
        plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
        plot_visamp_residuals, plot_visphi_residuals, plot_residuals,

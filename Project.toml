@@ -39,10 +39,16 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [weakdeps]
+GLFW_jll = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 Pigeons = "0eb8d820-af6a-4919-95ae-11206f830c31"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
+QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
+QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
 
 [extensions]
+OITOOLSGUIExt = ["GLFW_jll", "GLMakie", "Makie", "QML", "QMLMakie"]
 OITOOLSPigeonsExt = "Pigeons"
 OITOOLSPythonPlotExt = "PythonPlot"
 
