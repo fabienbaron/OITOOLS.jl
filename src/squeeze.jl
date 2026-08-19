@@ -623,59 +623,15 @@ end
 """
     monitor_update!(mon, image, iter; chi2r, temperature, params)
 
-Redraw the live displays: the current image via [`imdisp`](@ref), and a trace
-panel with χ²r, temperature (or Pigeons round) and each free model parameter
-against iteration.
+Redraw the live displays: the current image and a trace panel with χ²r, temperature (or
+Pigeons round) and each free model parameter against iteration.
 
-`imdisp` opens its figure by title and clears it, so calling this repeatedly with
-the same monitor updates the same window instead of spawning one per call.
+The drawing lives in `oiplot.jl`, i.e. in the PythonPlot extension — `SqueezeMonitor` itself
+holds only plain data, so the sampler needs no plotting stack unless monitoring is on. Load
+PythonPlot to enable this method.
 """
-function monitor_update!(mon::SqueezeMonitor, image::AbstractMatrix, iter::Integer;
-                         chi2r::Real = NaN, temperature::Real = NaN,
-                         params = nothing)
-    push!(mon.iters, Int(iter))
-    push!(mon.chi2r, Float64(chi2r))
-    push!(mon.temperature, Float64(temperature))
-    params === nothing || push!(mon.params, copy(Float64.(params)))
+function monitor_update! end
 
-    imdisp(image; figtitle = mon.title * " — image", pixsize = mon.pixsize,
-           colormap = mon.colormap, use_colorbar = true)
-
-    ntrace = 2 + (isempty(mon.free) ? 0 : length(mon.free))
-    fig = figure(mon.title * " — traces", figsize = (6, 2.2 * ntrace))
-    clf()
-    k = 1
-    subplot(ntrace, 1, k); k += 1
-    plot(mon.iters, mon.chi2r, "-"); yscale("log")
-    ylabel(L"$\chi^2_r$"); grid(true, alpha = 0.3)
-    title(@sprintf("iteration %d", iter), fontsize = 9)
-
-    subplot(ntrace, 1, k); k += 1
-    plot(mon.iters, mon.temperature, "-", color = "tab:orange")
-    ylabel(mon.trace2_label); grid(true, alpha = 0.3)
-
-    if !isempty(mon.free) && !isempty(mon.params)
-        for j in mon.free
-            subplot(ntrace, 1, k); k += 1
-            plot(mon.iters, [p[j] for p in mon.params], "-", color = "tab:green")
-            ylabel(String(SPARCO_PARAM_NAMES[j]), fontsize = 8)
-            grid(true, alpha = 0.3)
-        end
-    end
-    xlabel("iteration")
-    # `subplots_adjust` rather than `tight_layout`: the latter re-solves the whole
-    # layout every call and measured ~30 ms of the ~100 ms update.
-    subplots_adjust(hspace = 0.45, left = 0.18, right = 0.97, top = 0.94, bottom = 0.08)
-
-    # Force a redraw without blocking.  Only meaningful for an interactive
-    # backend; under Agg (headless, e.g. CI) `pause` costs ~14 ms and does
-    # nothing useful, so skip it.
-    try
-        Bool(pyplot.isinteractive()) && pause(0.001)
-    catch
-    end
-    return mon
-end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The sampler.

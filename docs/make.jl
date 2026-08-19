@@ -1,10 +1,19 @@
 using Pkg
 Pkg.activate(@__DIR__)
 CI = get(ENV, "CI", nothing) == "true"
-using Documenter, OITOOLS
+# Plotting lives in OITOOLSPythonPlotExt, not in OITOOLS itself. Loading PythonPlot is what
+# brings that module into existence; without it every `@docs` block naming a plotting
+# function fails with "no docs found", because the docstrings are attached to methods that
+# have not been defined yet. Agg first: makedocs must not open a window, and the default
+# backend probe is also what used to map a conflicting Qt into the process.
+ENV["MPLBACKEND"] = get(ENV, "MPLBACKEND", "Agg")
+using Documenter, OITOOLS, PythonPlot
+
+const PLOTEXT = Base.get_extension(OITOOLS, :OITOOLSPythonPlotExt)
+PLOTEXT === nothing && error("OITOOLSPythonPlotExt did not load; plotting docs would be lost")
 
 makedocs(;
-    modules=[OITOOLS],
+    modules=[OITOOLS, PLOTEXT],
     sitename = "OITOOLS",
     checkdocs = :exports,
     doctest = false,

@@ -12,7 +12,7 @@ using Dates, LinearAlgebra
 # ─── CHARA POP data (from telescopes.chara, Jun 2019) ────────────────────────
 
 const CHARA_POP_ARRAY = let
-    p = zeros(Float32, 7, 5)  # 7 telescopes (S1,S2,E1,E2,W1,W2,S3) × 5 POPs
+    p = zeros(Float32, 6, 5)  # 6 telescopes (S1,S2,E1,E2,W1,W2) × 5 POPs
     # S1
     p[1,:] = [0.0, 36.5639684, 73.1289412, 109.7249843, 143.0358086]
     # S2
@@ -25,12 +25,19 @@ const CHARA_POP_ARRAY = let
     p[5,:] = [-73.1098438, -36.5368346, 0.0, 36.5936311, 69.9061629]
     # W2
     p[6,:] = [-143.055000, -106.455324, -69.911098, -33.306356, 0.0]
-    # S3 (same POP offsets as S1 for now — update when known)
-    p[7,:] = [0.0, 36.5639684, 73.1289412, 109.7249843, 143.0358086]
+    #
+    # There is deliberately no seventh row. This table used to carry one for S3, filled with
+    # a copy of S1's offsets and a "update when known" note -- but S3 has no POPs, so there
+    # are no numbers to fill in and a POP search including it was silently optimising against
+    # S1. CHARA.toml lists the six telescopes above and nothing else, and both this table and
+    # CHARA_AIRPATH are indexed by telescope index into that list, so a seventh row was
+    # unreachable as well as wrong.
     p
 end
 
-const CHARA_AIRPATH = Float32[0.0, 573633.833, 4250500.0, 3680300.0, 1842354.0, 2405131.0, 0.0] .* Float32(1e-6)
+# One entry per telescope, in CHARA.toml order (S1, S2, E1, E2, W1, W2). See the note in
+# CHARA_POP_ARRAY for why there is no seventh.
+const CHARA_AIRPATH = Float32[0.0, 573633.833, 4250500.0, 3680300.0, 1842354.0, 2405131.0] .* Float32(1e-6)
 
 # ─── Low-precision Moon ephemeris (Meeus, Astronomical Algorithms) ────────────
 
@@ -505,26 +512,6 @@ showing dark time, altitude window, and delay feasibility.
 Pass `delay_length=43.0` for a conservative delay estimate.
 Pass `savefile="path.png"` to save to file and close the figure.
 """
-function obs_plan(targetname::AbstractString, facility::FacilityConfig,
-                  ra::Float64, dec::Float64, obsdate::DateTime,
-                  pop::Vector{Int}, config::Vector{Int};
-                  alt_limit::Float64=30.0, alt_max::Float64=90.0,
-                  delay_length::Union{Nothing,Float64}=nothing,
-                  dark_offset::Float64=0.0, step_minutes::Int=1,
-                  figsize=(10,5), savefile::AbstractString="",
-                  show_alt::Bool=true)
-
-    obs = night_observability(facility, ra, dec, obsdate;
-                              alt_limit=alt_limit, alt_max=alt_max,
-                              dark_offset=dark_offset, step_minutes=step_minutes)
-
-    dr = in_delay(facility, dec, obs.ha, config, pop; delay_length=delay_length)
-
-    gantt_onenight(targetname, obsdate, obs.lst, obs.lst_midnight,
-                   obs.az, obs.alt, obs.good_alt, dr.good_delay;
-                   good_twilight=obs.good_twilight,
-                   figsize=figsize, savefile=savefile, show_alt=show_alt)
-end
 
 """
     empty_night(facility, obsdate; figsize=(10,5), savefile="")
@@ -532,24 +519,6 @@ end
 Render a Gantt plot showing only the twilight bands for a given night,
 with no target. Useful as a blank canvas before a target is selected.
 """
-function empty_night(facility::FacilityConfig, obsdate::DateTime;
-                     dark_offset::Float64=0.0, step_minutes::Int=1,
-                     figsize=(10,5), savefile::AbstractString="")
-    lat, lon = facility.lat, facility.lon
-    # Use a dummy RA to get LST grid (RA only shifts HA, not LST)
-    ra_dummy = 0.0
-    lst_midnight, _ = hour_angle_calc(obsdate + Dates.Day(1) + Dates.Hour(7), lon, ra_dummy)
-    lst_midnight = lst_midnight[1]
-    _, UTC_set  = sunrise_sunset(obsdate, lat, lon)
-    UTC_rise, _ = sunrise_sunset(obsdate + Dates.Day(1), lat, lon)
-    utc = collect(range(UTC_set + dark_offset, UTC_rise - dark_offset, step=1.0/60*step_minutes))
-    lst, _ = hour_angle_calc(hours_to_date(obsdate, utc), lon, ra_dummy)
-    lst = Float32.(lst)
-
-    gantt_onenight("", obsdate, lst, lst_midnight,
-                   Float32[], Float32[], Int[], Int[];
-                   figsize=figsize, savefile=savefile)
-end
 
 # ─── CHARA-plan style delay plot ──────────────────────────────────────────────
 
@@ -566,62 +535,6 @@ curve and elevation limit overlaid.
 
 Pass `delay_length=43.0` for a conservative delay estimate.
 """
-function chara_plan(targetname::AbstractString, facility::FacilityConfig,
-                    ra::Float64, dec::Float64, obsdate::DateTime,
-                    pop::Vector{Int}, config::Vector{Int};
-                    alt_limit::Float64=30.0, alt_max::Float64=90.0,
-                    delay_length::Union{Nothing,Float64}=nothing,
-                    dark_offset::Float64=0.0, step_minutes::Int=1)
-
-    obs = night_observability(facility, ra, dec, obsdate;
-                              alt_limit=alt_limit, alt_max=alt_max,
-                              dark_offset=dark_offset, step_minutes=step_minutes)
-
-    dr = in_delay(facility, dec, obs.ha, config, pop; delay_length=delay_length)
-
-    # Effective delay limit for the plot
-    if !isnothing(delay_length)
-        dmax = Float64(delay_length)
-    elseif !isempty(facility.delay_lengths)
-        dmax = maximum(facility.delay_lengths)
-    else
-        dmax = 45.7
-    end
-
-    fig = figure(figsize=(12, 6))
-    ax1 = fig.add_subplot(111)
-
-    # Plot delay carts for each baseline
-    for b in 1:dr.nbaselines
-        ax1.plot(obs.lst, dr.delay_carts[b, :], label=dr.baseline_names[b])
-    end
-
-    ax1.axhline(y=dmax, color="gray", linestyle="--", alpha=0.5, label="Delay limit")
-    ax1.axhline(y=-dmax, color="gray", linestyle="--", alpha=0.5)
-
-    ax1.set_ylabel("Delay cart position (m)")
-    ax1.set_xlabel("LST (hours)")
-
-    # Altitude on secondary axis
-    ax2 = ax1.twinx()
-    ax2.plot(obs.lst, obs.alt, color="black", linestyle=":", linewidth=1.5, label="Altitude")
-    ax2.axhline(y=alt_limit, color="red", linestyle="-", alpha=0.5, label="El. limit $(alt_limit)°")
-    ax2.set_ylabel("Altitude (°)")
-    ax2.set_ylim(-5, 90)
-
-    # Combined legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(vcat(lines1, lines2), vcat(labels1, labels2),
-               loc="upper left", fontsize=8, ncol=2)
-
-    pop_str = join(["$(facility.sta_names[i]):P$(pop[i])" for i in findall(config .> 0)], " ")
-    ax1.set_title("$(targetname) — $(Date(obsdate)) — POPs: $(pop_str)")
-
-    ax1.set_xlim(minimum(obs.lst), maximum(obs.lst))
-    tight_layout()
-    return fig
-end
 
 # ─── Display helpers ──────────────────────────────────────────────────────────
 

@@ -1,5 +1,12 @@
 using OITOOLS, Test, LinearAlgebra
 
+# Loads the OITOOLSPythonPlotExt extension. Plotting is no longer in the core package, so
+# without this every figure test would call a stub function with no methods. MPLBACKEND is
+# set first because PythonPlot picks its backend at import time, and the default probe
+# loads Qt.
+ENV["MPLBACKEND"] = "Agg"
+using PythonPlot
+
 # _bidiag_svd calls LAPACK and reductions can reassociate with thread count, while the
 # BSMEM gate is bit-for-bit. Pin threads so the comparison is reproducible.
 BLAS.set_num_threads(1)

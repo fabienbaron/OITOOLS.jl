@@ -17,22 +17,41 @@ function _ft_cell_info(cell)
     end
 end
 
-function Base.display(ft::Vector{<:AbstractArray{<:NFFTPlan}})
+"""
+    ft_info(ft)
+
+Print a summary of a Fourier-transform plan set: mode, image size, channels and uv counts.
+
+    julia> ft = setup_ft(data, 128, 0.25);
+    julia> ft_info(ft)
+    OITOOLS NFFT Fourier transform plans: 8 wavelength(s) × 1 epoch(s)
+      Image size: 128×128 pixels
+      UV points: 380–412 (total 3168)
+
+Named rather than a `Base.display` method: `display` and `AbstractMatrix` both belong to Base,
+so a method on them would change how every matrix in the session displays, including in
+unrelated packages.
+"""
+function ft_info(ft::AbstractVector)
     nmulti = length(ft)
-    println("OITOOLS NFFT transform for $nmulti channels");
+    println("OITOOLS NFFT transform for $nmulti channels")
     for i in 1:nmulti
         _, nx, nuv = _ft_cell_info(ft[i])
         println("  Channel $i: $(nx)×$(nx) image, $nuv UV points")
     end
+    return nothing
 end
 
-function Base.display(ft::AbstractMatrix)
+function ft_info(ft::AbstractMatrix)
     nwav, nepoch = size(ft)
+    isempty(ft) && (println("empty Fourier transform plan set"); return nothing)
     info = _ft_cell_info(ft[1])
-    info[1] === nothing && (invoke(Base.display, Tuple{Any}, ft); return)
+    if info[1] === nothing
+        println("not an OITOOLS Fourier transform plan set: ", summary(ft))
+        return nothing
+    end
     mode, nx, nuv = info
     ncells = nwav * nepoch
-    # Collect all UV counts
     nuv_all = [_ft_cell_info(ft[w, t])[3] for w in 1:nwav, t in 1:nepoch]
     println("OITOOLS $mode Fourier transform plans: $nwav wavelength(s) × $nepoch epoch(s)")
     println("  Image size: $(nx)×$(nx) pixels")
@@ -41,6 +60,7 @@ function Base.display(ft::AbstractMatrix)
     else
         println("  UV points: $(minimum(nuv_all))–$(maximum(nuv_all)) (total $(sum(nuv_all)))")
     end
+    return nothing
 end
 
 # setup_dft: generic in the floating-point type T of the uv coordinates.

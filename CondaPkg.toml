@@ -1,7 +1,7 @@
 # Python dependencies.
 #
-#   matplotlib, mpl_toolkits.axes_grid1   -> oiplot.jl (required to load the package: all
-#                                            plotting goes through matplotlib)
+#   matplotlib-base                       -> fit_model.jl sets rcParams around UltraNest's
+#                                            corner plot; ultranest.plot needs it too
 #   astroquery.simbad                     -> utils.jl, magnitudes_from_simbad
 #   ultranest, ultranest.plot,
 #   ultranest.stepsampler                 -> fit_model.jl, fit_model_ultranest
@@ -48,11 +48,29 @@
 # `Vector{Matrix}` (e.g. per-polygon vertex lists handed to PolyCollection/Poly3DCollection)
 # and `Vector{Any}` all fail. Plotting a dense image works; plotting polygons does not.
 
+# matplotlib-base, NOT matplotlib. On conda-forge `matplotlib` is a thin metapackage whose
+# only content beyond `matplotlib-base` is a GUI toolkit: it depends on pyside6, which pulls
+# qt6-main, which pulls libclang and libLLVM. Measured in this environment that subtree is
+# 510 MB unpacked -- roughly half the whole thing -- for a Qt binding nothing here imports.
+# The plotting OITOOLS does is Agg (headless, tests and docs) or whatever backend the user's
+# own session provides.
+#
+# It also removes a real conflict rather than a merely theoretical one. The Qt that pyside6
+# installs here is 6.11.1; QML.jl binds Qt 6.10.2 from its JLL, and two Qt builds in one
+# process fail with an undefined private-API symbol that names nothing relevant. That is the
+# failure OITOOLSGUI's `check_qt_conflict` exists to explain. With matplotlib-base there is
+# no second Qt in an OITOOLS environment for it to find.
+#
+# Interactive matplotlib is unaffected where it is actually wanted: PythonPlot.jl carries its
+# own `matplotlib = ">=1"`, so any environment with PythonPlot -- this package's test target,
+# and any user session that loads it -- gets the full metapackage and its Qt backend back.
+# Nothing is lost; the dependency simply moved to the package that needs it.
+
 channels = ["conda-forge"]
 
 [deps]
 python = ">=3.9,<4"
-matplotlib = ">=3.5"
+matplotlib-base = ">=3.5"
 numpy = ">=2"
 scipy = ">=1.9"
 astroquery = ">=0.4.6"

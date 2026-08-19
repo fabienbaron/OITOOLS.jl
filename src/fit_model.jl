@@ -679,14 +679,13 @@ function fit_model_ultranest(model_dict   ::Dict{String},
 
     # ── 7. Corner plot ─────────────────────────────────────────────────────
     if cornerplot
-        pyimport("matplotlib").rcParams["font.size"] = 8
-        histogram_color = "black"
-        contour_colors = Dict("colors"      => ["#0072B2","#56B4E9","#009E73","#F0E442"],
-                              "linestyles"  => ["-", "-", "-", "-"])
-        pyimport("ultranest.plot").cornerplot(result;
-            contour_kwargs = contour_colors,
-            color          = histogram_color,
-        )
+        if isempty(methods(plot_ultranest_corner))
+            @warn "cornerplot=true, but drawing needs matplotlib: `using PythonPlot` " *
+                  "enables it. The fit itself is unaffected; the result carries `posterior`, " *
+                  "so the corner plot can be drawn later." maxlog = 1
+        else
+            plot_ultranest_corner(result)
+        end
     end
 
     # ── 8. Build posterior matrix ──────────────────────────────────────────
@@ -823,14 +822,13 @@ function fit_model_ultranest(model        ::FlatModel,
     end
 
     if cornerplot
-        pyimport("matplotlib").rcParams["font.size"] = 8
-        histogram_color = "black"
-        contour_colors = Dict("colors"      => ["#0072B2","#56B4E9","#009E73","#F0E442"],
-                              "linestyles"  => ["-", "-", "-", "-"])
-        pyimport("ultranest.plot").cornerplot(result;
-            contour_kwargs = contour_colors,
-            color          = histogram_color,
-        )
+        if isempty(methods(plot_ultranest_corner))
+            @warn "cornerplot=true, but drawing needs matplotlib: `using PythonPlot` " *
+                  "enables it. The fit itself is unaffected; the result carries `posterior`, " *
+                  "so the corner plot can be drawn later." maxlog = 1
+        else
+            plot_ultranest_corner(result)
+        end
     end
 
     samples_py = result["samples"]

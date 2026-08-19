@@ -5,6 +5,9 @@
 # gather common display tasks
 using PythonPlot, PythonCall, LaTeXStrings, Statistics
 
+# matplotlib measures bar widths in days; Julia Periods do not convert implicitly.
+_mpl_days(p::Dates.Period) = Dates.value(Dates.Millisecond(p)) / 86_400_000
+
 # ── Styling globals (set by set_oiplot_defaults) ──────────────────────────────
 global oiplot_markersize    = 3.0
 global oiplot_scatter_size  = 6.0
@@ -21,6 +24,41 @@ global oiplot_figsize       = (12, 6)
 # Physical gap, in inches, between the bottom of the axes and a legend placed below it.
 # Enough to clear the x tick labels and the x-axis label at either font size.
 const _LEGEND_GAP_IN = 0.75
+
+# ── UltraNest corner plot ─────────────────────────────────────────────────────
+
+"""
+    plot_ultranest_corner(result; font_size = 8, histogram_color = "black",
+                          contour_colors = ["#0072B2", "#56B4E9", "#009E73", "#F0E442"])
+
+Draw UltraNest's corner plot for a completed nested-sampling `result`.
+
+`result` is the raw Python object UltraNest returns, which is what `fit_model_ultranest` has
+while it still holds one: the plot needs the sampler's own structure -- weights and cluster
+membership -- not just the posterior matrix the `UltraNestResult` keeps.
+
+This was inline in `fit_model.jl` until plotting moved out of the core package. It belongs
+here because it *is* matplotlib -- it sets an rcParam and calls `ultranest.plot` -- and
+leaving it in core would drag the whole plotting stack into every fit, including the ones
+that never draw anything. `fit_model_ultranest(...; cornerplot = true)` calls this when
+PythonPlot is loaded, and warns instead of failing when it is not.
+
+The default contour colours are the Okabe-Ito palette, which stays legible in greyscale and
+to colour-blind readers.
+"""
+function plot_ultranest_corner(result;
+                               font_size::Integer = 8,
+                               histogram_color::AbstractString = "black",
+                               contour_colors::AbstractVector{<:AbstractString} =
+                                   ["#0072B2", "#56B4E9", "#009E73", "#F0E442"])
+    pyimport("matplotlib").rcParams["font.size"] = font_size
+    contour_kwargs = Dict("colors"     => contour_colors,
+                          "linestyles" => fill("-", length(contour_colors)))
+    pyimport("ultranest.plot").cornerplot(result;
+                                          contour_kwargs = contour_kwargs,
+                                          color          = histogram_color)
+    return nothing
+end
 
 # ── Python axes arrays → 1-based Julia arrays ────────────────────────────────
 # matplotlib's `subplots` returns a numpy array of Axes as a `Py`, whose indexing passes
@@ -117,104 +155,6 @@ end
 # functions so that a user's own rcParams edits are not clobbered on every call; an explicit
 # `set_oiplot_defaults()` still reapplies unconditionally.
 _ensure_oiplot_defaults() = _oiplot_defaults_applied[] || set_oiplot_defaults()
-
-# Saturated categorical palette. tab20 was tried instead, but half of it is pastel "light"
-# variants that wash out at the small marker sizes used here — with many baselines the plot
-# stopped being readable. These are the strongly-saturated named colours used historically.
-#
-# 28 entries, indexed with mod1, so a dataset with more baselines than colours repeats rather
-# than erroring. Note the historical list named "blue" twice, which silently gave two
-# baselines the same colour; the second is "navy" here.
-const global oiplot_colors = [
-    "black", "gold", "chartreuse", "blue", "red", "pink", "lightgray", "darkorange",
-    "darkgreen", "aqua", "fuchsia", "saddlebrown", "dimgray", "darkslateblue", "violet",
-    "indigo", "navy", "dodgerblue", "sienna", "olive", "purple", "darkorchid", "tomato",
-    "darkturquoise", "steelblue", "seagreen", "darkgoldenrod", "darkseagreen",
-]
-
-const global oiplot_markers=["o","s","v","P","*","x","^","D","p",1,"<","H","X","4",4,"_","1",6,"8","d",9]
-
-# ── Data normalization ────────────────────────────────────────────────────────
-"""
-    as_datavec(data) -> Vector{<:OIdata}
-
-Ensure `data` is a flat `Vector{<:OIdata}`, wrapping a single `OIdata` or
-flattening a 2-D array as needed.
-"""
-function as_datavec(data::Union{OIdata, AbstractArray{<:OIdata}})
-    data isa OIdata && return [data]
-    ndims(data) == 2 && return vec(data)
-    return data
-end
-
-# ── Generic observable plotting infrastructure ────────────────────────────────
-
-struct ObsPlotSpec
-    plot_title::String
-    ylabel::String
-    xlabel::String
-    y_field::Symbol          # :v2, :visamp, :t3phi, ...
-    yerr_field::Symbol       # :v2_err, :visamp_err, ...
-    x_field::Symbol          # :v2_baseline, :vis_baseline, :flux_lam, ...
-    lam_field::Symbol        # :v2_lam, :vis_lam, :t3_lam, :flux_lam
-    mjd_field::Symbol        # :v2_mjd, :vis_mjd, :t3_mjd, :flux_mjd
-    sta_index_field::Symbol  # :v2_sta_index, :vis_sta_index, :flux_sta_index
-    grouping::Symbol         # :baseline, :triplet, or :station
-    logplot_ok::Bool
-    x_scale::Float64         # multiplicative factor for x values (1e-6 for Mλ, 1e6 for μm)
-end
-
-const OBS_PLOT_SPECS = Dict{String, ObsPlotSpec}(
-    "V2" => ObsPlotSpec(
-        "V²", "V²",
-        L"Baseline (M$\lambda$)",
-        :v2, :v2_err, :v2_baseline, :v2_lam, :v2_mjd,
-        :v2_sta_index, :baseline, true, 1e-6),
-    "T3PHI" => ObsPlotSpec(
-        "T3φ", "T3φ (°)",
-        L"Baseline (M$\lambda$)",
-        :t3phi, :t3phi_err, :t3_baseline, :t3_lam, :t3_mjd,
-        :t3_sta_index, :triplet, false, 1e-6),
-    "T3PHI_MAX" => ObsPlotSpec(
-        "T3φ", "T3φ (°)",
-        L"Max. baseline (M$\lambda$)",
-        :t3phi, :t3phi_err, :t3_maxbaseline, :t3_lam, :t3_mjd,
-        :t3_sta_index, :triplet, false, 1e-6),
-    "T3AMP" => ObsPlotSpec(
-        "T3amp", "T3amp",
-        L"Baseline (M$\lambda$)",
-        :t3amp, :t3amp_err, :t3_baseline, :t3_lam, :t3_mjd,
-        :t3_sta_index, :triplet, true, 1e-6),
-    "T3AMP_MAX" => ObsPlotSpec(
-        "T3amp", "T3amp",
-        L"Max. baseline (M$\lambda$)",
-        :t3amp, :t3amp_err, :t3_maxbaseline, :t3_lam, :t3_mjd,
-        :t3_sta_index, :triplet, true, 1e-6),
-    "VISAMP" => ObsPlotSpec(
-        "Visamp", "Visamp",
-        L"Baseline (M$\lambda$)",
-        :visamp, :visamp_err, :vis_baseline, :vis_lam, :vis_mjd,
-        :vis_sta_index, :baseline, true, 1e-6),
-    "VISPHI" => ObsPlotSpec(
-        "Visφ", "Visφ (°)",
-        L"Baseline (M$\lambda$)",
-        :visphi, :visphi_err, :vis_baseline, :vis_lam, :vis_mjd,
-        :vis_sta_index, :baseline, false, 1e-6),
-    "FLUX" => ObsPlotSpec(
-        "Flux", "Flux",
-        "Wavelength (μm)",
-        :flux, :flux_err, :flux_lam, :flux_lam, :flux_mjd,
-        :flux_sta_index, :station, false, 1e6),
-)
-
-# Normalize color aliases to a canonical form
-function canonical_color(color::String)
-    color in ("baseline", "base", "bases", "baselines") && return "baseline"
-    color in ("station", "stations")                     && return "station"
-    color in ("wavelength", "wav", "wavs", "wavelengths") && return "wav"
-    color in ("mjd", "time", "timestamp", "timestamps")  && return "mjd"
-    return color
-end
 
 # Place colorbar label to the right instead of below
 """
@@ -530,7 +470,9 @@ function plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}};
     plotshow(block=false)
     return fig
 end
-const plot_multi = plot_obs
+# A method rather than `const plot_multi = plot_obs`: an extension can add methods to a
+# function declared in the core, but cannot rebind a const.
+plot_multi(args...; kwargs...) = plot_obs(args...; kwargs...)
 
 # Overloaded uvplot functions
 function uvplot(uv::AbstractMatrix{<:Real})
@@ -1573,4 +1515,354 @@ function imshow2(img1, img2)
     fig, ax = subplots(nrows=1, ncols=2); ax = _axes_to_julia(ax)
     ax[1].imshow(img1)
     ax[2].imshow(img2)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SQUEEZE live monitor
+#
+# Moved here from squeeze.jl so that every matplotlib call in the package lives in one file.
+# `SqueezeMonitor` stays in squeeze.jl because it holds only plain data (iteration numbers,
+# chi2r, temperature, parameter traces); only the drawing needs a plotting stack, and a
+# sampler run without `monitor` should not require one.
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    monitor_update!(mon, image, iter; chi2r, temperature, params)
+
+Redraw the live displays: the current image via [`imdisp`](@ref), and a trace
+panel with χ²r, temperature (or Pigeons round) and each free model parameter
+against iteration.
+
+`imdisp` opens its figure by title and clears it, so calling this repeatedly with
+the same monitor updates the same window instead of spawning one per call.
+"""
+function monitor_update!(mon::SqueezeMonitor, image::AbstractMatrix, iter::Integer;
+                         chi2r::Real = NaN, temperature::Real = NaN,
+                         params = nothing)
+    push!(mon.iters, Int(iter))
+    push!(mon.chi2r, Float64(chi2r))
+    push!(mon.temperature, Float64(temperature))
+    params === nothing || push!(mon.params, copy(Float64.(params)))
+
+    imdisp(image; figtitle = mon.title * " — image", pixsize = mon.pixsize,
+           colormap = mon.colormap, use_colorbar = true)
+
+    ntrace = 2 + (isempty(mon.free) ? 0 : length(mon.free))
+    fig = figure(mon.title * " — traces", figsize = (6, 2.2 * ntrace))
+    clf()
+    k = 1
+    subplot(ntrace, 1, k); k += 1
+    plot(mon.iters, mon.chi2r, "-"); yscale("log")
+    ylabel(L"$\chi^2_r$"); grid(true, alpha = 0.3)
+    title(@sprintf("iteration %d", iter), fontsize = 9)
+
+    subplot(ntrace, 1, k); k += 1
+    plot(mon.iters, mon.temperature, "-", color = "tab:orange")
+    ylabel(mon.trace2_label); grid(true, alpha = 0.3)
+
+    if !isempty(mon.free) && !isempty(mon.params)
+        for j in mon.free
+            subplot(ntrace, 1, k); k += 1
+            plot(mon.iters, [p[j] for p in mon.params], "-", color = "tab:green")
+            ylabel(String(SPARCO_PARAM_NAMES[j]), fontsize = 8)
+            grid(true, alpha = 0.3)
+        end
+    end
+    xlabel("iteration")
+    # `subplots_adjust` rather than `tight_layout`: the latter re-solves the whole
+    # layout every call and measured ~30 ms of the ~100 ms update.
+    subplots_adjust(hspace = 0.45, left = 0.18, right = 0.97, top = 0.94, bottom = 0.08)
+
+    # Force a redraw without blocking.  Only meaningful for an interactive
+    # backend; under Agg (headless, e.g. CI) `pause` costs ~14 ms and does
+    # nothing useful, so skip it.
+    try
+        Bool(pyplot.isinteractive()) && pause(0.001)
+    catch
+    end
+    return mon
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Observation-planning displays
+#
+# Moved here from astrometry.jl and plan.jl so that every matplotlib call in the package
+# lives in one file, which is what makes the PythonPlot extension a single boundary rather
+# than three.
+#
+# DEPRECATED, and kept deliberately. The Observe perspective of OITOOLSGUI reproduces these
+# in Makie, and `gantt_onenight` in particular is the only worked example of the ASPRO-style
+# night display — twilight bands, altitude bar, delay window, LST axis. It is the reference
+# the Makie port is diffed against, exactly as `uvplot` was for uv coverage, so deleting it
+# would remove the thing the port is checked against.
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    _index_runs(idx) -> Vector{Tuple{Int,Int}}
+
+Split a sorted index vector into maximal runs of consecutive integers.
+
+An observability window is not necessarily one block: a target can dip below the elevation
+limit and come back, and a baseline routinely leaves and re-enters the delay range, which is
+the normal shape of a POP configuration. Drawing such a set as a single bar from `idx[1]` to
+`idx[end]` -- which is what this file used to do -- paints the gaps as observable.
+"""
+function _index_runs(idx::AbstractVector{<:Integer})
+    runs = Tuple{Int,Int}[]
+    isempty(idx) && return runs
+    v = sort(collect(idx))
+    first_i = v[1]; prev = v[1]
+    for k in @view v[2:end]
+        if k == prev + 1
+            prev = k
+        else
+            push!(runs, (first_i, prev)); first_i = k; prev = k
+        end
+    end
+    push!(runs, (first_i, prev))
+    return runs
+end
+
+function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, good_alt, good_delay;
+                        good_twilight::Union{Nothing,Vector{Int}}=nothing,
+                        good_moon::Union{Nothing,Vector{Int}}=nothing,
+                        figsize=(10,5), savefile::AbstractString="", show_alt::Bool=true)
+    # `nothing` means "this constraint was not supplied"; an EMPTY vector means "it excludes
+    # the whole night". Those are opposite answers, and `good_twilight` used to conflate them
+    # by treating empty as ignore -- so a night with no astronomical darkness at all reported
+    # the target as observable. `good_moon` is new here: night_observability has always
+    # returned it, and obs_plan has always dropped it on the floor, so the Moon has never
+    # constrained this plot despite moon_min_sep defaulting to 30 degrees.
+    # Unwrap LST so it is monotonically increasing (handles 24→0 crossing)
+    lst = Float64.(lst_in)
+    for i in 2:length(lst)
+        while lst[i] < lst[i-1]
+            lst[i] += 24.0
+        end
+    end
+    # Unwrap lst_midnight to be consistent with the LST range
+    lst_mid = Float64(isa(lst_midnight_in, AbstractArray) ? lst_midnight_in[1] : lst_midnight_in)
+    if !isempty(lst) && lst_mid < lst[1]
+        lst_mid += 24.0
+    end
+
+    fig = figure(figsize=figsize)
+    ax = fig.add_subplot(111)
+    ax.xaxis.set_major_locator(matplotlib.dates.HourLocator(interval=1))
+    ax.xaxis.set_minor_locator(matplotlib.dates.MinuteLocator(interval=15))
+    ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%H:%M"))
+    offset = 4
+    xlim(hours_to_date(obsdate, lst_mid-12+offset),
+         hours_to_date(obsdate+Dates.Day(1), lst_mid-12-offset))
+    xlabel("LST")
+    ylim(0, 10)
+    fig.autofmt_xdate(bottom=0.2, rotation=30, ha="right")
+    ax.xaxis_date()
+    grid()
+    pyplot.axvline(x=hours_to_date(obsdate, lst_mid), color="red")
+
+    # Twilight bands
+    start_date = hours_to_date(obsdate, lst[1]+1.5)
+    end_date   = hours_to_date(obsdate, lst[end]-1.5)
+    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
+            color="lightgray", alpha=0.75)
+    start_date = hours_to_date(obsdate, lst[1]+2)
+    end_date   = hours_to_date(obsdate, lst[end]-2)
+    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
+            color="lightgray", alpha=0.75)
+    start_date = hours_to_date(obsdate, lst[1]+3)
+    end_date   = hours_to_date(obsdate, lst[end]-3)
+    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
+            color="gray", alpha=0.75)
+
+    # Draw one bar per contiguous run, so a window that is interrupted reads as interrupted.
+    # matplotlib keeps only the first label out of the legend for the rest ("_nolegend_").
+    function _bars(indices, y, height, colour, lbl)
+        for (k, (i0, i1)) in enumerate(_index_runs(indices))
+            s_d = hours_to_date(obsdate, lst[i0])
+            e_d = hours_to_date(obsdate, lst[i1])
+            ax.barh(y, _mpl_days(e_d - s_d), left=s_d, height=height, align="center",
+                    color=colour, label=(k == 1 ? lbl : "_nolegend_"), zorder=3)
+        end
+    end
+
+    # Detailed mode breaks the constraints out one per row, as ASPRO's "detailed output" tick
+    # box does; summary mode shows only their intersection.
+    if show_alt
+        isempty(good_alt) || _bars(good_alt, 5, 1.5, "orange", "Altitude")
+        good_moon === nothing || isempty(good_moon) ||
+            _bars(good_moon, 7, 1.0, "mediumpurple", "Moon sep.")
+    end
+
+    if show_alt
+        show_indices = sort(collect(good_delay))
+        bar_label = "In Delay"
+    else
+        show_indices = intersect(good_alt, good_delay)
+        good_twilight === nothing || (show_indices = intersect(show_indices, good_twilight))
+        good_moon     === nothing || (show_indices = intersect(show_indices, good_moon))
+        show_indices = sort(collect(show_indices))
+        bar_label = "Observable"
+    end
+
+    if !isempty(show_indices)
+        _bars(show_indices, 2, 2, "blue", bar_label)
+        # Annotate every run, not just the outermost pair: each run is one observing block,
+        # and its own start/end time and az/alt are what you would write on a schedule.
+        for (i0, i1) in _index_runs(show_indices)
+            s_d = hours_to_date(obsdate, lst[i0])
+            e_d = hours_to_date(obsdate, lst[i1])
+            text(s_d, 2, Dates.format(s_d, dateformat"H:M"),
+                 rotation=90, va="center", ha="right", color="black")
+            text(e_d, 2, Dates.format(e_d, dateformat"H:M"),
+                 rotation=90, va="center", ha="left", color="black")
+            text(s_d, 3.3, round(Int64, az[i0]),  va="top",    ha="center", color="black")
+            text(s_d, 0.7, round(Int64, alt[i0]), va="bottom", ha="center", color="black")
+            text(e_d, 3.3, round(Int64, az[i1]),  va="top",    ha="right",  color="black")
+            text(e_d, 0.7, round(Int64, alt[i1]), va="bottom", ha="right",  color="black")
+        end
+    end
+
+    yticks([2], [targetname])
+    if show_alt
+        handles, labels = ax.get_legend_handles_labels()
+        if !isempty(handles)
+            legend()
+        end
+    end
+    tight_layout()
+
+    if !isempty(savefile)
+        savefig(savefile, dpi=100)
+        close(fig)
+    end
+    return fig
+end
+
+"""
+    obs_plan(targetname, facility, ra, dec, obsdate, pop, config;
+             alt_limit=30.0, alt_max=90.0, delay_length=nothing,
+             dark_offset=0.0, step_minutes=1, figsize=(10,5), savefile="")
+
+Produce a Gantt-style observability plot for one target on one night,
+showing dark time, altitude window, and delay feasibility.
+
+Pass `delay_length=43.0` for a conservative delay estimate.
+Pass `savefile="path.png"` to save to file and close the figure.
+"""
+function obs_plan(targetname::AbstractString, facility::FacilityConfig,
+                  ra::Float64, dec::Float64, obsdate::DateTime,
+                  pop::Vector{Int}, config::Vector{Int};
+                  alt_limit::Float64=30.0, alt_max::Float64=90.0,
+                  delay_length::Union{Nothing,Float64}=nothing,
+                  dark_offset::Float64=0.0, step_minutes::Int=1,
+                  figsize=(10,5), savefile::AbstractString="",
+                  show_alt::Bool=true)
+
+    obs = night_observability(facility, ra, dec, obsdate;
+                              alt_limit=alt_limit, alt_max=alt_max,
+                              dark_offset=dark_offset, step_minutes=step_minutes)
+
+    dr = in_delay(facility, dec, obs.ha, config, pop; delay_length=delay_length)
+
+    gantt_onenight(targetname, obsdate, obs.lst, obs.lst_midnight,
+                   obs.az, obs.alt, obs.good_alt, dr.good_delay;
+                   good_twilight=obs.good_twilight, good_moon=obs.good_moon,
+                   figsize=figsize, savefile=savefile, show_alt=show_alt)
+end
+
+"""
+    empty_night(facility, obsdate; figsize=(10,5), savefile="")
+
+Render a Gantt plot showing only the twilight bands for a given night,
+with no target. Useful as a blank canvas before a target is selected.
+"""
+function empty_night(facility::FacilityConfig, obsdate::DateTime;
+                     dark_offset::Float64=0.0, step_minutes::Int=1,
+                     figsize=(10,5), savefile::AbstractString="")
+    lat, lon = facility.lat, facility.lon
+    # Use a dummy RA to get LST grid (RA only shifts HA, not LST)
+    ra_dummy = 0.0
+    lst_midnight, _ = hour_angle_calc(obsdate + Dates.Day(1) + Dates.Hour(7), lon, ra_dummy)
+    lst_midnight = lst_midnight[1]
+    _, UTC_set  = sunrise_sunset(obsdate, lat, lon)
+    UTC_rise, _ = sunrise_sunset(obsdate + Dates.Day(1), lat, lon)
+    utc = collect(range(UTC_set + dark_offset, UTC_rise - dark_offset, step=1.0/60*step_minutes))
+    lst, _ = hour_angle_calc(hours_to_date(obsdate, utc), lon, ra_dummy)
+    lst = Float32.(lst)
+
+    gantt_onenight("", obsdate, lst, lst_midnight,
+                   Float32[], Float32[], Int[], Int[];
+                   figsize=figsize, savefile=savefile)
+end
+
+"""
+    chara_plan(targetname, facility, ra, dec, obsdate, pop, config;
+               alt_limit=30.0, alt_max=90.0, delay_length=nothing,
+               dark_offset=0.0, step_minutes=1)
+
+Produce a delay-vs-LST plot with altitude overlay, similar to the
+classic chara_plan software from GSU.
+
+Each baseline's delay cart position is plotted vs LST, with the altitude
+curve and elevation limit overlaid.
+
+Pass `delay_length=43.0` for a conservative delay estimate.
+"""
+function chara_plan(targetname::AbstractString, facility::FacilityConfig,
+                    ra::Float64, dec::Float64, obsdate::DateTime,
+                    pop::Vector{Int}, config::Vector{Int};
+                    alt_limit::Float64=30.0, alt_max::Float64=90.0,
+                    delay_length::Union{Nothing,Float64}=nothing,
+                    dark_offset::Float64=0.0, step_minutes::Int=1)
+
+    obs = night_observability(facility, ra, dec, obsdate;
+                              alt_limit=alt_limit, alt_max=alt_max,
+                              dark_offset=dark_offset, step_minutes=step_minutes)
+
+    dr = in_delay(facility, dec, obs.ha, config, pop; delay_length=delay_length)
+
+    # Effective delay limit for the plot
+    if !isnothing(delay_length)
+        dmax = Float64(delay_length)
+    elseif !isempty(facility.delay_lengths)
+        dmax = maximum(facility.delay_lengths)
+    else
+        dmax = 45.7
+    end
+
+    fig = figure(figsize=(12, 6))
+    ax1 = fig.add_subplot(111)
+
+    # Plot delay carts for each baseline
+    for b in 1:dr.nbaselines
+        ax1.plot(obs.lst, dr.delay_carts[b, :], label=dr.baseline_names[b])
+    end
+
+    ax1.axhline(y=dmax, color="gray", linestyle="--", alpha=0.5, label="Delay limit")
+    ax1.axhline(y=-dmax, color="gray", linestyle="--", alpha=0.5)
+
+    ax1.set_ylabel("Delay cart position (m)")
+    ax1.set_xlabel("LST (hours)")
+
+    # Altitude on secondary axis
+    ax2 = ax1.twinx()
+    ax2.plot(obs.lst, obs.alt, color="black", linestyle=":", linewidth=1.5, label="Altitude")
+    ax2.axhline(y=alt_limit, color="red", linestyle="-", alpha=0.5, label="El. limit $(alt_limit)°")
+    ax2.set_ylabel("Altitude (°)")
+    ax2.set_ylim(-5, 90)
+
+    # Combined legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(vcat(lines1, lines2), vcat(labels1, labels2),
+               loc="upper left", fontsize=8, ncol=2)
+
+    pop_str = join(["$(facility.sta_names[i]):P$(pop[i])" for i in findall(config .> 0)], " ")
+    ax1.set_title("$(targetname) — $(Date(obsdate)) — POPs: $(pop_str)")
+
+    ax1.set_xlim(minimum(obs.lst), maximum(obs.lst))
+    tight_layout()
+    return fig
 end

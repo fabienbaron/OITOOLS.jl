@@ -23,8 +23,12 @@
 ENV["MPLBACKEND"] = "Agg"
 
 using OITOOLS, Test
+using PythonPlot          # activates OITOOLSPythonPlotExt, which defines everything below
 
-const PLT = OITOOLS.PythonPlot
+const PLT = PythonPlot
+# imshow2 and _cbar_ticks are matplotlib helpers, so they live in the extension module
+# rather than in OITOOLS itself. OBS_PLOT_SPECS is toolkit-independent and stayed in core.
+const EXT = Base.get_extension(OITOOLS, :OITOOLSPythonPlotExt)
 const PC  = OITOOLS.PythonCall
 
 # Rendered PNGs land in test/figures/plotting so the whole gallery can be browsed after a
@@ -128,6 +132,21 @@ function same_values(plotted::Vector{Float64}, expected::AbstractVector; rtol = 
 end
 
 axes_of(fig = PLT.gcf()) = [ax for ax in fig.axes]
+
+"""Every point an axis draws, as plain Julia data, so two figures can be compared exactly."""
+function _xy(ax)
+    pts = Vector{Tuple{Float64,Float64}}()
+    for ln in ax.get_lines()
+        xs = PC.pyconvert(Vector{Float64}, ln.get_xdata())
+        ys = PC.pyconvert(Vector{Float64}, ln.get_ydata())
+        append!(pts, zip(xs, ys))
+    end
+    for col in ax.collections
+        o = PC.pyconvert(Array, col.get_offsets())
+        size(o, 1) > 0 && append!(pts, [(o[i,1], o[i,2]) for i in axes(o, 1)])
+    end
+    return sort(pts)
+end
 ylabel_of(ax) = _pystr(ax.get_ylabel())
 yscale_of(ax) = _pystr(ax.get_yscale())
 
@@ -179,9 +198,20 @@ yscale_of(ax) = _pystr(ax.get_yscale())
             renders("plot_obs_log",     () -> plot_obs(poly; logplot = true))
             # empty panels must be skipped, not drawn blank
             renders("plot_obs_skips",   () -> plot_obs(mono; obs = ["V2", "FLUX"]))
-            # plot_multi is currently `const plot_multi = plot_obs`. Assert the alias, and
-            # also call through it, so this still tests something if it becomes a wrapper.
-            @test plot_multi === plot_obs
+            # plot_multi forwards to plot_obs. It used to be `const plot_multi = plot_obs`,
+            # but a const alias cannot be extended from an extension module, so the move of
+            # plotting into OITOOLSPythonPlotExt made it a real method. Identity no longer
+            # holds; assert what actually matters, which is that the two draw the same thing.
+            @test plot_multi !== plot_obs                     # genuinely a separate function
+            _close()
+            plot_obs(poly; obs = ["V2", "T3PHI"])
+            ref = [_xy(ax) for ax in axes_of()]
+            _close()
+            plot_multi(poly; obs = ["V2", "T3PHI"])
+            got = [_xy(ax) for ax in axes_of()]
+            _close()
+            @test length(got) == length(ref) && !isempty(ref)
+            @test got == ref                                  # same panels, same points
             renders("plot_multi", () -> plot_multi(poly; obs = ["V2", "T3PHI"]))
         end
 
@@ -206,7 +236,7 @@ yscale_of(ax) = _pystr(ax.get_yscale())
             renders("imdisp_multi",     () -> imdisp_multi(cube; pixsize = 0.2))
             renders("imdisp_multi_cbar",() -> imdisp_multi(cube; pixsize = 0.2,
                                                            use_colorbar = true))
-            renders("imshow2",          () -> OITOOLS.imshow2(gaussian2d(32, 32, 5.0),
+            renders("imshow2",          () -> EXT.imshow2(gaussian2d(32, 32, 5.0),
                                                               gaussian2d(32, 32, 7.0)))
         end
 
@@ -457,12 +487,12 @@ yscale_of(ax) = _pystr(ax.get_yscale())
                          collect(range(1.5153, 1.7742, length = 119)))
                 lo, hi = extrema(vals)
                 for n in (5, 7)
-                    t = OITOOLS._cbar_ticks(vals, n)
+                    t = EXT._cbar_ticks(vals, n)
                     @test all(lo .<= t .<= hi)
                     @test issorted(t)
                 end
             end
-            @test length(OITOOLS._cbar_ticks([2.0, 2.0], 7)) == 1   # degenerate range
+            @test length(EXT._cbar_ticks([2.0, 2.0], 7)) == 1   # degenerate range
 
             # end to end: no tick may fall outside the colorbar axis's own limits
             _close(); plot_v2(poly, color = "wav")
@@ -565,4 +595,84 @@ end
 
 let npng = count(f -> endswith(f, ".png"), readdir(_DIR))
     @info "Plotting: $npng figures written to $_DIR"
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # gantt_onenight: contiguity and the Moon
+    # ═════════════════════════════════════════════════════════════════════════
+    #
+    # Both of these were wrong until the ASPRO-style Observe panel was designed against this
+    # function. They are asserted on the drawn rectangles rather than on the index maths,
+    # because the bug was never in the maths -- night_observability computed the Moon
+    # correctly all along, and the plot simply did not use it.
+    @testset "gantt_onenight" begin
+        # Bars are Rectangles: (x, width, y, height) in axis units.
+        rects(ax) = [(PC.pyconvert(Float64, r.get_x()), PC.pyconvert(Float64, r.get_width()),
+                      PC.pyconvert(Float64, r.get_y()), PC.pyconvert(Float64, r.get_height()))
+                     for r in ax.patches]
+        # The observable/delay bar sits at y = 2 with height 2, so its rectangle starts at 1.
+        obsbars(ax) = [r for r in rects(ax) if isapprox(r[3], 1.0; atol = 1e-6)]
+        width(ax)   = sum(r[2] for r in obsbars(ax); init = 0.0)
+
+        obsdate = Dates.DateTime(2026, 8, 19)
+        n       = 121
+        lst     = Float32.(collect(range(0.0, 6.0, length = n)))
+        az      = Float32.(fill(90.0, n))
+        alt     = Float32.(fill(45.0, n))
+        allidx  = collect(1:n)
+
+        @testset "_index_runs" begin
+            R = EXT._index_runs
+            @test R(Int[])              == Tuple{Int,Int}[]
+            @test R([3])                == [(3, 3)]
+            @test R([1, 2, 3])          == [(1, 3)]
+            @test R([1, 2, 3, 7, 8, 11]) == [(1, 3), (7, 8), (11, 11)]
+            @test R([5, 4, 3, 1])       == [(1, 1), (3, 5)]   # unsorted input still works
+        end
+
+        @testset "an interrupted window draws as two bars, not one" begin
+            _close()
+            gantt_onenight("t", obsdate, lst, 3.0, az, alt, allidx, collect(20:80);
+                           show_alt = false)
+            one = obsbars(axes_of()[1]); w_one = width(axes_of()[1])
+            _close()
+            gantt_onenight("t", obsdate, lst, 3.0, az, alt, allidx, [20:40; 60:80];
+                           show_alt = false)
+            two = obsbars(axes_of()[1]); w_two = width(axes_of()[1])
+            _close()
+
+            @test length(one) == 1                 # contiguous: still a single bar
+            @test length(two) == 2                 # split: two, with the gap left empty
+            # The gap must actually be missing, not merely redrawn: 20:40 plus 60:80 covers
+            # less time than 20:80. Before the fix both drew one bar of identical width.
+            @test w_two < w_one
+        end
+
+        @testset "the Moon constrains the observable window" begin
+            _close()
+            gantt_onenight("t", obsdate, lst, 3.0, az, alt, allidx, collect(1:n);
+                           show_alt = false)
+            w_nomoon = width(axes_of()[1])
+            _close()
+            gantt_onenight("t", obsdate, lst, 3.0, az, alt, allidx, collect(1:n);
+                           good_moon = collect(1:60), show_alt = false)
+            w_moon = width(axes_of()[1])
+            _close()
+            @test w_moon < w_nomoon                # the Moon must remove time, not be ignored
+            @test w_moon ≈ w_nomoon / 2 rtol = 0.05
+        end
+
+        @testset "empty means excluded, not ignored" begin
+            # A night with no dark time at all, or a target never far enough from the Moon,
+            # is not observable. Treating the empty vector as "no constraint" is what made
+            # good_twilight silently permissive.
+            for kw in ((; good_twilight = Int[]), (; good_moon = Int[]))
+                _close()
+                gantt_onenight("t", obsdate, lst, 3.0, az, alt, allidx, collect(1:n);
+                               show_alt = false, kw...)
+                @test isempty(obsbars(axes_of()[1]))
+                _close()
+            end
+        end
+    end
+
 end

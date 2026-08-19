@@ -14,6 +14,7 @@
 ENV["MPLBACKEND"] = "Agg"          # must be set before the plotting stack initialises
 
 using OITOOLS, Test, Statistics
+using PythonPlot          # activates OITOOLSPythonPlotExt: plotting lives there now
 
 # These tests run at any thread count on the current Python bridge (verified at 16). The
 # guard below only trips if the package is ever built against a thread-unsafe bridge, so a
@@ -28,12 +29,9 @@ const _PYDIR  = mktempdir()
 const _DATA   = joinpath(@__DIR__, "..", "demos", "data")
 const _ONCI   = get(ENV, "CI", nothing) == "true"
 
-# Resolve the plotting module without hard-coding it, so the file is not tied to one bridge.
-@static if isdefined(OITOOLS, :PythonPlot)
-    const _PLT = OITOOLS.PythonPlot
-else
-    const _PLT = OITOOLS.PyPlot
-end
+# Plotting lives in OITOOLSPythonPlotExt, so the module is the one this file loaded itself
+# rather than something reached through OITOOLS.
+const _PLT = PythonPlot
 
 _savefig(name) = (p = joinpath(_PYDIR, name * ".png"); _PLT.savefig(p, dpi = 60); p)
 _closeall()    = _PLT.close("all")

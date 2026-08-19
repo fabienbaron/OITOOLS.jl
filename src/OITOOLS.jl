@@ -17,6 +17,7 @@ using PrecompileTools
 version() = println("OITOOLS v$(pkgversion(OITOOLS))")
 
 include("readoifits.jl")
+include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
 include("vis_functions.jl")
 include("model_chainrules.jl")
 
@@ -32,7 +33,6 @@ include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
 include("utils.jl")
 include("oichi2.jl")
 include("sparco_flat.jl")
-include("oiplot.jl")
 include("astrometry.jl")
 include("atmosphere.jl")     # bands, seeing, AO Strehl — used by simulate.jl
 include("vonmises.jl")
@@ -46,6 +46,46 @@ include("squeeze.jl")
 include("plan.jl")
 include("pmoired_compat.jl")
 
+# ── Plotting: declared here, implemented in ext/OITOOLSPythonPlotExt.jl ──────
+#
+# Every matplotlib call in the package lives in src/oiplot.jl, which is loaded only when the
+# caller has PythonPlot. These are the function objects the extension adds methods to.
+#
+# Why: importing OITOOLS used to import matplotlib, which probes for an interactive backend,
+# finds PySide6 in the CondaPkg environment and maps a Qt into the process. That cost a
+# ~3 s load, broke `Pkg.test()` and the docs build (each project building its own 1.5 GB
+# Python environment), and made OITOOLS unusable alongside a Qt-based Julia GUI. None of that
+# is needed to read an OIFITS file.
+#
+# Calling one of these without PythonPlot raises a MethodError naming the function; see the
+# note in the package README.
+function chara_plan end
+function gantt_onenight end
+function imdisp end
+function imdisp_multi end
+function obs_plan end
+function plot_diffphi end
+function plot_facility end
+function plot_flux end
+function plot_multi end
+function plot_obs end
+function plot_residuals end
+function plot_t3amp end
+function plot_t3amp_residuals end
+function plot_t3phi end
+function plot_t3phi_residuals end
+function plot_v2 end
+function plot_v2_multifile end
+function plot_v2_residuals end
+function plot_visamp end
+function plot_visamp_residuals end
+function plot_visphi end
+function plot_visphi_residuals end
+function set_oiplot_defaults end
+function plot_ultranest_corner end
+function uvplot end
+function empty_night end
+
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
 export readoifits, readoifits_multiepochs, list_oifits_targets
@@ -55,6 +95,7 @@ export filter_data, set_data_filter
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
+       plot_ultranest_corner,
        plot_visamp, plot_visphi, plot_diffphi, plot_flux, plot_obs, plot_multi,
        plot_v2_residuals, plot_t3phi_residuals, plot_t3amp_residuals,
        plot_visamp_residuals, plot_visphi_residuals, plot_residuals,
@@ -84,7 +125,7 @@ export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_tri
        visibility_Lorentzian_ring, visibility_GaussianLorentzian_ring_az
 
 # ── Image reconstruction ─────────────────────────────────────────────────────
-export setup_ft, setup_dft, setup_nfft
+export setup_ft, setup_dft, setup_nfft, ft_info
 export image_to_vis,
        image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs,
        image_to_residuals, image_to_chi2, image_to_chi2_fg
