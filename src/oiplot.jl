@@ -1598,42 +1598,17 @@ end
 # would remove the thing the port is checked against.
 # ─────────────────────────────────────────────────────────────────────────────
 
-"""
-    _index_runs(idx) -> Vector{Tuple{Int,Int}}
-
-Split a sorted index vector into maximal runs of consecutive integers.
-
-An observability window is not necessarily one block: a target can dip below the elevation
-limit and come back, and a baseline routinely leaves and re-enters the delay range, which is
-the normal shape of a POP configuration. Drawing such a set as a single bar from `idx[1]` to
-`idx[end]` -- which is what this file used to do -- paints the gaps as observable.
-"""
-function _index_runs(idx::AbstractVector{<:Integer})
-    runs = Tuple{Int,Int}[]
-    isempty(idx) && return runs
-    v = sort(collect(idx))
-    first_i = v[1]; prev = v[1]
-    for k in @view v[2:end]
-        if k == prev + 1
-            prev = k
-        else
-            push!(runs, (first_i, prev)); first_i = k; prev = k
-        end
-    end
-    push!(runs, (first_i, prev))
-    return runs
-end
 
 function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, good_alt, good_delay;
                         good_twilight::Union{Nothing,Vector{Int}}=nothing,
                         good_moon::Union{Nothing,Vector{Int}}=nothing,
                         figsize=(10,5), savefile::AbstractString="", show_alt::Bool=true)
     # `nothing` means "this constraint was not supplied"; an EMPTY vector means "it excludes
-    # the whole night". Those are opposite answers, and `good_twilight` used to conflate them
-    # by treating empty as ignore -- so a night with no astronomical darkness at all reported
-    # the target as observable. `good_moon` is new here: night_observability has always
-    # returned it, and obs_plan has always dropped it on the floor, so the Moon has never
-    # constrained this plot despite moon_min_sep defaulting to 30 degrees.
+    # the whole night". Those are opposite answers, and conflating them makes a night with no
+    # astronomical darkness at all report the target as observable. Each constraint is
+    # therefore tested for `nothing` rather than for emptiness -- including `good_moon`, which
+    # `night_observability` returns and which `moon_min_sep` (30 degrees by default) makes
+    # meaningful.
     # Unwrap LST so it is monotonically increasing (handles 24→0 crossing)
     lst = Float64.(lst_in)
     for i in 2:length(lst)
@@ -1679,7 +1654,7 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
     # Draw one bar per contiguous run, so a window that is interrupted reads as interrupted.
     # matplotlib keeps only the first label out of the legend for the rest ("_nolegend_").
     function _bars(indices, y, height, colour, lbl)
-        for (k, (i0, i1)) in enumerate(_index_runs(indices))
+        for (k, (i0, i1)) in enumerate(index_runs(indices))
             s_d = hours_to_date(obsdate, lst[i0])
             e_d = hours_to_date(obsdate, lst[i1])
             ax.barh(y, _mpl_days(e_d - s_d), left=s_d, height=height, align="center",
@@ -1710,7 +1685,7 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
         _bars(show_indices, 2, 2, "blue", bar_label)
         # Annotate every run, not just the outermost pair: each run is one observing block,
         # and its own start/end time and az/alt are what you would write on a schedule.
-        for (i0, i1) in _index_runs(show_indices)
+        for (i0, i1) in index_runs(show_indices)
             s_d = hours_to_date(obsdate, lst[i0])
             e_d = hours_to_date(obsdate, lst[i1])
             text(s_d, 2, Dates.format(s_d, dateformat"H:M"),

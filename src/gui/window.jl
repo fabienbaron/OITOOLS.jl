@@ -10,6 +10,7 @@ function __init__()
                      shell_console, shell_ready, shell_reset_zoom, shell_pick_text,
                      shell_observables, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
+                     shell_facilities, shell_telescopes, shell_gantt, shell_best_pops,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
                      # Julia for everything the toolkit would otherwise supply.
@@ -93,8 +94,16 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(imax)
     imcanvas = build_canvas(imfig, imax)
 
+    # And a third for the Gantt. Three figures rather than one shared: a reconstruction must
+    # not wipe the plot being read on another tab, and a night plan is not a scatter — it needs
+    # its own axis limits, its own y ticks and its own set of plots.
+    gfig = Makie.Figure()
+    gax  = Makie.Axis(gfig[1, 1]; xlabel = "LST (h)", title = "")
+    style_axis!(gax)
+    gantt = build_gantt(gfig, gax)
+
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline,
-                     "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing)
+                     "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt)
     SHELL[] = sh
     install_interactions!(sh)
 
@@ -120,6 +129,7 @@ function OITOOLS.gui(session::Session = Session();
     QML.loadqml(qmlfile;
                 plot            = fig,
                 imagePlot       = imfig,
+                ganttPlot       = gfig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,

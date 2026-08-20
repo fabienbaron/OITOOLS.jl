@@ -47,6 +47,9 @@ export model_rows, model_inspection, ComponentInfo, free_parameter_vector
 export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        start_image, reconstruct_image, observable_availability, observable_flags_string,
        parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start
+export NightPlan, config_catalog, facility_telescopes, telescope_config,
+       night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
+       GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
        picker_kind, picker_would_overwrite, picker_matches
 export GLOBAL_COMPONENT
@@ -61,6 +64,8 @@ include(joinpath(GUIDIR, "actions_data.jl"))
 include(joinpath(GUIDIR, "model.jl"))       # Model perspective: parameter table, parser inspection
 include(joinpath(GUIDIR, "imaging.jl"))     # Image perspective: geometry, start image, reconstruct
 include(joinpath(GUIDIR, "filepicker.jl"))  # the in-window file picker's directory listing
+include(joinpath(GUIDIR, "observing.jl"))   # Observe perspective: configs, targets, nights
+include(joinpath(GUIDIR, "gantt.jl"))       # the Gantt chart, in Makie
 include(joinpath(GUIDIR, "plots.jl"))
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
 include(joinpath(GUIDIR, "shell.jl"))
@@ -111,6 +116,19 @@ using PrecompileTools
             model_inspection(md)
             picker_list(dirname(_pcfile), "*.oifits", false)
             picker_places()
+
+            # The Observe perspective. `build_gantt` alone is 1.02 s of compilation on first
+            # use, and it runs while the user is waiting for a window — the same argument as
+            # for `build_canvas` below.
+            plan = night_plan("CHARA", "Vega", 279.2347, 38.7837, DateTime(2026, 6, 21);
+                              config = [1, 1, 1, 1, 0, 0], use_delay = true, step_minutes = 10)
+            gantt_geometry(plan; show_alt = true)
+            gantt_geometry(plan; show_alt = false)
+            plan_rows([plan])
+            gfig = Makie.Figure()
+            gax  = Makie.Axis(gfig[1, 1])
+            gg   = build_gantt(gfig, gax)
+            update_gantt!(gg, plan)
 
             # The canvas itself. `build_canvas` creates one of every plot the shell can show,
             # and that construction is a large part of the delay before the first window

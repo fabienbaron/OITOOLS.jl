@@ -551,3 +551,37 @@ function print_pop_results(facility::FacilityConfig, config::AbstractVector{Int}
         println("  #$rank  ($( r.score) min):  $pop_str")
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contiguous runs of an index vector
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# In the core rather than beside one of the renderers, because BOTH draw from it: a Gantt bar
+# is one contiguous run, and a matplotlib chart and a Makie one that each found their own runs
+# would be free to disagree about where an observing block starts.
+
+"""
+    index_runs(idx) -> Vector{Tuple{Int,Int}}
+
+Split a sorted index vector into maximal runs of consecutive integers.
+
+An observability window is not necessarily one block: a target can dip below the elevation
+limit and come back, and a baseline routinely leaves and re-enters the delay range, which is
+the normal shape of a POP configuration. Drawing such a set as a single bar from `idx[1]` to
+`idx[end]` -- which is what this file used to do -- paints the gaps as observable.
+"""
+function index_runs(idx::AbstractVector{<:Integer})
+    runs = Tuple{Int,Int}[]
+    isempty(idx) && return runs
+    v = sort(collect(idx))
+    first_i = v[1]; prev = v[1]
+    for k in @view v[2:end]
+        if k == prev + 1
+            prev = k
+        else
+            push!(runs, (first_i, prev)); first_i = k; prev = k
+        end
+    end
+    push!(runs, (first_i, prev))
+    return runs
+end

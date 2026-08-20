@@ -20,7 +20,7 @@ using PythonPlot
 PythonPlot.matplotlib          # force the import NOW, while conda's harfbuzz can still win
 
 # GLMakie, QMLMakie and QML are what activate OITOOLSGUIExt, where the whole GUI lives.
-using OITOOLS, GLMakie, QMLMakie, QML, Test
+using OITOOLS, GLMakie, QMLMakie, QML, Test, Dates
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
 GUI === nothing && error("OITOOLSGUIExt did not load; the GUI tests cannot run")
 using .GUI
@@ -526,7 +526,8 @@ end
     @testset "console pane" begin
         G = GUI
         sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
-                          :uv, :baseline, "", String[], nothing, "", nothing, nothing, nothing)
+                          :uv, :baseline, "", String[], nothing, "", nothing, nothing, nothing,
+                          nothing)
 
         G.console!(sh, "load_dataset!(session, \"a.oifits\")"; kind = :cmd)
         G.console!(sh, "1520 points")
@@ -639,6 +640,8 @@ end
 
     include(joinpath(@__DIR__, "test_model.jl"))   # Model perspective data layer
     include(joinpath(@__DIR__, "test_imaging.jl")) # Image perspective data layer
+    include(joinpath(@__DIR__, "test_observing.jl")) # Observe perspective data layer
+    include(joinpath(@__DIR__, "test_gantt.jl"))     # the Gantt port vs its oiplot original
 
     @testset "the shell path and the figure builders agree" begin
         # Same implementation, so the harness result for uv_figure applies to the shell too.

@@ -57,6 +57,21 @@
             image_to_chi2(gaussian2d(32, 32, 32 ÷ 6), ftm, dmono, verb=false)
         end
 
+        # Planning. Measured, the computation is free and the wait is entirely compilation:
+        # `night_observability` costs 1.89 s on first call and 0.1 MILLISECOND thereafter,
+        # `in_delay` 1.10 s against 0.0 ms. A coarse grid is used because the step changes how
+        # long the workload runs at build time and not which code it compiles.
+        #
+        # The facility config ships inside the package, so unlike the OIFITS guards above this
+        # branch cannot silently become a no-op.
+        chara = read_facility_file("CHARA")
+        obsv = night_observability(chara, 279.2347, 38.7837, DateTime(2026, 6, 21);
+                                   step_minutes = 10)
+        cfg4 = [1, 1, 1, 1, 0, 0]
+        in_delay(chara, 38.7837, obsv.ha, cfg4, [1, 3, 3, 4, 1, 1])
+        best_pop(chara, 38.7837, obsv.ha, cfg4)
+        index_runs(obsv.good_alt)
+
         # Model fitting path
         model_dict = Dict{String,Any}("c1,ud" => 1.0, "c1,f" => 1.0)
         fm = parse_model(model_dict, ["c1,ud"])

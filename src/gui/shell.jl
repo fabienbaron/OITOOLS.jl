@@ -38,6 +38,7 @@ mutable struct ShellState
     imaging :: Any              # the last ImagingResult, or nothing
     imcanvas:: Any              # the Image perspective's own LiveCanvas
     ftcache :: Any              # (; key, ft, summary) for the Image perspective's plan
+    gantt   :: Any              # the Observe perspective's Gantt chart
 end
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
@@ -362,6 +363,71 @@ end
 
 """Last identified point. QML polls this rather than asking for a pick itself."""
 shell_pick_text() = _shell().picktext
+
+"Facilities on disk, newline-separated. CHARA first: it is the only one the delay-line and POP checks cover."
+function shell_facilities()
+    c = config_catalog()
+    fac = sort(String.(c.facilities); by = f -> (f != "CHARA", f))
+    return join(fac, "\n")
+end
+
+"Telescope names for a facility, in the order its configuration lists them."
+shell_telescopes(name::AbstractString) = join(facility_telescopes(String(name)), "\n")
+
+"""
+    shell_gantt(facility, name, ra, dec, dateiso, telescopes, pops, use_delay, detailed) -> String
+
+Compute one night and draw it on the Observe canvas. Returns a one-line summary.
+
+`ra` and `dec` are DEGREES, `telescopes` and `pops` are space-separated. `use_delay` is opt-in
+because an unsearched POP configuration reports far less time than is really available — see
+[`night_plan`](@ref).
+"""
+function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, dec::Real,
+                     dateiso::AbstractString, telescopes::AbstractString,
+                     pops::AbstractString, use_delay::Bool, detailed::Bool)
+    sh = _shell()
+    date = try
+        DateTime(String(dateiso))
+    catch
+        return "! not a date: $(dateiso)"
+    end
+    tels = facility_telescopes(String(facility))
+    sel  = filter(!isempty, String.(split(String(telescopes))))
+    cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
+    pp   = isempty(strip(String(pops))) ? nothing :
+           [parse(Int, x) for x in split(String(pops))]
+
+    p = try
+        night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
+                   config = cfg, pop = pp, use_delay = use_delay)
+    catch err
+        msg = "! " * _cause(err); console!(sh, msg); return msg
+    end
+
+    sh.gantt === nothing || update_gantt!(sh.gantt, p; show_alt = detailed)
+
+    h = observable_hours(p)
+    console!(sh, "> night_plan(\"$(facility)\", \"$(name)\", $(round(Float64(ra); digits=4)), " *
+                 "$(round(Float64(dec); digits=4)), DateTime(\"$(dateiso)\"))")
+    line = @sprintf("%s: %.2f h observable%s   moon %d%% lit",
+                    name, h, p.delay_applied ? "" : "  (delay not checked)",
+                    round(Int, 100 * p.moon_fli))
+    console!(sh, "  " * line)
+    return line
+end
+
+"The best POP configurations for this array and declination, as `pop\tscore` rows."
+function shell_best_pops(facility::AbstractString, dec::Real, dateiso::AbstractString,
+                         ra::Real, telescopes::AbstractString)
+    date = try; DateTime(String(dateiso)); catch; return ""; end
+    f = read_facility_file(String(facility))
+    obs = night_observability(f, Float64(ra), Float64(dec), date)
+    tels = facility_telescopes(String(facility))
+    sel  = filter(!isempty, String.(split(String(telescopes))))
+    cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
+    return pop_rows(best_pops(f, Float64(dec), obs.ha, cfg; n = 5))
+end
 
 """
     shell_ft_setup(nx, pixsize, mode) -> String

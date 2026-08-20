@@ -230,3 +230,70 @@ so names and hex are never compared against each other.
 """
 makie_color_map(names) =
     Dict(g => _hex(c) for (g, c) in GUI.baseline_color_map(names))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gantt: rectangles and text
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The rest of this file compares scatter and line data, which is what the observable plots draw.
+# A Gantt draws neither: it is bars and annotations, so it needs its own extraction.
+#
+# The comparison is against `gantt_geometry`, which is the description BOTH renderers consume.
+# So what this proves is that matplotlib really draws the geometry the Makie port is drawing —
+# not that two implementations happen to agree today.
+
+"""
+    mpl_gantt_bars(f) -> Vector{NamedTuple}
+
+Bars from a matplotlib Gantt, as `(; x0, width, y, height, color)`.
+
+matplotlib works in date units, so widths come back in days; they are converted to hours here
+so they can be compared with a geometry expressed in LST hours. Positions cannot be compared
+directly — the x origin is a date — so what is checked is width, height, y and colour, plus how
+many bars there are and in what order.
+"""
+function mpl_gantt_bars(f)
+    pyplot    = PythonPlot.pyplot
+    pyconvert = OITOOLS.pyconvert
+    pyplot.close("all")
+    f()
+    ax = pyplot.gca()
+    out = NamedTuple[]
+    for p in ax.patches
+        w = try; pyconvert(Float64, p.get_width()); catch; continue; end
+        h = pyconvert(Float64, p.get_height())
+        x = pyconvert(Float64, p.get_x())
+        y = pyconvert(Float64, p.get_y())
+        c = try; _hex(p.get_facecolor()); catch; ""; end
+        push!(out, (; x0 = x, width = w * 24, y = y + h/2, height = h, color = c))
+    end
+    return out
+end
+
+"Annotation strings from a matplotlib Gantt, in draw order."
+function mpl_gantt_texts(f)
+    pyplot    = PythonPlot.pyplot
+    pyconvert = OITOOLS.pyconvert
+    pyplot.close("all")
+    f()
+    ax = pyplot.gca()
+    return [pyconvert(String, t.get_text()) for t in ax.texts]
+end
+
+"""
+    geometry_bars(geo) -> Vector{NamedTuple}
+
+`gantt_geometry`'s bands and bars in the same shape as [`mpl_gantt_bars`](@ref), so the two can
+be compared entry by entry. Bands come first, matching the order they are drawn in.
+"""
+function geometry_bars(geo)
+    conv = Dict("lightgray" => "#d3d3d3", "gray" => "#808080", "orange" => "#ffa500",
+                "mediumpurple" => "#9370db", "blue" => "#0000ff")
+    rows = NamedTuple[]
+    for b in vcat(geo.bands, geo.bars)
+        push!(rows, (; width = b.x1 - b.x0, y = b.y, height = b.height,
+                       color = get(conv, b.color, b.color)))
+    end
+    return rows
+end

@@ -330,9 +330,11 @@ ApplicationWindow {
             // The three scale values are passed rather than reached for: a tab is a plain
             // component, so it cannot see `win`.
             ObserveTab {
+                id: observeTab
                 uiScale:    win.uiScale
                 fontScale:  win.fontScale
                 baseFontPt: win.baseFontPt
+                onConsoleChanged: win.refreshConsole()
             }
 
             // ── Model ────────────────────────────────────────────────────────

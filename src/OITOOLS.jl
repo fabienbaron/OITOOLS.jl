@@ -194,6 +194,7 @@ export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad, sex
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
 export night_observability, compute_delays, in_delay, best_pop, observable_epochs
+export index_runs
 export obs_plan, chara_plan, print_pop_results
 export moon_radec, moon_illumination, angular_separation
 

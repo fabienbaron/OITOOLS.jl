@@ -620,8 +620,10 @@ let npng = count(f -> endswith(f, ".png"), readdir(_DIR))
         alt     = Float32.(fill(45.0, n))
         allidx  = collect(1:n)
 
-        @testset "_index_runs" begin
-            R = EXT._index_runs
+        @testset "index_runs" begin
+            # In the core package, not this extension: a Gantt bar IS a contiguous run, and the
+            # matplotlib and Makie charts must find the same ones.
+            R = OITOOLS.index_runs
             @test R(Int[])              == Tuple{Int,Int}[]
             @test R([3])                == [(3, 3)]
             @test R([1, 2, 3])          == [(1, 3)]

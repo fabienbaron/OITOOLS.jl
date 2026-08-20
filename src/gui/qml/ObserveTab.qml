@@ -18,6 +18,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import jlqml
+import Makie            // MakieArea, for this perspective's own Gantt canvas
 
 Item {
     id: root
@@ -819,6 +820,52 @@ Item {
                 Layout.fillHeight: true
                 spacing: dp(4)
 
+                // ── compute ──────────────────────────────────────────────────
+                //
+                // Explicit, not automatic on every edit. A night is cheap to compute once the
+                // code is warm (0.1 ms), but recomputing on each keystroke while a coordinate
+                // is being typed would draw a chart for every half-entered number.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: dp(8)
+
+                    Button {
+                        text: "Compute"
+                        enabled: root.nNamedTargets > 0 && root.dateISO.length > 0
+                        ToolTip.visible: hovered && !enabled
+                        ToolTip.text: "needs a named target and a date"
+                        onClicked: root.computePlan()
+                    }
+                    CheckBox {
+                        text: "detailed"
+                        checked: root.detailed
+                        onToggled: { root.detailed = checked; if (root.hasPlan) root.computePlan() }
+                        ToolTip.visible: hovered
+                        ToolTip.text: "one row per constraint, as ASPRO's detailed output; " +
+                                      "off shows only their intersection"
+                    }
+                    CheckBox {
+                        text: "delay lines"
+                        checked: root.useDelay
+                        onToggled: { root.useDelay = checked; if (root.hasPlan) root.computePlan() }
+                        // Opt-in for a measured reason: with an unsearched POP configuration the
+                        // check reports far less time than is available -- 0 minutes with all six
+                        // telescopes at POP 1 against 380 with the POPs best_pop finds -- so
+                        // leaving it on by default would call every target unobservable.
+                        ToolTip.visible: hovered
+                        ToolTip.text: root.popString.length > 0
+                                      ? "using POPs " + root.popString
+                                      : "no POPs searched yet — Search POPs first, or this will " +
+                                        "report far less time than is really available"
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.planText
+                        elide: Text.ElideRight
+                        color: root.planText.indexOf("!") === 0 ? "#c62828" : "#444"
+                    }
+                }
+
                 TabBar {
                     id: viewTabs
                     Layout.fillWidth: true
@@ -977,26 +1024,33 @@ Item {
 
                             Rectangle {
                                 id: ganttMount
-                                // MAKIE MOUNT — the bars are drawn here and nowhere else.
-                                //
-                                // wire: gantt_onenight(name, obsdate, lst, lst_midnight, az, alt,
-                                // good_alt, good_delay; good_twilight=...) per target row, or
-                                // obs_plan(...) for a full plan, or empty_night(facility, obsdate)
-                                // when nothing resolves. Row i occupies y in
-                                // [i*ganttRowHeight, (i+1)*ganttRowHeight), which is how a row is
-                                // recovered from a click coordinate.
+                                // This perspective's own figure, `ganttPlot`, built beside the
+                                // other two before the window exists. The chart is static:
+                                // a Gantt is read, not manipulated, so there is no picking and
+                                // no second input path through MakieArea.
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 color: "#ffffff"
                                 border.color: "#ddd"
 
-                                Label {
-                                    anchors.centerIn: parent
-                                    horizontalAlignment: Text.AlignHCenter
-                                    color: "#666"
-                                    text: "Gantt mount — " + targetModel.count + " rows × "
-                                          + root.ganttRowHeight + " px\ngantt_onenight() / obs_plan()"
-                                    font.family: "monospace"
+                                MakieArea {
+                                    id: ganttArea
+                                    anchors.fill: parent
+                                    scene: ganttPlot
+                                }
+
+                                // Over the canvas until a night has been computed: an empty
+                                // axis reads as a failed plan rather than as one not yet run.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: !root.hasPlan
+                                    color: "#ffffff"
+                                    Label {
+                                        anchors.centerIn: parent
+                                        horizontalAlignment: Text.AlignHCenter
+                                        color: "#888"
+                                        text: "choose a target and a date, then Compute"
+                                    }
                                 }
                             }
                         }
@@ -1013,13 +1067,14 @@ Item {
                             Button {
                                 text: "Search POPs"
                                 enabled: root.nSelectedTelescopes >= 2 && root.nNamedTargets > 0
-                                // wire: best_pop(facility, dec, ha, config; n_best, min_minutes)
-                                // with config = root.telescopeConfig, then compute_delays / in_delay
-                                // for the feasibility curve. CHARA_POP_ARRAY and CHARA_AIRPATH are
-                                // the defaults, which is the other half of why this tab is
-                                // CHARA-only. Append one row per result into popModel with the
-                                // roles pops, score, haRange.
-                                onClicked: root.statusText = "POP search"
+                                // CHARA_POP_ARRAY and CHARA_AIRPATH are the defaults inside
+                                // best_pop, which is the other half of why this tab is CHARA-only.
+                                // The best result is adopted rather than merely listed: leaving
+                                // the user to copy it is how the searched POPs get forgotten and
+                                // the delay check reports a third of the real window.
+                                onClicked: { root.findPops(); root.statusText =
+                                             popModel.count > 0 ? "POPs " + root.popString
+                                                                : "no POP configuration found" }
                             }
                             Label { text: "n_best"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                             SpinBox { id: nBestBox; from: 1; to: 20; value: 5 }
@@ -1372,4 +1427,48 @@ Item {
             root.statusText = "simulate -> " + root.outputFile
         }
     }
+
+    // ── computing a night ────────────────────────────────────────────────────
+    //
+    // The delay-line check is OPT-IN. Applying it with an unsearched POP configuration reports
+    // far less time than is really available -- measured on Vega from CHARA, 0 minutes with all
+    // six telescopes at POP 1, against 380 with the POPs `best_pop` finds -- so a panel that
+    // applied it by default would call every target unobservable.
+    property bool hasPlan: false
+    property bool useDelay: false
+    property bool detailed: true
+    property string planText: ""
+
+    function computePlan() {
+        var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
+        if (t === null) { planText = "no target"; return }
+        var tels = root.selectedTelescopes.join(" ")
+        planText = Julia.shell_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
+                                     tels, root.popString, root.useDelay, root.detailed)
+        hasPlan = planText.indexOf("!") !== 0
+        ganttArea.update()
+        root.consoleChanged()
+    }
+
+    function findPops() {
+        var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
+        if (t === null) return
+        popModel.clear()
+        var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra,
+                                         root.selectedTelescopes.join(" "))
+        if (rows.length === 0) return
+        var lines = rows.split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length === 2) popModel.append({ pop: f[0], score: f[1] })
+        }
+        // The best one is the one worth using, so take it rather than making the user copy it.
+        if (popModel.count > 0) root.popString = popModel.get(0).pop
+    }
+
+    property string popString: ""
+
+    // Raised when Julia has written to the shared console and the window should re-read it.
+    signal consoleChanged()
+
 }
