@@ -161,12 +161,22 @@ SHOT 05_colour
 # the plot keyboard focus (MakieArea gates its input on that), the second actually picks.
 # Click where the points actually are, not an arbitrary spot: the search returns nothing over
 # empty space, so a miss is indistinguishable from a broken pick. By this point the view is V²
-# against baseline, and the dense band sits near the bottom of the axis -- read off
-# 06_picked.png, which is what this step writes. Re-read it if the view or the file changes.
-CL 700 440 2
-CL 700 440 3
+# against baseline, and the dense band sits a little below the middle of the axis.
+#
+# As a FRACTION of the window, not a fixed pixel. A fixed pixel silently stops landing on data
+# the moment the window's default size changes -- which is what happened when the default width
+# went from 1280 to 1600: 700,440 had been on the band and became empty sky above it, and the
+# run then reported a broken pick rather than a stale coordinate. Fractions ride the resize,
+# because the axis fills its share of the window either way.
+eval "$(DISPLAY="$DISP" xdotool getwindowgeometry --shell "$WID")"
+PICK_X=$((WIDTH * 40 / 100)); PICK_Y=$((HEIGHT * 49 / 100))
+say "picking at ${PICK_X},${PICK_Y} of ${WIDTH}x${HEIGHT}"
+CL "$PICK_X" "$PICK_Y" 2
+CL "$PICK_X" "$PICK_Y" 3
 SHOT 06_picked
-DISPLAY="$DISP" xdotool mousemove --window "$WID" 683 292 click 3; sleep 3  # right click = reset
+# right click = reset view; anywhere inside the axis will do
+DISPLAY="$DISP" xdotool mousemove --window "$WID" $((WIDTH * 43 / 100)) $((HEIGHT * 28 / 100)) click 3
+sleep 3
 SHOT 07_reset
 
 wait "$GUI_PID" 2>/dev/null
@@ -200,7 +210,10 @@ PICK=$(grep "^PICKTEXT: " "$DUMP" | sed 's/^PICKTEXT: //')
 if [ -n "$PICK" ]; then
     echo "  PASS  clicking identified a point: $PICK"
 else
-    echo "  FAIL  clicking a point identified nothing"; FAIL=1
+    echo "  FAIL  clicking a point identified nothing"
+    echo "        Look at 06_picked.png first: if the click landed on empty axis rather than"
+    echo "        on the data, the fractions above need re-reading, not the picking code."
+    FAIL=1
 fi
 
 echo "  screenshots: $SHOTDIR"

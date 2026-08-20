@@ -17,10 +17,15 @@
 # the factor out and this file supplies only the override, which keeps the policy (parsing,
 # range, what counts as "auto") in plain Julia where it can be tested without a display.
 #
-# Plot text is deliberately NOT scaled. Makie font sizes stay at the 12 pt / 8 pt / 10 pt
-# measured from oiplot, so a figure on screen is the figure in the paper, and the port harness
-# keeps asserting against those numbers unchanged. The cost is that on a HiDPI panel the plot
-# labels read smaller than the chrome around them.
+# Plot text is not scaled on the STATIC path. `draw!` leaves Makie font sizes at the 12 pt /
+# 8 pt / 10 pt measured from oiplot, so a figure saved from a script is the figure in the
+# paper, and the port harness keeps asserting against those numbers unchanged.
+#
+# The live canvas is a different question, because it is read on screen rather than on paper,
+# and it follows the UI scale -- see `live_plot_scale`. It has to: a window whose chrome
+# tracks the screen while its plot labels do not ends up with 8 pt tick labels beside 14 pt
+# buttons, which is how the same code came to look right on a 189 dpi laptop and too large on
+# a 92 dpi desktop.
 
 "Environment variable that overrides the detected UI scale."
 const UI_SCALE_VAR = "OITOOLSGUI_SCALE"
@@ -72,4 +77,29 @@ function ui_scale_override(; verbose::Bool = true)
     end
 
     return (scale = parsed, auto = false, reason = "$UI_SCALE_VAR=$parsed")
+end
+
+"""
+The UI scale QML settled on, pushed back from the window.
+
+QML owns the detection (`Screen` is live and Julia's copy could not follow a move to another
+monitor), so the value has to travel back for anything drawn in Julia to match it. Until the
+window reports in, this holds `UI_SCALE_REFERENCE` -- `build_canvas` runs before any window
+exists, and every later `update_canvas!` restyles from the live value anyway.
+"""
+const UI_SCALE_LIVE = Ref(1.25)
+
+"""
+The UI scale the plot sizes were tuned against.
+
+`PLOT_SCALE_AT_REFERENCE / UI_SCALE_REFERENCE` is the ratio carried forward to any other
+screen, so plot text and markers keep their proportion to the chrome around them.
+"""
+const UI_SCALE_REFERENCE       = 1.25
+const PLOT_SCALE_AT_REFERENCE  = 1.7
+
+"Record the scale QML computed. Called once, from the window's `Component.onCompleted`."
+function set_ui_scale!(x::Real)
+    (isfinite(x) && x > 0) || return UI_SCALE_LIVE[]
+    return UI_SCALE_LIVE[] = clamp(Float64(x), UI_SCALE_MIN, UI_SCALE_MAX)
 end

@@ -144,12 +144,17 @@ ApplicationWindow {
     // Printed once at startup so the scale is diagnosable on a machine nobody can inspect
     // remotely. If the window looks wrong, this line says whether the screen asked for it
     // (autoScale) or an override did, and OITOOLSGUI_SCALE is how you argue with it.
-    Component.onCompleted: console.log(
+    Component.onCompleted: {
+        // Hand the scale to Julia before anything is drawn: Makie font and marker sizes are
+        // computed there, and they have to follow the same factor as the chrome around them.
+        Julia.shell_ui_scale(uiScale)
+        console.log(
         "OITOOLSGUI ui scale: screen=" + (Screen.logicalPixelDensity * 25.4).toFixed(1) + " dpi"
         + "  devicePixelRatio=" + Screen.devicePixelRatio.toFixed(2)
         + "  autoScale=" + autoScale.toFixed(3)
         + (uiScaleOverride > 0 ? "  override=" + uiScaleOverride.toFixed(3) : "  (no override)")
         + "  -> uiScale=" + uiScale.toFixed(3) + " fontScale=" + fontScale.toFixed(3))
+    }
 
     // Reads the dataset list back from the session and selects the newest entry. Called both
     // after a load and at startup, because a Session may already hold datasets before the

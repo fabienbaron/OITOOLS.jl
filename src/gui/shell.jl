@@ -583,6 +583,38 @@ function shell_simbad(name::AbstractString)
                  m("V"), m("J"), m("H"), m("K"), t.main_id, t.sptype), "\t")
 end
 
+"""
+    shell_ui_scale(x) -> String
+
+Record the UI scale QML worked out from the screen, so anything drawn in Julia matches it.
+
+Called once from `Component.onCompleted`, which runs before the first plot is drawn — the
+canvas is built earlier still, but every redraw restyles from the live value.
+"""
+function shell_ui_scale(x)
+    before = live_plot_scale()
+    v = set_ui_scale!(Float64(x))
+    sh = SHELL[]
+    sh === nothing && return ""
+    console!(sh, @sprintf("plot scale: %.2f (ui %.2f)", live_plot_scale(), v))
+
+    # Restyle. `gui()` draws the first plot before `exec()`, so by the time QML reports the
+    # scale the figure already exists at whatever the default was -- and `makieArea.update()`
+    # only re-renders it, it does not re-run `update_canvas!`. Without this the very first
+    # view keeps the wrong font and marker sizes until something else forces a redraw.
+    #
+    # Safe here despite the window being up: `update_canvas!` only assigns to Observables and
+    # creates no plots, which is what the whole pre-built canvas design is for.
+    live_plot_scale() ≈ before && return ""
+    current_dataset(sh) === nothing && return ""
+    try
+        sh.status = refresh_plot!(sh)
+    catch err
+        console!(sh, "could not restyle for the new scale: " * _cause(err); kind = :err)
+    end
+    return ""
+end
+
 "Facilities on disk, newline-separated. CHARA first: it is the only one the delay-line and POP checks cover."
 function shell_facilities()
     c = config_catalog()

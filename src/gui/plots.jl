@@ -72,6 +72,16 @@ function style_axis!(ax; scale::Real = 1.0)
     # differently even though the data is identical.
     ax.xticks[] = Makie.LinearTicks(OIPLOT_XTICKS)
     ax.yticks[] = Makie.LinearTicks(OIPLOT_XTICKS)
+    # Restore Makie's own 5% headroom, which something else on this axis has taken away.
+    #
+    # `build_canvas` pre-creates a hidden heatmap for the Image perspective, and image-like
+    # plots declare a zero autolimit margin -- an image wants no padding around it. The axis
+    # adopts that for EVERY plot on it, so the scatter views ended up with limits sitting
+    # exactly on the data and the outermost points bisected by the frame. Worse, the limit is
+    # stored as Float32 and can round just inside a Float64 datum, which put two uv points
+    # outside the axis entirely. Set on every redraw, because that is when it matters.
+    ax.xautolimitmargin[] = (0.05f0, 0.05f0)
+    ax.yautolimitmargin[] = (0.05f0, 0.05f0)
     return ax
 end
 

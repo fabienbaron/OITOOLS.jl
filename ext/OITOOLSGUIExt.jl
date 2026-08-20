@@ -41,7 +41,8 @@ export log!, export_script, load_dataset!, filter_dataset!, dataset
 export uv_figure, observable_figure, point_info, uv_point_labels, plot_into!
 export OBS_SPECS, group_names, baseline_names, triplet_names, station_names
 export baseline_color_map, style_axis!, add_baseline_legend!
-export LiveCanvas, build_canvas, update_canvas!, canvas_data
+export LiveCanvas, build_canvas, update_canvas!, canvas_data, zoom_step!,
+       ZOOM_MIN_SPAN, ZOOM_MAX_SPAN, ZOOM_PER_DETENT
 export ParamRow, ParamMode, PARAM_FIXED, PARAM_FREE, PARAM_EXPR
 export model_rows, model_inspection, ComponentInfo, free_parameter_vector
 export model_depends_on, render_model_image, model_image_cube

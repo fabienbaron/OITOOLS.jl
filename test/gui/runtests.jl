@@ -154,6 +154,49 @@ end
     load_dataset!(s, MONO; warn = false, verbose = false)
     d = s.datasets[1].data[1, 1]
 
+    @testset "zoom is bounded at both ends" begin
+        # The wheel arithmetic, without a mouse. QMLMakie hands Makie the raw Qt delta when a
+        # device reports pixelDelta -- ±120 for a discrete wheel under libinput -- and Makie
+        # raises (1-speed) to it, so an unbounded axis reached 1e49 in a handful of clicks and
+        # then threw `AssertionError: vmin != vmax` out of the tick locator. These bounds are
+        # what stops that, so they are worth asserting rather than trusting.
+        fig = Makie.Figure(); ax = Makie.Axis(fig[1, 1])
+        c = build_canvas(fig, ax)
+        update_canvas!(c, d, :uv; color = :baseline)
+        hx, hy = c.homespan[]
+        @test hx > 0 && hy > 0
+
+        span() = (Float64(ax.finallimits[].widths[1]), Float64(ax.finallimits[].widths[2]))
+
+        # Far past the stop in each direction, then assert where it came to rest. Bounds are
+        # asserted to within 10%: the stop cannot be landed on exactly through a Float32 rect
+        # under DataAspect, and a tenth of a stop is far below anything a reader would see.
+        for _ in 1:200; zoom_step!(c, 1); end
+        sx, sy = span()
+        # Never crosses the bound, and comes to rest within one detent of it.
+        @test ZOOM_MIN_SPAN * hx ≤ sx ≤ ZOOM_MIN_SPAN * hx * ZOOM_PER_DETENT
+        @test ZOOM_MIN_SPAN * hy ≤ sy ≤ ZOOM_MIN_SPAN * hy * ZOOM_PER_DETENT
+        @test zoom_step!(c, 1) == false        # overzooming does nothing at all
+        @test span() == (sx, sy)               # and leaves the view untouched
+
+        for _ in 1:400; zoom_step!(c, -1); end
+        sx, sy = span()
+        @test ZOOM_MAX_SPAN * hx / ZOOM_PER_DETENT ≤ sx ≤ ZOOM_MAX_SPAN * hx
+        @test ZOOM_MAX_SPAN * hy / ZOOM_PER_DETENT ≤ sy ≤ ZOOM_MAX_SPAN * hy
+        @test zoom_step!(c, -1) == false
+        @test span() == (sx, sy)
+
+        # Every limit stays finite: the assertion in the tick locator fires on the way to Inf.
+        @test all(isfinite, (ax.finallimits[].origin..., ax.finallimits[].widths...))
+
+        # Aspect is preserved, which DataAspect makes a correctness claim about the sky.
+        zoom_step!(c, 0)                          # no-op
+        update_canvas!(c, d, :uv; color = :baseline)
+        r0 = (/)(span()...)
+        for _ in 1:5; zoom_step!(c, 1); end
+        @test (/)(span()...) ≈ r0 rtol = 1e-6
+    end
+
     @testset "baseline names and point info" begin
         n = baseline_names(d)
         @test length(n) == d.nv2

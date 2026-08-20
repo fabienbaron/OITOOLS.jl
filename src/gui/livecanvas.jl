@@ -66,6 +66,10 @@ struct LiveCanvas
     imagex      :: Makie.Observable{Vector{Float32}}
     imagey      :: Makie.Observable{Vector{Float32}}
     imageplot   :: Any
+    # Width and height of the view `autolimits!` chose for the current data. The zoom clamp
+    # measures against this, so "10x out" means ten times the data extent rather than ten
+    # times whatever the user last left on screen.
+    homespan    :: Base.RefValue{Tuple{Float64,Float64}}
 end
 
 """
@@ -105,7 +109,7 @@ function build_canvas(fig, ax)
     legtpos  = Makie.Observable(Makie.Point2f[])
     legtxt   = Makie.Observable(String[])
     legfs    = Makie.Observable(Float32(UVPLOT_LEGEND_SIZE * live_plot_scale()))
-    legms    = Makie.lift(f -> f * 1.1f0, legfs)
+    legms    = Makie.lift(f -> f * LEGEND_MARKER_RATIO, legfs)
     Makie.scatter!(legax, legmarks; color = legcols, marker = OIPLOT_MARKER, markersize = legms)
     Makie.text!(legax, legtpos; text = legtxt, align = (:left, :center), fontsize = legfs)
 
@@ -125,7 +129,16 @@ function build_canvas(fig, ax)
                         errpts, errlo, errhi, errplot,
                         legax, legmarks, legcols, legtpos, legtxt, legfs,
                         cblim, cblab, cbar,
-                        imdata, imx, imy, implot)
+                        imdata, imx, imy, implot,
+                        Base.RefValue((1.0, 1.0)))
+    _install_zoom!(canvas)
+
+    # The legend axis is a drawing surface, not a plot. Left interactive it responds to the
+    # wheel and to drags like any other axis, and since it holds no data there is nothing on
+    # screen to show that it moved -- the labels simply drift out of the visible unit square.
+    for i in (:scrollzoom, :dragpan, :rectanglezoom, :limitreset)
+        Makie.deregister_interaction!(legax, i)
+    end
     set_legend!(canvas, Pair{String,Makie.RGBAf}[])
     _show_colorbar!(canvas, false)
     return canvas
@@ -169,6 +182,10 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::A
     c.axis.ylabel = "δ (mas)"
     Makie.limits!(c.axis, half, -half, -half, half)
     c.axis.aspect = 1
+    # The zoom bounds are multiples of the home view, and for an image the home view is this
+    # one -- not whatever scatter plot the canvas last held. Without this, zooming a
+    # reconstruction is bounded against the uv coverage that happened to precede it.
+    c.homespan[] = (2 * Float64(half), 2 * Float64(half))
     return c
 end
 
@@ -198,9 +215,22 @@ Override with `OITOOLSGUI_PLOT_SCALE=2.0` (or 1.0 to get the publication sizes o
 """
 function live_plot_scale()
     v = tryparse(Float64, get(ENV, "OITOOLSGUI_PLOT_SCALE", ""))
-    (v === nothing || !isfinite(v) || v <= 0) && return 1.7
-    return clamp(v, 0.5, 5.0)
+    (v === nothing || !isfinite(v) || v <= 0) || return clamp(v, 0.5, 5.0)
+    # Follow the UI. The constant is a ratio, not a size: 1.7 was tuned where the UI scale was
+    # 1.25, so on a screen asking for 0.875 the plot lands at 1.19 and keeps the same relation
+    # to the buttons beside it. Without this the chrome shrinks and the tick labels do not.
+    return clamp(PLOT_SCALE_AT_REFERENCE * UI_SCALE_LIVE[] / UI_SCALE_REFERENCE, 0.5, 5.0)
 end
+
+"""
+Legend swatch size, as a fraction of the legend font size.
+
+A swatch stands for a data point, so it should not tower over one. At 1.1 it did: measured at
+ui scale 0.875 the swatch came out 13.1 px against a 7.14 px marker on the plot, nearly twice
+the thing it labels. 0.8 keeps it a little larger than the data point, which it needs to be to
+read as a colour at this size, without dominating the row.
+"""
+const LEGEND_MARKER_RATIO = 0.8f0
 
 """
 Width of one legend character as a fraction of the axis, at `UVPLOT_LEGEND_SIZE`.
@@ -216,6 +246,111 @@ const CHAR_W = 0.0067
 #
 # No try/catch around these assignments. A failure to hide leaves an empty legend frame and a
 # meaningless 0..1 colorbar on screen, which a swallowed exception would make invisible.
+"""
+Zoom per wheel detent, and how far the view may travel from the data.
+
+Both spans are multiples of the one `autolimits!` chose, so they are absolute stops measured
+against the DATA rather than against wherever the user last left the view: zooming in stops at
+4x magnification (a quarter of the data extent on screen) and zooming out at 3x the extent.
+Scrolling past either does nothing, which is the intended feel -- the view cannot be lost.
+
+The ceiling is not only a convenience. Without one a few wheel clicks reach 1e49, where tick
+spacing falls below what a Float64 can represent, every tick lands on the same value, and
+Makie throws `AssertionError: vmin != vmax` out of its tick locator.
+"""
+const ZOOM_PER_DETENT = 1.1
+const ZOOM_MIN_SPAN   = 1 / 4          # zoom in  ⇒ at most 4x magnification
+const ZOOM_MAX_SPAN   = 3.0            # zoom out ⇒ at most 3x the data extent
+
+"One wheel detent, in the scroll units Qt delivers for a discrete mouse wheel."
+const WHEEL_DETENT = 120.0
+
+"""
+    _install_zoom!(canvas)
+
+Replace the axis's stock scroll zoom with one that normalises the event and bounds the result.
+
+Makie's `ScrollZoom` takes the scroll value as a count of steps and raises `(1 - speed)` to it,
+which assumes something delivers small numbers. QMLMakie does not, and not by its own choice:
+it scales `angleDelta` by `wheelfactor` ONLY when `pixelDelta` is zero, on the reading that a
+non-zero `pixelDelta` means fine-grained pixel scrolling that needs no scaling. Under libinput
+a discrete wheel reports BOTH as ±120, so the guard is false, 120 arrives unscaled, and
+`0.9^120` zooms out by 270000x per click. Measured on this hardware: eight clicks reach 1e43.
+
+A touchpad sends many small deltas instead, which is why the same code behaves on a laptop and
+runs away on a desktop mouse -- so the fix has to normalise the EVENT, not lower the speed. A
+speed small enough to tame 120 units per detent would make a touchpad barely zoom at all.
+
+Dividing by one detent gives both devices the same meaning: a wheel click is one step, and a
+touchpad's small deltas are fractions of a step that accumulate as the finger moves.
+"""
+function _install_zoom!(c::LiveCanvas)
+    ax = c.axis
+    Makie.deregister_interaction!(ax, :scrollzoom)
+    Makie.register_interaction!(ax, :scrollzoom) do event::Makie.ScrollEvent, axis
+        # Anchor on the pointer, so whatever is under the cursor stays under it.
+        mp = Makie.mouseposition(axis.scene)
+        zoom_step!(c, Float64(event.y) / WHEEL_DETENT; at = (Float64(mp[1]), Float64(mp[2])))
+        return Makie.Consume(true)
+    end
+    return nothing
+end
+
+"""
+    zoom_step!(canvas, steps; at = nothing) -> Bool
+
+Zoom by `steps` wheel detents about the data point `at`, honouring the bounds. Positive steps
+zoom in. Returns whether the view actually moved, which is `false` once a stop is reached.
+
+Separate from the interaction that calls it so the bounds can be tested without a mouse: a
+synthetic scroll event is not a faithful stand-in for a wheel, and the arithmetic is the part
+worth pinning down.
+"""
+function zoom_step!(c::LiveCanvas, steps::Real; at = nothing)
+    steps == 0 && return false
+    ax = c.axis
+    fl = ax.finallimits[]
+    ox, oy = Float64(fl.origin[1]), Float64(fl.origin[2])
+    wx, wy = Float64(fl.widths[1]), Float64(fl.widths[2])
+    (isfinite(wx) && isfinite(wy) && wx > 0 && wy > 0) || return false
+
+    hx, hy = c.homespan[]
+    (hx > 0 && hy > 0) || return false
+    # One factor for both axes. Scaling them differently would quietly change the aspect
+    # ratio, and uv coverage is drawn with DataAspect, where that is a lie about the sky.
+    factor = ZOOM_PER_DETENT^(-steps)
+    nwx, nwy = wx * factor, wy * factor
+
+    # Refuse the whole step rather than clamping it to the bound: overzooming does NOTHING.
+    #
+    # Clamping was tried and is worse. The bound cannot be landed on exactly -- `finallimits`
+    # is a Rect2f, so the span round-trips through Float32, and under DataAspect the x and y
+    # spans finish straddling it by about 1e-7 in opposite directions (measured) -- so a clamp
+    # goes on requesting invisible corrections for ever and the view never comes to rest.
+    # Refusing stops within one detent of the bound, which is 10% and invisible.
+    if nwx < ZOOM_MIN_SPAN * hx || nwy < ZOOM_MIN_SPAN * hy ||
+       nwx > ZOOM_MAX_SPAN * hx || nwy > ZOOM_MAX_SPAN * hy
+        return false
+    end
+
+    fx, fy = if at === nothing
+        (0.5, 0.5)
+    else
+        (clamp((Float64(at[1]) - ox) / wx, 0.0, 1.0),
+         clamp((Float64(at[2]) - oy) / wy, 0.0, 1.0))
+    end
+    # `limits!`, not an assignment to `finallimits`. While `ax.limits` is still automatic,
+    # Makie recomputes the view from the plots and a directly-assigned rectangle is discarded:
+    # measured, zooming IN crept a little and then snapped back to the data extent on the next
+    # step, over and over, while zooming out happened to survive because autolimits only ever
+    # expand. `limits!` sets an explicit view, and `update_canvas!` calls `autolimits!` on
+    # every redraw, so nothing stays pinned once the data changes.
+    x0 = ox + fx * (wx - nwx)
+    y0 = oy + fy * (wy - nwy)
+    Makie.limits!(ax, x0, x0 + nwx, y0, y0 + nwy)
+    return true
+end
+
 """
     set_legend!(canvas, entries; ncol = UVPLOT_LEGEND_NCOL)
 
@@ -290,6 +425,13 @@ function _show_colorbar!(c::LiveCanvas, on::Bool)
     c.colorbar.labelvisible[]     = on
     c.colorbar.ticklabelsize[]    = OIPLOT_TICKLABELSIZE * sc
     c.colorbar.labelsize[]        = OIPLOT_LABELSIZE * sc
+    # The spine too. At width 0 the left and right spines land on the same pixel column and
+    # draw a bare vertical line down the side of every baseline-coloured plot -- a stray axis
+    # with nothing in it. `Colorbar` has no `visible`, so each side is named individually.
+    c.colorbar.leftspinevisible[]   = on
+    c.colorbar.rightspinevisible[]  = on
+    c.colorbar.topspinevisible[]    = on
+    c.colorbar.bottomspinevisible[] = on
     on || (c.cbarlabel[] = "")
     Makie.colsize!(c.figure.layout, 2, on ? Makie.Auto() : Makie.Fixed(0))
     # Sit beside the axis, not adrift from it. The default column gap is generous for a
@@ -495,6 +637,9 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
     # Limits from the data while the axis is still linear, then log10 last of all -- by which
     # point every loaded value is positive, because canvas_data clamped them to the floor.
     Makie.autolimits!(ax)
+    let fl = ax.finallimits[]
+        c.homespan[] = (Float64(fl.widths[1]), Float64(fl.widths[2]))
+    end
     if pd.logscale
         pd.ylims !== nothing && Makie.ylims!(ax, pd.ylims...)
         ax.yscale[] = log10
