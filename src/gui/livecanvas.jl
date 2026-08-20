@@ -61,6 +61,11 @@ struct LiveCanvas
     cbarlimits  :: Makie.Observable{Tuple{Float32,Float32}}
     cbarlabel   :: Makie.Observable{String}
     colorbar    :: Any
+    # reconstructed image, drawn by the Image perspective
+    imagedata   :: Makie.Observable{Matrix{Float32}}
+    imagex      :: Makie.Observable{Vector{Float32}}
+    imagey      :: Makie.Observable{Vector{Float32}}
+    imageplot   :: Any
 end
 
 """
@@ -108,13 +113,72 @@ function build_canvas(fig, ax)
     cblab = Makie.Observable("")
     cbar  = Makie.Colorbar(fig[1, 2]; colormap = LIVE_COLORMAP, limits = cblim, label = cblab)
 
+    # The reconstructed image, created here and hidden, like everything else on this canvas.
+    # Building a plot after the window exists allocates GL buffers with no context bound, which
+    # is the failure this whole pre-create design is here to avoid.
+    imdata = Makie.Observable(zeros(Float32, 2, 2))
+    imx    = Makie.Observable(Float32[0, 1])
+    imy    = Makie.Observable(Float32[0, 1])
+    implot = Makie.heatmap!(ax, imx, imy, imdata; colormap = LIVE_COLORMAP, visible = false)
+
     canvas = LiveCanvas(fig, ax, points, colors, msize, sc,
                         errpts, errlo, errhi, errplot,
                         legax, legmarks, legcols, legtpos, legtxt, legfs,
-                        cblim, cblab, cbar)
+                        cblim, cblab, cbar,
+                        imdata, imx, imy, implot)
     set_legend!(canvas, Pair{String,Makie.RGBAf}[])
     _show_colorbar!(canvas, false)
     return canvas
+end
+
+"""
+    show_image!(canvas, img, pixsize; label = "")
+
+Put a reconstructed image on the canvas, in place of the scatter view.
+
+Axes are in milliarcseconds and East is to the LEFT, which is the convention every figure in
+this package uses and the opposite of a bare `heatmap` — an image drawn without the flip is
+mirrored, and a mirrored reconstruction is not obviously wrong to the eye.
+
+Nothing is created here. The heatmap already exists; this sets its data and swaps which plots
+are visible.
+"""
+function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::AbstractString = "")
+    nx = size(img, 1)
+    half = nx * pixsize / 2
+    # Descending x: East left. Makie takes the coordinate vectors as cell centres.
+    c.imagex[] = Float32.(range(half, -half; length = nx))
+    c.imagey[] = Float32.(range(-half, half; length = nx))
+    c.imagedata[] = Float32.(img)
+
+    c.points[] = Makie.Point2f[]
+    c.errpoints[] = Makie.Point2f[]
+    c.errlow[] = Float32[]; c.errhigh[] = Float32[]
+    set_legend!(c, Pair{String,Makie.RGBAf}[])
+
+    c.scatterplot.visible[] = false
+    c.errplot.visible[] = false
+    c.imageplot.visible[] = true
+
+    mx = maximum(img)
+    c.cbarlimits[] = (0.0f0, Float32(mx > 0 ? mx : 1))
+    c.cbarlabel[] = isempty(label) ? "flux / pixel" : String(label)
+    _show_colorbar!(c, true)
+
+    c.axis.xlabel = "α (mas)"
+    c.axis.ylabel = "δ (mas)"
+    Makie.limits!(c.axis, half, -half, -half, half)
+    c.axis.aspect = 1
+    return c
+end
+
+"Return the canvas to the scatter view after an image has been shown."
+function hide_image!(c::LiveCanvas)
+    c.imageplot.visible[] = false
+    c.scatterplot.visible[] = true
+    c.errplot.visible[] = true
+    c.axis.aspect = nothing
+    return c
 end
 
 "Colormap used for the continuous colour modes; also what the colorbar shows."

@@ -13,6 +13,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import jlqml            // supplies `Julia`, through which the reconstruction is run
+import Makie            // MakieArea, for this perspective's own canvas
 
 Item {
     id: root
@@ -36,7 +38,11 @@ Item {
     property bool scaleRegs: true                               // scale_regularizers on pixsize change
     property string ftMode: "nfft"                              // setup_ft mode
 
-    property string startImage: "dirac"                         // dirac | gaussian | fits
+    // Gaussian, not Dirac. A single lit pixel is the least committal image there is and the
+    // worst possible start for an unregularised gradient descent: measured on 2004-data1 it
+    // begins at chi2r 1.4e10 and ends at 1.2e6 with the flux blown up to 4234, where a
+    // Gaussian start on the same data reaches chi2r 312 with the flux near 1.
+    property string startImage: "gaussian"                      // dirac | gaussian | fits
     property string startImagePath: ""
     property real   startFwhm: 0                                // mas; 0 ⇒ fov/5, gaussian_prior's default
 
@@ -363,6 +369,59 @@ Item {
     onHaveT3phiChanged:   resetObservables()
     onHaveDiffvisChanged: resetObservables()
 
+    // ── running a reconstruction ─────────────────────────────────────────────
+    //
+    // The call holds Qt's thread for as long as the optimiser takes, so the status has to be
+    // on screen BEFORE it starts — hence the timer. Without it the window freezes with the
+    // button still reading "Run" and nothing saying why.
+    // The VMLMB regulariser rows as `name,mu[,extra];name,mu` — one string, because that is
+    // what crosses into Julia cleanly. Only this engine's rows are sent: the other engines
+    // take their regularisation in shapes that are not a named list at all.
+    function regulariserSpec() {
+        if (engine !== "vmlmb") return ""
+        var out = []
+        for (var i = 0; i < regModel.count; ++i) {
+            var r = regModel.get(i)
+            if (!r.name || r.name.length === 0) continue
+            var row = r.name + "," + r.mu
+            // `l1l2` is the one name that REQUIRES its second argument; sending it without
+            // one would error inside reconstruct rather than here.
+            if (r.extra !== undefined && String(r.extra).length > 0) row += "," + r.extra
+            out.push(row)
+        }
+        return out.join(";")
+    }
+
+    // Raised when Julia has written to the shared console and the window should re-read it.
+    signal consoleChanged()
+
+    function startRun() {
+        if (!canRun) return
+        running = true
+        statusText = "reconstructing…"
+        runTimer.restart()
+    }
+
+    Timer {
+        id: runTimer
+        interval: 120; repeat: false
+        onTriggered: {
+            var line = Julia.shell_reconstruct(root.nx, root.pixsize, root.ftMode,
+                                               root.startImage,
+                                               root.useV2, root.useT3amp, root.useT3phi,
+                                               root.vmlmbMaxiter,
+                                               root.regulariserSpec())
+            root.statusText = line
+            root.hasResult = line.indexOf("chi2r") >= 0
+            root.running = false
+            // The console pane belongs to the window, and the reconstruction wrote to it.
+            root.consoleChanged()
+            // Makie draws on demand here; without this the new image is not painted until
+            // something else happens to invalidate the area.
+            imageArea.update()
+        }
+    }
+
     // Which page of the regulariser stack an engine wants. Annealing and tempering share one:
     // tempering IS the annealing sampler with a Pigeons ladder around it.
     function regPageFor(key) {
@@ -449,9 +508,12 @@ Item {
         ListElement { key: "vi";        name: "Variational inference (OIVI)";          entry: "reconstruct_map / mgvi / geovi" }
     }
 
+    // Empty on purpose. Positivity is already in force — it is VMLMB's `lower = 0`, not a
+    // regulariser — so an empty list is an unregularised maximum-likelihood reconstruction,
+    // which is a real one and the right thing to see before anything is added. A pre-filled
+    // row would be applied by the first Run without the user having asked for it.
     ListModel {
         id: regModel
-        ListElement { name: "tv"; mu: 1.0; extra: 1.0e-8; path: "" }
     }
 
     // SQUEEZE's names are spelled like oichi2.jl's but they act on the integer histogram, so
@@ -1364,9 +1426,7 @@ Item {
                             id: runButton
                             text: "Run"
                             enabled: root.canRun
-                            // wire: start the reconstruction on a worker thread and register it
-                            //       with the task tray in Main.qml
-                            onClicked: { }
+                            onClicked: root.startRun()
                         }
                         ReasonTip { reason: root.blockedReason }
                     }
@@ -1377,20 +1437,29 @@ Item {
                         // wire: ask the running task to stop; SQUEEZE can return its best chain so far
                         onClicked: { }
                     }
+                    // Only while a run is going. Afterwards the space belongs to the result
+                    // line, which otherwise overruns the bar and prints on top of it.
                     ProgressBar {
                         Layout.fillWidth: true
+                        visible: root.running
                         from: 0; to: 1
                         value: Math.max(0, root.progress)
                         indeterminate: root.running && root.progress < 0
-                        // wire: Julia pushes progress and statusText from the running task
                     }
                     Label {
+                        // Once a run has finished, show what it produced. "ready" is what the
+                        // control said before the run and says nothing a user wants after it.
                         text: root.running
                               ? (root.roundText.length > 0 ? root.roundText : root.statusText)
+                              : root.hasResult ? root.statusText
                               : (root.blockedReason.length > 0 ? root.blockedReason : "ready")
                         color: (!root.running && root.blockedReason.length > 0) ? "#c62828" : "#666"
                         elide: Text.ElideRight
-                        Layout.maximumWidth: dp(200)
+                        Layout.fillWidth: true
+                        ToolTip.visible: hovered && root.hasResult
+                        ToolTip.text: root.statusText
+                        HoverHandler { id: statusHover }
+                        property bool hovered: statusHover.hovered
                     }
                 }
             }
@@ -1476,7 +1545,12 @@ Item {
                 }
             }
 
-            // ── canvas mount (§5.7) ───────────────────────────────────────────
+            // ── canvas (§5.7) ─────────────────────────────────────────────────
+            //
+            // This perspective has its OWN figure, `imagePlot`, built beside the Exploring
+            // one before the window exists. Sharing a single canvas would mean a
+            // reconstruction wiping the plot being read on the other tab, and this tab's own
+            // result appearing somewhere else. East is left and North is up, matching imdisp.
             Rectangle {
                 id: imageCanvasMount
                 Layout.fillWidth: true
@@ -1485,14 +1559,25 @@ Item {
                 color: "#f4f4f4"
                 border.color: "#ddd"
 
-                Label {
-                    anchors.centerIn: parent
-                    horizontalAlignment: Text.AlignHCenter
-                    color: "#888"
-                    text: root.hasResult ? "image canvas" : "no reconstruction yet"
+                MakieArea {
+                    id: imageArea
+                    anchors.fill: parent
+                    scene: imagePlot
                 }
-                // wire: the Makie canvas is mounted here by the shell — this file neither
-                //       imports nor instantiates it. East left, North up, per imdisp.
+
+                // Over the canvas until there is something on it: an empty axis reads as a
+                // broken reconstruction rather than as one that has not been run.
+                Rectangle {
+                    anchors.fill: parent
+                    visible: !root.hasResult
+                    color: "#f4f4f4"
+                    Label {
+                        anchors.centerIn: parent
+                        horizontalAlignment: Text.AlignHCenter
+                        color: "#888"
+                        text: "no reconstruction yet"
+                    }
+                }
             }
 
             // ── diagnostics (§5.5) ────────────────────────────────────────────

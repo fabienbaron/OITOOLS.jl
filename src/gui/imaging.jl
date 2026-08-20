@@ -70,8 +70,12 @@ function start_image(setup::ImagingSetup, ft)
         m[nx ÷ 2 + 1, nx ÷ 2 + 1] = 1.0
         m
     elseif setup.startkind === :gaussian
-        fwhm = setup.startfwhm > 0 ? setup.startfwhm : fov(setup) / 5
-        reshape(gaussian_prior(nx, setup.pixsize; fwhm_mas = fwhm), nx, nx)
+        # `gaussian2d(nx, nx, nx/6)`, which is what the shipped demos start from — a Gaussian
+        # of sigma nx/6 PIXELS, unit total flux. `startfwhm` overrides it in mas for a caller
+        # who wants a specific width.
+        setup.startfwhm > 0 ?
+            reshape(gaussian_prior(nx, setup.pixsize; fwhm_mas = setup.startfwhm), nx, nx) :
+            Float64.(gaussian2d(nx, nx, nx / 6))
     elseif setup.startkind === :fits
         isfile(setup.startpath) || error("No starting image at '$(setup.startpath)'")
         m = Float64.(readfits(setup.startpath))
@@ -147,6 +151,7 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
                            maxiter      ::Integer = 200,
                            regularizers = [],
                            verb         ::Bool = false)
+    regularizers = parse_regularizers(regularizers)
     all(iszero, weights) &&
         error("Every observable is switched off; there is nothing to fit")
 
@@ -160,4 +165,72 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
     img = Float64.(x)
     return ImagingResult(img, chi2r, chi2r_start, sum(img), Int(maxiter), t,
                          setup, Float64.(weights))
+end
+
+
+"""
+    observable_availability(data) -> NamedTuple
+
+Which observables the dataset actually contains, as six booleans.
+
+Counted, not inferred from the presence of a table: `nv2` and friends are *valid-point*
+counts, and a table whose points were all sanitised away (they get `err = Inf` to keep index
+alignment) contains nothing to fit even though it exists. A panel that enabled a tick box on
+the strength of the table would offer an observable with no data behind it.
+
+`diffvis` additionally needs more than one wavelength — a differential phase is measured
+against the other channels, so a monochromatic file cannot carry one whatever its OI_VIS says.
+
+This answers only "does the file have it". Whether an *engine* can use it is a separate
+question with a separate answer, and the two must not be merged: greying a box out for two
+different reasons without distinguishing them is how a user concludes the file is broken.
+"""
+function observable_availability(data)
+    ds = data isa AbstractArray ? vec(data) : [data]
+    tot(f) = sum(d -> Int(getfield(d, f)), ds; init = 0)
+    nwav = data isa AbstractArray ? size(data, 1) : 1
+    return (; v2      = tot(:nv2)     > 0,
+              t3amp   = tot(:nt3amp)  > 0,
+              t3phi   = tot(:nt3phi)  > 0,
+              cvis    = tot(:nvisamp) > 0 || tot(:nvisphi) > 0,
+              flux    = tot(:nflux)   > 0,
+              diffvis = nwav > 1 && tot(:nvisphi) > 0)
+end
+
+"The six flags as `name=0|1` pairs, which is the shape QML reads them back in."
+observable_flags_string(data) =
+    join(("$k=$(Int(v))" for (k, v) in pairs(observable_availability(data))), ",")
+
+
+"""
+    parse_regularizers(spec) -> Vector
+
+Accept regularisers as `reconstruct` wants them, or as the panel has them.
+
+`reconstruct` takes `["name", mu, extra...]` lists. A panel has strings, so a row arrives as
+`"name,mu"` or `"name,mu,extra"` and is turned into that list here — one place that knows the
+format, rather than the format being rebuilt wherever a run is started.
+
+An empty spec is the positivity-only reconstruction, which is a real one: positivity is VMLMB's
+`lower = 0`, not a regulariser, so it is in force either way.
+"""
+function parse_regularizers(spec)
+    spec === nothing && return Any[]
+    spec isa AbstractString || return collect(spec)
+    out = Any[]
+    for row in split(String(spec), ';')
+        row = strip(row)
+        isempty(row) && continue
+        f = [strip(x) for x in split(row, ',')]
+        isempty(f[1]) && continue
+        entry = Any[String(f[1])]
+        for v in f[2:end]
+            isempty(v) && continue
+            push!(entry, parse(Float64, v))
+        end
+        length(entry) == 1 &&
+            error("Regulariser '$(f[1])' has no weight; give it as \"name,mu\"")
+        push!(out, entry)
+    end
+    return out
 end

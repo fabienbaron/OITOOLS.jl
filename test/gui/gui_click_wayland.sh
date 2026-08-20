@@ -88,9 +88,16 @@ XCOMPOSEFILE=/usr/share/X11/locale/en_US.UTF-8/Compose \
 OITOOLSGUI_SCALE=1.0 OITOOLSGUI_CONSOLE_DUMP="$DUMP" OITOOLSGUI_READY_FILE="$READY" \
 env -u DISPLAY -u XAUTHORITY \
   julia --project=bin -e '
-      using OITOOLS, GLMakie, QMLMakie, QML
+      # prefer_native_wayland! must run BEFORE `using GLMakie`: GLFW.jl hard-codes X11 at
+      # module init, so with DISPLAY unset it dies with "X11: The DISPLAY environment variable
+      # is missing" before the hint can be applied. GLFW_jll alone activates the extension
+      # that defines it, which is the reason that extension is separate from the GUI one.
+      using OITOOLS
+      configure_graphics!()
+      using GLFW_jll
+      prefer_native_wayland!()
+      using GLMakie, QMLMakie, QML
       GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
-      GUI.prefer_native_wayland!()
       # Fullscreen so screen coordinates map 1:1 onto client coordinates, and the click
       # arithmetic is just the compositor window origin.
       ENV["OITOOLSGUI_FULLSCREEN"] = "1"

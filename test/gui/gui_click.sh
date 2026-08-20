@@ -73,13 +73,16 @@ say "precompiled; starting the GUI"
 OITOOLSGUI_DEBUG_PICK="${OITOOLSGUI_DEBUG_PICK:-}" OITOOLSGUI_SCALE=1.0 OITOOLSGUI_CONSOLE_DUMP="$DUMP" DISPLAY="$DISP" \
 ${QT_QPA_PLATFORM:+QT_QPA_PLATFORM="$QT_QPA_PLATFORM"} \
   julia --project=bin -e '
-      # Same order as bin/oitoolsgui.jl, and the order matters: configure_graphics! sets the
-      # Mesa driver variables, and Mesa reads them when the GL stack initialises. Loading
-      # GLMakie first and configuring afterwards is too late on WSL, where the difference is
-      # between the D3D12 gallium driver and a probe that finds nothing.
-      using OITOOLS, GLMakie, QMLMakie, QML
+      # The order is forced: Mesa reads its driver variables and GLFW its platform hint when
+      # the first OpenGL context is created, so both calls must happen ABOVE `using GLMakie`.
+      # Loading GLMakie first is why GLFW then dies with "X11: The DISPLAY environment
+      # variable is missing" in a Wayland session -- GLFW.jl hard-codes X11.
+      using OITOOLS
+      configure_graphics!()
+      using GLFW_jll
+      prefer_native_wayland!()
+      using GLMakie, QMLMakie, QML
       GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
-      GUI.configure_graphics!(); GUI.prefer_native_wayland!()
       @info "packages loaded; opening the window"
       OITOOLS.gui(; autoquit_ms = 70000)' > "$JLOG" 2>&1 &
 GUI_PID=$!
@@ -128,11 +131,20 @@ SHOT() { DISPLAY="$DISP" import -window "$WID" "$SHOTDIR/$1.png" 2>/dev/null; }
 CL 160 42 2          # Explore tab (first of four)
 SHOT 01_explore
 
-# -- the file dialog: opening it is what breaks the GL context ----------------
+# -- the file picker: opening it is what breaks the GL context ----------------
+#
+# Driven by keyboard, not by coordinates. The picker gives its list focus on open, the entries
+# are sorted with directories first, and Return opens the current row -- so row 0 is
+# 2004-data1.oifits and the plot-pick coordinates further down stay valid. Picking by pixel
+# silently changed WHICH file was loaded when the picker changed, and every later coordinate
+# went stale with it.
 CL 470 14 3          # "Open OIFITS..."
 SHOT 02_dialog
-CL 700 342 1         # the v1295Aql.oifits row (polychromatic)
-CL 801 603 8         # the dialog's Open button
+DISPLAY="$DISP" xdotool key Down; sleep 1     # row 1: v1295Aql.oifits (polychromatic)
+DISPLAY="$DISP" xdotool key Return; sleep 8
+# The polychromatic file on purpose: it carries 9864 uv points against the mono file's 494, and
+# the point-picking check further down clicks a fixed spot. On a sparse plot that spot lands on
+# empty space, and a miss is indistinguishable from a broken pick.
 SHOT 03_after_open
 
 # -- redraws after the dialog has been open ----------------------------------
@@ -145,10 +157,12 @@ SHOT 05_colour
 # Picking is read from Makie's event stream, not from a QML handler, so the only way to know
 # it works is to click the plot and look at the label underneath. Two clicks: the first gives
 # the plot keyboard focus (MakieArea gates its input on that), the second actually picks.
-# Click the dense centre of the uv coverage, not an arbitrary spot: Makie.pick returns
-# nothing over empty space, so a miss is indistinguishable from a broken pick.
-CL 683 292 2
-CL 683 292 3
+# Click where the points actually are, not an arbitrary spot: the search returns nothing over
+# empty space, so a miss is indistinguishable from a broken pick. By this point the view is V²
+# against baseline, and the dense band sits near the bottom of the axis -- read off
+# 06_picked.png, which is what this step writes. Re-read it if the view or the file changes.
+CL 700 440 2
+CL 700 440 3
 SHOT 06_picked
 DISPLAY="$DISP" xdotool mousemove --window "$WID" 683 292 click 3; sleep 3  # right click = reset
 SHOT 07_reset

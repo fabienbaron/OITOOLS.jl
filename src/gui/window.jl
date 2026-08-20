@@ -7,7 +7,14 @@ function __init__()
     # Callbacks must be registered before any QML file that calls them is loaded.
     QML.@qmlfunction(shell_open, shell_set_view, shell_select_dataset,
                      shell_dataset_names, shell_script, shell_export, shell_pick,
-                     shell_console, shell_ready, shell_reset_zoom, shell_pick_text)
+                     shell_console, shell_ready, shell_reset_zoom, shell_pick_text,
+                     shell_observables, shell_reconstruct, shell_imaging_summary,
+                     shell_image_defaults,
+                     # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
+                     # some systems, so the picker is drawn inside our own window and needs
+                     # Julia for everything the toolkit would otherwise supply.
+                     picker_list, picker_places, picker_join, picker_parent,
+                     picker_start, picker_kind, picker_would_overwrite)
     return nothing
 end
 
@@ -74,8 +81,20 @@ function OITOOLS.gui(session::Session = Session();
     # Build every plot BEFORE the window exists. Once QML is up, GLMakie allocates GPU buffers
     # on insertion and the context belongs to Qt's render thread -- see src/livecanvas.jl.
     canvas = build_canvas(fig, ax)
+
+    # A second figure for the Image perspective. Sharing one canvas between Exploring and
+    # Imaging would mean a reconstruction wiping the plot a user is reading, and a tab whose
+    # own result appears somewhere else. Both figures are built here, before the window: the
+    # GL context belongs to Qt's render thread afterwards, and inserting a plot then is what
+    # allocates buffers with no context bound.
+    imfig = Makie.Figure()
+    imax  = Makie.Axis(imfig[1, 1]; xlabel = "α (mas)", ylabel = "δ (mas)",
+                       title = "reconstruction")
+    style_axis!(imax)
+    imcanvas = build_canvas(imfig, imax)
+
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline,
-                     "no dataset loaded", String[], canvas, "")
+                     "no dataset loaded", String[], canvas, "", nothing, imcanvas)
     SHELL[] = sh
     install_interactions!(sh)
 
@@ -100,6 +119,7 @@ function OITOOLS.gui(session::Session = Session();
     # the figure-level path sets up.
     QML.loadqml(qmlfile;
                 plot            = fig,
+                imagePlot       = imfig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,

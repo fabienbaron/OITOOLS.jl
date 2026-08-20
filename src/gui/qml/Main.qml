@@ -11,7 +11,6 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import jlqml
 import Makie
 
@@ -80,7 +79,52 @@ ApplicationWindow {
     // handlers call update() for exactly this reason.
     function redrawPlot() { if (typeof makieArea !== "undefined") makieArea.update() }
 
-    function afterAction() { refreshConsole(); redrawPlot() }
+    function afterAction() { refreshConsole(); redrawPlot(); refreshObservables() }
+
+    // Which observables the loaded file actually holds. Julia counts VALID points, not tables,
+    // and pushes the answer to every panel that gates a tick box on it. Without this the boxes
+    // stay off after a load and the run buttons never enable — they have no other source of
+    // truth, and defaulting them to on would offer observables the file does not contain.
+    function refreshObservables() {
+        var have = { v2: false, t3amp: false, t3phi: false,
+                     cvis: false, flux: false, diffvis: false }
+        var s = Julia.shell_observables()
+        if (s.length > 0) {
+            var parts = s.split(",")
+            for (var i = 0; i < parts.length; ++i) {
+                var kv = parts[i].split("=")
+                if (kv.length === 2) have[kv[0]] = (kv[1] === "1")
+            }
+        }
+        imageTab.haveV2      = have.v2
+        imageTab.haveT3amp   = have.t3amp
+        imageTab.haveT3phi   = have.t3phi
+        imageTab.haveCvis    = have.cvis
+        imageTab.haveFlux    = have.flux
+        imageTab.haveDiffvis = have.diffvis
+        imageTab.resetObservables()
+
+        // Geometry the data suggests. A constant pixel size is not a neutral default: too
+        // coarse and the image cannot represent what the data resolves, too fine and it is
+        // unconstrained at the pixel scale.
+        var g = Julia.shell_image_defaults()
+        if (g.length > 0) {
+            var gp = g.split(",")
+            for (var k = 0; k < gp.length; ++k) {
+                var kv2 = gp[k].split("=")
+                if (kv2.length !== 2) continue
+                if (kv2[0] === "pixsize") imageTab.pixsize = parseFloat(kv2[1])
+                if (kv2[0] === "nx")      imageTab.nx      = parseInt(kv2[1])
+            }
+        }
+
+        modelTab.haveV2      = have.v2
+        modelTab.haveT3amp   = have.t3amp
+        modelTab.haveT3phi   = have.t3phi
+        modelTab.haveCvis    = have.cvis
+        modelTab.haveFlux    = have.flux
+        modelTab.haveDiffvis = have.diffvis
+    }
 
     // Printed once at startup so the scale is diagnosable on a machine nobody can inspect
     // remotely. If the window looks wrong, this line says whether the screen asked for it
@@ -114,7 +158,7 @@ ApplicationWindow {
                 // precisely when a second click happens; the extra dialog then outlives the
                 // one that was answered and reads as a picker that would not close.
                 enabled: !openDialog.visible
-                onClicked: openDialog.open()
+                onClicked: openDialog.openAt(initialFolder)
             }
             Label { text: win.status; elide: Text.ElideMiddle; Layout.fillWidth: true }
 
@@ -124,28 +168,20 @@ ApplicationWindow {
         }
     }
 
-    FileDialog {
+    // The pickers are drawn INSIDE this window. QtQuick.Dialogs.FileDialog leaves its own
+    // window mapped on some systems — measured, see FilePicker.qml — and a window Qt will not
+    // close cannot be closed from QML. A Popup has no window of its own to leave behind.
+    FilePicker {
         id: openDialog
+        uiScale: win.uiScale; fontScale: win.fontScale; baseFontPt: win.baseFontPt
         title: "Open OIFITS"
-        // Start somewhere with data in it rather than wherever Qt defaults to. Julia works out
-        // where: beside the last dataset opened, else the bundled data/ directory.
-        currentFolder: initialFolder
-        nameFilters: ["OIFITS files (*.oifits *.fits)", "All files (*)"]
-
-        // Close, then work — with enough delay for the close to actually happen.
-        //
-        // The load takes seconds and runs synchronously on the GUI thread, and Qt cannot
-        // finish tearing the dialog down while one of our handlers is running, so the dialog
-        // stays on screen for the whole load unless the work is deferred.
-        //
-        // Two tempting alternatives do not work here: `options: DontUseNativeDialog` stops the
-        // dialog accepting a selection, and `onVisibleChanged` never fires. Raise the interval
-        // if a platform needs longer.
-        onAccepted: {
-            var picked = selectedFile.toString()
-            openDialog.close()
+        filters: [{ label: "OIFITS files (*.oifits *.fits)", patterns: "*.oifits,*.fits" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
             busy.running = true; taskLabel.text = "loading…"
-            loadTimer.path = picked
+            // Still deferred: the load holds the GUI thread for seconds, and nothing repaints
+            // while one of our handlers runs.
+            loadTimer.path = path
             loadTimer.restart()
         }
     }
@@ -177,19 +213,15 @@ ApplicationWindow {
         }
     }
 
-    FileDialog {
+    FilePicker {
         id: saveDialog
+        uiScale: win.uiScale; fontScale: win.fontScale; baseFontPt: win.baseFontPt
         title: "Export script"
-        fileMode: FileDialog.SaveFile
-        nameFilters: ["Julia files (*.jl)"]
-        // Same treatment as openDialog: writing the script is fast, but the dialog still
-        // cannot finish closing while this handler runs, and the symptom is identical.
-        onAccepted: {
-            var target = selectedFile.toString()
-            saveDialog.close()
-            exportTimer.path = target
-            exportTimer.restart()
-        }
+        saveMode: true
+        defaultSuffix: "jl"
+        filters: [{ label: "Julia files (*.jl)", patterns: "*.jl" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { exportTimer.path = path; exportTimer.restart() }
     }
 
     Timer {
@@ -302,6 +334,7 @@ ApplicationWindow {
 
             // ── Model ────────────────────────────────────────────────────────
             ModelTab {
+                id: modelTab
                 uiScale:    win.uiScale
                 fontScale:  win.fontScale
                 baseFontPt: win.baseFontPt
@@ -309,9 +342,11 @@ ApplicationWindow {
 
             // ── Image ────────────────────────────────────────────────────────
             ImageTab {
+                id: imageTab
                 uiScale:    win.uiScale
                 fontScale:  win.fontScale
                 baseFontPt: win.baseFontPt
+                onConsoleChanged: win.refreshConsole()
             }
         }
 
@@ -348,7 +383,7 @@ ApplicationWindow {
                     Button {
                         text: "Export script…"
                         enabled: logToggle.checked && !saveDialog.visible
-                        onClicked: saveDialog.open()
+                        onClicked: saveDialog.openAt(initialFolder)
                     }
                 }
                 ScrollView {

@@ -35,6 +35,8 @@ mutable struct ShellState
     console :: Vector{String}   # what the bottom pane shows: commands and outcomes, in order
     canvas  :: Any              # LiveCanvas once the window exists; nothing when headless
     picktext:: String           # last identified point; QML polls this
+    imaging :: Any              # the last ImagingResult, or nothing
+    imcanvas:: Any              # the Image perspective's own LiveCanvas
 end
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
@@ -359,6 +361,102 @@ end
 
 """Last identified point. QML polls this rather than asking for a pick itself."""
 shell_pick_text() = _shell().picktext
+
+"""
+    shell_reconstruct(nx, pixsize, mode, startkind, v2, t3amp, t3phi, maxiter) -> String
+
+Run one image reconstruction on the current dataset and put the result on the canvas.
+
+Positivity is the only thing shaping the image: it is VMLMB's `lower = 0` rather than a
+regulariser, so it is in force with the regulariser list empty. That is a real reconstruction —
+an unregularised maximum-likelihood image — and it is the configuration in which a broken plan,
+criterion or weighting shows up as a chi2 that does not move.
+
+Runs on the calling thread, which is Qt's. A reconstruction takes seconds and the window will
+not repaint during it; the caller is expected to have said so before calling.
+"""
+function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
+                           startkind::AbstractString,
+                           v2::Bool, t3amp::Bool, t3phi::Bool, maxiter::Integer,
+                           regularizers::AbstractString = "")
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "no dataset loaded"
+
+    weights = imaging_weights(; v2, t3amp, t3phi)
+    all(iszero, weights) && return "no observables selected"
+
+    setup = ImagingSetup(; nx = Int(nx), pixsize = Float64(pixsize),
+                           mode = Symbol(mode), startkind = Symbol(startkind))
+    regs = try
+        parse_regularizers(regularizers)
+    catch err
+        msg = "! " * _cause(err); console!(sh, msg); return msg
+    end
+    regtext = isempty(regs) ? "positivity only" :
+              "regularizers = [" * join((string(r) for r in regs), ", ") * "]"
+    console!(sh, "> reconstruct(x_start, data, ft; maxiter = $(Int(maxiter)))  " *
+                 "# $(Int(nx))×$(Int(nx)) at $(round(Float64(pixsize); digits=4)) mas, " *
+                 regtext)
+    r = try
+        reconstruct_image(e.data, setup; weights, maxiter = Int(maxiter),
+                          regularizers = regs)
+    catch err
+        msg = "! reconstruction failed: " * _cause(err)
+        console!(sh, msg)
+        return msg
+    end
+
+    sh.imcanvas === nothing || show_image!(sh.imcanvas, r.image, r.setup.pixsize)
+    sh.imaging = r
+
+    # Total flux is reported because nothing constrains it: V² and closure phase are both
+    # invariant under a global scaling, so an image fitted from them alone drifts away from
+    # unit flux, and a user who does not know that reads the number as a bug.
+    line = @sprintf("chi2r %.4g -> %.4g   flux %.4f   %d iter, %.1f s",
+                    r.chi2r_start, r.chi2r, r.flux, r.maxiter, r.seconds)
+    console!(sh, "  " * line)
+    return line
+end
+
+"""
+    shell_image_defaults() -> String
+
+Image geometry the current dataset suggests, as `"pixsize=…,nx=…"`.
+
+`auto_pixsize` samples the longest baseline about three times over. A constant in its place is
+not a neutral default: too coarse and the model cannot represent what the data resolves, too
+fine and the reconstruction is unconstrained at the pixel scale.
+"""
+function shell_image_defaults()
+    e = current_dataset()
+    e === nothing && return ""
+    s = imaging_defaults(e.data)
+    return "pixsize=$(round(s.pixsize; digits = 4)),nx=$(s.nx)"
+end
+
+"The last reconstruction, or an empty string when there is none."
+shell_imaging_summary() =
+    _shell().imaging === nothing ? "" : sprint(show, _shell().imaging)
+
+"""
+    shell_observables() -> String
+
+Which observables the current dataset holds, as `"v2=1,t3amp=1,…"`.
+
+The Image and Model panels both gate their tick boxes on this. Empty when no dataset is
+loaded, which is the state where every box should be off rather than optimistically on.
+"""
+function shell_observables()
+    e = current_dataset()
+    e === nothing && return ""
+    try
+        return observable_flags_string(e.data)
+    catch err
+        console!(_shell(), "! could not read observables: " * _cause(err))
+        return ""
+    end
+end
 
 """
     check_qt_conflict()
