@@ -551,6 +551,38 @@ function shell_sim_source(kind::AbstractString, path::AbstractString)
     return (i.ok ? "ok\t" : "bad\t") * i.summary
 end
 
+"""
+    shell_simbad(name) -> String
+
+Resolve one target: `"ok\tra\tdec\tV\tJ\tH\tK\tmain_id\tsptype"`, or `"bad\t<why>"`.
+
+Coordinates in DEGREES. A magnitude SIMBAD does not have comes back empty rather than as a
+number, because a missing magnitude and a magnitude of zero are very different things to an
+SNR estimate — Vega is roughly zero in every band.
+
+Blocking: this is a network call on Qt's thread, and the caller is expected to have said so
+before making it.
+"""
+function shell_simbad(name::AbstractString)
+    sh = SHELL[]
+    say(t) = sh === nothing ? nothing : console!(sh, t)
+    n = strip(String(name))
+    isempty(n) && return "bad\tno name"
+    say("> simbad_target(\"$n\")")
+    t = try
+        simbad_target(n)
+    catch err
+        msg = "bad\t" * _cause(err)
+        say("! " * _cause(err))
+        return msg
+    end
+    m(b) = (v = get(t.mags, b, NaN); isnan(v) ? "" : string(round(v; digits = 3)))
+    say(@sprintf("  %s: ra %.5f  dec %+.5f  %s  plx %.2f mas",
+                 t.main_id, t.ra, t.dec, t.sptype, t.plx))
+    return join(("ok", string(round(t.ra; digits = 6)), string(round(t.dec; digits = 6)),
+                 m("V"), m("J"), m("H"), m("K"), t.main_id, t.sptype), "\t")
+end
+
 "Facilities on disk, newline-separated. CHARA first: it is the only one the delay-line and POP checks cover."
 function shell_facilities()
     c = config_catalog()

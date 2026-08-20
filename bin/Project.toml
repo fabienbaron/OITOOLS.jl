@@ -12,6 +12,7 @@
 # No name/uuid: this is an environment, not a package.
 
 [deps]
+CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 GLFW_jll = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
@@ -23,3 +24,22 @@ QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
 
 [sources]
 OITOOLS = {path = ".."}
+
+# The Conda environment every project in this repo shares, at
+# <depot>/conda_environments/oitools.
+#
+# CondaPkg otherwise builds one per ACTIVE PROJECT — `dirname(Base.active_project())/.CondaPkg`
+# — so this repo grew three of them, and the [workspace] above made that worse rather than
+# better: one shared manifest means each project resolves the union of every member's Python
+# dependencies, so all three reached the same full set. Measured at 763 MB + 1.6 GB + 1.6 GB of
+# the same packages, against 1.6 GB once.
+#
+# Set HERE rather than through JULIA_CONDAPKG_ENV because a preference is a committed file that
+# reads identically on Windows, macOS and Linux, needs no shell profile, and is scoped to this
+# repo instead of to every Julia project on the machine.
+#
+# CondaPkg is listed in [deps] for this to work at all: Preferences resolves only for DIRECT
+# dependencies, and reached indirectly through PythonCall it returns nothing with no error. It
+# is a real dependency in substance either way — this package ships a CondaPkg.toml.
+[preferences.CondaPkg]
+env = "@oitools"

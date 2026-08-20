@@ -3,13 +3,26 @@ uuid = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 keywords = ["astronomy", "interferometry"]
 license = "GPLv3"
 desc = "The all-in-one data analysis package for optical interferometry"
-version = "0.11.1"
+version = "0.12.0"
 authors = ["Fabien Baron <fbaron@gsu.edu>"]
+
+# One resolution for the package and the two environments that live beside it, sharing this
+# directory's Manifest.toml. `docs/` and `bin/` therefore have no manifest of their own.
+#
+# Why: they were resolved independently and drifted. Measured before this was added, the root
+# and launcher manifests disagreed on the version of 50 shared packages — ForwardDiff 1.3.3
+# against 1.4.5, StatsFuns 1.5.2 against 2.2.1, and so on. Julia keys a precompile cache to
+# the whole resolved dependency graph, so every one of those packages was compiled twice and
+# switching environments recompiled what the other had just built. OITOOLS alone held nine
+# cache files and 599 MB.
+[workspace]
+projects = ["docs", "bin"]
 
 [deps]
 ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
 ArrayTools = "1dc0ca97-c5ce-4e77-ac6d-c576ac9d7f27"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
@@ -67,6 +80,7 @@ ADTypes = "1.21.0"
 FiniteDifferences = "0.12.33"
 LogDensityProblemsAD = "1.13.1"
 OIFITS = "1"
+CondaPkg = "0.2"
 PythonCall = "0.9"
 PythonPlot = "1"
 julia = "1.12"
@@ -80,3 +94,22 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 # PythonPlot is a weak dependency of the package but a hard one of the tests:
 # test_plotting.jl exercises every figure, and that needs the extension loaded.
 test = ["Test", "Serialization", "PythonPlot"]
+
+# The Conda environment every project in this repo shares, at
+# <depot>/conda_environments/oitools.
+#
+# CondaPkg otherwise builds one per ACTIVE PROJECT — `dirname(Base.active_project())/.CondaPkg`
+# — so this repo grew three of them, and the [workspace] above made that worse rather than
+# better: one shared manifest means each project resolves the union of every member's Python
+# dependencies, so all three reached the same full set. Measured at 763 MB + 1.6 GB + 1.6 GB of
+# the same packages, against 1.6 GB once.
+#
+# Set HERE rather than through JULIA_CONDAPKG_ENV because a preference is a committed file that
+# reads identically on Windows, macOS and Linux, needs no shell profile, and is scoped to this
+# repo instead of to every Julia project on the machine.
+#
+# CondaPkg is listed in [deps] for this to work at all: Preferences resolves only for DIRECT
+# dependencies, and reached indirectly through PythonCall it returns nothing with no error. It
+# is a real dependency in substance either way — this package ships a CondaPkg.toml.
+[preferences.CondaPkg]
+env = "@oitools"

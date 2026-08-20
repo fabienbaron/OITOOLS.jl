@@ -105,7 +105,7 @@ const _F0_phot = [b.f0 * 1e-6    for b in PHOTOMETRIC_BANDS[3:end]]
 """
     zero_point_flux(λ)
 
-Photon flux of a zero-magnitude star at wavelength `λ` (metres), in photons/s/m²/µm.
+Photon flux of a zero-magnitude star at wavelength `λ` (metres), in photons/s/m²/μm.
 
 Interpolated log-linearly in `log(λ)` between the band centres of [`PHOTOMETRIC_BANDS`](@ref),
 and clamped to the V and Q endpoints outside that range.

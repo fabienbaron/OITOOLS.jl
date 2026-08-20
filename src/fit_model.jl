@@ -27,8 +27,8 @@ using NLopt, LsqFit, ForwardDiff, Printf, PythonCall, FFTW
 """
 Batch size below which evaluating the rows serially beats threading them.
 
-`Threads.@threads` costs a few µs to spawn and join, which a one-row batch cannot amortise.
-Measured on a 4-parameter analytic model against `2004-data1.oifits` (≈85 µs per χ²
+`Threads.@threads` costs a few μs to spawn and join, which a one-row batch cannot amortise.
+Measured on a 4-parameter analytic model against `2004-data1.oifits` (≈85 μs per χ²
 evaluation, 16 threads), speedup of the threaded batch over the serial one:
 
     batch      1     2     5    15    20    50   128   400

@@ -159,7 +159,13 @@ end
         @test length(n) == d.nv2
         @test all(occursin("-", x) for x in n)
         i = point_info(d, 1)
-        @test occursin("Mλ", i) && occursin("µm", i) && occursin("V²", i)
+        # U+03BC GREEK SMALL LETTER MU, not U+00B5 MICRO SIGN. They look alike in an editor
+        # and are not interchangeable here: Makie's default font has a glyph for the Greek
+        # letter and none for the micro sign, so a label carrying the wrong one renders as a
+        # blank box next to a λ that comes out fine. Comparing by codepoint is the only way
+        # this is visible from a test.
+        @test occursin("Mλ", i) && occursin("μm", i) && occursin("V²", i)
+        @test !occursin("\u00b5", i)
         # the units must be the corrected ones: B/λ, not metres
         b = Float64(d.v2_baseline[1]) / 1e6
         @test occursin(string(round(b, digits = 2)), i)

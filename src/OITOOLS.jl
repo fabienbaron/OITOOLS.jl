@@ -191,6 +191,7 @@ export PhotometricBand, PHOTOMETRIC_BANDS, band_for_wavelength, band_by_name, ze
 export gantt_onenight
 export sunrise_sunset, alt_az, opd_limits, airmass, datetime_to_jd, datetime_to_mjd
 export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad, sexagesimal_to_degrees
+export simbad_target, SIMBAD_BANDS
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
 export night_observability, compute_delays, in_delay, best_pop, observable_epochs

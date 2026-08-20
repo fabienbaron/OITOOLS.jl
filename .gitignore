@@ -34,3 +34,9 @@ __pycache__/
 # on every run). Regenerated artifacts, not reference images — the plotting assertions
 # compare artist data, not pixels.
 test/figures/
+
+# Working notes kept alongside the code: memory/ is the assistant's cross-session notes and
+# plans/ holds design documents still being drafted. Neither is part of the package, and both
+# are personal to whoever is working in this clone.
+memory/
+plans/

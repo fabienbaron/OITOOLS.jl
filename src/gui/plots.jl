@@ -125,7 +125,7 @@ Mirror of oiplot.jl's `ObsPlotSpec`: which arrays feed a plot, how points are gr
 colouring, and the axis labels. Driving from a table rather than an `if` chain is deliberate —
 it is how oiplot does it, so the two stay aligned when either gains an observable.
 
-`xscale` converts to display units (1e-6 for Mλ, 1e6 for µm), exactly as oiplot's does.
+`xscale` converts to display units (1e-6 for Mλ, 1e6 for μm), exactly as oiplot's does.
 """
 struct ObsSpec
     y :: Symbol; yerr :: Symbol; x :: Symbol; lam :: Symbol; mjd :: Symbol; sta :: Symbol
@@ -208,7 +208,7 @@ group_names(d, spec::ObsSpec) =
 obs_info(d, spec::ObsSpec, i::Integer, names) =
     string(names[i],
            "   x = ", round(Float64(getfield(d, spec.x)[i]) * spec.xscale, digits = 3),
-           "   λ = ", round(Float64(getfield(d, spec.lam)[i]) * 1e6, digits = 3), " µm",
+           "   λ = ", round(Float64(getfield(d, spec.lam)[i]) * 1e6, digits = 3), " μm",
            "   ", strip(spec.ylabel), " = ",
            round(Float64(getfield(d, spec.y)[i]), digits = 4),
            " ± ", round(Float64(getfield(d, spec.yerr)[i]), digits = 4))
@@ -222,7 +222,7 @@ MJD, value and error, and whether the point is flagged.
 function point_info(d, i::Integer, names = baseline_names(d))
     string(names[i],
            "   B/λ = ", round(Float64(d.v2_baseline[i]) / 1e6, digits = 2), " Mλ",
-           "   λ = ", round(Float64(d.v2_lam[i]) * 1e6, digits = 3), " µm",
+           "   λ = ", round(Float64(d.v2_lam[i]) * 1e6, digits = 3), " μm",
            "   MJD = ", round(d.v2_mjd[i], digits = 4),
            "   V² = ", round(Float64(d.v2[i]), digits = 4),
            " ± ", round(Float64(d.v2_err[i]), digits = 4),
@@ -281,7 +281,7 @@ function uv_point_labels(d)
         info[k]  = string(nm, "   OI_VIS",
                           "   B/λ = ", round(hypot(Float64(d.uv[1, k]),
                                                    Float64(d.uv[2, k])) / 1e6, digits = 2),
-                          " Mλ   λ = ", round(Float64(d.uv_lam[k]) * 1e6, digits = 3), " µm")
+                          " Mλ   λ = ", round(Float64(d.uv_lam[k]) * 1e6, digits = 3), " μm")
     end
 
     nt3 = size(d.t3_sta_index, 2)
@@ -298,7 +298,7 @@ function uv_point_labels(d)
             info[k]  = string(nm, "   closure leg ", li,
                               "   B/λ = ", round(hypot(Float64(d.uv[1, k]),
                                                        Float64(d.uv[2, k])) / 1e6, digits = 2),
-                              " Mλ   λ = ", round(Float64(d.uv_lam[k]) * 1e6, digits = 3), " µm")
+                              " Mλ   λ = ", round(Float64(d.uv_lam[k]) * 1e6, digits = 3), " μm")
         end
     end
     return names, info
@@ -359,7 +359,7 @@ function draw!(fig, ax, d, kind::Symbol;
                            markersize = something(markersize, 6))
         if color === :wav || color === :mjd
             push!(extras, Makie.Colorbar(fig[1, 2], p;
-                                         label = color === :wav ? "λ (µm)" : "MJD"))
+                                         label = color === :wav ? "λ (μm)" : "MJD"))
         else
             push!(extras, add_baseline_legend!(fig, ax, names;
                                                size = UVPLOT_LEGEND_SIZE,
@@ -397,16 +397,16 @@ function draw!(fig, ax, d, kind::Symbol;
     style_axis!(ax)
 
     if logscale
-        # Under a log scale the lower whisker of an error bar routinely reaches below zero,
-        # and Makie transforms the bar's bounding box, so log10 is called on a negative and
-        # throws. matplotlib truncates the bar at the axis floor instead of dropping the
-        # point; do the same, keeping every measurement visible.
-        pos = filter(v -> v > 0 && isfinite(v), y)
-        isempty(pos) && throw(ArgumentError(
+        # Non-positive points are dropped, matching matplotlib under `set_yscale("log")` —
+        # which is what oiplot's `logplot=true` produces, and what the port tests compare
+        # against. The lower whisker of a surviving point can still reach below zero, and
+        # Makie transforms the bar's bounding box, so that one is truncated at the axis floor.
+        keep = [isfinite(v) && v > 0 for v in y]
+        any(keep) || throw(ArgumentError(
             "cannot use a log scale: no positive $(kind) values in $(basename(d.filename))"))
-        floorv = minimum(pos) / 10
-        lowerr = y .- max.(y .- e, floorv)
-        Makie.errorbars!(ax, x, max.(y, floorv), lowerr, e; color = OIPLOT_ECOLOR)
+        x, y, e, c, info = x[keep], y[keep], e[keep], c[keep], info[keep]
+        floorv = minimum(y) / 10
+        Makie.errorbars!(ax, x, y, y .- max.(y .- e, floorv), e; color = OIPLOT_ECOLOR)
     else
         Makie.errorbars!(ax, x, y, e; color = OIPLOT_ECOLOR)
     end
@@ -417,17 +417,18 @@ function draw!(fig, ax, d, kind::Symbol;
     # `Invalid y-limits (0.0, 10.0) for scale log10`. matplotlib simply omits non-positive
     # points, so do the same rather than refuse a plot the user can legitimately ask for.
     if logscale
-        pos = filter(v -> v > 0 && isfinite(v), y)
-        lo, hi = extrema(pos)
+        lo, hi = extrema(y)
         Makie.ylims!(ax, lo / 2, hi * 2)
         ax.yscale[] = log10
+        # LinearTicks on a log axis bunches every label into the top decade; see livecanvas.jl.
+        ax.yticks[] = Makie.LogTicks(Makie.LinearTicks(OIPLOT_XTICKS))
     else
         ax.yscale[] = identity
     end
 
     if color === :wav || color === :mjd
         push!(extras, Makie.Colorbar(fig[1, 2], p;
-                                     label = color === :wav ? "λ (µm)" : "MJD"))
+                                     label = color === :wav ? "λ (μm)" : "MJD"))
     else
         push!(extras, add_baseline_legend!(fig, ax, names).block)
     end

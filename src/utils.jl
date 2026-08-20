@@ -128,7 +128,9 @@ Missing magnitudes are set to NaN.
 """
 function magnitudes_from_simbad(targetname)
     Simbad = pyimport("astroquery.simbad").Simbad
-    bands = ["V", "J", "H", "K", "L", "M", "N"]
+    # B through N: V is what the adaptive optics guides on, R appears in older catalogues,
+    # and the near-infrared bands are what the observation is actually made in.
+    bands = ["B", "V", "R", "I", "J", "H", "K", "L", "M", "N"]
     mags = Dict{String,Float64}(b => NaN for b in bands)
     try
         # Use TAP query to get all available fluxes for this object
@@ -157,8 +159,86 @@ function magnitudes_from_simbad(targetname)
                 end
             end
         end
-    catch; end
+    catch err
+        # NOT swallowed. A network failure and a target with no photometry are different
+        # answers, and reporting them the same way is how "this star has no K magnitude"
+        # comes to mean "the query never ran".
+        throw(ErrorException("SIMBAD photometry query failed for \"$targetname\": " *
+                             first(split(sprint(showerror, err), "\n"))))
+    end
     return mags
+end
+
+"""
+Photometric bands `simbad_target` asks for, in the order a panel should show them.
+
+B through N. The near-infrared ones are what an interferometric observation is actually made
+in, and V is what the adaptive optics guides on, so both matter and for different reasons.
+"""
+const SIMBAD_BANDS = ["B", "V", "R", "I", "J", "H", "K", "L", "M", "N"]
+
+"""
+    simbad_target(name) -> NamedTuple
+
+Everything SIMBAD holds that an observation needs: `(; name, main_id, ra, dec, pmra, pmdec,
+plx, rv, sptype, otype, mags)`.
+
+`ra`/`dec` are DEGREES, proper motions mas/yr, parallax mas, radial velocity km/s. Missing
+values are `NaN` and a missing string is `""` — SIMBAD not knowing a target's parallax is a
+fact about the target, not a failure, and it has to be distinguishable from the query failing.
+
+Beyond coordinates and magnitudes this returns what ASPRO also reads, and for the same reasons:
+proper motion places the target at the epoch actually being observed, parallax turns an angular
+diameter into a physical one, and the spectral type is what a surface-brightness relation needs
+to predict a diameter before anything is measured.
+"""
+function simbad_target(targetname::AbstractString)
+    Simbad = pyimport("astroquery.simbad").Simbad
+    name = String(targetname)
+    esc  = replace(name, "'" => "''")
+
+    num(x) = try
+        v = pyconvert(Float64, x); isfinite(v) ? v : NaN
+    catch
+        NaN
+    end
+    str(x) = try
+        strip(pyconvert(String, x))
+    catch
+        ""
+    end
+
+    row = try
+        Simbad.query_tap("""
+            SELECT b.main_id, b.ra, b.dec, b.pmra, b.pmdec, b.plx_value, b.rvz_radvel,
+                   b.sp_type, b.otype
+            FROM basic AS b JOIN ident AS i ON i.oidref = b.oid
+            WHERE i.id = '$esc'
+            """)
+    catch err
+        throw(ErrorException("SIMBAD query failed for \"$name\": " *
+                             first(split(sprint(showerror, err), "\n"))))
+    end
+    (pyis(row, pybuiltins.None) || pylen(row) == 0) &&
+        error("SIMBAD returned no match for \"$name\"")
+
+    mags = try
+        magnitudes_from_simbad(name)
+    catch
+        Dict{String,Float64}()          # coordinates are still worth returning
+    end
+
+    return (; name,
+              main_id = str(row["main_id"][0]),
+              ra      = num(row["ra"][0]),
+              dec     = num(row["dec"][0]),
+              pmra    = num(row["pmra"][0]),
+              pmdec   = num(row["pmdec"][0]),
+              plx     = num(row["plx_value"][0]),
+              rv      = num(row["rvz_radvel"][0]),
+              sptype  = str(row["sp_type"][0]),
+              otype   = str(row["otype"][0]),
+              mags    = Dict{String,Float64}(b => get(mags, b, NaN) for b in SIMBAD_BANDS))
 end
 
 function meshgrid(xx::AbstractVector{<:Real}) #example: meshgrid([-N/2:N/2-1;]*δ);

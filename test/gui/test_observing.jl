@@ -122,6 +122,42 @@
         @test parse(Float64, split(rows[2], "\t")[4]) == 0
     end
 
+    @testset "SIMBAD resolution answers in the panel's own format" begin
+        # The reply is parsed by ObserveTab.qml's applySimbad, which splits on tabs and
+        # branches on field 1. Both branches are asserted here because a malformed reply
+        # would be read by QML as a successful resolve and write NaNs into the row.
+        @test startswith(GUI.shell_simbad(""), "bad\t")
+        @test startswith(GUI.shell_simbad("   "), "bad\t")
+
+        # The network is not a test dependency. This runs only when asked for, because a
+        # suite that fails on a SIMBAD outage is a suite people learn to ignore.
+        if get(ENV, "OITOOLS_SIMBAD_TESTS", "0") == "1"
+            f = split(GUI.shell_simbad("Vega"), "\t")
+            @test f[1] == "ok"
+            @test length(f) == 9
+            @test parse(Float64, f[2]) ≈ VEGA_RA  atol = 1e-3   # degrees, not hours
+            @test parse(Float64, f[3]) ≈ VEGA_DEC atol = 1e-3
+            @test f[8] == "* alf Lyr"
+            @test startswith(f[9], "A0")
+
+            # Southern declinations keep their sign: this is P0-2, and a sexagesimal parser
+            # that applies the minus to the degrees field alone gets it wrong by 2×(′+″).
+            g = split(GUI.shell_simbad("Alpha Cen A"), "\t")
+            @test g[1] == "ok"
+            @test parse(Float64, g[3]) < -60
+            # α Cen A has no published R or I magnitude. That must arrive as an empty field,
+            # not as 0.0 — magnitude zero is Vega-bright, and writing it for "unknown" would
+            # silently make an unmeasured band the brightest in the row.
+            t = simbad_target("Alpha Cen A")
+            @test isnan(t.mags["R"])
+            @test t.mags["K"] < 0
+            @test t.plx > 700                       # the nearest star system
+        end
+
+        @test_throws Exception simbad_target("NoSuchStarXYZ")
+        @test issorted(indexin(["V", "J", "H", "K"], SIMBAD_BANDS))   # panel order
+    end
+
     @testset "the moon is reported even when it does not exclude anything" begin
         p = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE)
         @test 0 <= p.moon_fli <= 1

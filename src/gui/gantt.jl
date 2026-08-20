@@ -126,6 +126,13 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false)
 
     # One tick per row: in detailed mode those are the baselines, which is what makes the view
     # readable at all -- fifteen unlabelled bars say nothing.
+    # The POPs the chart was made with. Same target, same night, different POPs gives a
+    # different window, so a Gantt that does not say which is not reproducible from what it
+    # shows. "delay lines not checked" is the honest label when they were not applied.
+    g.axis.title = isempty(geo.subtitle) ?
+                   (geo.delay_applied ? "" : "delay lines not checked") :
+                   "POPs   " * geo.subtitle
+
     g.axis.yticks = ([r[1] for r in geo.rows], [r[2] for r in geo.rows])
     Makie.xlims!(g.axis, geo.xlim[1], geo.xlim[2])
     Makie.ylims!(g.axis, 0, geo.ymax)

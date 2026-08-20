@@ -202,6 +202,14 @@ function live_plot_scale()
     return clamp(v, 0.5, 5.0)
 end
 
+"""
+Width of one legend character as a fraction of the axis, at `UVPLOT_LEGEND_SIZE`.
+
+Measured off a rendered legend: seven characters of a baseline name span 0.047 of the axis.
+Only `set_legend!`'s centring uses it.
+"""
+const CHAR_W = 0.0067
+
 # Neither Legend nor Colorbar has a `visible` attribute, so they are hidden by collapsing the
 # row or column they occupy. Deleting and re-adding them is not an option: recreating a block
 # allocates GPU buffers.
@@ -224,8 +232,12 @@ function set_legend!(c::LiveCanvas, entries::AbstractVector; ncol::Integer = UVP
         Makie.rowsize!(c.figure.layout, 2, Makie.Fixed(0))
         return nothing
     end
-    cols  = max(1, min(Int(ncol), n))
-    rows  = cld(n, cols)
+    rows  = cld(n, max(1, min(Int(ncol), n)))
+    # Columns ACTUALLY filled, which is not always the column budget. Six entries in a
+    # five-column budget need two rows, and two rows hold six entries in three columns, not
+    # five. Centring against the budget would then reserve two empty columns on the right and
+    # push the whole legend left of the plot it belongs to.
+    cols  = cld(n, rows)
     # Column pitch from the longest label, not 1/cols.
     #
     # Spreading the columns evenly across the whole axis made the legend as wide as the window
@@ -235,7 +247,13 @@ function set_legend!(c::LiveCanvas, entries::AbstractVector; ncol::Integer = UVP
     # width; they only need to be close, because the block is centred either way.
     maxlen = maximum(length(first(e)) for e in entries)
     pitch  = min(1.0 / cols, 0.045 + 0.0135 * maxlen)
-    x0     = max(0.0, (1.0 - pitch * cols) / 2)
+    # The block ends at the last column's TEXT, not at the last column's pitch: a marker plus
+    # its label is narrower than the pitch, which carries the gap to the next column too.
+    # CHAR_W is a measured glyph width at the legend font size, and is deliberately not the
+    # 0.0135 in `pitch` — that one sets a comfortable gap between columns, this one has to be
+    # the real width or the block is centred against space the text does not occupy.
+    width  = (cols - 1) * pitch + 0.022 + CHAR_W * maxlen
+    x0     = max(0.0, (1.0 - width) / 2)
     marks = Vector{Makie.Point2f}(undef, n)
     cs    = Vector{Makie.RGBAf}(undef, n)
     tpos  = Vector{Makie.Point2f}(undef, n)
@@ -329,7 +347,7 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
         elseif color === :wav
             w = Float64.(d.uv_lam) .* 1e6
             cvals = conjugate ? vcat(w, w) : w
-            clabel = "λ (µm)"
+            clabel = "λ (μm)"
             ramp_colors(cvals)
         elseif color === :mjd
             m = Float64.(d.uv_mjd)
@@ -371,7 +389,7 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
         v = Float64.(getfield(d, color === :wav ? spec.lam : spec.mjd))
         color === :wav && (v = v .* 1e6)
         cvals  = v
-        clabel = color === :wav ? "λ (µm)" : "MJD"
+        clabel = color === :wav ? "λ (μm)" : "MJD"
         ramp_colors(v)
     elseif color === :none
         fill(Makie.RGBAf(Makie.to_color("#1f77b4")), length(x))
@@ -385,13 +403,25 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
     lo_err = e
     yv = y
     if logscale
-        pos = filter(v -> v > 0 && isfinite(v), y)
-        isempty(pos) && throw(ArgumentError(
+        # Non-positive points are DROPPED, not clamped to the axis floor. This is what
+        # matplotlib does under `set_yscale("log")`, so it is what `plot_v2(...; logplot=true)`
+        # already does and what the port tests compare against. Clamping instead piles every
+        # noise-dominated V² onto the bottom of the axis, where it reads as a measurement at
+        # that value rather than as one the log axis cannot show.
+        keep = [isfinite(v) && v > 0 for v in y]
+        any(keep) || throw(ArgumentError(
             "cannot use a log scale: no positive $(kind) values in $(basename(d.filename))"))
-        floorv = minimum(pos) / 10
-        lo_err = y .- max.(y .- e, floorv)
-        yv     = max.(y, floorv)
-        l, h   = extrema(pos)
+        x    = x[keep]
+        yv   = y[keep]
+        e    = e[keep]
+        info = info[keep]
+        cols = cols[keep]
+        isempty(cvals) || (cvals = cvals[keep])
+        l, h = extrema(yv)
+        # The lower whisker still reaches below zero on a noisy point. Makie transforms the
+        # bar's bounding box, so log10 would be called on the negative; truncate at the floor.
+        floorv = l / 10
+        lo_err = yv .- max.(yv .- e, floorv)
         ylims  = (l / 2, h * 2)
     end
 
@@ -421,14 +451,12 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
     style_axis!(ax; scale = sc)
     c.legfontsize[] = Float32(UVPLOT_LEGEND_SIZE * sc)
 
-    # Scale before points: setting log10 while the old linear data is still loaded makes Makie
-    # validate the stale limits against the new scale and throw.
-    if pd.logscale
-        pd.ylims !== nothing && Makie.ylims!(ax, pd.ylims...)
-        ax.yscale[] = log10
-    else
-        ax.yscale[] = identity
-    end
+    # `identity` first, always. Changing the scale transforms whatever points are loaded AT
+    # THAT MOMENT, so setting log10 before the new data arrives calls log10 on the previous
+    # plot's values -- a negative V², a closure phase -- and throws DomainError. Going the
+    # other way has the same problem: pushing a closure phase while the axis is still log10.
+    # `identity` accepts anything, so it is the only safe state in which to swap the data.
+    ax.yscale[] = identity
 
     c.markersize[] = Float32(something(markersize, pd.markersize) * sc)
     c.points[]     = Makie.Point2f.(pd.x, pd.y)
@@ -464,6 +492,16 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
         _show_colorbar!(c, true)
     end
 
+    # Limits from the data while the axis is still linear, then log10 last of all -- by which
+    # point every loaded value is positive, because canvas_data clamped them to the floor.
     Makie.autolimits!(ax)
+    if pd.logscale
+        pd.ylims !== nothing && Makie.ylims!(ax, pd.ylims...)
+        ax.yscale[] = log10
+        # style_axis! has just forced LinearTicks, which on a log axis places ten evenly
+        # SPACED labels at evenly VALUED positions -- so they bunch into the top decade and
+        # leave the rest of the axis unlabelled. LogTicks puts them one per decade.
+        ax.yticks[] = Makie.LogTicks(Makie.LinearTicks(OIPLOT_XTICKS))
+    end
     return pd.info
 end

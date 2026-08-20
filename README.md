@@ -148,9 +148,36 @@ interferometric imaging):
 - Observation planning with Gantt charts, delay-line feasibility,
   and SIMBAD target queries
 
-|     **ASPRO-like Gantt chart**                  | **chara\_plan-like plots**               |
-|:--------------------------------:|:--------------------------------:|
-| ![gantt](docs/src/assets/gantt.svg) | ![chara\_plan](docs/src/assets/chara_plan.png) |
+## Graphical interface (work in progress)
+
+A single window with four perspectives over one session, so a dataset moves from planning to
+exploration to fitting to imaging without being exported and read back. It is under active
+development: the panels below work, but not every control behind them is wired yet.
+
+```julia
+using OITOOLS, GLMakie, QMLMakie, QML   # these three activate the GUI extension
+gui()                                   # optionally gui(session), or pass files to load
+```
+
+GLMakie, QMLMakie and QML are weak dependencies, so `using OITOOLS` still costs no Makie and
+no Qt; add them to your environment to open the window. From a clone there is a pinned
+launcher environment which also sets the graphics hints that must precede the first OpenGL
+context:
+
+```
+julia --project=bin bin/oitoolsgui.jl [file.oifits]
+```
+
+| **Exploring** — uv coverage and observables, click to identify | **Observing** — Gantt, delay lines, POP search |
+|:---:|:---:|
+| ![exploring](docs/src/assets/gui/exploring.png) | ![observing](docs/src/assets/gui/observing.png) |
+| **Modeling** — parameters free/fixed/derived, and what the parser understood | **Imaging** — reconstruction with per-observable reduced χ² |
+| ![modeling](docs/src/assets/gui/modeling.png) | ![imaging](docs/src/assets/gui/imaging.png) |
+
+The console at the bottom echoes the equivalent OITOOLS call for every action, so the window
+doubles as a way to learn the scripting API. "Export script" turns the session into a runnable
+`.jl`; it currently covers loading and filtering, and the remaining perspectives are being
+wired into it as they are finished.
 
 ## Documentation
 

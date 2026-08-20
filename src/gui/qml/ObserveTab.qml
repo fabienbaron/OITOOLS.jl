@@ -246,8 +246,8 @@ Item {
     ListModel {
         id: targetModel
         // Two northern seeds so the panel is never empty on a first run.
-        ListElement { name: "Vega";   ra: 279.234735; dec: 38.783689; magV: 0.03; magH: 0.00; magK: 0.00; cached: false }
-        ListElement { name: "Altair"; ra: 297.695827; dec:  8.868322; magV: 0.76; magH: 0.10; magK: 0.10; cached: false }
+        ListElement { name: "Vega";   ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: false }
+        ListElement { name: "Altair"; ra: 297.695827; dec:  8.868322; magV: 0.76; magJ: 0.35; magH: 0.24; magK: 0.24; cached: false }
     }
 
     function refreshTargets() {
@@ -256,7 +256,8 @@ Item {
         for (var i = 0; i < targetModel.count; ++i) {
             var t = targetModel.get(i)
             out.push({ name: t.name, ra: t.ra, dec: t.dec,
-                       magV: t.magV, magH: t.magH, magK: t.magK, cached: t.cached })
+                       magV: t.magV, magJ: t.magJ, magH: t.magH, magK: t.magK,
+                       cached: t.cached })
             if (t.cached) nc += 1
         }
         root.targets = out
@@ -264,7 +265,8 @@ Item {
     }
 
     function addTarget() {
-        targetModel.append({ name: "", ra: 0.0, dec: 0.0, magV: 0.0, magH: 0.0, magK: 0.0, cached: false })
+        targetModel.append({ name: "", ra: 0.0, dec: 0.0,
+                             magV: 0.0, magJ: 0.0, magH: 0.0, magK: 0.0, cached: false })
         root.currentTargetIndex = targetModel.count - 1
         refreshTargets()
     }
@@ -286,12 +288,79 @@ Item {
         refreshTargets()
     }
 
+    // Applies one shell_simbad reply to one row. A magnitude SIMBAD does not publish comes
+    // back as an empty field, and the row keeps whatever was there rather than being zeroed:
+    // magnitude 0 is a real and very bright value, so writing it for "unknown" would put a
+    // first-magnitude star in every empty band.
+    function applySimbad(i, reply) {
+        var f = String(reply).split("\t")
+        if (f[0] !== "ok") {
+            root.statusText = "SIMBAD: " + (f.length > 1 ? f[1] : "failed")
+            return false
+        }
+        var patch = { ra: parseFloat(f[1]), dec: parseFloat(f[2]), cached: true }
+        var bands = ["magV", "magJ", "magH", "magK"]
+        for (var b = 0; b < bands.length; ++b)
+            if (f[3 + b] !== "" && f[3 + b] !== undefined) patch[bands[b]] = parseFloat(f[3 + b])
+        targetModel.set(i, patch)
+        refreshTargets()
+        return true
+    }
+
+    // The query is a network round trip on Qt's thread, so the status line is set and the call
+    // deferred by a tick — otherwise the window repaints only after the answer arrives and the
+    // user sees nothing at all until it does.
+    function resolveTarget(i) {
+        var nm = targetModel.get(i).name
+        if (!nm || nm.length === 0) return
+        root.statusText = "resolving " + nm + "…"
+        resolveTimer.queue = [i]
+        resolveTimer.restart()
+    }
+
+    function resolveAll() {
+        var q = []
+        for (var i = 0; i < targetModel.count; ++i) {
+            var t = targetModel.get(i)
+            // Rows already cached are left alone: they were resolved this session and asking
+            // again would spend a round trip to be told the same thing.
+            if (t.name && t.name.length > 0 && !t.cached) q.push(i)
+        }
+        if (q.length === 0) { root.statusText = "nothing to resolve"; return }
+        root.statusText = "resolving " + q.length + " target" + (q.length === 1 ? "" : "s") + "…"
+        resolveTimer.queue = q
+        resolveTimer.restart()
+    }
+
+    // One row per tick, so a list of ten targets repaints between queries instead of freezing
+    // for the whole batch.
+    Timer {
+        id: resolveTimer
+        property var queue: []
+        property int failures: 0
+        interval: 20
+        repeat: false
+        onTriggered: {
+            if (queue.length === 0) return
+            var i = queue.shift()
+            if (!root.applySimbad(i, Julia.shell_simbad(targetModel.get(i).name))) failures += 1
+            root.consoleChanged()       // shell_simbad logs what it resolved; show it
+            if (queue.length > 0) {
+                restart()
+            } else if (failures > 0) {
+                failures = 0
+            } else {
+                root.statusText = "resolved"
+            }
+        }
+    }
+
     function clearCache() {
         for (var i = 0; i < targetModel.count; ++i) targetModel.set(i, { cached: false })
         refreshTargets()
-        // wire: drop the session's SIMBAD cache in Julia too, or the next resolve is answered
-        // from a cache this button claims to have emptied.
-        root.statusText = "SIMBAD cache cleared"
+        // Clears only the per-row flags. There is no Julia-side cache to drop: shell_simbad
+        // queries SIMBAD every time, so a cleared row genuinely re-resolves.
+        root.statusText = "SIMBAD flags cleared"
     }
 
     Component.onCompleted: { selectFacility(root.facility); refreshTargets() }
@@ -383,6 +452,7 @@ Item {
                                         required property real ra
                                         required property real dec
                                         required property real magV
+                                        required property real magJ
                                         required property real magH
                                         required property real magK
                                         required property bool cached
@@ -431,11 +501,7 @@ Item {
                                                 Button {
                                                     text: "SIMBAD"
                                                     enabled: targetRow.name.length > 0
-                                                    // wire: ra_dec_from_simbad(name) -> (ra, dec) in
-                                                    // decimal degrees and magnitudes_from_simbad(name)
-                                                    // -> Dict band => magnitude; write both back with
-                                                    // setTargetField and then set cached = true.
-                                                    onClicked: root.statusText = "resolve " + targetRow.name
+                                                    onClicked: root.resolveTarget(targetRow.index)
                                                 }
                                                 Button {
                                                     text: "−"
@@ -483,6 +549,13 @@ Item {
                                                     validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
                                                     onEditingFinished: root.setTargetField(targetRow.index, "magV", parseFloat(text))
                                                 }
+                                                Label { text: "J"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                TextField {
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.magJ.toFixed(2)
+                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "magJ", parseFloat(text))
+                                                }
                                                 Label { text: "H"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                                 TextField {
                                                     Layout.fillWidth: true
@@ -508,12 +581,7 @@ Item {
                                     Button {
                                         text: "Resolve all"
                                         enabled: root.nNamedTargets > 0
-                                        // wire: ra_dec_from_simbad / magnitudes_from_simbad for every
-                                        // named row, skipping rows already flagged cached. Surface a
-                                        // network failure rather than leaving a row at 0,0 — a
-                                        // swallowed error is indistinguishable from a target with no
-                                        // published magnitudes.
-                                        onClicked: root.statusText = "resolve " + root.nNamedTargets + " targets"
+                                        onClicked: root.resolveAll()
                                     }
                                     Item { Layout.fillWidth: true }
                                 }
@@ -1492,7 +1560,7 @@ Item {
 
                     Button {
                         text: "Output file…"
-                        onClicked: outputDialog.open()
+                        onClicked: outputDialog.openAt("")
                     }
                     Label {
                         Layout.fillWidth: true
@@ -1558,15 +1626,15 @@ Item {
 
     ListModel { id: popModel }
 
-    FileDialog {
+    FilePicker {
         id: outputDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Simulated OIFITS"
-        fileMode: FileDialog.SaveFile
-        nameFilters: ["OIFITS files (*.oifits *.fits)", "All files (*)"]
-        onAccepted: {
-            root.outputFile = selectedFile.toString()
-            outputDialog.close()
-        }
+        saveMode: true
+        defaultSuffix: "oifits"
+        filters: [{ label: "OIFITS files (*.oifits *.fits)", patterns: "*.oifits,*.fits" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.outputFile = path }
     }
 
     // The same deferred idiom Main.qml uses for its file dialogs: simulate() runs synchronously on

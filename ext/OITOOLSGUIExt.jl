@@ -53,10 +53,11 @@ export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
 export NightPlan, config_catalog, facility_telescopes, telescope_config,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,
+       pop_label,
        baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
        delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
-       picker_kind, picker_would_overwrite, picker_matches
+       picker_kind, picker_would_overwrite, picker_matches, picker_examples
 export GLOBAL_COMPONENT
 export ShellState, check_qt_conflict, ui_scale_override
 

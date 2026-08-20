@@ -12,7 +12,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import jlqml            // supplies `Julia`, through which the reconstruction is run
 import Makie            // MakieArea, for this perspective's own canvas
 
@@ -367,6 +366,7 @@ Item {
         for (var i = 0; i < regModel.count; ++i) {
             var r = regModel.get(i)
             if (!r.name || r.name.length === 0) continue
+            if (r.on === false) continue        // unticked: left out of this run, not deleted
             var row = r.name + "," + r.mu
             // `l1l2` is the one name that REQUIRES its second argument; sending it without
             // one would error inside reconstruct rather than here.
@@ -562,42 +562,45 @@ Item {
 
     // ── file pickers ──────────────────────────────────────────────────────────
 
-    FileDialog {
+    // FilePicker throughout: QtQuick.Dialogs.FileDialog leaves its window mapped on some
+    // systems even after reporting itself closed -- see FilePicker.qml.
+    FilePicker {
         id: startImageDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Starting image (FITS)"
-        nameFilters: ["FITS images (*.fits *.fit)", "All files (*)"]
-        // wire: Julia reads the FITS and installs it as x_start
-        onAccepted: { root.startImagePath = selectedFile.toString(); startImageDialog.close() }
+        filters: [{ label: "FITS images (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.startImagePath = path }
     }
 
-    FileDialog {
+    FilePicker {
         id: bsmemPriorDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "MaxEnt prior image (FITS)"
-        nameFilters: ["FITS images (*.fits *.fit)", "All files (*)"]
-        // wire: Julia reads the FITS into the ["mem", prior] entry of reconstruct_bsmem
-        onAccepted: { root.bsmemPriorPath = selectedFile.toString(); bsmemPriorDialog.close() }
+        filters: [{ label: "FITS images (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.bsmemPriorPath = path }
     }
 
-    FileDialog {
+    FilePicker {
         id: squeezePriorDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Squeeze prior image (FITS)"
-        nameFilters: ["FITS images (*.fits *.fit)", "All files (*)"]
-        // wire: Julia reads the FITS into the ["priorimage", λ] entry; zero pixels are a hard mask
-        onAccepted: {
-            root.squeezePriorPath = selectedFile.toString()
-            squeezePriorDialog.close()
-        }
+        // A zero pixel here is a hard mask: no flux quantum may sit there.
+        filters: [{ label: "FITS images (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.squeezePriorPath = path }
     }
 
-    FileDialog {
+    FilePicker {
         id: specImageDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Regulariser image (FITS)"
         property int rowIndex: -1
-        nameFilters: ["FITS images (*.fits *.fit)", "All files (*)"]
-        // wire: Julia reads the FITS into the third element of that spec row (support prior)
-        onAccepted: {
-            if (rowIndex >= 0) regModel.setProperty(rowIndex, "path", selectedFile.toString())
-            specImageDialog.close()
+        filters: [{ label: "FITS images (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            if (rowIndex >= 0) regModel.setProperty(rowIndex, "path", path)
         }
     }
 
@@ -621,8 +624,20 @@ Item {
                     Layout.fillWidth: true
                     spacing: dp(6)
 
+                    // Off rather than removed. Trying a reconstruction with and without a term
+                    // is the normal way to find out what it is doing, and deleting the row to
+                    // do that loses the weight that was tuned to get there.
+                    CheckBox {
+                        checked: specRow.model.on === undefined ? true : specRow.model.on
+                        ToolTip.visible: hovered
+                        ToolTip.text: checked ? "in use — untick to leave it out of the run"
+                                              : "not used by the next run"
+                        onToggled: regModel.setProperty(specRow.index, "on", checked)
+                    }
+
                     ComboBox {
                         Layout.preferredWidth: dp(180)
+                        enabled: specRow.model.on === undefined ? true : specRow.model.on
                         model: root.specNames
                         currentIndex: root.specNames.indexOf(specRow.model.name)
                         onActivated: regModel.setProperty(specRow.index, "name", root.specNames[currentIndex])
@@ -648,7 +663,7 @@ Item {
                     Button {
                         text: specRow.model.path === "" ? "prior…" : "prior ✓"
                         visible: root.specNeedsImage(specRow.model.name)
-                        onClicked: { specImageDialog.rowIndex = specRow.index; specImageDialog.open() }
+                        onClicked: { specImageDialog.rowIndex = specRow.index; specImageDialog.openAt("") }
                     }
                     Label {
                         // radialvar takes two matrices, H and G, which no numeric field can carry.
@@ -674,7 +689,8 @@ Item {
                 spacing: dp(8)
                 Button {
                     text: "+ regularizer"
-                    onClicked: regModel.append({ "name": "tv", "mu": 1.0, "extra": 1.0e-8, "path": "" })
+                    onClicked: regModel.append({ "on": true, "name": "tv", "mu": 1.0,
+                                                 "extra": 1.0e-8, "path": "" })
                 }
             }
         }
@@ -872,7 +888,7 @@ Item {
                                 Button {
                                     visible: root.startImage === "fits"
                                     text: "Choose…"
-                                    onClicked: startImageDialog.open()
+                                    onClicked: startImageDialog.openAt("")
                                 }
                                 Label {
                                     visible: root.startImage === "fits"
@@ -1100,7 +1116,7 @@ Item {
                                         Button {
                                             text: "Choose…"
                                             enabled: root.bsmemUsePrior
-                                            onClicked: bsmemPriorDialog.open()
+                                            onClicked: bsmemPriorDialog.openAt("")
                                         }
                                         Label {
                                             Layout.fillWidth: true
@@ -1222,7 +1238,7 @@ Item {
                                                 text: root.squeezePriorPath === "" ? "image…" : "image ✓"
                                                 visible: squeezeRow.model.name === "priorimage"
                                                 enabled: squeezeRow.model.use
-                                                onClicked: squeezePriorDialog.open()
+                                                onClicked: squeezePriorDialog.openAt("")
                                             }
                                             Label {
                                                 visible: squeezeRow.model.name === "priorimage"

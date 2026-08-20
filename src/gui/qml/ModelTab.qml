@@ -21,7 +21,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import jlqml            // supplies `Julia`, through which the model is rendered
 import Makie            // MakieArea, for this perspective's own canvas
 
@@ -363,19 +362,19 @@ Item {
             // constraints and the priors all change the answer. The TOML file carries all five.
             Button {
                 text: "Open…"
-                onClicked: openModelDialog.open()
+                onClicked: openModelDialog.openAt("")
             }
             Button {
                 text: "Save…"
                 enabled: paramModel.count > 0
-                onClicked: saveModelDialog.open()
+                onClicked: saveModelDialog.openAt("")
             }
 
             ToolSeparator {}
 
             Button {
                 text: "Import PMOIRED…"
-                onClicked: importPmoiredDialog.open()
+                onClicked: importPmoiredDialog.openAt(Julia.picker_examples("pmoired"))
             }
             Button {
                 text: "Export PMOIRED…"
@@ -384,7 +383,7 @@ Item {
                 // cannot represent — the OITOOLS-only geometries, and azimuthal modes, whose
                 // `az projang` differs by π/2 between the two packages. Writing a model that
                 // means something else on the other side is the failure worth preventing.
-                onClicked: exportPmoiredDialog.open()
+                onClicked: exportPmoiredDialog.openAt("")
             }
 
             Item { Layout.fillWidth: true }
@@ -1453,18 +1452,21 @@ Item {
                             Label { text: "Optimiser"; font.bold: true }
                             ComboBox {
                                 id: optBox
-                                Layout.preferredWidth: root.dp(200)
-                                // There is no whitelist on the NLopt method symbol — it goes straight
-                                // to Opt(method, n), and use_grad is `startswith(method, "LD_")`. So
-                                // the LD_ entries are marked as using the analytic gradient rather
-                                // than the list being cut down.
-                                model: ["LD_LBFGS  (gradient)",
-                                        "LD_MMA  (gradient, takes constraints)",
-                                        "LD_SLSQP  (gradient, takes constraints)",
-                                        "LN_NELDERMEAD  (derivative-free)",
-                                        "LN_COBYLA  (derivative-free, takes constraints)",
-                                        "Levenberg-Marquardt  (lsqfit)",
-                                        "Nested sampling  (UltraNest)"]
+                                // Wide enough for the longest entry: a dropdown that elides its
+                                // own descriptions hides the part distinguishing the choices.
+                                Layout.preferredWidth: root.dp(330)
+                                // NLopt's names carry an LD_/LN_ prefix encoding exactly one
+                                // thing — `use_grad = startswith(method, "LD_")`. That is said
+                                // in words here instead, so the list reads as algorithms rather
+                                // than as symbols. The SYMBOL is unchanged: `optimiserKey` still
+                                // returns :LD_LBFGS, because that is what reaches Opt(method, n).
+                                model: ["L-BFGS  ·  gradient",
+                                        "MMA  ·  gradient, takes constraints",
+                                        "SLSQP  ·  gradient, takes constraints",
+                                        "Nelder-Mead  ·  derivative-free",
+                                        "COBYLA  ·  derivative-free, takes constraints",
+                                        "Levenberg-Marquardt  ·  lsqfit",
+                                        "Nested sampling  ·  UltraNest"]
                                 onActivated: root.optimiser = root.optimiserKey(index)
                             }
 
@@ -1765,37 +1767,50 @@ Item {
         onAccepted: root.applyMode(row, "expr")
     }
 
-    FileDialog {
+    // FilePicker, not QtQuick.Dialogs.FileDialog. That dialog sets `visible = false` and
+    // emits `accepted` while leaving its window on screen on some systems -- measured with
+    // `test/gui/filepicker_min.jl`. A Popup has no window of its own to leave behind.
+    FilePicker {
         id: openModelDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Open model file"
-        nameFilters: ["Model files (*.toml)", "All files (*)"]
-        // wire: read_model_file(path) → model, free, lb, ub, constraints, priors, name
+        filters: [{ label: "Model files (*.toml)", patterns: "*.toml" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.modelPath = path; root.modelName = path }
+        // wire: read_model_file(path) -> model, free, lb, ub, constraints, priors, name
     }
 
-    FileDialog {
+    FilePicker {
         id: saveModelDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Save model file"
-        fileMode: FileDialog.SaveFile
+        saveMode: true
         defaultSuffix: "toml"
-        nameFilters: ["Model files (*.toml)", "All files (*)"]
+        filters: [{ label: "Model files (*.toml)", patterns: "*.toml" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.modelPath = path }
         // wire: write_model_file(path, model_dict; free, lb, ub, constraints, priors, name)
     }
 
-    FileDialog {
+    FilePicker {
         id: importPmoiredDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Import a PMOIRED model"
-        nameFilters: ["Python files (*.py)", "All files (*)"]
+        filters: [{ label: "Python files (*.py)", patterns: "*.py" },
+                  { label: "All files", patterns: "*" }]
         // wire: pmoired_to_julia_file. Import is a transpiler, not a validator, so run the
         // inspector's unrecognised-key check afterwards.
     }
 
-    FileDialog {
+    FilePicker {
         id: exportPmoiredDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Export as a PMOIRED model"
-        fileMode: FileDialog.SaveFile
+        saveMode: true
         defaultSuffix: "py"
-        nameFilters: ["Python files (*.py)", "All files (*)"]
-        // wire: dict_to_pmoired_file, surfacing its warnings — the OITOOLS-only geometries
+        filters: [{ label: "Python files (*.py)", patterns: "*.py" },
+                  { label: "All files", patterns: "*" }]
+        // wire: dict_to_pmoired_file, surfacing its warnings -- the OITOOLS-only geometries
         // (ldlin, ldquad, ldpow, resolved) and azimuthal modes cannot be represented, and
         // writing them anyway would mean something different on the other side.
     }

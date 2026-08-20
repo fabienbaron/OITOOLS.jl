@@ -97,6 +97,12 @@ struct NightPlan
     delay_applied :: Bool           # false ⇒ good_delay is "not checked", not "all fine"
     alt_limit     :: Float64
     alt_max       :: Float64
+    # The array and its POPs. Carried on the plan because the chart has to say what it was made
+    # with: the same target on the same night gives a different window under different POPs, so
+    # a Gantt without them is not reproducible from what it shows.
+    config        :: Vector{Int}
+    pop           :: Vector{Int}
+    telescopes    :: Vector{String}
     # One entry per baseline, `(; name, good)`. Empty unless the delay check ran: this is the
     # detailed view's whole content, and one baseline can close the night on its own.
     baselines     :: Vector{NamedTuple}
@@ -173,7 +179,8 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
                      Int.(obs.good_alt), good_delay,
                      Int.(obs.good_twilight), Int.(obs.good_moon),
                      obs.moon_sep, obs.moon_fli, applied,
-                     Float64(alt_limit), Float64(alt_max), blines)
+                     Float64(alt_limit), Float64(alt_max),
+                     cfg, pp, String.(f.tel_names), blines)
 end
 
 function Base.show(io::IO, p::NightPlan)
@@ -320,6 +327,26 @@ function unwrap_lst(lst)
 end
 
 """
+    pop_label(plan) -> String
+
+The array and its POPs as one line, e.g. `"S1:P1 S2:P3 E1:P3 E2:P4"`.
+
+Only the telescopes actually in the array: a POP for a telescope that is not observing is not a
+setting, it is noise in a label that has to be read at a glance.
+"""
+function pop_label(p::NightPlan)
+    isempty(p.config) && return ""
+    on = findall(>(0), p.config)
+    isempty(on) && return ""
+    parts = String[]
+    for i in on
+        name = i <= length(p.telescopes) ? p.telescopes[i] : string("T", i)
+        push!(parts, string(name, ":P", i <= length(p.pop) ? p.pop[i] : 1))
+    end
+    return join(parts, " ")
+end
+
+"""
     gantt_geometry(plan; detailed = false) -> (; bars, labels, bands, rows, midnight, xlim, ymax)
 
 The whole chart as data: background bands, one bar per contiguous run, and the annotations.
@@ -410,7 +437,12 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     # Bands span whatever height the rows ended up needing.
     bands = [GanttBar(b.x0, b.x1, ymax/2, ymax, b.color, b.label) for b in bands]
 
-    return (; bars, labels, bands, midnight = mid, xlim, target = p.name, rows, ymax, detailed)
+    # The POPs only when the delay check actually ran: quoting a setting that did not affect
+    # the chart would be worse than quoting none.
+    subtitle = p.delay_applied ? pop_label(p) : ""
+
+    return (; bars, labels, bands, midnight = mid, xlim, target = p.name, rows, ymax, detailed,
+              subtitle, delay_applied = p.delay_applied)
 end
 
 "LST hours as `H:M`, matching the annotation format of the matplotlib original."

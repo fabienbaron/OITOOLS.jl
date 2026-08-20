@@ -53,9 +53,14 @@ ApplicationWindow {
     property real baseFontPt: 11
     font.pointSize: pt(baseFontPt)
 
-    // Never open larger than the screen: dp(1280) on a 2x panel is 2560 logical pixels, which
+    // Never open larger than the screen: dp(1600) on a 2x panel is 3200 logical pixels, which
     // would put the window's own edges off the desktop before the user has done anything.
-    width:  Math.min(Screen.desktopAvailableWidth  * 0.95, dp(1280))
+    //
+    // 1600 rather than something squarer because every perspective is a settings column beside
+    // a plot: Observing puts the Gantt next to the target list, Imaging the reconstruction next
+    // to the regularisers. Width is what those layouts spend, and too little of it pushes the
+    // plot into a strip.
+    width:  Math.min(Screen.desktopAvailableWidth  * 0.95, dp(1600))
     // The plot is one of five stacked regions -- context bar, tabs, plot, pick line, console --
     // so the window needs the height to leave it more than a band.
     height: Math.min(Screen.desktopAvailableHeight * 0.95, dp(1040))
@@ -146,6 +151,15 @@ ApplicationWindow {
         + (uiScaleOverride > 0 ? "  override=" + uiScaleOverride.toFixed(3) : "  (no override)")
         + "  -> uiScale=" + uiScale.toFixed(3) + " fontScale=" + fontScale.toFixed(3))
 
+    // Reads the dataset list back from the session and selects the newest entry. Called both
+    // after a load and at startup, because a Session may already hold datasets before the
+    // window exists -- `oitoolsgui.jl file.oifits` loads them and then calls gui().
+    function refreshDatasets() {
+        var names = Julia.shell_dataset_names().split("\n").filter(function (s) { return s.length > 0 })
+        datasetBox.model = names
+        datasetBox.currentIndex = names.length - 1
+    }
+
     // ── context bar: what every perspective is looking at ─────────────────────
     header: ToolBar {
         RowLayout {
@@ -212,8 +226,7 @@ ApplicationWindow {
         interval: 250; repeat: false
         onTriggered: {
             win.status = Julia.shell_open(path)
-            datasetBox.model = Julia.shell_dataset_names().split("\n").filter(function (s) { return s.length > 0 })
-            datasetBox.currentIndex = datasetBox.model.length - 1
+            win.refreshDatasets()
             win.afterAction()
             busy.running = false; taskLabel.text = "idle"
             // The load holds the GUI thread for seconds, so by the time it returns the window
@@ -442,7 +455,11 @@ ApplicationWindow {
         interval: 700
         running: true
         repeat: false
-        onTriggered: { win.status = Julia.shell_ready(); win.afterAction() }
+        onTriggered: {
+            win.refreshDatasets()
+            win.status = Julia.shell_ready()
+            win.afterAction()
+        }
     }
 
     // Closes the window after a delay so the shell can be exercised under a virtual display

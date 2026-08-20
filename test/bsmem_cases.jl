@@ -116,8 +116,22 @@ function run_bsmem_case(case; T = Float64)
                                 fftflags = GATE_FFTFLAGS, case.kw...)
         return (; ok = true, image = Array(img), history = hist, env = codegen_env())
     catch e
-        return (; ok = false, err = first(split(sprint(showerror, e), "\n")), env = codegen_env())
+        return (; ok = false, err = _describe(e), env = codegen_env())
     end
+end
+
+"""
+One line naming what actually went wrong.
+
+`TaskFailedException` is unwrapped first: `showerror` puts the words "TaskFailedException" on
+line one and the real cause below, so summarising by first line alone reports only that a
+thread failed and never why.
+"""
+function _describe(e)
+    while e isa TaskFailedException
+        e = e.task.result
+    end
+    return first(split(sprint(showerror, e), "\n"))
 end
 
 baseline_path(case) = joinpath(REF_DIR, "bsmem_baseline_$(case.name).jls")
