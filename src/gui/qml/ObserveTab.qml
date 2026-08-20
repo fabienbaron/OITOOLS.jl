@@ -69,8 +69,12 @@ Item {
     property real   haMin: -4.0
     property real   haMax:  4.0
     property int    stepMinutes: 10
-    property real   altLimit:   30.0
-    property real   altMax:     80.0
+    // ASPRO's defaults. 25 rather than 30 because the last five degrees are a real part of a
+    // short night; 85 rather than 90 because near the zenith the delay lines and the azimuth
+    // axis both have to track fast, and the cap genuinely bites -- Vega transits at 85.4 from
+    // CHARA.
+    property real   altLimit:   25.0
+    property real   altMax:     85.0
     property real   moonMinSep: 30.0
     property real   darkOffset:  0.0
     // Dark-window readout. The two hours are decimal local time and are properties rather than
@@ -690,11 +694,35 @@ Item {
                                     // wire: recompute the dark window and every view for this date
                                     onEditingFinished: root.dateISO = text
                                 }
-                                // wire: step dateISO by ±1 day in Julia — Date arithmetic belongs
-                                // where the calendar is, not in a string edit here.
-                                Button { text: "◀";     onClicked: root.statusText = "previous night" }
-                                Button { text: "Today"; onClicked: root.statusText = "tonight" }
-                                Button { text: "▶";     onClicked: root.statusText = "next night" }
+                                // Stepping is done in Julia: adding a month to 31 January has to
+                                // land on 28 February, which is calendar arithmetic and not
+                                // something to attempt on a string here.
+                                //
+                                // Double arrows move a whole month, which is the step that
+                                // matters for observability — a target's window shifts by about
+                                // two hours of LST per month, so a month is the unit in which
+                                // "is it up yet this season" gets answered.
+                                Button {
+                                    text: "◀◀"
+                                    ToolTip.visible: hovered; ToolTip.text: "one month earlier"
+                                    onClicked: root.shiftDate(0, -1)
+                                }
+                                Button {
+                                    text: "◀"
+                                    ToolTip.visible: hovered; ToolTip.text: "previous night"
+                                    onClicked: root.shiftDate(-1, 0)
+                                }
+                                Button { text: "Today"; onClicked: root.shiftDate(0, 0) }
+                                Button {
+                                    text: "▶"
+                                    ToolTip.visible: hovered; ToolTip.text: "next night"
+                                    onClicked: root.shiftDate(1, 0)
+                                }
+                                Button {
+                                    text: "▶▶"
+                                    ToolTip.visible: hovered; ToolTip.text: "one month later"
+                                    onClicked: root.shiftDate(0, 1)
+                                }
                                 Item { Layout.fillWidth: true }
                             }
 
@@ -838,11 +866,13 @@ Item {
                     }
                     CheckBox {
                         text: "detailed"
+                        enabled: root.useDelay
                         checked: root.detailed
                         onToggled: { root.detailed = checked; if (root.hasPlan) root.computePlan() }
                         ToolTip.visible: hovered
-                        ToolTip.text: "one row per constraint, as ASPRO's detailed output; " +
-                                      "off shows only their intersection"
+                        ToolTip.text: "ASPRO's detailed view: one row per BASELINE, so the " +
+                                      "baseline that closes the night is the short bar. Needs " +
+                                      "the delay check on. Off shows only the answer."
                     }
                     CheckBox {
                         text: "delay lines"
@@ -1436,15 +1466,25 @@ Item {
     // applied it by default would call every target unobservable.
     property bool hasPlan: false
     property bool useDelay: false
-    property bool detailed: true
+    // Summary by default, as in ASPRO: "when can I observe this" is the question asked first.
+    // Detailed is the delay view -- one row per baseline -- and answers "why not".
+    property bool detailed: false
     property string planText: ""
+
+    // Stepping the date recomputes if a plan is already showing: the chart is what the date
+    // control is FOR, and leaving it stale after a step is how a user reads last week's night.
+    function shiftDate(days, months) {
+        root.dateISO = Julia.shell_shift_date(root.dateISO, days, months)
+        if (root.hasPlan) root.computePlan()
+    }
 
     function computePlan() {
         var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
         if (t === null) { planText = "no target"; return }
         var tels = root.selectedTelescopes.join(" ")
         planText = Julia.shell_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
-                                     tels, root.popString, root.useDelay, root.detailed)
+                                     tels, root.popString, root.useDelay, root.detailed,
+                                     root.altLimit, root.altMax)
         hasPlan = planText.indexOf("!") !== 0
         ganttArea.update()
         root.consoleChanged()

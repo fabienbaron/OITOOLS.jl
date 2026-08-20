@@ -49,7 +49,8 @@ export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start
 export NightPlan, config_catalog, facility_telescopes, telescope_config,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
-       GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!
+       GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,
+       baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
        picker_kind, picker_would_overwrite, picker_matches
 export GLOBAL_COMPONENT

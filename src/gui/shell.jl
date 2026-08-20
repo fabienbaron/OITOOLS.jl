@@ -364,6 +364,26 @@ end
 """Last identified point. QML polls this rather than asking for a pick itself."""
 shell_pick_text() = _shell().picktext
 
+"""
+    shell_shift_date(iso, days, months) -> String
+
+Move a date by whole days and/or months, returning ISO `yyyy-mm-dd`.
+
+In Julia because this is calendar arithmetic, not string editing: adding a month to 31 January
+has to land on 28 February, and `Dates.Month` clamps to the end of the month while a naive
+`+30 days` would not. An empty or unparseable input comes back as today, which is the only
+useful answer to "step from nothing".
+"""
+function shell_shift_date(iso::AbstractString, days::Integer, months::Integer)
+    d = try
+        Dates.Date(String(iso))
+    catch
+        Dates.today()
+    end
+    (days == 0 && months == 0) && return string(Dates.today())
+    return string(d + Dates.Month(months) + Dates.Day(days))
+end
+
 "Facilities on disk, newline-separated. CHARA first: it is the only one the delay-line and POP checks cover."
 function shell_facilities()
     c = config_catalog()
@@ -385,7 +405,8 @@ because an unsearched POP configuration reports far less time than is really ava
 """
 function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, dec::Real,
                      dateiso::AbstractString, telescopes::AbstractString,
-                     pops::AbstractString, use_delay::Bool, detailed::Bool)
+                     pops::AbstractString, use_delay::Bool, detailed::Bool,
+                     alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX)
     sh = _shell()
     date = try
         DateTime(String(dateiso))
@@ -400,12 +421,13 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
 
     p = try
         night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
-                   config = cfg, pop = pp, use_delay = use_delay)
+                   config = cfg, pop = pp, use_delay = use_delay,
+                   alt_limit = Float64(alt_limit), alt_max = Float64(alt_max))
     catch err
         msg = "! " * _cause(err); console!(sh, msg); return msg
     end
 
-    sh.gantt === nothing || update_gantt!(sh.gantt, p; show_alt = detailed)
+    sh.gantt === nothing || update_gantt!(sh.gantt, p; detailed)
 
     h = observable_hours(p)
     console!(sh, "> night_plan(\"$(facility)\", \"$(name)\", $(round(Float64(ra); digits=4)), " *

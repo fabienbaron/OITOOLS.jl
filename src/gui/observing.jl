@@ -45,6 +45,23 @@ One entry per telescope in the facility's own order, 1 for in and 0 for out.
 telescope_config(selected, all) = Int[(String(t) in String.(selected)) ? 1 : 0 for t in all]
 
 """
+Lowest elevation worth observing at, in degrees.
+
+25 rather than the library's 30: it is what ASPRO defaults to, and the last five degrees are a
+real part of a short night.
+"""
+const DEFAULT_ALT_LIMIT = 25.0
+
+"""
+Highest elevation, in degrees.
+
+Not 90. Near the zenith the delay lines and the azimuth axis both have to move fast to track,
+and most arrays have a limit; 85 is ASPRO's. It genuinely bites — Vega transits at 85.4 from
+CHARA, so the cap trims the top of its window rather than being a formality.
+"""
+const DEFAULT_ALT_MAX = 85.0
+
+"""
 One target's night: the arrays every Observe view is drawn from.
 
 `good_alt`, `good_delay`, `good_twilight` and `good_moon` are INDEX vectors into the time grid,
@@ -69,6 +86,11 @@ struct NightPlan
     moon_sep      :: Vector{Float32}
     moon_fli      :: Float64
     delay_applied :: Bool           # false ⇒ good_delay is "not checked", not "all fine"
+    alt_limit     :: Float64
+    alt_max       :: Float64
+    # One entry per baseline, `(; name, good)`. Empty unless the delay check ran: this is the
+    # detailed view's whole content, and one baseline can close the night on its own.
+    baselines     :: Vector{NamedTuple}
 end
 
 "Indices where every supplied constraint holds at once — the hours actually worth booking."
@@ -107,8 +129,8 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
                     config        = nothing,
                     pop           = nothing,
                     use_delay     ::Bool = false,
-                    alt_limit     ::Real = 30.0,
-                    alt_max       ::Real = 90.0,
+                    alt_limit     ::Real = DEFAULT_ALT_LIMIT,
+                    alt_max       ::Real = DEFAULT_ALT_MAX,
                     moon_min_sep  ::Real = 30.0,
                     dark_offset   ::Real = 0.0,
                     step_minutes  ::Integer = 1,
@@ -126,21 +148,23 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
     # The delay check is also CHARA-only unless the caller supplies its own POP array and
     # airpath, so a facility without them reports "not checked" rather than a wrong answer.
     all_idx = collect(1:length(obs.ha))
-    good_delay, applied = if use_delay
+    good_delay, applied, blines = if use_delay
         try
-            (Int.(in_delay(f, Float64(dec), obs.ha, cfg, pp; delay_length).good_delay), true)
+            (Int.(in_delay(f, Float64(dec), obs.ha, cfg, pp; delay_length).good_delay), true,
+             baseline_delay_windows(f, Float64(dec), obs.ha, cfg, pp; delay_length))
         catch
-            (all_idx, false)
+            (all_idx, false, NamedTuple[])
         end
     else
-        (all_idx, false)
+        (all_idx, false, NamedTuple[])
     end
 
     return NightPlan(String(name), Float64(ra), Float64(dec), date,
                      obs.lst, obs.lst_midnight, obs.ha, obs.alt, obs.az,
                      Int.(obs.good_alt), good_delay,
                      Int.(obs.good_twilight), Int.(obs.good_moon),
-                     obs.moon_sep, obs.moon_fli, applied)
+                     obs.moon_sep, obs.moon_fli, applied,
+                     Float64(alt_limit), Float64(alt_max), blines)
 end
 
 function Base.show(io::IO, p::NightPlan)
@@ -175,6 +199,41 @@ function plan_rows(plans, step_minutes::Integer = 1)
     return join(rows, "\n")
 end
 
+
+"""
+    baseline_delay_windows(facility, dec, ha, config, pop; delay_length) -> Vector{NamedTuple}
+
+Where each BASELINE is inside its delay limits, as `(; name, good)`.
+
+`in_delay` returns only the AND over every baseline — one answer for the array. That is the
+right thing for "can I observe now", and the wrong thing for "why not": a single baseline out
+of fifteen can close the whole night, and the summary cannot say which. ASPRO's detailed view
+is exactly this, one row per baseline, which is what makes it worth having.
+
+The limit is the smaller of the two telescopes' delay lengths, matching `in_delay`.
+"""
+function baseline_delay_windows(facility, dec::Real, ha::AbstractVector, config, pop;
+                                delay_length = nothing)
+    f = facility isa AbstractString ? read_facility_file(String(facility)) : facility
+    r = in_delay(f, Float64(dec), Float32.(ha), Int.(config), Int.(pop); delay_length)
+
+    dlens = if delay_length !== nothing
+        fill(Float32(delay_length), f.ntel)
+    elseif !isempty(f.delay_lengths)
+        Float32.(f.delay_lengths)
+    else
+        fill(45.7f0, f.ntel)
+    end
+
+    out = NamedTuple[]
+    for b in 1:r.nbaselines
+        dmax = min(dlens[r.baseline_stations[1, b]], dlens[r.baseline_stations[2, b]])
+        good = [t for t in axes(r.delay_carts, 2)
+                if -dmax <= r.delay_carts[b, t] <= dmax]
+        push!(out, (; name = String(r.baseline_names[b]), good))
+    end
+    return out
+end
 
 """
     best_pops(facility, dec, ha, config; n = 5) -> Vector{NamedTuple}
@@ -248,15 +307,20 @@ function unwrap_lst(lst)
 end
 
 """
-    gantt_geometry(plan; show_alt = true) -> (; bars, labels, bands, midnight, xlim, target)
+    gantt_geometry(plan; detailed = false) -> (; bars, labels, bands, rows, midnight, xlim, ymax)
 
 The whole chart as data: background bands, one bar per contiguous run, and the annotations.
 
-`show_alt` is the detailed/summary switch, and it changes what is drawn rather than merely how.
-Detailed breaks the constraints onto their own rows, the way ASPRO's "detailed output" does;
-summary draws only their intersection — one bar, the hours actually bookable.
+`detailed` changes what is drawn, not merely how, and summary is the default because it answers
+the question that gets asked first: when can I observe this, at all.
+
+Detailed is ASPRO's, and it is about DELAYS: one row per baseline, plus altitude and moon. That
+is the view worth having when the answer is "you can't", because the summary cannot say why —
+a single baseline out of fifteen closes the whole night, and only a per-baseline row names it.
 """
-function gantt_geometry(p::NightPlan; show_alt::Bool = true)
+function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing)
+    # `show_alt` was the old name for this switch, and it defaulted the other way.
+    detailed = show_alt === nothing ? detailed : Bool(show_alt)
     lst = unwrap_lst(p.lst)
     mid = Float64(p.lst_midnight)
     !isempty(lst) && mid < lst[1] && (mid += 24.0)
@@ -280,18 +344,40 @@ function gantt_geometry(p::NightPlan; show_alt::Bool = true)
         end
     end
 
-    if show_alt
-        isempty(p.good_alt)  || add!(p.good_alt,  5.0, 1.5, "orange",       "Altitude")
-        isempty(p.good_moon) || add!(p.good_moon, 7.0, 1.0, "mediumpurple", "Moon sep.")
-        show_idx = sort(collect(p.good_delay))
-        lbl = "In Delay"
+    rows = Tuple{Float64,String}[]        # (y, tick label), bottom-up
+    ymax = 10.0
+
+    if detailed
+        # Bottom row is the answer; everything above it is why. One row per baseline, so the
+        # baseline that closes the night is the one whose bar is short.
+        y = 2.0
+        show_idx = sort(collect(observable_indices(p)))
+        lbl = "Observable"
+        push!(rows, (y, p.name))
+
+        y += 1.4
+        isempty(p.good_alt) || add!(p.good_alt, y, 0.9, "orange", "Altitude")
+        push!(rows, (y, "altitude")); y += 1.1
+
+        isempty(p.good_moon) || add!(p.good_moon, y, 0.9, "mediumpurple", "Moon sep.")
+        push!(rows, (y, "moon")); y += 1.1
+
+        first_bl = true
+        for b in p.baselines
+            isempty(b.good) || add!(b.good, y, 0.9, "blue", first_bl ? "In Delay" : "")
+            first_bl = false
+            push!(rows, (y, b.name))
+            y += 1.1
+        end
+        ymax = max(10.0, y + 0.6)
     else
         show_idx = sort(collect(observable_indices(p)))
         lbl = "Observable"
+        push!(rows, (2.0, p.name))
     end
 
     if !isempty(show_idx)
-        add!(show_idx, 2.0, 2.0, "blue", lbl)
+        add!(show_idx, 2.0, 2.0, detailed ? "green" : "blue", lbl)
         # Every run is annotated, not just the outermost pair: each is one observing block, and
         # its own start and end times with their az/alt are what goes on a schedule.
         for (i0, i1) in index_runs(show_idx)
@@ -308,14 +394,19 @@ function gantt_geometry(p::NightPlan; show_alt::Bool = true)
     offset = 4.0
     xlim = (mid - 12 + offset, mid + 12 - offset)
 
-    return (; bars, labels, bands, midnight = mid, xlim, target = p.name)
+    # Bands span whatever height the rows ended up needing.
+    bands = [GanttBar(b.x0, b.x1, ymax/2, ymax, b.color, b.label) for b in bands]
+
+    return (; bars, labels, bands, midnight = mid, xlim, target = p.name, rows, ymax, detailed)
 end
 
 "LST hours as `H:M`, matching the annotation format of the matplotlib original."
 function _hhmm(h::Real)
     t = mod(Float64(h), 24.0)
     hh = floor(Int, t)
-    mm = round(Int, (t - hh) * 60)
-    mm == 60 && (mm = 0; hh += 1)
+    # Truncated, not rounded: `gantt_onenight` formats a DateTime, and that drops the seconds
+    # rather than rounding them up. Rounding here puts the two renderers a minute apart on any
+    # block whose end falls past the half-minute.
+    mm = floor(Int, (t - hh) * 60)
     return string(mod(hh, 24), ":", mm)
 end

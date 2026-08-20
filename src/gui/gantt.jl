@@ -15,6 +15,7 @@ const GANTT_COLORS = Dict(
     "orange"       => Makie.RGBAf(1.000, 0.647, 0.000, 1.0),
     "mediumpurple" => Makie.RGBAf(0.576, 0.439, 0.859, 1.0),
     "blue"         => Makie.RGBAf(0.000, 0.000, 1.000, 1.0),
+    "green"        => Makie.RGBAf(0.000, 0.502, 0.000, 1.0),
 )
 
 _gantt_color(name) = get(GANTT_COLORS, name, Makie.RGBAf(0.5, 0.5, 0.5, 1.0))
@@ -76,6 +77,12 @@ function build_gantt(fig, ax)
     ax.ylabel = ""
     ax.xlabel = "LST (h)"
     ax.yticks = ([2.0], [""])
+    # No horizontal gridline. The y axis is categorical -- one row per target -- so a line
+    # through the row divides nothing, and it runs straight through the rotated start/end times
+    # drawn at the bar ends. The vertical grid stays: that one marks the hours, which is the
+    # axis a reader actually measures against.
+    ax.ygridvisible = false
+    ax.yticksvisible = false
     Makie.ylims!(ax, 0, 10)
 
     return (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
@@ -84,12 +91,12 @@ function build_gantt(fig, ax)
 end
 
 """
-    update_gantt!(g, plan; show_alt = true)
+    update_gantt!(g, plan; detailed = false)
 
 Draw one night. Allocates only the vectors handed to the Observables.
 """
-function update_gantt!(g, p::NightPlan; show_alt::Bool = true)
-    geo = gantt_geometry(p; show_alt)
+function update_gantt!(g, p::NightPlan; detailed::Bool = false)
+    geo = gantt_geometry(p; detailed)
 
     _rect(b) = Makie.Rect2f(b.x0, b.y - b.height/2, max(b.x1 - b.x0, 1e-6), b.height)
 
@@ -97,7 +104,7 @@ function update_gantt!(g, p::NightPlan; show_alt::Bool = true)
     g.bandcols[]  = [_gantt_color(b.color) for b in geo.bands]
     g.barrects[]  = [_rect(b) for b in geo.bars]
     g.barcols[]   = [_gantt_color(b.color) for b in geo.bars]
-    g.midline[]   = [Makie.Point2f(geo.midnight, 0), Makie.Point2f(geo.midnight, 10)]
+    g.midline[]   = [Makie.Point2f(geo.midnight, 0), Makie.Point2f(geo.midnight, geo.ymax)]
 
     for (pick, pos, txt) in ((l -> l.kind === :time && l.side === :start, g.tspos, g.tstxt),
                              (l -> l.kind === :time && l.side === :end,   g.tepos, g.tetxt),
@@ -112,12 +119,15 @@ function update_gantt!(g, p::NightPlan; show_alt::Bool = true)
     # matplotlib applies with "_nolegend_".
     named = [b for b in geo.bars if !isempty(b.label)]
     x0 = geo.xlim[1] + 0.80 * (geo.xlim[2] - geo.xlim[1])   # top right, as in the original
-    g.legpos[]  = [Makie.Point2f(x0, 9.4 - 0.6 * (k - 1)) for k in eachindex(named)]
+    ytop = geo.ymax - 0.6
+    g.legpos[]  = [Makie.Point2f(x0, ytop - 0.06 * geo.ymax * (k - 1)) for k in eachindex(named)]
     g.legtxt[]  = [b.label for b in named]
     g.legcols[] = [_gantt_color(b.color) for b in named]
 
-    g.axis.yticks = ([2.0], [geo.target])
+    # One tick per row: in detailed mode those are the baselines, which is what makes the view
+    # readable at all -- fifteen unlabelled bars say nothing.
+    g.axis.yticks = ([r[1] for r in geo.rows], [r[2] for r in geo.rows])
     Makie.xlims!(g.axis, geo.xlim[1], geo.xlim[2])
-    Makie.ylims!(g.axis, 0, 10)
+    Makie.ylims!(g.axis, 0, geo.ymax)
     return g
 end

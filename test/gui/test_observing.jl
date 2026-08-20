@@ -46,10 +46,12 @@
         # dec +38.8 against latitude +34.2 transits within 5 degrees of the zenith
         @test maximum(june.alt) > 80
         @test observable_hours(june) > 3
-        # in December it never clears the default 30-degree limit
+        # In December it barely scrapes the 25-degree floor -- 28.5 at transit -- so it is
+        # nominally "up" for a few minutes and useless. The check is the ratio, not zero:
+        # asserting zero would have been an accident of the old 30-degree default.
         @test maximum(dec.alt) < 30
-        @test isempty(dec.good_alt)
-        @test observable_hours(dec) == 0
+        @test length(dec.good_alt) < length(june.good_alt) / 10
+        @test observable_hours(dec) < 0.5
     end
 
     @testset "a far-southern target never rises from a northern site" begin
@@ -60,13 +62,24 @@
     end
 
     @testset "the June night is short, and it is what limits the target" begin
-        p = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE)
-        # Vega is above the limit all night, so the observable time IS the dark window — which
-        # is the check that twilight is being computed at all rather than assumed.
+        # alt_max = 90 on purpose: with the default 85 the zenith cap ALSO bites (Vega transits
+        # at 85.4), and this test is about twilight being computed rather than assumed. The cap
+        # gets its own test below.
+        p = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE; alt_max = 90.0)
         @test length(p.good_alt) > length(p.good_twilight)
         @test observable_hours(p) ≈ length(p.good_twilight) / 60 rtol = 1e-6
         # and a June night at mid-latitude is short
         @test 3 < length(p.good_twilight) / 60 < 8
+    end
+
+    @testset "the defaults are ASPRO's, and the zenith cap is not decorative" begin
+        @test DEFAULT_ALT_LIMIT == 25.0
+        @test DEFAULT_ALT_MAX   == 85.0
+        d = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE)
+        @test d.alt_limit == 25.0 && d.alt_max == 85.0
+        # Vega transits at 85.4 from CHARA, so the cap removes real time rather than nothing
+        open_ = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE; alt_max = 90.0)
+        @test observable_hours(d) < observable_hours(open_)
     end
 
     @testset "the delay check is opt-in, and says when it did not run" begin
