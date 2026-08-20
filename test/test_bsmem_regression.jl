@@ -1,65 +1,77 @@
-# BSMEM/MaximENT regression gate.
+# BSMEM/MaximENT regression check.
 #
-# Compares the current code against the frozen Float64 baseline in test/references/.
-# Capture the baseline first:  julia --project=. test/capture_bsmem_baseline.jl
+# What this asserts: every case still runs, and produces an image that is finite, non-negative
+# and carries positive flux. Those hold on any machine, and they catch the breakage that
+# actually happens — a method that throws, a solver that returns NaN, a plan wired to the wrong
+# observable.
 #
-# The gate is bit-for-bit by default. That is deliberate and not excessive: the solver
-# contains discrete bisections on alpha (maximent.jl:409, :1149) where a 1-ulp shift
-# flips a branch, changes the CG trust region, and diverges the whole trajectory — so a
-# loose tolerance would be neither meaningful nor achievable. Refactor phases that are
-# pure typing MUST reproduce Float64 exactly; if they don't, something changed.
+# What it no longer asserts by default: bit-for-bit equality against a frozen baseline.
 #
-# But bit-for-bit equality is ONLY defined on the platform the baseline was captured on
-# (linux x86_64) with a matching codegen env. This solver's chaos amplifies the ~1e-16
-# reduction differences between architectures/BLAS and between Julia versions into whole-
-# trajectory divergence — so on any other platform, or any other Julia patch, a bit compare
-# is guaranteed to differ for reasons that are NOT a regression. We therefore assert the
-# bit gate only where it is meaningful and smoke-test (does it still run?) everywhere else.
-# The baselines live at linux x86_64 (see test/references/*.jls env); capture there.
+# The reasoning for the bit gate was sound — the solver bisects on alpha (maximent.jl:409,
+# :1149), so a 1-ulp shift flips a branch and diverges the whole trajectory, which makes a
+# loose tolerance meaningless. But the same chaos makes the comparison valid only on the exact
+# machine, Julia patch, thread count and `--check-bounds` setting the baseline was captured
+# under, and in practice that is never the machine running the tests. Measured here, all eight
+# cases reported:
+#
+#     bit-for-bit gate skipped — codegen/threading mismatch, baseline not comparable —
+#     check_bounds: 1 -> 0, nthreads: 1 -> 16, julia: 1.12.6 -> 1.12.7, cpu: <absent> -> znver5
+#
+# So it compared nothing, while carrying baselines in the repository and failing CI whenever
+# the environment drifted. A check that is skipped everywhere it runs is not a safety net.
+#
+# It is kept behind a switch rather than deleted, because it is the right tool for one specific
+# job: verifying that a pure-typing refactor changed no numbers. Re-capture and run it on ONE
+# machine, deliberately:
+#
+#     julia --project=. test/capture_bsmem_baseline.jl
+#     OITOOLS_BSMEM_BITGATE=1 julia --project=. test/runtests.jl
 
 using Test, Serialization
 
 include(joinpath(@__DIR__, "bsmem_cases.jl"))
 
-# The one platform the baselines are valid on. Off it, bit-for-bit is undefined (see above).
-const BITGATE_PLATFORM = Sys.islinux() && Sys.ARCH === :x86_64
+"Opt in with `OITOOLS_BSMEM_BITGATE=1`, having captured a baseline on this machine first."
+const BITGATE = get(ENV, "OITOOLS_BSMEM_BITGATE", "0") in ("1", "true", "yes")
 
-@testset "BSMEM regression (T=Float64, bit-for-bit)" begin
-    any_baseline = false
+@testset "BSMEM regression" begin
     for case in BSMEM_CASES
-        path = baseline_path(case)
-        if !isfile(path)
-            @info "no baseline for $(case.name) — run test/capture_bsmem_baseline.jl" maxlog = 1
-            continue
-        end
-        ref = try
-            deserialize(path)
-        catch e
-            # Almost always a Serialization format-version mismatch after a Julia upgrade:
-            # these baselines are not forward-readable (see capture_bsmem_baseline.jl — the
-            # permanent fix is to switch to JLD2). Skip this case rather than error the whole
-            # suite; if EVERY baseline is unreadable, the `any_baseline` assertion below fails
-            # loudly and asks for a re-cut.
-            @info "$(case.name): baseline unreadable, skipping — $(sprint(showerror, e))" maxlog = 8
-            continue
-        end
-        any_baseline = true
         @testset "$(case.name)" begin
             got = run_bsmem_case(case; T = Float64)
-            cmp = compare_bsmem(ref, got; rtol = 0.0)
-            env_ok = get(cmp, :comparable, true)  # false ⟺ codegen env differs from baseline
-            if BITGATE_PLATFORM && env_ok
-                @test cmp.pass || (@error("$(case.name): $(cmp.msg)"); false)
-            else
-                # Not the capture platform, or a different codegen env: bit-for-bit is
-                # undefined here. Verify the case still runs the same way (success/failure),
-                # and skip the exact comparison rather than report a bogus regression.
-                reason = env_ok ? "platform is not linux x86_64" : cmp.msg
-                @info "$(case.name): bit-for-bit gate skipped — $reason" maxlog = 8
-                @test got.ok == ref.ok
-                @test_skip cmp.pass
-            end
+
+            # Runs at all. `run_bsmem_case` swallows the exception and reports it here, so a
+            # failure names what went wrong instead of aborting the file.
+            @test got.ok || (@error("$(case.name) threw: $(get(got, :err, "?"))"); false)
+            got.ok || return
+
+            img = got.image
+            @test all(isfinite, img)
+            @test all(>=(0), img)      # MaxEnt works in log-space; a negative pixel is a bug
+            @test sum(img) > 0
+            @test !isempty(got.history)
         end
     end
-    @test any_baseline  # the gate must not silently pass by having nothing to compare
+
+    if BITGATE
+        @testset "bit-for-bit against the captured baseline" begin
+            compared = false
+            for case in BSMEM_CASES
+                path = baseline_path(case)
+                isfile(path) || continue
+                ref = try
+                    deserialize(path)
+                catch e
+                    @info "$(case.name): baseline unreadable — $(sprint(showerror, e))" maxlog = 8
+                    continue
+                end
+                compared = true
+                got = run_bsmem_case(case; T = Float64)
+                cmp = compare_bsmem(ref, got; rtol = 0.0)
+                @test cmp.pass || (@error("$(case.name): $(cmp.msg)"); false)
+            end
+            # Asking for the gate and getting nothing compared is the failure the old version
+            # could not report: it passed silently with every case skipped.
+            @test compared
+        end
+    end
 end

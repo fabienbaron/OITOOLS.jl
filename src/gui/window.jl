@@ -9,7 +9,7 @@ function __init__()
                      shell_dataset_names, shell_script, shell_export, shell_pick,
                      shell_console, shell_ready, shell_reset_zoom, shell_pick_text,
                      shell_observables, shell_reconstruct, shell_imaging_summary,
-                     shell_image_defaults,
+                     shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
                      # Julia for everything the toolkit would otherwise supply.
@@ -94,7 +94,7 @@ function OITOOLS.gui(session::Session = Session();
     imcanvas = build_canvas(imfig, imax)
 
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline,
-                     "no dataset loaded", String[], canvas, "", nothing, imcanvas)
+                     "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing)
     SHELL[] = sh
     install_interactions!(sh)
 

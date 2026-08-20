@@ -37,6 +37,7 @@ mutable struct ShellState
     picktext:: String           # last identified point; QML polls this
     imaging :: Any              # the last ImagingResult, or nothing
     imcanvas:: Any              # the Image perspective's own LiveCanvas
+    ftcache :: Any              # (; key, ft, summary) for the Image perspective's plan
 end
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
@@ -363,6 +364,36 @@ end
 shell_pick_text() = _shell().picktext
 
 """
+    shell_ft_setup(nx, pixsize, mode) -> String
+
+Build the Fourier plan for this geometry and describe it, reusing the last one when nothing
+changed.
+
+Called whenever nx, the pixel size or the transform changes, so the readout beside the
+selector always describes the plan a Run would actually use. Building an NFFT plan is the
+expensive part of setting up a reconstruction, which is why it is keyed and not repeated.
+"""
+function shell_ft_setup(nx::Integer, pixsize::Real, mode::AbstractString)
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && (sh.ftcache = nothing; return "no dataset")
+    setup = ImagingSetup(; nx = Int(nx), pixsize = Float64(pixsize), mode = Symbol(mode))
+    try
+        ft, summary, rebuilt = ensure_ft!(sh.ftcache, e.data, setup)
+        sh.ftcache = (; key = (objectid(e.data), setup.nx, setup.pixsize, setup.mode),
+                        ft, summary)
+        rebuilt && console!(sh, "> setup_ft(data, $(setup.nx), $(setup.pixsize); " *
+                                "mode = \"$(mode)\")")
+        return summary
+    catch err
+        msg = "! plan failed: " * _cause(err)
+        console!(sh, msg)
+        sh.ftcache = nothing
+        return msg
+    end
+end
+
+"""
     shell_reconstruct(nx, pixsize, mode, startkind, v2, t3amp, t3phi, maxiter) -> String
 
 Run one image reconstruction on the current dataset and put the result on the canvas.
@@ -378,7 +409,9 @@ not repaint during it; the caller is expected to have said so before calling.
 function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
                            startkind::AbstractString,
                            v2::Bool, t3amp::Bool, t3phi::Bool, maxiter::Integer,
-                           regularizers::AbstractString = "")
+                           regularizers::AbstractString = "",
+                           startfwhm::Real = AUTO_FWHM, startseed::Integer = 1,
+                           from_previous::Bool = false)
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "no dataset loaded"
@@ -387,7 +420,8 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     all(iszero, weights) && return "no observables selected"
 
     setup = ImagingSetup(; nx = Int(nx), pixsize = Float64(pixsize),
-                           mode = Symbol(mode), startkind = Symbol(startkind))
+                           mode = Symbol(mode), startkind = Symbol(startkind),
+                           startfwhm = Float64(startfwhm), startseed = Int(startseed))
     regs = try
         parse_regularizers(regularizers)
     catch err
@@ -395,12 +429,25 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     end
     regtext = isempty(regs) ? "positivity only" :
               "regularizers = [" * join((string(r) for r in regs), ", ") * "]"
+    startdesc = from_previous ? "x_start = previous image" : "x_start = $(startkind)"
     console!(sh, "> reconstruct(x_start, data, ft; maxiter = $(Int(maxiter)))  " *
                  "# $(Int(nx))×$(Int(nx)) at $(round(Float64(pixsize); digits=4)) mas, " *
-                 regtext)
+                 "$startdesc, " * regtext)
+    # Continue from the last image rather than from a fresh start.
+    xprev = nothing
+    if from_previous
+        sh.imaging === nothing && return "no previous image to continue from"
+        xprev = sh.imaging.image
+        size(xprev, 1) == Int(nx) ||
+            return "the previous image is $(size(xprev,1))×$(size(xprev,2)), not $(Int(nx))×$(Int(nx))"
+    end
+
+    cached = sh.ftcache
+    ftkey  = (objectid(e.data), setup.nx, setup.pixsize, setup.mode)
+    ft     = (cached !== nothing && cached.key == ftkey) ? cached.ft : nothing
     r = try
         reconstruct_image(e.data, setup; weights, maxiter = Int(maxiter),
-                          regularizers = regs)
+                          regularizers = regs, ft, x_start = xprev)
     catch err
         msg = "! reconstruction failed: " * _cause(err)
         console!(sh, msg)
@@ -414,9 +461,26 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     # invariant under a global scaling, so an image fitted from them alone drifts away from
     # unit flux, and a user who does not know that reads the number as a bug.
     line = @sprintf("chi2r %.4g -> %.4g   flux %.4f   %d iter, %.1f s",
-                    r.chi2r_start, r.chi2r, r.flux, r.maxiter, r.seconds)
+                    chi2r_start(r), chi2r(r), r.flux, r.maxiter, r.seconds)
     console!(sh, "  " * line)
+    isempty(r.breakdown) ||
+        console!(sh, "  " * join((@sprintf("%s %.3f%s", b.name, b.chi2r, b.used ? "" : " (unused)")
+                                  for b in r.breakdown), "   "))
     return line
+end
+
+"""
+    shell_chi2_breakdown() -> String
+
+The last run's reduced chi2 per observable, as `name\tchi2r\tn\tused` rows.
+
+Separate from the run so the panel can re-read it without re-running anything.
+"""
+function shell_chi2_breakdown()
+    r = _shell().imaging
+    r === nothing && return ""
+    return join((join((b.name, string(round(b.chi2r; digits = 4)), string(b.n),
+                       b.used ? "1" : "0"), "\t") for b in r.breakdown), "\n")
 end
 
 """

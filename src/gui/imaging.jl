@@ -11,6 +11,8 @@
 # Nothing here draws. As with `model.jl`, that is what lets it be tested against OITOOLS
 # rather than against a screenshot.
 
+using Random
+
 """
 What a reconstruction needs before it can start.
 
@@ -22,15 +24,26 @@ struct ImagingSetup
     nx        :: Int
     pixsize   :: Float64
     mode      :: Symbol        # :nfft or :dft
-    startkind :: Symbol        # :dirac, :gaussian or :fits
-    startfwhm :: Float64       # mas; 0 means "let gaussian_prior decide" (fov/5)
+    startkind :: Symbol        # :dirac, :gaussian, :random or :fits
+    startfwhm :: Float64       # mas; NEGATIVE means "choose it from the field of view"
     startpath :: String
+    startseed :: Int           # for :random, so a run can be repeated
 end
 
 ImagingSetup(; nx = 64, pixsize = 0.25, mode = :nfft,
-               startkind = :gaussian, startfwhm = 0.0, startpath = "") =
+               startkind = :gaussian, startfwhm = AUTO_FWHM, startpath = "",
+               startseed = 1) =
     ImagingSetup(nx, Float64(pixsize), Symbol(mode), Symbol(startkind),
-                 Float64(startfwhm), String(startpath))
+                 Float64(startfwhm), String(startpath), Int(startseed))
+
+"""
+Sentinel for "work the starting width out from the field of view".
+
+Negative, not zero. Zero is a width — a degenerate one, but a reader has no way to tell it from
+a value someone meant, and a control showing `0` invites being left alone as though it said
+something. A negative FWHM cannot be mistaken for a width anyone intended.
+"""
+const AUTO_FWHM = -1.0
 
 """
     imaging_defaults(data; nx = 64) -> ImagingSetup
@@ -71,11 +84,22 @@ function start_image(setup::ImagingSetup, ft)
         m
     elseif setup.startkind === :gaussian
         # `gaussian2d(nx, nx, nx/6)`, which is what the shipped demos start from — a Gaussian
-        # of sigma nx/6 PIXELS, unit total flux. `startfwhm` overrides it in mas for a caller
-        # who wants a specific width.
+        # of sigma nx/6 PIXELS, unit total flux. A positive `startfwhm` overrides it in mas.
         setup.startfwhm > 0 ?
             reshape(gaussian_prior(nx, setup.pixsize; fwhm_mas = setup.startfwhm), nx, nx) :
             Float64.(gaussian2d(nx, nx, nx / 6))
+    elseif setup.startkind === :random
+        # Noise, for asking whether the answer depends on where you started — the check a
+        # smooth start cannot make.
+        #
+        # Uniform, not Gaussian. The optimiser is bounded below by zero, so the start has to be
+        # non-negative; `rand` already is, whereas a Gaussian would need folding, and folding
+        # it piles half the pixels up against the bound the optimiser is about to work against.
+        #
+        # Seeded, always. An unseeded start makes a reconstruction that cannot be repeated and
+        # an exported script that does not reproduce its own figure.
+        m = rand(Random.Xoshiro(setup.startseed), Float64, nx, nx)
+        m ./ sum(m)
     elseif setup.startkind === :fits
         isfile(setup.startpath) || error("No starting image at '$(setup.startpath)'")
         m = Float64.(readfits(setup.startpath))
@@ -85,7 +109,8 @@ function start_image(setup::ImagingSetup, ft)
         s > 0 || error("The starting image sums to $s; it must carry positive flux")
         m ./ s
     else
-        error("Unknown starting image '$(setup.startkind)'; expected :dirac, :gaussian or :fits")
+        error("Unknown starting image '$(setup.startkind)'; " *
+              "expected :dirac, :gaussian, :random or :fits")
     end
     return to_ft_precision(x, ft)
 end
@@ -106,35 +131,133 @@ imaging_weights(; v2::Bool = true, t3amp::Bool = true, t3phi::Bool = true) =
     Float64[v2 ? 1.0 : 0.0, t3amp ? 1.0 : 0.0, t3phi ? 1.0 : 0.0]
 
 """
+    chi2_breakdown(image, ft, data, weights) -> Vector{NamedTuple}
+
+Reduced χ² per observable: `(; name, chi2, n, chi2r, used)`.
+
+Computed by asking the criterion itself, one observable at a time with a one-hot weight vector,
+rather than by re-deriving the residuals here. The breakdown does exist inside `_chi2_f`, but
+only as something it prints when `verb = true` — it returns the weighted sum alone — and a
+panel that recomputed it by hand would be free to drift away from what is actually being
+minimised.
+
+`used` records whether the observable was in the fit at all. An observable the user unticked
+still has a χ² worth seeing: it says how well the reconstruction predicts data it never saw.
+"""
+function chi2_breakdown(image, ft, data, weights = [1.0, 1.0, 1.0])
+    ds = data isa AbstractArray ? vec(data) : [data]
+    counts = (v2 = sum(d -> d.nv2, ds; init = 0),
+              t3amp = sum(d -> d.nt3amp, ds; init = 0),
+              t3phi = sum(d -> d.nt3phi, ds; init = 0))
+    labels = ("V²", "T3amp", "T3φ")
+    keys_  = (:v2, :t3amp, :t3phi)
+    out = NamedTuple[]
+    for i in 1:3
+        n = counts[keys_[i]]
+        n == 0 && continue
+        onehot = [j == i ? 1.0 : 0.0 for j in 1:3]
+        c2 = try
+            Float64(image_to_chi2(image, ft, data; weights = onehot, verb = false))
+        catch
+            NaN
+        end
+        push!(out, (; name = labels[i], chi2 = c2, n = n, chi2r = c2 / n,
+                      used = weights[i] > 0))
+    end
+    return out
+end
+
+"""
 What a finished run produced, and what it cost.
 
-`chi2r_start` is kept beside `chi2r` because a reduced χ² on its own says very little: what
-tells you the run did something is the two together. `flux` is the image sum, which is worth
+`image_to_chi2` returns the RAW χ², not a reduced one — the sum over every observable, with no
+division. Storing it under a name ending in `r` would be a quiet lie of the worst kind: on this
+dataset the raw number is 315 where the reduced one is 0.69, and 315 reads as a fit that failed
+completely. `chi2r` is a property here, computed against the points actually fitted.
+
+`ndof` counts data points and is NOT reduced by any parameter count — an image has as many
+parameters as pixels, so the usual correction is meaningless and pretending otherwise would be
+worse than omitting it.
+
+`chi2_start` is kept beside `chi2` because a χ² on its own says very little: what tells you the
+run did something is the two together. `flux` is the image sum, which is worth
 reporting precisely because nothing constrains it — V² and closure phase are both invariant
 under a global scaling, so a reconstruction from them alone is free to drift away from unit
 flux, and a user who does not know that reads the number as a bug.
 """
 struct ImagingResult
     image       :: Matrix{Float64}
-    chi2r       :: Float64
-    chi2r_start :: Float64
+    chi2        :: Float64          # raw, as image_to_chi2 returns it
+    chi2_start  :: Float64
+    ndof        :: Int              # valid points in the observables actually fitted
     flux        :: Float64
     maxiter     :: Int
     seconds     :: Float64
     setup       :: ImagingSetup
     weights     :: Vector{Float64}
+    breakdown   :: Vector{NamedTuple}   # reduced chi2 per observable
 end
+
+"Reduced χ², against the points actually fitted. `NaN` when nothing was."
+chi2r(r::ImagingResult) = r.ndof > 0 ? r.chi2 / r.ndof : NaN
+
+"Reduced χ² of the starting image, on the same footing."
+chi2r_start(r::ImagingResult) = r.ndof > 0 ? r.chi2_start / r.ndof : NaN
 
 function Base.show(io::IO, r::ImagingResult)
     print(io, "ImagingResult: ", r.setup.nx, "×", r.setup.nx, " at ",
           round(r.setup.pixsize; digits = 4), " mas  ",
-          "χ²ᵣ ", round(r.chi2r_start; digits = 2), " → ", round(r.chi2r; digits = 2),
+          "χ²ᵣ ", round(chi2r_start(r); digits = 3), " → ", round(chi2r(r); digits = 3),
           "  flux ", round(r.flux; digits = 4),
           "  (", r.maxiter, " iter, ", round(r.seconds; digits = 2), " s)")
 end
 
 """
-    reconstruct_image(data, setup; weights, maxiter, regularizers, verb) -> ImagingResult
+    ft_summary(ft, setup) -> String
+
+One line describing a Fourier plan set: mode, geometry, channels and uv points.
+
+`ft_info` prints and returns nothing, which suits the REPL and cannot fill a label. This is the
+same facts on one line, and it is worth showing: the plan is the thing that decides what the
+reconstruction can represent, and it is silently rebuilt whenever the geometry changes.
+"""
+function ft_summary(ft, setup::ImagingSetup)
+    nwav, nepoch = size(ft)
+    nuv = try
+        c = ft[1]
+        c isa NFFTCell ? size(c.uv.k, 2) : size(c, 1)
+    catch
+        0
+    end
+    chans = nwav * nepoch
+    mode = uppercase(String(setup.mode))
+    parts = ["$mode  $(setup.nx)×$(setup.nx)  $(round(setup.pixsize; digits = 4)) mas",
+             "FOV $(round(fov(setup); digits = 2)) mas",
+             chans == 1 ? "1 channel" : "$chans channels",
+             "$nuv uv points"]
+    return join(parts, "  ·  ")
+end
+
+"""
+    ensure_ft!(cache, data, setup) -> (ft, summary, rebuilt)
+
+The plan for this geometry, building it only when the geometry actually changed.
+
+`cache` is whatever the last call returned, or `nothing`. Rebuilding an NFFT plan is the
+expensive part of setting a reconstruction up — it is why the geometry controls can be moved
+freely and only the final one costs anything.
+"""
+function ensure_ft!(cache, data, setup::ImagingSetup)
+    key = (objectid(data), setup.nx, setup.pixsize, setup.mode)
+    if cache !== nothing && cache.key == key
+        return (cache.ft, cache.summary, false)
+    end
+    ft = setup_ft(data, setup.nx, setup.pixsize; mode = String(setup.mode))
+    return (ft, ft_summary(ft, setup), true)
+end
+
+"""
+    reconstruct_image(data, setup; weights, maxiter, regularizers, ft, verb) -> ImagingResult
 
 Run one reconstruction and report what it did.
 
@@ -150,21 +273,40 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
                            weights      = imaging_weights(),
                            maxiter      ::Integer = 200,
                            regularizers = [],
+                           ft           = nothing,
+                           x_start      = nothing,
                            verb         ::Bool = false)
     regularizers = parse_regularizers(regularizers)
     all(iszero, weights) &&
         error("Every observable is switched off; there is nothing to fit")
 
-    ft = setup_ft(data, setup.nx, setup.pixsize; mode = String(setup.mode))
-    x0 = start_image(setup, ft)
+    # A plan built by the panel when the geometry changed is reused; nothing is cached here,
+    # since this function has no business owning state that outlives one call.
+    ft = ft === nothing ?
+         setup_ft(data, setup.nx, setup.pixsize; mode = String(setup.mode)) : ft
+    # A supplied image continues from where a previous run stopped, which is what makes
+    # "run from previous" more than a restart: VMLMB begins at that point rather than at a
+    # generic start, so a run can be extended instead of repeated.
+    x0 = if x_start === nothing
+        start_image(setup, ft)
+    else
+        size(x_start) == (setup.nx, setup.nx) ||
+            error("The previous image is $(size(x_start,1))×$(size(x_start,2)) but nx is " *
+                  "$(setup.nx); change nx back or start fresh")
+        to_ft_precision(Float64.(x_start), ft)
+    end
 
-    chi2r_start = image_to_chi2(x0, ft, data; weights, verb = false)
+    chi2_start = image_to_chi2(x0, ft, data; weights, verb = false)
     t = @elapsed x = reconstruct(x0, data, ft; weights, regularizers, maxiter, verb)
-    chi2r = image_to_chi2(x, ft, data; weights, verb = false)
+    chi2 = image_to_chi2(x, ft, data; weights, verb = false)
 
     img = Float64.(x)
-    return ImagingResult(img, chi2r, chi2r_start, sum(img), Int(maxiter), t,
-                         setup, Float64.(weights))
+    bd  = chi2_breakdown(x, ft, data, Float64.(weights))
+    # Only the observables that were actually in the criterion: dividing by points the fit
+    # never saw would flatter it.
+    ndof = sum(b -> b.used ? b.n : 0, bd; init = 0)
+    return ImagingResult(img, Float64(chi2), Float64(chi2_start), ndof, sum(img),
+                         Int(maxiter), t, setup, Float64.(weights), bd)
 end
 
 

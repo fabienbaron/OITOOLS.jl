@@ -46,7 +46,7 @@ export ParamRow, ParamMode, PARAM_FIXED, PARAM_FREE, PARAM_EXPR
 export model_rows, model_inspection, ComponentInfo, free_parameter_vector
 export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        start_image, reconstruct_image, observable_availability, observable_flags_string,
-       parse_regularizers
+       parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
        picker_kind, picker_would_overwrite, picker_matches
 export GLOBAL_COMPONENT
@@ -65,5 +65,66 @@ include(joinpath(GUIDIR, "plots.jl"))
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
 include(joinpath(GUIDIR, "shell.jl"))
 include(joinpath(GUIDIR, "window.jl"))        # gui(): builds the window and runs Qt
+
+# ── precompilation ───────────────────────────────────────────────────────────
+#
+# The core package's workload cannot reach any of this: these methods only exist once Makie and
+# Qt are loaded, so they are compiled in the user's session on first use — which is exactly
+# when a window is already open and every pause is visible.
+#
+# Only what runs headless is here. Building a Figure, an Axis and every plot on it is
+# scene-graph construction and needs no GL; rendering does, and nothing below renders. `gui()`
+# itself and anything touching QML are deliberately absent — they need a display.
+using PrecompileTools
+
+@setup_workload begin
+    _pcfile = joinpath(pkgdir(OITOOLS), "test", "gui", "data", "2004-data1.oifits")
+    @compile_workload begin
+        if isfile(_pcfile)
+            data = readoifits(_pcfile; verbose = false, warn = false)
+            d = data[1, 1]
+
+            # The redraw path: turning an OIdata into points and colours is what every plot
+            # change runs, and it is pure Julia.
+            for kind in (:uv, :v2, :t3phi)
+                canvas_data(d, kind; color = :baseline)
+            end
+            uv_point_labels(d)
+            observable_flags_string(data)
+
+            # The panels' own data layers.
+            imaging_defaults(data)
+
+            # The whole imaging path as the Run button takes it. Precompiling core's
+            # `reconstruct` is NOT enough: the call goes through this extension's
+            # `reconstruct_image`, and inference through that wrapper is its own
+            # specialisation — measured at 7.7 s on first use with only the core workload in
+            # place, against 0.2 s of actual work. Two iterations compile all of it.
+            _s = ImagingSetup(; nx = 16, pixsize = 0.5, startkind = :gaussian)
+            reconstruct_image(data, _s; maxiter = 2)
+            reconstruct_image(data, _s; maxiter = 2, regularizers = "centering,1e4")
+            start_image(ImagingSetup(; nx = 16, pixsize = 0.5, startkind = :dirac),
+                        setup_ft(data, 16, 0.5))
+            parse_regularizers("centering,1e5;l1l2,1e7,1e-3")
+            md = Dict{String,Any}("s,ud" => 3.0, "s,f" => 1.0)
+            model_rows(md, ["s,ud"])
+            model_inspection(md)
+            picker_list(dirname(_pcfile), "*.oifits", false)
+            picker_places()
+
+            # The canvas itself. `build_canvas` creates one of every plot the shell can show,
+            # and that construction is a large part of the delay before the first window
+            # appears.
+            fig = Makie.Figure()
+            ax  = Makie.Axis(fig[1, 1])
+            style_axis!(ax)
+            c = build_canvas(fig, ax)
+            update_canvas!(c, d, :uv; color = :baseline)
+            update_canvas!(c, d, :v2; color = :wav)
+            show_image!(c, zeros(Float32, 8, 8), 0.3)
+            hide_image!(c)
+        end
+    end
+end
 
 end # module

@@ -59,9 +59,13 @@
         # positivity is VMLMB's lower bound, in force with no regulariser asking for it
         @test all(r.image .>= 0)
         # and the fit actually descended, by a lot
-        @test r.chi2r < r.chi2r_start
-        @test r.chi2r < r.chi2r_start / 100
-        @test isfinite(r.chi2r)
+        @test chi2r(r) < chi2r_start(r)
+        @test chi2r(r) < chi2r_start(r) / 100
+        @test isfinite(chi2r(r))
+        # `image_to_chi2` returns the RAW chi2; the reduced one divides by the points actually
+        # fitted. Confusing the two turns a good fit (0.7) into an apparent disaster (315).
+        @test r.chi2 ≈ chi2r(r) * r.ndof
+        @test r.ndof == sum(b -> b.used ? b.n : 0, r.breakdown)
         @test r.seconds > 0
         @test r.setup === s
         @test r.weights == [1.0, 1.0, 1.0]
@@ -73,8 +77,8 @@
         short = reconstruct_image(data, s; maxiter = 30)
         long  = reconstruct_image(data, s; maxiter = 150)
         # VMLMB is a descent method from the same start, so the longer run cannot end higher
-        @test long.chi2r <= short.chi2r * (1 + 1e-6)
-        @test long.chi2r_start ≈ short.chi2r_start
+        @test chi2r(long) <= chi2r(short) * (1 + 1e-6)
+        @test chi2r_start(long) ≈ chi2r_start(short)
     end
 
     @testset "switching an observable off changes the problem" begin
@@ -85,8 +89,10 @@
         # Dropping the closure phases drops their contribution from chi2, so the two numbers
         # are not comparable — what is checked is that the weights reached the criterion at all.
         @test v2only.weights == [1.0, 0.0, 0.0]
-        @test v2only.chi2r != all3.chi2r
-        @test v2only.chi2r < v2only.chi2r_start
+        @test chi2r(v2only) != chi2r(all3)
+        @test chi2r(v2only) < chi2r_start(v2only)
+        # only the fitted observable counts toward ndof
+        @test v2only.ndof == only(filter(b -> b.name == "V²", v2only.breakdown)).n
     end
 
     @testset "no observables is refused rather than fitted" begin
@@ -106,5 +112,19 @@
         r = reconstruct_image(data, s; maxiter = 60)
         @test r.flux ≈ sum(r.image)
         @test r.flux > 0
+    end
+
+    @testset "the breakdown says which observable is fitted and which is predicted" begin
+        # One aggregate number cannot say that a V²-only fit leaves the closure phases wild,
+        # and that is exactly the thing worth seeing.
+        s = ImagingSetup(; nx = 32, pixsize = 0.35)
+        r = reconstruct_image(data, s; maxiter = 60,
+                              weights = imaging_weights(t3amp = false, t3phi = false))
+        by = Dict(b.name => b for b in r.breakdown)
+        @test by["V²"].used
+        @test !by["T3φ"].used
+        @test all(isfinite(b.chi2r) for b in r.breakdown)
+        # the fitted one is fitted; the unfitted one is merely predicted, and much worse
+        @test by["V²"].chi2r < by["T3φ"].chi2r
     end
 end

@@ -44,7 +44,8 @@ Item {
     // Gaussian start on the same data reaches chi2r 312 with the flux near 1.
     property string startImage: "gaussian"                      // dirac | gaussian | fits
     property string startImagePath: ""
-    property real   startFwhm: 0                                // mas; 0 ⇒ fov/5, gaussian_prior's default
+    property real   startFwhm: -1                               // mas; negative ⇒ chosen from the FOV
+    property int    startSeed: 1                                // for the random start
 
     // ── what the file actually contains (§1.8) ────────────────────────────────
     //
@@ -112,16 +113,6 @@ Item {
 
     // Positivity is a bound, not a term in the objective, and the reason it is unarguable
     // differs by engine — hiding it in the regulariser list would misrepresent both facts.
-    readonly property bool positivity: true
-    readonly property string positivityNote:
-          isSqueeze
-            ? "exact by construction: the image is a bag of flux quanta, so total flux is conserved too"
-        : engine === "bsmem"
-            ? "structural: the entropy term is undefined for a negative pixel"
-        : engine === "vi"
-            ? "structural: the sky model is exponentiated"
-            : "VMLMB's lower = 0 bound, not a regulariser"
-
     // ── regularisation state, one block per engine shape (§5.3) ───────────────
     //
     // reconstruct() and reconstruct_hybrid() take ["name", μ, extra...] specs, so they share
@@ -338,14 +329,7 @@ Item {
         }
     }
 
-    // ── L-curve (§5.6) ────────────────────────────────────────────────────────
-    property string lcurveReg: "tv"
-    property real   lcurveMuMin: 1.0e-2
-    property real   lcurveMuMax: 1.0e3
-    property int    lcurveSteps: 12
-    property bool   lcurveHasResult: false
-    property real   lcurveElbowMu: 0
-    property int    lcurveSelected: -1
+
 
     // ── observable boxes follow the file, not the user's last session ─────────
     //
@@ -392,13 +376,58 @@ Item {
         return out.join(";")
     }
 
+    // ── the Fourier plan ─────────────────────────────────────────────────────
+    //
+    // Rebuilt whenever nx, the pixel size or the transform changes, because those three ARE
+    // the plan — a run with a stale one would transform against a geometry the panel no longer
+    // shows. Debounced: building an NFFT plan is the expensive part of setting a
+    // reconstruction up, and a spin box emits a value per click.
+    property string planText: "plan: —"
+
+    function refreshPlan() { planTimer.restart() }
+
+    Timer {
+        id: planTimer
+        interval: 400; repeat: false
+        onTriggered: {
+            root.planText = Julia.shell_ft_setup(root.nx, root.pixsize, root.ftMode)
+            root.consoleChanged()
+        }
+    }
+
+    onNxChanged:      refreshPlan()
+    onPixsizeChanged: refreshPlan()
+    onFtModeChanged:  refreshPlan()
+
+    // ── per-observable reduced chi2 ──────────────────────────────────────────
+    //
+    // One number for the whole fit hides which observable is being fitted and which is being
+    // sacrificed, and that is usually the question. An unticked observable still gets a row:
+    // its chi2 says how well the image predicts data it never saw.
+    ListModel { id: breakdownModel }
+
+    function refreshBreakdown() {
+        breakdownModel.clear()
+        var rows = Julia.shell_chi2_breakdown()
+        if (rows.length === 0) return
+        var lines = rows.split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length === 4)
+                breakdownModel.append({ obs: f[0], chi2r: f[1], npts: f[2], used: f[3] === "1" })
+        }
+    }
+
     // Raised when Julia has written to the shared console and the window should re-read it.
     signal consoleChanged()
 
-    function startRun() {
+    property bool _continueRun: false
+
+    function startRun(fromPrevious) {
         if (!canRun) return
+        _continueRun = fromPrevious === true
         running = true
-        statusText = "reconstructing…"
+        statusText = _continueRun ? "continuing…" : "reconstructing…"
         runTimer.restart()
     }
 
@@ -410,9 +439,12 @@ Item {
                                                root.startImage,
                                                root.useV2, root.useT3amp, root.useT3phi,
                                                root.vmlmbMaxiter,
-                                               root.regulariserSpec())
+                                               root.regulariserSpec(),
+                                               root.startFwhm, root.startSeed,
+                                               root._continueRun)
             root.statusText = line
             root.hasResult = line.indexOf("chi2r") >= 0
+            root.refreshBreakdown()
             root.running = false
             // The console pane belongs to the window, and the reconstruction wrote to it.
             root.consoleChanged()
@@ -491,9 +523,9 @@ Item {
 
     ListModel {
         id: engineModel
-        ListElement { key: "vmlmb";     name: "VMLMB + regularisers";                  entry: "reconstruct" }
-        ListElement { key: "bsmem";     name: "MaxEnt / BSMEM";                        entry: "reconstruct_bsmem" }
-        ListElement { key: "bsdmm";     name: "ADMM / BSDMM";                          entry: "reconstruct_bsdmm" }
+        ListElement { key: "vmlmb";     name: "VMLMB";                                 entry: "reconstruct" }
+        ListElement { key: "bsmem";     name: "BSMEM";                                 entry: "reconstruct_bsmem" }
+        ListElement { key: "bsdmm";     name: "BSDMM";                                 entry: "reconstruct_bsdmm" }
         ListElement { key: "sparco";    name: "SPARCO hybrid";                         entry: "reconstruct_hybrid" }
         // SQUEEZE appears three times because the three are used as three different
         // engines, not as one engine with settings: annealing and tempering are separate
@@ -548,7 +580,7 @@ Item {
 
     FileDialog {
         id: squeezePriorDialog
-        title: "SQUEEZE prior image (FITS)"
+        title: "Squeeze prior image (FITS)"
         nameFilters: ["FITS images (*.fits *.fit)", "All files (*)"]
         // wire: Julia reads the FITS into the ["priorimage", λ] entry; zero pixels are a hard mask
         onAccepted: {
@@ -629,6 +661,9 @@ Item {
                     Button {
                         text: "−"
                         implicitWidth: dp(28)
+                        implicitHeight: dp(24)
+                        ToolTip.visible: hovered
+                        ToolTip.text: "remove this regulariser"
                         onClicked: regModel.remove(specRow.index)
                     }
                 }
@@ -638,14 +673,8 @@ Item {
                 Layout.fillWidth: true
                 spacing: dp(8)
                 Button {
-                    text: "Add regulariser"
+                    text: "+ regularizer"
                     onClicked: regModel.append({ "name": "tv", "mu": 1.0, "extra": 1.0e-8, "path": "" })
-                }
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: "spatial names act per channel; transspectral_* couple the channels"
-                    color: "#888"; font.pointSize: pt(baseFontPt - 2)
                 }
             }
         }
@@ -737,7 +766,10 @@ Item {
                             SpinBox {
                                 id: nxBox
                                 from: 16; to: 2048; stepSize: 16
-                                value: 128
+                                // Bound, not initialised: Julia pushes a data-driven nx after a
+                                // load, and a box that only took its value at construction
+                                // would show one number while the run used another.
+                                value: root.nx
                                 editable: true
                                 onValueModified: root.nx = value
                             }
@@ -752,7 +784,8 @@ Item {
                                 Layout.preferredWidth: dp(100)
                                 minimum: 1.0e-6
                                 value: root.pixsize
-                                // wire: Julia suggests auto_pixsize(data) here after a dataset loads
+                                // Julia pushes auto_pixsize(data) into root.pixsize after a
+                                // load; this follows it.
                                 onCommitted: (v) => {
                                     root.pixsize = v
                                     // wire: if scaleRegs, Julia calls scale_regularizers(regs, pixsize)
@@ -774,14 +807,20 @@ Item {
                                 Layout.preferredWidth: dp(100)
                                 model: ["nfft", "dft"]
                                 onActivated: root.ftMode = currentText
-                                // wire: setup_ft(data, nx, pixsize; mode = ftMode)
                             }
                             Label {
-                                text: "plan: —"
-                                color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                // What a Run would actually transform with. The plan is what
+                                // decides the representable field of view and resolution, and
+                                // it is rebuilt silently whenever the geometry changes — so it
+                                // is worth stating rather than leaving to be inferred.
+                                text: root.planText
+                                color: root.planText.indexOf("!") === 0 ? "#c62828" : "#888"
+                                font.pointSize: pt(baseFontPt - 2)
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
-                                // wire: Julia fills this from the plan matrix's Base.display
+                                ToolTip.visible: planHover.hovered && root.planText.length > 0
+                                ToolTip.text: root.planText
+                                HoverHandler { id: planHover }
                                 //       (mode / size / channels / uv counts)
                             }
 
@@ -789,8 +828,12 @@ Item {
                             ComboBox {
                                 id: startBox
                                 Layout.preferredWidth: dp(100)
-                                model: ["Dirac", "Gaussian", "FITS file"]
-                                onActivated: root.startImage = ["dirac", "gaussian", "fits"][currentIndex]
+                                model: ["Dirac", "Gaussian", "Random", "FITS file"]
+                                currentIndex: root.startImage === "gaussian" ? 1
+                                            : root.startImage === "random"   ? 2
+                                            : root.startImage === "fits"     ? 3 : 0
+                                onActivated: root.startImage =
+                                    ["dirac", "gaussian", "random", "fits"][currentIndex]
                             }
                             RowLayout {
                                 spacing: dp(6)
@@ -798,15 +841,33 @@ Item {
                                 NumField {
                                     Layout.preferredWidth: dp(80)
                                     visible: root.startImage === "gaussian"
-                                    minimum: 0
+                                    // Negative is the "choose it for me" sentinel. Zero is not:
+                                    // zero IS a width, and a field showing 0 reads as a value
+                                    // someone meant rather than as one nobody set.
+                                    minimum: -1
                                     value: root.startFwhm
                                     onCommitted: (v) => root.startFwhm = v
-                                    // wire: gaussian_prior(nx, pixsize; fwhm_mas), 0 ⇒ fov/5
                                 }
                                 Label {
                                     visible: root.startImage === "gaussian"
-                                    text: root.startFwhm > 0 ? "mas FWHM" : "mas FWHM (0 ⇒ FOV/5)"
+                                    text: root.startFwhm > 0 ? "mas FWHM" : "mas FWHM (−1 ⇒ from FOV)"
                                     color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                }
+                                // A random start answers "does the answer depend on where I
+                                // started", which a smooth one cannot. Its seed is part of the
+                                // reconstruction, not a detail: without it the run cannot be
+                                // repeated and an exported script does not reproduce its figure.
+                                Label {
+                                    visible: root.startImage === "random"
+                                    text: "seed"
+                                    color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                }
+                                SpinBox {
+                                    visible: root.startImage === "random"
+                                    Layout.preferredWidth: dp(90)
+                                    from: 0; to: 999999; editable: true
+                                    value: root.startSeed
+                                    onValueModified: root.startSeed = value
                                 }
                                 Button {
                                     visible: root.startImage === "fits"
@@ -947,21 +1008,6 @@ Item {
                                 elide: Text.ElideRight
                             }
 
-                            RowLayout {
-                                spacing: dp(6)
-                                Item {
-                                    implicitWidth: positivityBox.implicitWidth
-                                    implicitHeight: positivityBox.implicitHeight
-                                    CheckBox { id: positivityBox; text: "positivity"; checked: true; enabled: false }
-                                    ReasonTip { reason: "not a regulariser and not optional — " + root.positivityNote }
-                                }
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: root.positivityNote
-                                    wrapMode: Text.WordWrap
-                                    color: "#888"; font.pointSize: pt(baseFontPt - 2)
-                                }
-                            }
                         }
                     }
 
@@ -1146,7 +1192,7 @@ Item {
                                     Label {
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
-                                        text: "SQUEEZE regularisers act on the integer flux histogram: tv, entropy and " +
+                                        text: "Squeeze regularisers act on the integer flux histogram: tv, entropy and " +
                                               "compactness are spelled like the gradient engines' but are different maths, " +
                                               "and l0 exists here only because no gradient is taken."
                                         color: "#888"; font.pointSize: pt(baseFontPt - 2)
@@ -1426,9 +1472,22 @@ Item {
                             id: runButton
                             text: "Run"
                             enabled: root.canRun
-                            onClicked: root.startRun()
+                            onClicked: root.startRun(false)
                         }
                         ReasonTip { reason: root.blockedReason }
+                    }
+                    // Continue rather than restart: x_start is the image already on screen, so
+                    // more iterations can be added, or a regulariser introduced part-way,
+                    // without going back to a generic start.
+                    Button {
+                        id: continueButton
+                        text: "Run from previous"
+                        enabled: root.canRun && root.hasResult
+                        ToolTip.visible: hovered
+                        ToolTip.text: root.hasResult
+                                      ? "continue from the current image"
+                                      : "nothing reconstructed yet"
+                        onClicked: root.startRun(true)
                     }
                     Button {
                         id: stopButton
@@ -1662,95 +1721,63 @@ Item {
                 }
             }
 
-            // ── L-curve (§5.6) ────────────────────────────────────────────────
+            // ── how well each observable is fitted ────────────────────────────
+            //
+            // This is where the L-curve used to be. A μ sweep reruns the whole reconstruction
+            // per point and answers a question nobody has yet on a first pass; what a run
+            // actually raises is "which observable is being fitted, and which is being given
+            // up", and one aggregate chi2 cannot say.
             GroupBox {
-                title: "L-curve"
+                title: "Reduced χ² per observable"
                 Layout.fillWidth: true
 
                 ColumnLayout {
-                    anchors.fill: parent
                     spacing: dp(4)
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: dp(6)
+                    Repeater {
+                        model: breakdownModel
+                        delegate: RowLayout {
+                            id: bdRow
+                            required property var model
+                            Layout.fillWidth: true
+                            spacing: dp(8)
 
-                        Label { text: "sweep" }
-                        ComboBox {
-                            Layout.preferredWidth: dp(160)
-                            model: root.specNames
-                            currentIndex: root.specNames.indexOf(root.lcurveReg)
-                            enabled: root.engine === "vmlmb"
-                            onActivated: root.lcurveReg = root.specNames[currentIndex]
-                        }
-                        Label { text: "μ from" }
-                        NumField {
-                            Layout.preferredWidth: dp(80); minimum: 0
-                            enabled: root.engine === "vmlmb"
-                            value: root.lcurveMuMin
-                            onCommitted: (v) => root.lcurveMuMin = v
-                        }
-                        Label { text: "to" }
-                        NumField {
-                            Layout.preferredWidth: dp(80); minimum: 0
-                            enabled: root.engine === "vmlmb"
-                            value: root.lcurveMuMax
-                            onCommitted: (v) => root.lcurveMuMax = v
-                        }
-                        Label { text: "points" }
-                        SpinBox {
-                            from: 3; to: 100; value: 12; editable: true
-                            enabled: root.engine === "vmlmb"
-                            onValueModified: root.lcurveSteps = value
-                        }
-                        Item {
-                            implicitWidth: lcurveButton.implicitWidth
-                            implicitHeight: lcurveButton.implicitHeight
-                            Button {
-                                id: lcurveButton
-                                text: "Compute"
-                                enabled: root.engine === "vmlmb" && !root.running && root.blockedReason === ""
-                                // wire: lcurve(x_start, data, ft, lcurveReg, μ range) — it returns
-                                //       every intermediate image, so nothing needs recomputing on click
-                                onClicked: { }
+                            Label {
+                                text: bdRow.model.obs
+                                Layout.preferredWidth: dp(70)
+                                font.bold: true
+                                color: bdRow.model.used ? "#222" : "#999"
                             }
-                            ReasonTip {
-                                reason: root.engine !== "vmlmb"
-                                        ? "the sweep reruns the VMLMB engine, so it is offered only for that engine"
-                                        : root.blockedReason
+                            Label {
+                                text: bdRow.model.chi2r
+                                Layout.preferredWidth: dp(90)
+                                horizontalAlignment: Text.AlignRight
+                                // A reduced chi2 near 1 is the fit the error bars describe;
+                                // far above means unfitted, far below means overfitted.
+                                color: !bdRow.model.used ? "#999"
+                                     : Math.abs(parseFloat(bdRow.model.chi2r) - 1) < 0.5 ? "#2e7d32"
+                                     : parseFloat(bdRow.model.chi2r) > 5 ? "#c62828" : "#b06000"
                             }
+                            Label {
+                                text: bdRow.model.npts + " pts"
+                                color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                Layout.preferredWidth: dp(80)
+                            }
+                            Label {
+                                // An unticked observable was not fitted, so its chi2 is a
+                                // prediction rather than a fit — worth saying, not hiding.
+                                visible: !bdRow.model.used
+                                text: "not fitted — predicted"
+                                color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                            }
+                            Item { Layout.fillWidth: true }
                         }
-                        Item { Layout.fillWidth: true }
-                    }
-
-                    Rectangle {
-                        id: lcurveMount
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: dp(140)
-                        color: "#f4f4f4"
-                        border.color: "#ddd"
-
-                        Label {
-                            anchors.centerIn: parent
-                            color: "#888"
-                            horizontalAlignment: Text.AlignHCenter
-                            text: root.lcurveHasResult
-                                  ? "click a point to load that image"
-                                  : "χ²r against regulariser value, once the sweep has run"
-                        }
-                        // wire: the L-curve canvas is mounted here; clicking point i sets
-                        //       lcurveSelected and shows lcurve's images[i]
                     }
 
                     Label {
-                        Layout.fillWidth: true
-                        text: root.lcurveElbowMu > 0
-                              ? "lcurve_elbow suggests μ = " + root.fmt(root.lcurveElbowMu, 4)
-                              : "no elbow yet"
-                        color: root.lcurveElbowMu > 0 ? "#2e7d32" : "#888"
-                        font.pointSize: pt(baseFontPt - 2)
-                        // wire: lcurve_elbow() marks the suggested μ; a button here would push it
-                        //       into the selected regulariser row
+                        visible: breakdownModel.count === 0
+                        text: "run a reconstruction to see this"
+                        color: "#888"; font.pointSize: pt(baseFontPt - 2)
                     }
                 }
             }

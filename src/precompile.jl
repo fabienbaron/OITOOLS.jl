@@ -5,6 +5,9 @@
 #     with workload         25.1 s        57 MB          2.9-3.3 s            1.33 s
 #     workload skipped       4.5 s       5.4 MB           2.87 s             29.7 s
 #
+# `reconstruct` and `fit_model` were added afterwards: they are what the GUI's Run buttons
+# call, and neither is reached by the chi2 entry points above. See the notes beside each.
+#
 # So it costs ~20 s once per precompile and saves ~28 s in every fresh session that touches
 # the image reconstruction path, with no penalty to load time. Do not delete it to make
 # `Pkg.precompile` look faster; if it is in the way while iterating on src/, switch it off
@@ -33,10 +36,37 @@
         g4d = zero(x4d)
         image_to_chi2_fg(x4d, g4d, ft, data, verb=false)
 
+        # The reconstruction driver itself. `image_to_chi2_fg` above is NOT the same code:
+        # `reconstruct` wraps it in `crit_fg` (which folds in the regularisers) and hands that
+        # to OptimPackNextGen's VMLMB, and neither is reached by any call above. Measured from
+        # the GUI, the first Run spent one to two MINUTES compiling this before ten seconds of
+        # actual work. Two iterations are enough: the cost is compilation, not iteration.
+        reconstruct(x4d, data, ft; maxiter=2, verb=false)
+        # …and once more with a regulariser, since the regularised criterion is a separate
+        # specialisation and the panel offers it in the same breath as the plain one.
+        reconstruct(x4d, data, ft; maxiter=2, verb=false,
+                    regularizers=[["centering", 1e4]])
+
+        # The MONOCHROMATIC read, which is a different branch from the polychromatic one above
+        # and is what the GUI takes for an ordinary file. Cheap, and it is the very first thing
+        # any session does.
+        mono = joinpath(@__DIR__, "..", "demos", "data", "2004-data1.oifits")
+        if isfile(mono)
+            dmono = readoifits(mono; verbose=false, warn=false)
+            ftm = setup_ft(dmono, 32, 0.3)
+            image_to_chi2(gaussian2d(32, 32, 32 ÷ 6), ftm, dmono, verb=false)
+        end
+
         # Model fitting path
         model_dict = Dict{String,Any}("c1,ud" => 1.0, "c1,f" => 1.0)
         fm = parse_model(model_dict, ["c1,ud"])
         model_to_chi2(fm, [1.0], data[1,1], verb=false)
         model_to_obs(fm, [1.0], data[1,1])
+
+        # The NLopt objective and its gradient, which is what a model fit actually runs — and
+        # again not reached by `model_to_chi2` alone.
+        fit_model(model_dict, ["c1,ud"], data[1,1];
+                  lb=Dict("c1,ud"=>0.1), ub=Dict("c1,ud"=>10.0),
+                  maxeval=2, verb=false)
     end
 end
