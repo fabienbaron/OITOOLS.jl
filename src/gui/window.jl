@@ -11,7 +11,8 @@ function __init__()
                      shell_observables, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
                      shell_facilities, shell_telescopes, shell_gantt, shell_best_pops,
-                     shell_shift_date,
+                     shell_shift_date, shell_sim_source, shell_model_image,
+                     shell_fit_model, shell_fit_values, shell_fit_rows,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
                      # Julia for everything the toolkit would otherwise supply.
@@ -21,18 +22,31 @@ function __init__()
 end
 
 """
-Folder the file dialog opens in: next to the last dataset loaded if there is one, otherwise
-the bundled `data/` directory, otherwise the working directory. Opening in the filesystem
-root or the home directory is a small tax paid on every single open, and it makes automated
-clicking guesswork.
+Folder the file dialog opens in.
+
+Next to the last dataset loaded if there is one, then `\$OITOOLSGUI_DATA_DIR`, then the
+package's `demos/data`. That last is the user-facing data directory — it holds Alpha Cen A and
+B, the 2004 beauty-contest set, and `BC2026/`, whose files are the only ones shipped with
+differential phase and OI_FLUX and therefore the only ones on which the `diffphi` and `flux`
+views show anything.
+
+It used to open in `test/gui/data`, which is the automated tests' fixture directory: two files,
+neither with an OI_FLUX table. The env var exists so those tests can still pin it.
+
+Opening in the filesystem root or the home directory is a small tax paid on every single open,
+and it makes automated clicking guesswork.
 """
 function _initial_folder(session::Session)
     if !isempty(session.datasets)
         d = dirname(abspath(session.datasets[end].path))
         isdir(d) && return "file://" * d
     end
-    bundled = joinpath(pkgdir(OITOOLS), "test", "gui", "data")
-    isdir(bundled) && return "file://" * bundled
+    forced = get(ENV, "OITOOLSGUI_DATA_DIR", "")
+    isempty(forced) || (isdir(forced) && return "file://" * abspath(forced))
+    for sub in (joinpath("demos", "data"), joinpath("test", "gui", "data"))
+        p = joinpath(pkgdir(OITOOLS), sub)
+        isdir(p) && return "file://" * p
+    end
     return "file://" * pwd()
 end
 
@@ -103,8 +117,21 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(gax)
     gantt = build_gantt(gfig, gax)
 
-    sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline,
-                     "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt)
+    dfig = Makie.Figure()
+    dax  = Makie.Axis(dfig[1, 1])
+    style_axis!(dax)
+    delayplot = build_delay_plot(dfig, dax)
+
+    # And one for the model rendering. `build_canvas` gives an axis with a heatmap already on
+    # it, which is all this needs; `show_image!` then draws into it.
+    mfig = Makie.Figure()
+    max_ = Makie.Axis(mfig[1, 1]; title = "model")
+    style_axis!(max_)
+    modelcanvas = build_canvas(mfig, max_)
+
+    sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false,
+                     "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
+                     delayplot, modelcanvas, Any[])
     SHELL[] = sh
     install_interactions!(sh)
 
@@ -131,6 +158,8 @@ function OITOOLS.gui(session::Session = Session();
                 plot            = fig,
                 imagePlot       = imfig,
                 ganttPlot       = gfig,
+                delayPlot       = dfig,
+                modelPlot       = mfig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,

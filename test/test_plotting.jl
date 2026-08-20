@@ -609,8 +609,10 @@ let npng = count(f -> endswith(f, ".png"), readdir(_DIR))
         rects(ax) = [(PC.pyconvert(Float64, r.get_x()), PC.pyconvert(Float64, r.get_width()),
                       PC.pyconvert(Float64, r.get_y()), PC.pyconvert(Float64, r.get_height()))
                      for r in ax.patches]
-        # The observable/delay bar sits at y = 2 with height 2, so its rectangle starts at 1.
-        obsbars(ax) = [r for r in rects(ax) if isapprox(r[3], 1.0; atol = 1e-6)]
+        # The observable/delay bar is the one CENTRED on y = 2 — the target's own row. Selecting
+        # it by its bottom edge instead would depend on the bar height, and silently find
+        # nothing the moment that changes.
+        obsbars(ax) = [r for r in rects(ax) if isapprox(r[3] + r[4]/2, 2.0; atol = 1e-6)]
         width(ax)   = sum(r[2] for r in obsbars(ax); init = 0.0)
 
         obsdate = Dates.DateTime(2026, 8, 19)

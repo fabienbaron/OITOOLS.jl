@@ -131,3 +131,115 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false)
     Makie.ylims!(g.axis, 0, geo.ymax)
     return g
 end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The delay-cart plot (`chara_plan`), in Makie
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Same arrangement as the Gantt: `delay_plot_geometry` describes the chart and this draws it.
+#
+# Altitude gets a real second axis on the right, as the original's `twinx` does. Mapping it onto
+# the metre axis was tried first and is worse for one reason: a curve with no scale beside it
+# cannot be read. Degrees and metres share a plot here, so one of them has to say which is
+# which, and a labelled axis is how.
+
+"Distinct colours for the baselines. Beyond this many they repeat, which is honest: fifteen
+baselines cannot each have a memorable colour, and the legend is what names them."
+const DELAY_COLORS = [
+    Makie.RGBAf(0.12, 0.47, 0.71, 1), Makie.RGBAf(1.00, 0.50, 0.05, 1),
+    Makie.RGBAf(0.17, 0.63, 0.17, 1), Makie.RGBAf(0.84, 0.15, 0.16, 1),
+    Makie.RGBAf(0.58, 0.40, 0.74, 1), Makie.RGBAf(0.55, 0.34, 0.29, 1),
+    Makie.RGBAf(0.89, 0.47, 0.76, 1), Makie.RGBAf(0.50, 0.50, 0.50, 1),
+    Makie.RGBAf(0.74, 0.74, 0.13, 1), Makie.RGBAf(0.09, 0.75, 0.81, 1),
+]
+
+"How many baselines the plot can draw. Six telescopes give fifteen, which is the practical cap."
+const MAX_BASELINES = 15
+
+"""
+    build_delay_plot(figure, axis) -> NamedTuple
+
+Every plot the delay chart can need, created before the window exists.
+
+A fixed pool of `MAX_BASELINES` curves, hidden until used: the count changes with the array,
+and creating a line per baseline on demand is what allocates GL buffers with no context bound.
+"""
+function build_delay_plot(fig, ax)
+    curves = [Makie.Observable(Makie.Point2f[]) for _ in 1:MAX_BASELINES]
+    lines  = [Makie.lines!(ax, curves[i];
+                           color = DELAY_COLORS[mod1(i, length(DELAY_COLORS))],
+                           visible = false, linewidth = 1.5) for i in 1:MAX_BASELINES]
+
+    limitpts = Makie.Observable(Makie.Point2f[])
+    Makie.lines!(ax, limitpts; color = (:gray, 0.6), linestyle = :dash, linewidth = 1.5)
+
+    # The altitude axis: same cell, ticks on the right, x linked so the two never drift apart.
+    ax2 = Makie.Axis(fig[1, 1]; yaxisposition = :right, ylabel = "altitude (°)",
+                     ygridvisible = false, xgridvisible = false)
+    Makie.hidespines!(ax2)
+    Makie.hidexdecorations!(ax2)
+    Makie.linkxaxes!(ax, ax2)
+    Makie.ylims!(ax2, -5, 90)
+
+    altpts = Makie.Observable(Makie.Point2f[])
+    Makie.lines!(ax2, altpts; color = :black, linestyle = :dot, linewidth = 1.5)
+    ellim = Makie.Observable(Makie.Point2f[])
+    Makie.lines!(ax2, ellim; color = (:red, 0.6), linewidth = 1.5)
+
+    fs = Float32(9 * live_plot_scale())
+    legpos = Makie.Observable(Makie.Point2f[]); legtxt = Makie.Observable(String[])
+    legcol = Makie.Observable(Makie.RGBAf[])
+    Makie.scatter!(ax, legpos; color = legcol, marker = :rect, markersize = fs)
+    Makie.text!(ax, legpos; text = legtxt, align = (:left, :center), fontsize = fs,
+                offset = (fs, 0))
+
+    ax.xlabel = "LST (h)"
+    ax.ylabel = "delay cart position (m)"
+    return (; figure = fig, axis = ax, altaxis = ax2, curves, lines, limitpts, altpts, ellim,
+              legpos, legtxt, legcol)
+end
+
+"""
+    update_delay_plot!(d, plan)
+
+Draw one night's delay carts. Curves beyond this array's baseline count are hidden, not removed.
+"""
+function update_delay_plot!(d, p::NightPlan)
+    geo = delay_plot_geometry(p)
+    n = min(length(geo.curves), MAX_BASELINES)
+
+    for i in 1:MAX_BASELINES
+        if i <= n
+            c = geo.curves[i]
+            d.curves[i][] = [Makie.Point2f(c.x[k], c.y[k]) for k in eachindex(c.x)]
+            d.lines[i].visible[] = true
+        else
+            d.lines[i].visible[] = false
+        end
+    end
+
+    x0, x1 = geo.xlim
+    # Both limit lines as one polyline with a NaN break, so the pair costs one plot not two.
+    d.limitpts[] = [Makie.Point2f(x0, geo.limit), Makie.Point2f(x1, geo.limit),
+                    Makie.Point2f(NaN, NaN),
+                    Makie.Point2f(x0, -geo.limit), Makie.Point2f(x1, -geo.limit)]
+
+    # Altitude in DEGREES on its own axis, so the dotted curve can actually be read off.
+    lo, hi = geo.ylim
+    d.altpts[] = [Makie.Point2f(geo.alt.x[k], geo.alt.y[k]) for k in eachindex(geo.alt.x)]
+    d.ellim[]  = [Makie.Point2f(x0, geo.alt_limit), Makie.Point2f(x1, geo.alt_limit)]
+    Makie.ylims!(d.altaxis, geo.altlim[1], geo.altlim[2])
+
+    ytop = hi - 0.06 * (hi - lo)
+    d.legpos[] = [Makie.Point2f(x0 + 0.02 * (x1 - x0), ytop - 0.055 * (hi - lo) * (k - 1))
+                  for k in 1:n]
+    d.legtxt[] = [geo.curves[k].name for k in 1:n]
+    d.legcol[] = [DELAY_COLORS[mod1(k, length(DELAY_COLORS))] for k in 1:n]
+
+    d.axis.title = geo.target * " — delay carts (limit ±" * string(round(geo.limit; digits = 1)) *
+                   " m, elevation limit " * string(round(Int, geo.alt_limit)) * "°)"
+    Makie.xlims!(d.axis, x0, x1)
+    Makie.ylims!(d.axis, lo, hi)
+    return d
+end

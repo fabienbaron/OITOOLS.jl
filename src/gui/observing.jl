@@ -45,6 +45,15 @@ One entry per telescope in the facility's own order, 1 for in and 0 for out.
 telescope_config(selected, all) = Int[(String(t) in String.(selected)) ? 1 : 0 for t in all]
 
 """
+Height of a target's own bar, in the chart's 0–10 row units.
+
+Thinner than the constraint rows are tall. At 2.0 the bar was a fifth of the whole chart and
+crowded the az/alt annotations sitting just above and below it; 1.2 leaves them clear while
+keeping it the most prominent row, which it should be — it is the answer.
+"""
+const TARGET_BAR_HEIGHT = 1.2
+
+"""
 Lowest elevation worth observing at, in degrees.
 
 25 rather than the library's 30: it is what ASPRO defaults to, and the last five degrees are a
@@ -230,7 +239,11 @@ function baseline_delay_windows(facility, dec::Real, ha::AbstractVector, config,
         dmax = min(dlens[r.baseline_stations[1, b]], dlens[r.baseline_stations[2, b]])
         good = [t for t in axes(r.delay_carts, 2)
                 if -dmax <= r.delay_carts[b, t] <= dmax]
-        push!(out, (; name = String(r.baseline_names[b]), good))
+        # The cart position itself, not just whether it is inside: the Gantt answers "in delay
+        # or not", and the delay plot answers "by how much" — a baseline running at 44 m of a
+        # 45.7 m limit is feasible and about to stop being so.
+        push!(out, (; name = String(r.baseline_names[b]),
+                      good, carts = Float64.(r.delay_carts[b, :]), limit = Float64(dmax)))
     end
     return out
 end
@@ -377,7 +390,7 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     end
 
     if !isempty(show_idx)
-        add!(show_idx, 2.0, 2.0, detailed ? "green" : "blue", lbl)
+        add!(show_idx, 2.0, TARGET_BAR_HEIGHT, detailed ? "green" : "blue", lbl)
         # Every run is annotated, not just the outermost pair: each is one observing block, and
         # its own start and end times with their az/alt are what goes on a schedule.
         for (i0, i1) in index_runs(show_idx)
@@ -409,4 +422,110 @@ function _hhmm(h::Real)
     # block whose end falls past the half-minute.
     mm = floor(Int, (t - hh) * 60)
     return string(mod(hh, 24), ":", mm)
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Delay-cart geometry (the `chara_plan` view)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    delay_plot_geometry(plan) -> (; curves, limit, alt, xlim, ylim, altlim, target)
+
+The delay-cart chart as data: one curve per baseline, the ±limit lines, and the altitude trace.
+
+Where the Gantt reduces each baseline to in-or-out, this keeps the number. That is the
+difference between "you can observe" and "you can observe, with 1.7 m of cart to spare", and
+only the second tells you whether a small change of POP or array would help.
+
+`alt` is carried on its own scale — the original draws it on a twin axis — so the renderer
+maps it rather than mixing metres and degrees on one axis.
+"""
+function delay_plot_geometry(p::NightPlan)
+    lst = unwrap_lst(p.lst)
+    curves = [(; name = b.name, x = lst, y = b.carts) for b in p.baselines]
+    limit  = isempty(p.baselines) ? 45.7 : maximum(b.limit for b in p.baselines)
+
+    ymax = isempty(curves) ? limit :
+           max(limit, maximum(maximum(abs, c.y) for c in curves)) * 1.05
+    xlim = isempty(lst) ? (0.0, 24.0) : (minimum(lst), maximum(lst))
+
+    return (; curves, limit, alt = (; x = lst, y = Float64.(p.alt)),
+              xlim, ylim = (-ymax, ymax), altlim = (-5.0, 90.0),
+              alt_limit = p.alt_limit, alt_max = p.alt_max, target = p.name)
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# What a simulation is OF
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `simulate` needs a sky, and it takes one of two kinds:
+#
+#     image      = a FITS path or an array — 2-D is grey, 3-D is one plane per channel
+#     flat_model = a compiled model, plus `flat_params`, its current values
+#
+# Those are genuinely different inputs, not one input with a flag, and the panel has to say
+# which it holds before it can say whether Simulate is possible at all. Validating here rather
+# than at the call means a wrong file is reported when it is chosen, not after an observation
+# has been computed.
+
+"""
+    simulate_source_info(kind, path) -> (; ok, kind, summary, ndims, nx, nwav, detail)
+
+Describe the sky a simulation would use, and whether it is usable.
+
+`kind` is `"image"`, `"cube"` or `"model"`. For the two image kinds `path` is a FITS file; for
+`"model"` it is a TOML model file (see [`read_model_file`](@ref)) — or empty, meaning the model
+currently held by the Modeling perspective.
+
+`ok = false` comes with a `summary` saying why, which is the whole point: "3-D file chosen as a
+grey image" is a mistake worth catching before it produces an OIFITS nobody can explain.
+"""
+function simulate_source_info(kind::AbstractString, path::AbstractString = "")
+    k = lowercase(strip(String(kind)))
+    p = String(path)
+
+    no(msg) = (; ok = false, kind = k, summary = msg, ndims = 0, nx = 0, nwav = 0, detail = "")
+
+    if k == "model"
+        isempty(p) && return (; ok = true, kind = k,
+                                summary = "the model held by the Modeling perspective",
+                                ndims = 0, nx = 0, nwav = 0, detail = "")
+        isfile(p) || return no("no model file at '$p'")
+        m = try
+            read_model_file(p)
+        catch err
+            return no("could not read '$(basename(p))': " * sprint(showerror, err))
+        end
+        ncomp = length(OITOOLS._component_names(m.model))
+        return (; ok = true, kind = k,
+                  summary = "$(basename(p)): $ncomp component(s), $(length(m.free)) free",
+                  ndims = 0, nx = 0, nwav = 0,
+                  detail = join(sort(collect(keys(m.model))), ", "))
+    end
+
+    isempty(p) && return no("no file chosen")
+    isfile(p)  || return no("no file at '$p'")
+    img = try
+        readfits(p)
+    catch err
+        return no("could not read '$(basename(p))': " * sprint(showerror, err))
+    end
+
+    nd = ndims(img)
+    if k == "image"
+        nd == 2 || return no("'$(basename(p))' is $(nd)-D; a grey image must be 2-D " *
+                             (nd == 3 ? "— choose Image cube instead" : ""))
+        return (; ok = true, kind = k,
+                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) grey",
+                  ndims = 2, nx = size(img, 1), nwav = 1, detail = "")
+    elseif k == "cube"
+        nd == 3 || return no("'$(basename(p))' is $(nd)-D; a cube must be 3-D " *
+                             (nd == 2 ? "— choose Image instead" : ""))
+        return (; ok = true, kind = k,
+                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) × $(size(img,3)) channels",
+                  ndims = 3, nx = size(img, 1), nwav = size(img, 3), detail = "")
+    end
+    return no("unknown source '$kind'; expected image, cube or model")
 end

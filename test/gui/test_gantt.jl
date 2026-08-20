@@ -56,7 +56,7 @@
         bars = Dict(b.label => b for b in geo.bars if !isempty(b.label))
         @test haskey(bars, "Observable")
         @test bars["Observable"].y == 2.0
-        @test bars["Observable"].height == 2.0
+        @test bars["Observable"].height == TARGET_BAR_HEIGHT
         # no per-constraint rows at all in this mode
         @test !any(b -> b.y != 2.0, geo.bars)
         @test only(geo.rows)[2] == "Vega"

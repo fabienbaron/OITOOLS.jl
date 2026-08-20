@@ -44,13 +44,17 @@ export baseline_color_map, style_axis!, add_baseline_legend!
 export LiveCanvas, build_canvas, update_canvas!, canvas_data
 export ParamRow, ParamMode, PARAM_FIXED, PARAM_FREE, PARAM_EXPR
 export model_rows, model_inspection, ComponentInfo, free_parameter_vector
+export model_depends_on, render_model_image, model_image_cube
+export parse_model_lines, parse_free_lines, parse_constraint_lines, parse_prior_lines,
+       fitting_weights
 export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        start_image, reconstruct_image, observable_availability, observable_flags_string,
        parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start
 export NightPlan, config_catalog, facility_telescopes, telescope_config,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,
-       baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX
+       baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
+       delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
        picker_kind, picker_would_overwrite, picker_matches
 export GLOBAL_COMPONENT

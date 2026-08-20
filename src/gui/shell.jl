@@ -31,6 +31,7 @@ mutable struct ShellState
     current :: Int          # index into session.datasets, 0 = none
     kind    :: Symbol
     color   :: Symbol
+    logy    :: Bool             # log y axis, where the observable allows one
     status  :: String
     console :: Vector{String}   # what the bottom pane shows: commands and outcomes, in order
     canvas  :: Any              # LiveCanvas once the window exists; nothing when headless
@@ -39,6 +40,9 @@ mutable struct ShellState
     imcanvas:: Any              # the Image perspective's own LiveCanvas
     ftcache :: Any              # (; key, ft, summary) for the Image perspective's plan
     gantt   :: Any              # the Observe perspective's Gantt chart
+    delayplot :: Any            # ...and its delay-cart chart
+    modelcanvas :: Any          # the Model perspective's rendering canvas
+    fits    :: Vector{Any}      # completed fits, newest last
 end
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
@@ -93,11 +97,13 @@ function refresh_plot!(sh::ShellState = _shell())
         # Headless/offline: no window, so creating plots is free. This is the path the unit
         # tests take.
         sh.plotobj, sh.info = plot_into!(sh.figure, sh.axis, d, sh.kind;
-                                         color = sh.color, extras = sh.extras)
+                                         color = sh.color, logscale = sh.logy,
+                                         extras = sh.extras)
         Makie.autolimits!(sh.axis)
     else
         # Live: assignment only. See src/livecanvas.jl for why nothing may be created here.
-        sh.info    = update_canvas!(sh.canvas, d, sh.kind; color = sh.color)
+        sh.info    = update_canvas!(sh.canvas, d, sh.kind; color = sh.color,
+                                    logscale = sh.logy)
         sh.plotobj = sh.canvas.scatterplot
     end
     return string(e.name, " — ", basename(e.path), " — ", sh.kind,
@@ -194,20 +200,23 @@ function shell_open(path::AbstractString)
 end
 
 """Switch the view (`"uv"`, `"v2"`, `"t3phi"`, `"t3amp"`) and/or the colour encoding."""
-function shell_set_view(kind::AbstractString, color::AbstractString)
+function shell_set_view(kind::AbstractString, color::AbstractString, logy::Bool = false)
     sh = _shell()
-    old_kind, old_color = sh.kind, sh.color
+    old_kind, old_color, old_log = sh.kind, sh.color, sh.logy
     sh.kind  = Symbol(kind)
     sh.color = Symbol(color)
+    # Silently ignored where it would be wrong rather than refused: a phase takes both signs,
+    # and a log axis on one drops half the points without saying so.
+    sh.logy  = logy && Symbol(kind) in LOG_Y_KINDS
     # An exception thrown out of a QML callback terminates the application. Report it in the
     # status bar and roll back instead, so a dataset without T3 or a colour mode that does
     # not apply is an inconvenience rather than a crash.
-    console!(sh, "plot $(kind), coloured by $(color)"; kind = :cmd)
+    console!(sh, "plot $(kind), coloured by $(color)" * (sh.logy ? ", log y" : ""); kind = :cmd)
     try
         sh.status = refresh_plot!(sh)
         console!(sh, sh.status)
     catch err
-        sh.kind, sh.color = old_kind, old_color
+        sh.kind, sh.color, sh.logy = old_kind, old_color, old_log
         sh.status = "cannot plot $(kind)/$(color): " * _cause(err)
         console!(sh, sh.status; kind = :err)
         try; refresh_plot!(sh); catch; end
@@ -384,6 +393,164 @@ function shell_shift_date(iso::AbstractString, days::Integer, months::Integer)
     return string(d + Dates.Month(months) + Dates.Day(days))
 end
 
+"""
+    shell_fit_model(model_lines, free_lines, constraint_lines, prior_lines,
+                    v2, t3amp, t3phi, cvis, flux, diffvis, optimiser, maxeval) -> String
+
+Fit the panel's model to the current dataset. Returns a one-line summary.
+
+The optimiser choice decides more than speed. NLopt takes the constraints as real nonlinear
+constraints, so they hold at the optimum; Levenberg-Marquardt and nested sampling have no such
+machinery and apply a soft penalty that a steep χ² can overrule. That difference is stated in
+the console rather than left to be discovered.
+"""
+function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString,
+                         constraint_lines::AbstractString, prior_lines::AbstractString,
+                         v2::Bool, t3amp::Bool, t3phi::Bool,
+                         cvis::Bool, flux::Bool, diffvis::Bool,
+                         optimiser::AbstractString, maxeval::Integer)
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+
+    md = parse_model_lines(model_lines)
+    isempty(md) && return "! no model"
+    free, lb, ub = parse_free_lines(free_lines)
+    isempty(free) && return "! no free parameters"
+
+    cons = try
+        parse_constraint_lines(constraint_lines)
+    catch err
+        msg = "! constraint: " * _cause(err); console!(sh, msg); return msg
+    end
+    priors  = parse_prior_lines(prior_lines)
+    weights = fitting_weights(; v2, t3amp, t3phi, cvis, flux, diffvis)
+    all(iszero, weights) && return "! no observables selected"
+
+    data = e.data[1, 1]
+    opt  = String(optimiser)
+
+    isempty(cons) || console!(sh, "  constraints: " *
+        (startswith(opt, "L") && opt != "lsqfit" ?
+         "enforced by NLopt (they hold at the optimum)" :
+         "SOFT penalty with this fitter — a steep chi2 can overrule them"))
+
+    console!(sh, "> fit_model(model, $(free), data; " *
+                 "weights = $(weights), method = :$(opt))")
+    t = @elapsed r = try
+        if opt == "lsqfit"
+            fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons,
+                             maxIter = Int(maxeval))
+        elseif opt == "ultranest"
+            fit_model_ultranest(md, free, data; lb, ub, weights, constraints = cons,
+                                verb = false, cornerplot = false)
+        else
+            fit_model(md, free, data; lb, ub, weights, priors, constraints = cons,
+                      method = Symbol(opt), maxeval = Int(maxeval))
+        end
+    catch err
+        msg = "! fit failed: " * _cause(err); console!(sh, msg); return msg
+    end
+
+    push!(sh.fits, (; result = r, optimiser = opt, seconds = t, free))
+    for (k, v) in zip(r.list_free_params, r.x_opt)
+        console!(sh, @sprintf("    %-22s = %.6g", k, v))
+    end
+    line = @sprintf("chi2r %.4f   ndof %d   %d free   %.2f s",
+                    r.chi2r, r.ndof, length(free), t)
+    console!(sh, "  " * line)
+    return line
+end
+
+"The fitted values as `key=value` lines, so the table can adopt them."
+function shell_fit_values()
+    sh = _shell()
+    isempty(sh.fits) && return ""
+    r = last(sh.fits).result
+    return join((string(k, "=", v) for (k, v) in zip(r.list_free_params, r.x_opt)), "\n")
+end
+
+"""
+    shell_fit_rows() -> String
+
+Completed fits as `label\toptimiser\tchi2r\tndof\tnfree\taic\tbic` rows, newest first.
+
+AIC and BIC are computed here rather than read off `chi2r`, because `ndof` counts DATA POINTS
+and is not reduced by the free-parameter count — so a comparison that used it as a degrees-of-
+freedom would favour the larger model for the wrong reason.
+"""
+function shell_fit_rows()
+    sh = _shell()
+    rows = String[]
+    for (i, f) in enumerate(reverse(sh.fits))
+        r = f.result
+        k = length(f.free)
+        aic = r.chi2 + 2k
+        bic = r.chi2 + k * log(max(r.ndof, 1))
+        push!(rows, join((string("fit ", length(sh.fits) - i + 1), f.optimiser,
+                          string(round(r.chi2r; digits = 4)), string(r.ndof), string(k),
+                          string(round(aic; digits = 1)), string(round(bic; digits = 1))), "\t"))
+    end
+    return join(rows, "\n")
+end
+
+"""
+    shell_model_image(model_json, nx, pixsize, wl, mjd) -> String
+
+Render the current model and put it on the Model perspective's canvas.
+
+`model_json` is `key=value` pairs, one per line — the model dict as the panel holds it. A value
+that parses as a number is one; anything else is an expression, which is exactly the
+distinction the parser itself makes.
+
+`wl` in metres and `mjd` in days; either ≤ 0 means "not specified", which a model that does not
+reference them ignores anyway.
+"""
+function shell_model_image(model_json::AbstractString, nx::Integer, pixsize::Real,
+                           wl::Real, mjd::Real)
+    sh = _shell()
+    md = Dict{String,Any}()
+    for line in split(String(model_json), "\n")
+        isempty(strip(line)) && continue
+        i = findfirst('=', line)
+        i === nothing && continue
+        k = strip(line[1:i-1]); v = strip(line[nextind(line, i):end])
+        md[String(k)] = something(tryparse(Float64, v), String(v))
+    end
+    isempty(md) && return "! no model"
+
+    r = try
+        render_model_image(md, String[], Float64[];
+                           nx = Int(nx), pixsize = Float64(pixsize),
+                           wl  = wl  > 0 ? Float64(wl)  : nothing,
+                           mjd = mjd > 0 ? Float64(mjd) : nothing)
+    catch err
+        msg = "! render failed: " * _cause(err); console!(sh, msg); return msg
+    end
+
+    sh.modelcanvas === nothing || show_image!(sh.modelcanvas, r.image, r.pixsize)
+    console!(sh, "> model_to_image(model, x; nx = $(r.nx), pixsize = $(r.pixsize)" *
+                 (wl > 0 ? ", wl = $(wl)" : "") * ")")
+    dep = r.depends.wl || r.depends.mjd ? "" :
+          "   (this model uses neither \$WL nor \$MJD, so λ and MJD change nothing)"
+    line = "rendered $(r.nx)×$(r.nx), FOV $(round(r.fov; digits=2)) mas, flux $(round(r.flux; digits=4))" * dep
+    console!(sh, "  " * line)
+    return line
+end
+
+"""
+    shell_sim_source(kind, path) -> String
+
+Validate the sky a simulation would use: `"ok\t<summary>"` or `"bad\t<why>"`.
+
+Checked when the file is chosen rather than when Simulate is pressed, so a 3-D cube picked as a
+grey image is caught before an observation is computed from it.
+"""
+function shell_sim_source(kind::AbstractString, path::AbstractString)
+    i = simulate_source_info(String(kind), String(path))
+    return (i.ok ? "ok\t" : "bad\t") * i.summary
+end
+
 "Facilities on disk, newline-separated. CHARA first: it is the only one the delay-line and POP checks cover."
 function shell_facilities()
     c = config_catalog()
@@ -428,27 +595,73 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
     end
 
     sh.gantt === nothing || update_gantt!(sh.gantt, p; detailed)
+    # The delay chart is drawn from the same plan, so both views are always of one night.
+    sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p)
 
     h = observable_hours(p)
     console!(sh, "> night_plan(\"$(facility)\", \"$(name)\", $(round(Float64(ra); digits=4)), " *
                  "$(round(Float64(dec); digits=4)), DateTime(\"$(dateiso)\"))")
+
+    # Zero hours with the delay check on and no POPs searched is almost always the POPs, not
+    # the sky: an arbitrary configuration can close the night outright, and an empty chart with
+    # no explanation reads as a broken tool rather than an unsearched one.
+    why = if p.delay_applied && h == 0 && isempty(strip(String(pops)))
+        "  — POPs not searched; try Search POPs, or fewer telescopes"
+    elseif !p.delay_applied
+        "  (delay not checked)"
+    else
+        ""
+    end
     line = @sprintf("%s: %.2f h observable%s   moon %d%% lit",
-                    name, h, p.delay_applied ? "" : "  (delay not checked)",
-                    round(Int, 100 * p.moon_fli))
+                    name, h, why, round(Int, 100 * p.moon_fli))
     console!(sh, "  " * line)
     return line
 end
 
 "The best POP configurations for this array and declination, as `pop\tscore` rows."
 function shell_best_pops(facility::AbstractString, dec::Real, dateiso::AbstractString,
-                         ra::Real, telescopes::AbstractString)
-    date = try; DateTime(String(dateiso)); catch; return ""; end
-    f = read_facility_file(String(facility))
-    obs = night_observability(f, Float64(ra), Float64(dec), date)
-    tels = facility_telescopes(String(facility))
-    sel  = filter(!isempty, String.(split(String(telescopes))))
-    cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
-    return pop_rows(best_pops(f, Float64(dec), obs.ha, cfg; n = 5))
+                         ra::Real, telescopes::AbstractString, n::Integer = 5)
+    sh = SHELL[]
+    say(t) = sh === nothing ? nothing : console!(sh, t)
+    date = try
+        Dates.DateTime(String(dateiso))
+    catch
+        say("! POP search: '$(dateiso)' is not a date"); return ""
+    end
+    try
+        f = read_facility_file(String(facility))
+        obs = night_observability(f, Float64(ra), Float64(dec), date)
+        tels = facility_telescopes(String(facility))
+        sel  = filter(!isempty, String.(split(String(telescopes))))
+        cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
+        say("> best_pop(facility, $(round(Float64(dec); digits=4)), ha, $(cfg))")
+        res = best_pops(f, Float64(dec), obs.ha, cfg; n = Int(n))
+        if isempty(res)
+            say("  no POP configuration reaches this target with these telescopes")
+            return ""
+        end
+        say("  best: POPs $(join(res[1].pop, " ")) — $(res[1].score) steps")
+
+        # `pops \t score \t haRange` — the table promises an HA range, and it is worth the
+        # extra in_delay per candidate (microseconds): a configuration is chosen for WHEN it
+        # works, not only for how long.
+        rows = String[]
+        for r in res
+            span = try
+                g = in_delay(f, Float64(dec), obs.ha, cfg, Int.(r.pop)).good_delay
+                isempty(g) ? "—" :
+                    string(round(obs.ha[first(g)]; digits = 2), " … ",
+                           round(obs.ha[last(g)];  digits = 2), " h")
+            catch
+                "—"
+            end
+            push!(rows, join((join(string.(r.pop), " "), string(r.score), span), "\t"))
+        end
+        return join(rows, "\n")
+    catch err
+        say("! POP search failed: " * _cause(err))
+        return ""
+    end
 end
 
 """

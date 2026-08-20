@@ -353,8 +353,8 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
 
     if kind === :visphi && occursin("differential", lowercase(String(d.phityp)))
         throw(ArgumentError(
-            "this dataset has phityp=\"differential\"; oiplot draws differential phase as a " *
-            "per-baseline grid against wavelength, which is not ported yet."))
+            "this dataset has phityp=\"differential\": its phase is measured against the " *
+            "other channels, so it belongs against WAVELENGTH — use the `diffphi` view."))
     end
 
     names = group_names(d, spec)

@@ -1261,7 +1261,8 @@ function model_to_image(model::FlatModel,
                         pixsize::Real = 0.1,
                         oversample::Int = 1,
                         normalize::Bool = true,
-                        wl = nothing)
+                        wl = nothing,
+                        mjd = nothing)
 
     ns = nx * oversample
     ps = pixsize / oversample   # pixel size after oversampling (mas)
@@ -1287,7 +1288,10 @@ function model_to_image(model::FlatModel,
     end
 
     # ── Evaluate model visibility on the half-plane ─────────────────────────
-    V_half = eval_model(model, x, uv; wl)
+    # `mjd` as well as `wl`: a model may depend on either, and `eval_model` has always taken
+    # both — only this entry point did not pass it, so a time-dependent model rendered at one
+    # arbitrary epoch with nothing saying which.
+    V_half = eval_model(model, x, uv; wl, mjd)
 
     # Reshape to (nrfft, ns) — rfft output layout
     V_mat = reshape(V_half, nrfft, ns)

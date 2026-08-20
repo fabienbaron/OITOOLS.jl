@@ -70,7 +70,9 @@ if ! DISPLAY="$DISP" julia --project=bin -e 'using Pkg; Pkg.precompile()' > "$JL
 fi
 say "precompiled; starting the GUI"
 
-OITOOLSGUI_DEBUG_PICK="${OITOOLSGUI_DEBUG_PICK:-}" OITOOLSGUI_SCALE=1.0 OITOOLSGUI_CONSOLE_DUMP="$DUMP" DISPLAY="$DISP" \
+# Pin the picker to this directory: the GUI now opens in demos/data, and this script
+# selects its file by row.
+OITOOLSGUI_DATA_DIR="$PWD/test/gui/data" OITOOLSGUI_DEBUG_PICK="${OITOOLSGUI_DEBUG_PICK:-}" OITOOLSGUI_SCALE=1.0 OITOOLSGUI_CONSOLE_DUMP="$DUMP" DISPLAY="$DISP" \
 ${QT_QPA_PLATFORM:+QT_QPA_PLATFORM="$QT_QPA_PLATFORM"} \
   julia --project=bin -e '
       # The order is forced: Mesa reads its driver variables and GLFW its platform hint when

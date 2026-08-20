@@ -81,6 +81,12 @@ ApplicationWindow {
 
     function afterAction() { refreshConsole(); redrawPlot(); refreshObservables() }
 
+    function setView() {
+        win.status = Julia.shell_set_view(kindBox.currentText, colorBox.currentText,
+                                          logyBox.enabled && logyBox.checked)
+        win.afterAction()
+    }
+
     // Which observables the loaded file actually holds. Julia counts VALID points, not tables,
     // and pushes the answer to every panel that gates a tick box on it. Without this the boxes
     // stay off after a load and the run buttons never enable — they have no other source of
@@ -127,6 +133,7 @@ ApplicationWindow {
         modelTab.haveCvis    = have.cvis
         modelTab.haveFlux    = have.flux
         modelTab.haveDiffvis = have.diffvis
+        modelTab.hasDataset  = s.length > 0
     }
 
     // Printed once at startup so the scale is diagnosable on a machine nobody can inspect
@@ -271,14 +278,28 @@ ApplicationWindow {
                     Label { text: "Plot:" }
                     ComboBox {
                         id: kindBox
-                        model: ["uv", "v2", "t3phi", "t3amp"]
-                        onActivated: { win.status = Julia.shell_set_view(currentText, colorBox.currentText); win.afterAction() }
+                        Layout.preferredWidth: dp(130)
+                        // `diffphi` is `visphi` against WAVELENGTH — OIFITS carries differential
+                        // phase in OI_VIS with PHITYP=differential, so there is no separate
+                        // field, only a more useful axis.
+                        model: ["uv", "v2", "t3phi", "t3amp", "visamp", "visphi",
+                                "diffphi", "diffvisamp", "flux"]
+                        onActivated: win.setView()
                     }
                     Label { text: "Colour by:" }
                     ComboBox {
                         id: colorBox
                         model: ["baseline", "wav", "mjd", "none"]
-                        onActivated: { win.status = Julia.shell_set_view(kindBox.currentText, currentText); win.afterAction() }
+                        onActivated: win.setView()
+                    }
+                    CheckBox {
+                        id: logyBox
+                        text: "log y"
+                        // Only where it means something. A phase takes both signs, and a log
+                        // axis on one drops half the points rather than rescaling them.
+                        enabled: ["v2", "visamp", "t3amp", "flux", "diffvisamp"]
+                                 .indexOf(kindBox.currentText) >= 0
+                        onToggled: win.setView()
                     }
                     Item { Layout.fillWidth: true }
                     Label {
@@ -343,6 +364,7 @@ ApplicationWindow {
                 uiScale:    win.uiScale
                 fontScale:  win.fontScale
                 baseFontPt: win.baseFontPt
+                onConsoleChanged: win.refreshConsole()
             }
 
             // ── Image ────────────────────────────────────────────────────────

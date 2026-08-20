@@ -154,7 +154,25 @@ const OBS_SPECS = Dict{Symbol,ObsSpec}(
                           :vis_sta_index, :baseline, "Visφ (°)", "Baseline (Mλ)", 1e-6, :baseline),
     :flux      => ObsSpec(:flux, :flux_err, :flux_lam, :flux_lam, :flux_mjd,
                           :flux_sta_index, :station, "Flux", "Wavelength (μm)", 1e6, :wav),
+    # Against WAVELENGTH, not baseline. There is no separate differential-phase field: OIFITS
+    # carries it in OI_VIS with `PHITYP=differential`, so this is `visphi` plotted the way a
+    # differential quantity is read — one curve per baseline across the band. Against baseline
+    # it is a scatter of every channel at once, which is the same numbers and no signal.
+    :diffphi   => ObsSpec(:visphi, :visphi_err, :vis_lam, :vis_lam, :vis_mjd,
+                          :vis_sta_index, :baseline, "Diff. phase (°)",
+                          "Wavelength (μm)", 1e6, :baseline),
+    :diffvisamp => ObsSpec(:visamp, :visamp_err, :vis_lam, :vis_lam, :vis_mjd,
+                          :vis_sta_index, :baseline, "Diff. visamp",
+                          "Wavelength (μm)", 1e6, :baseline),
 )
+
+"""
+Observables a log y axis is meaningful for.
+
+Positive quantities only: a phase crosses zero and takes both signs, so a log axis on one is
+not a display choice but a way to silently drop half the data.
+"""
+const LOG_Y_KINDS = Set([:v2, :visamp, :t3amp, :t3amp_max, :flux, :diffvisamp])
 
 """Baseline label per point, e.g. `"S1-E1"` (oiplot's `get_baseline_names`)."""
 function baseline_names(d, sta::Symbol = :v2_sta_index)
@@ -360,8 +378,8 @@ function draw!(fig, ax, d, kind::Symbol;
     # silently drawing the absolute layout would look right and be a different figure.
     if kind === :visphi && occursin("differential", lowercase(String(d.phityp)))
         throw(ArgumentError(
-            "this dataset has phityp=\"differential\"; oiplot draws differential phase as a " *
-            "per-baseline grid against wavelength, which is not ported yet."))
+            "this dataset has phityp=\"differential\": its phase is measured against the " *
+            "other channels, so it belongs against WAVELENGTH — use the `diffphi` view."))
     end
 
     names = group_names(d, spec)

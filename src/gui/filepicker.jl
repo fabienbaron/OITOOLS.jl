@@ -113,6 +113,9 @@ function picker_places()
     cwd = pwd()
     isdir(cwd) && cwd != home && push!(rows, ("Working directory", cwd))
     for (label, sub) in (("OITOOLS demo data", joinpath("demos", "data")),
+                         # The only shipped files with differential phase and OI_FLUX, so the
+                         # only ones on which the diffphi and flux views show anything.
+                         ("Beauty Contest 2026", joinpath("demos", "data", "BC2026")),
                          ("OITOOLS test data", joinpath("test", "gui", "data")))
         p = joinpath(pkgdir(OITOOLS), sub)
         isdir(p) && push!(rows, (label, p))
@@ -142,6 +145,8 @@ function picker_start(hint::AbstractString = "")
         isfile(p) && return dirname(p)
         isdir(dirname(p)) && return dirname(p)
     end
+    forced = get(ENV, "OITOOLSGUI_DATA_DIR", "")
+    isempty(forced) || (isdir(forced) && return abspath(forced))
     for sub in (joinpath("demos", "data"), joinpath("test", "gui", "data"))
         p = joinpath(pkgdir(OITOOLS), sub)
         isdir(p) && return p

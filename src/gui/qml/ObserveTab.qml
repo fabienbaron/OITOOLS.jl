@@ -84,7 +84,11 @@ Item {
     property string darkWindowText: "—"
 
     // ── views ─────────────────────────────────────────────────────────────────
-    property var viewNames: ["Elevation", "Gantt", "Delay & POP", "uv coverage", "SNR", "Moon"]
+    // Two charts and the POP table, and nothing else. The Moon is reported as a number on the
+    // plan line rather than given a view of its own, and uv coverage and SNR belong to a
+    // dataset — so the way to see them is to Simulate and open the result in Exploring, which
+    // already draws both, rather than to build a second uv plot here.
+    property var viewNames: ["Gantt", "Delay carts", "POPs"]
     // Readonly and driven by the TabBar: a ComboBox or TabBar drops a two-way currentIndex
     // binding the instant the user clicks, so the control is the source of truth and this is a
     // read-only mirror of it.
@@ -105,6 +109,30 @@ Item {
     // the one guarantee the command log makes.
     property int    simSeed: 1
     property bool   simObservability: true
+
+    // ── what the simulation is OF ────────────────────────────────────────────
+    //
+    // `simulate` takes a sky, and the two kinds are genuinely different arguments rather than
+    // one argument with a flag: an image (2-D grey, or 3-D one plane per channel) goes in as
+    // `image` with a `pixsize`, a model goes in as `flat_model` plus its current `flat_params`.
+    // So the panel has to know which it holds before it can say Simulate is possible.
+    property string simSource: "image"          // image | cube | model
+    property string simImagePath: ""
+    property string simModelPath: ""            // empty ⇒ the Modeling perspective's model
+    property real   simPixsize: 0.1             // mas, images only; a model carries its own scale
+    property string simSourceText: "no file chosen"
+    property bool   simSourceOk: false
+
+    function refreshSimSource() {
+        var path = simSource === "model" ? simModelPath : simImagePath
+        var r = Julia.shell_sim_source(simSource, path)
+        var f = r.split("\t")
+        simSourceOk   = f[0] === "ok"
+        simSourceText = f.length > 1 ? f[1] : r
+    }
+    onSimSourceChanged:    refreshSimSource()
+    onSimImagePathChanged: refreshSimSource()
+    onSimModelPathChanged: refreshSimSource()
 
     property string statusText: "ready"
 
@@ -136,6 +164,9 @@ Item {
         nSelectedTelescopes < 2    ? "select at least 2 telescopes" :
         combiner.length === 0      ? "no combiner" :
         spectralSetup.length === 0 ? "no spectral setup" :
+        // A simulation is OF something. Without a usable sky there is nothing to observe, and
+        // that is as much a blocker as having no combiner.
+        !simSourceOk               ? "no source: " + simSourceText :
         outputFile.length === 0    ? "no output file" : ""
     readonly property bool canSimulate: blockReason.length === 0
 
@@ -290,557 +321,693 @@ Item {
             spacing: dp(8)
 
             // ── settings column ───────────────────────────────────────────────
-            ScrollView {
-                id: settingsScroll
-                Layout.preferredWidth: dp(430)
+            // ── settings, and the action they feed ───────────────────────────
+            //
+            // The panels scroll; Compute and the POPs it uses do not. An action button that
+            // scrolls out of view is one the user has to hunt for, and this one sits where
+            // Run sits on the Imaging tab.
+            ColumnLayout {
+                Layout.preferredWidth: dp(440)
                 Layout.fillHeight: true
-                contentWidth: availableWidth
+                spacing: dp(6)
 
-                ColumnLayout {
-                    width: settingsScroll.availableWidth
-                    spacing: dp(8)
+                ScrollView {
+                    id: settingsScroll
+                    Layout.preferredWidth: dp(430)
+                    Layout.fillHeight: true
+                    contentWidth: availableWidth
 
-                    // ── targets ───────────────────────────────────────────────
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: targetPanel.implicitHeight + dp(12)
-                        color: "#fbfbfb"
-                        border.color: "#ddd"
+                    ColumnLayout {
+                        width: settingsScroll.availableWidth
+                        spacing: dp(8)
 
-                        ColumnLayout {
-                            id: targetPanel
-                            anchors.fill: parent
-                            anchors.margins: dp(6)
-                            spacing: dp(6)
+                        // ── targets ───────────────────────────────────────────────
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: targetPanel.implicitHeight + dp(12)
+                            color: "#fbfbfb"
+                            border.color: "#ddd"
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Label { text: "Targets"; font.bold: true }
-                                Item { Layout.fillWidth: true }
-                                Label {
-                                    // The cache is per session and worth showing: a resolve
-                                    // answered from cache looks exactly like one that reached the
-                                    // network, right up until the network is down.
-                                    text: root.cacheCount + "/" + targetModel.count + " cached"
-                                    color: "#888"; font.pointSize: pt(baseFontPt - 2)
-                                }
-                                Button {
-                                    text: "Clear cache"
-                                    enabled: root.cacheCount > 0
-                                    onClicked: root.clearCache()
-                                }
-                            }
+                            ColumnLayout {
+                                id: targetPanel
+                                anchors.fill: parent
+                                anchors.margins: dp(6)
+                                spacing: dp(6)
 
-                            Repeater {
-                                id: targetRepeater
-                                model: targetModel
-
-                                Rectangle {
-                                    id: targetRow
-                                    required property int index
-                                    required property string name
-                                    required property real ra
-                                    required property real dec
-                                    required property real magV
-                                    required property real magH
-                                    required property real magK
-                                    required property bool cached
-
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    implicitHeight: targetRowColumn.implicitHeight + dp(10)
-                                    color: index === root.currentTargetIndex ? "#eef4fb" : "#ffffff"
-                                    border.color: index === root.currentTargetIndex ? "#9bbfe0" : "#e4e4e4"
-
-                                    MouseArea {
-                                        // Selecting a row must not eat the click that lands in one
-                                        // of its editors, so the press is passed on rather than
-                                        // consumed.
-                                        anchors.fill: parent
-                                        onPressed: function (mouse) {
-                                            root.currentTargetIndex = targetRow.index
-                                            mouse.accepted = false
-                                        }
+                                    Label { text: "Targets"; font.bold: true }
+                                    Item { Layout.fillWidth: true }
+                                    Label {
+                                        // The cache is per session and worth showing: a resolve
+                                        // answered from cache looks exactly like one that reached the
+                                        // network, right up until the network is down.
+                                        text: root.cacheCount + "/" + targetModel.count + " cached"
+                                        color: "#888"; font.pointSize: pt(baseFontPt - 2)
                                     }
-
-                                    ColumnLayout {
-                                        id: targetRowColumn
-                                        anchors.fill: parent
-                                        anchors.margins: dp(5)
-                                        spacing: dp(4)
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: dp(4)
-                                            Rectangle {
-                                                // Per-row cache indicator: filled means these
-                                                // numbers came from a resolve this session, hollow
-                                                // means they were typed or have been edited since.
-                                                Layout.alignment: Qt.AlignVCenter
-                                                implicitWidth: dp(9); implicitHeight: dp(9)
-                                                radius: implicitWidth / 2
-                                                color: targetRow.cached ? "#59a14f" : "transparent"
-                                                border.color: targetRow.cached ? "#59a14f" : "#bbb"
-                                            }
-                                            TextField {
-                                                Layout.fillWidth: true
-                                                text: targetRow.name
-                                                placeholderText: "target name"
-                                                onEditingFinished: root.setTargetField(targetRow.index, "name", text)
-                                            }
-                                            Button {
-                                                text: "SIMBAD"
-                                                enabled: targetRow.name.length > 0
-                                                // wire: ra_dec_from_simbad(name) -> (ra, dec) in
-                                                // decimal degrees and magnitudes_from_simbad(name)
-                                                // -> Dict band => magnitude; write both back with
-                                                // setTargetField and then set cached = true.
-                                                onClicked: root.statusText = "resolve " + targetRow.name
-                                            }
-                                            Button {
-                                                text: "−"
-                                                enabled: targetModel.count > 1
-                                                onClicked: root.removeTarget(targetRow.index)
-                                            }
-                                        }
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: dp(4)
-                                            // Decimal degrees throughout, matching
-                                            // TargetConfig.raep0 and night_observability.
-                                            // Sexagesimal is where the sign of a "-00 30 00"
-                                            // declination goes missing.
-                                            Label { text: "RA°"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                            TextField {
-                                                Layout.fillWidth: true
-                                                text: targetRow.ra.toFixed(6)
-                                                validator: DoubleValidator {
-                                                    bottom: 0.0; top: 360.0; decimals: 6
-                                                    notation: DoubleValidator.StandardNotation
-                                                }
-                                                onEditingFinished: root.setTargetField(targetRow.index, "ra", parseFloat(text))
-                                            }
-                                            Label { text: "Dec°"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                            TextField {
-                                                Layout.fillWidth: true
-                                                text: targetRow.dec.toFixed(6)
-                                                validator: DoubleValidator {
-                                                    bottom: -90.0; top: 90.0; decimals: 6
-                                                    notation: DoubleValidator.StandardNotation
-                                                }
-                                                onEditingFinished: root.setTargetField(targetRow.index, "dec", parseFloat(text))
-                                            }
-                                        }
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: dp(4)
-                                            Label { text: "V"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                            TextField {
-                                                Layout.fillWidth: true
-                                                text: targetRow.magV.toFixed(2)
-                                                validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
-                                                onEditingFinished: root.setTargetField(targetRow.index, "magV", parseFloat(text))
-                                            }
-                                            Label { text: "H"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                            TextField {
-                                                Layout.fillWidth: true
-                                                text: targetRow.magH.toFixed(2)
-                                                validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
-                                                onEditingFinished: root.setTargetField(targetRow.index, "magH", parseFloat(text))
-                                            }
-                                            Label { text: "K"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                            TextField {
-                                                Layout.fillWidth: true
-                                                text: targetRow.magK.toFixed(2)
-                                                validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
-                                                onEditingFinished: root.setTargetField(targetRow.index, "magK", parseFloat(text))
-                                            }
-                                        }
+                                    Button {
+                                        text: "Clear cache"
+                                        enabled: root.cacheCount > 0
+                                        onClicked: root.clearCache()
                                     }
                                 }
-                            }
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Button { text: "Add target"; onClicked: root.addTarget() }
-                                Button {
-                                    text: "Resolve all"
-                                    enabled: root.nNamedTargets > 0
-                                    // wire: ra_dec_from_simbad / magnitudes_from_simbad for every
-                                    // named row, skipping rows already flagged cached. Surface a
-                                    // network failure rather than leaving a row at 0,0 — a
-                                    // swallowed error is indistinguishable from a target with no
-                                    // published magnitudes.
-                                    onClicked: root.statusText = "resolve " + root.nNamedTargets + " targets"
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
-                        }
-                    }
-
-                    // ── instrument ────────────────────────────────────────────
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: instrumentPanel.implicitHeight + dp(12)
-                        color: "#fbfbfb"
-                        border.color: "#ddd"
-
-                        ColumnLayout {
-                            id: instrumentPanel
-                            anchors.fill: parent
-                            anchors.margins: dp(6)
-                            spacing: dp(6)
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Label { text: "Instrument"; font.bold: true }
-                                Item { Layout.fillWidth: true }
-                                Label { text: "CHARA only"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
-                            }
-
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: 2
-                                columnSpacing: dp(6)
-                                rowSpacing: dp(4)
-
-                                Label { text: "Facility"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                ComboBox {
-                                    id: facilityBox
-                                    Layout.fillWidth: true
-                                    model: root.facilities
-                                    // One entry today, but still a ComboBox: the cascade below is
-                                    // written against a facility choice, and hiding the control
-                                    // would hide what everything else is derived from.
-                                    enabled: root.facilities.length > 1
-                                    onActivated: root.selectFacility(currentText)
-                                }
-
-                                Label { text: "Combiner"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                ComboBox {
-                                    id: combinerBox
-                                    Layout.fillWidth: true
-                                    model: root.combiners
-                                    enabled: root.combiners.length > 0
-                                    currentIndex: Math.max(0, root.combiners.indexOf(root.combiner))
-                                    // A ComboBox drops its currentIndex binding the moment the user
-                                    // picks something, so after the cascade replaces the model the
-                                    // index is re-asserted explicitly rather than left to a binding
-                                    // that may no longer exist.
-                                    onModelChanged: currentIndex = Math.max(0, root.combiners.indexOf(root.combiner))
-                                    onActivated: root.selectCombiner(currentText)
-                                }
-
-                                Label { text: "Spectral setup"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                ComboBox {
-                                    id: setupBox
-                                    Layout.fillWidth: true
-                                    model: root.spectralSetups
-                                    // Filtered by combiner, not merely sorted: the `combiner` key
-                                    // inside each wavelength TOML is the only machine-readable link
-                                    // between the two, and a setup belonging to another combiner
-                                    // would be accepted by simulate() and quietly produce nonsense.
-                                    enabled: root.spectralSetups.length > 0
-                                    currentIndex: Math.max(0, root.spectralSetups.indexOf(root.spectralSetup))
-                                    onModelChanged: currentIndex = Math.max(0, root.spectralSetups.indexOf(root.spectralSetup))
-                                    onActivated: root.spectralSetup = currentText
-                                }
-
-                                Label { text: "Reference"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                ComboBox {
-                                    id: referenceBox
-                                    Layout.fillWidth: true
-                                    // Choosing one reduces the baselines to reference-to-each
-                                    // instead of every pair, so "(none)" is the default and the
-                                    // reduction is always deliberate.
-                                    model: ["(none)"].concat(root.selectedTelescopes)
-                                    enabled: root.nSelectedTelescopes > 1
-                                    currentIndex: Math.max(0, model.indexOf(root.referenceTelescope))
-                                    onModelChanged: currentIndex = Math.max(0, model.indexOf(root.referenceTelescope))
-                                    onActivated: root.setReference(currentIndex === 0 ? "" : currentText)
-                                }
-                            }
-
-                            Label { text: "Telescopes"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                            Flow {
-                                Layout.fillWidth: true
-                                spacing: dp(8)
                                 Repeater {
-                                    id: telescopeRepeater
-                                    model: root.telescopeNames
-                                    CheckBox {
+                                    id: targetRepeater
+                                    model: targetModel
+
+                                    Rectangle {
+                                        id: targetRow
                                         required property int index
-                                        required property string modelData
-                                        text: modelData + (root.telescopeConfig[index] === 2 ? " ★" : "")
-                                        checked: root.telescopeConfig[index] > 0
-                                        onToggled: root.setTelescopeUsed(index, checked)
+                                        required property string name
+                                        required property real ra
+                                        required property real dec
+                                        required property real magV
+                                        required property real magH
+                                        required property real magK
+                                        required property bool cached
+
+                                        Layout.fillWidth: true
+                                        implicitHeight: targetRowColumn.implicitHeight + dp(10)
+                                        color: index === root.currentTargetIndex ? "#eef4fb" : "#ffffff"
+                                        border.color: index === root.currentTargetIndex ? "#9bbfe0" : "#e4e4e4"
+
+                                        MouseArea {
+                                            // Selecting a row must not eat the click that lands in one
+                                            // of its editors, so the press is passed on rather than
+                                            // consumed.
+                                            anchors.fill: parent
+                                            onPressed: function (mouse) {
+                                                root.currentTargetIndex = targetRow.index
+                                                mouse.accepted = false
+                                            }
+                                        }
+
+                                        ColumnLayout {
+                                            id: targetRowColumn
+                                            anchors.fill: parent
+                                            anchors.margins: dp(5)
+                                            spacing: dp(4)
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: dp(4)
+                                                Rectangle {
+                                                    // Per-row cache indicator: filled means these
+                                                    // numbers came from a resolve this session, hollow
+                                                    // means they were typed or have been edited since.
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                    implicitWidth: dp(9); implicitHeight: dp(9)
+                                                    radius: implicitWidth / 2
+                                                    color: targetRow.cached ? "#59a14f" : "transparent"
+                                                    border.color: targetRow.cached ? "#59a14f" : "#bbb"
+                                                }
+                                                TextField {
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.name
+                                                    placeholderText: "target name"
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "name", text)
+                                                }
+                                                Button {
+                                                    text: "SIMBAD"
+                                                    enabled: targetRow.name.length > 0
+                                                    // wire: ra_dec_from_simbad(name) -> (ra, dec) in
+                                                    // decimal degrees and magnitudes_from_simbad(name)
+                                                    // -> Dict band => magnitude; write both back with
+                                                    // setTargetField and then set cached = true.
+                                                    onClicked: root.statusText = "resolve " + targetRow.name
+                                                }
+                                                Button {
+                                                    text: "−"
+                                                    enabled: targetModel.count > 1
+                                                    onClicked: root.removeTarget(targetRow.index)
+                                                }
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: dp(4)
+                                                // Decimal degrees throughout, matching
+                                                // TargetConfig.raep0 and night_observability.
+                                                // Sexagesimal is where the sign of a "-00 30 00"
+                                                // declination goes missing.
+                                                Label { text: "RA°"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                TextField {
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.ra.toFixed(6)
+                                                    validator: DoubleValidator {
+                                                        bottom: 0.0; top: 360.0; decimals: 6
+                                                        notation: DoubleValidator.StandardNotation
+                                                    }
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "ra", parseFloat(text))
+                                                }
+                                                Label { text: "Dec°"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                TextField {
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.dec.toFixed(6)
+                                                    validator: DoubleValidator {
+                                                        bottom: -90.0; top: 90.0; decimals: 6
+                                                        notation: DoubleValidator.StandardNotation
+                                                    }
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "dec", parseFloat(text))
+                                                }
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: dp(4)
+                                                Label { text: "V"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                TextField {
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.magV.toFixed(2)
+                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "magV", parseFloat(text))
+                                                }
+                                                Label { text: "H"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                TextField {
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.magH.toFixed(2)
+                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "magH", parseFloat(text))
+                                                }
+                                                Label { text: "K"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                TextField {
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.magK.toFixed(2)
+                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "magK", parseFloat(text))
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: root.nSelectedTelescopes < 2
-                                      ? "select at least 2 telescopes"
-                                      : root.configString() + "  ·  " + root.nBaselines + " baselines"
-                                color: root.nSelectedTelescopes < 2 ? "#b00000" : "#666"
-                                font.pointSize: pt(baseFontPt - 2)
-                                elide: Text.ElideRight
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Button { text: "Add target"; onClicked: root.addTarget() }
+                                    Button {
+                                        text: "Resolve all"
+                                        enabled: root.nNamedTargets > 0
+                                        // wire: ra_dec_from_simbad / magnitudes_from_simbad for every
+                                        // named row, skipping rows already flagged cached. Surface a
+                                        // network failure rather than leaving a row at 0,0 — a
+                                        // swallowed error is indistinguishable from a target with no
+                                        // published magnitudes.
+                                        onClicked: root.statusText = "resolve " + root.nNamedTargets + " targets"
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                }
                             }
                         }
-                    }
 
-                    // ── conditions ────────────────────────────────────────────
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: conditionsPanel.implicitHeight + dp(12)
-                        color: "#fbfbfb"
-                        border.color: "#ddd"
+                        // ── instrument ────────────────────────────────────────────
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: instrumentPanel.implicitHeight + dp(12)
+                            color: "#fbfbfb"
+                            border.color: "#ddd"
 
-                        ColumnLayout {
-                            id: conditionsPanel
-                            anchors.fill: parent
-                            anchors.margins: dp(6)
-                            spacing: dp(6)
+                            ColumnLayout {
+                                id: instrumentPanel
+                                anchors.fill: parent
+                                anchors.margins: dp(6)
+                                spacing: dp(6)
 
-                            Label { text: "Conditions"; font.bold: true }
-
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: 4
-                                columnSpacing: dp(6)
-                                rowSpacing: dp(4)
-
-                                Label { text: "Seeing (\")"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: seeingField
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: root.seeing.toFixed(2)
-                                    validator: DoubleValidator {
-                                        bottom: 0.1; top: 5.0; decimals: 2
-                                        notation: DoubleValidator.StandardNotation
-                                    }
-                                    // wire: facility.seeing = value (mutable field on FacilityConfig)
-                                    onEditingFinished: root.seeing = parseFloat(text)
+                                    Label { text: "Instrument"; font.bold: true }
+                                    Item { Layout.fillWidth: true }
+                                    Label { text: "CHARA only"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
                                 }
-                                Label { text: "r0 (m)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: r0Field
+
+                                GridLayout {
                                     Layout.fillWidth: true
-                                    text: root.r0.toFixed(4)
-                                    validator: DoubleValidator {
-                                        bottom: 0.001; top: 2.0; decimals: 4
-                                        notation: DoubleValidator.StandardNotation
+                                    columns: 2
+                                    columnSpacing: dp(6)
+                                    rowSpacing: dp(4)
+
+                                    Label { text: "Facility"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    ComboBox {
+                                        id: facilityBox
+                                        Layout.fillWidth: true
+                                        model: root.facilities
+                                        // One entry today, but still a ComboBox: the cascade below is
+                                        // written against a facility choice, and hiding the control
+                                        // would hide what everything else is derived from.
+                                        enabled: root.facilities.length > 1
+                                        onActivated: root.selectFacility(currentText)
                                     }
-                                    // wire: facility.r0 = value. seeing and r0 describe the same
-                                    // atmosphere, so whichever of the two Julia derives from the
-                                    // other has to be written back here or the readouts disagree.
-                                    onEditingFinished: root.r0 = parseFloat(text)
+
+                                    Label { text: "Combiner"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    ComboBox {
+                                        id: combinerBox
+                                        Layout.fillWidth: true
+                                        model: root.combiners
+                                        enabled: root.combiners.length > 0
+                                        currentIndex: Math.max(0, root.combiners.indexOf(root.combiner))
+                                        // A ComboBox drops its currentIndex binding the moment the user
+                                        // picks something, so after the cascade replaces the model the
+                                        // index is re-asserted explicitly rather than left to a binding
+                                        // that may no longer exist.
+                                        onModelChanged: currentIndex = Math.max(0, root.combiners.indexOf(root.combiner))
+                                        onActivated: root.selectCombiner(currentText)
+                                    }
+
+                                    Label { text: "Spectral setup"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    ComboBox {
+                                        id: setupBox
+                                        Layout.fillWidth: true
+                                        model: root.spectralSetups
+                                        // Filtered by combiner, not merely sorted: the `combiner` key
+                                        // inside each wavelength TOML is the only machine-readable link
+                                        // between the two, and a setup belonging to another combiner
+                                        // would be accepted by simulate() and quietly produce nonsense.
+                                        enabled: root.spectralSetups.length > 0
+                                        currentIndex: Math.max(0, root.spectralSetups.indexOf(root.spectralSetup))
+                                        onModelChanged: currentIndex = Math.max(0, root.spectralSetups.indexOf(root.spectralSetup))
+                                        onActivated: root.spectralSetup = currentText
+                                    }
+
+                                    Label { text: "Reference"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    ComboBox {
+                                        id: referenceBox
+                                        Layout.fillWidth: true
+                                        // Choosing one reduces the baselines to reference-to-each
+                                        // instead of every pair, so "(none)" is the default and the
+                                        // reduction is always deliberate.
+                                        model: ["(none)"].concat(root.selectedTelescopes)
+                                        enabled: root.nSelectedTelescopes > 1
+                                        currentIndex: Math.max(0, model.indexOf(root.referenceTelescope))
+                                        onModelChanged: currentIndex = Math.max(0, model.indexOf(root.referenceTelescope))
+                                        onActivated: root.setReference(currentIndex === 0 ? "" : currentText)
+                                    }
                                 }
 
-                                Label { text: "t0 (s)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: t0Field
+                                Label { text: "Telescopes"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                Flow {
                                     Layout.fillWidth: true
-                                    text: root.t0.toFixed(5)
-                                    validator: DoubleValidator {
-                                        bottom: 0.0001; top: 1.0; decimals: 6
-                                        notation: DoubleValidator.StandardNotation
+                                    spacing: dp(8)
+                                    Repeater {
+                                        id: telescopeRepeater
+                                        model: root.telescopeNames
+                                        CheckBox {
+                                            required property int index
+                                            required property string modelData
+                                            text: modelData + (root.telescopeConfig[index] === 2 ? " ★" : "")
+                                            checked: root.telescopeConfig[index] > 0
+                                            onToggled: root.setTelescopeUsed(index, checked)
+                                        }
                                     }
-                                    // wire: facility.t0 = value
-                                    onEditingFinished: root.t0 = parseFloat(text)
                                 }
-                                Label { text: "AO guide mag"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: magAOField
-                                    Layout.fillWidth: true
-                                    text: root.magAO.toFixed(2)
-                                    validator: DoubleValidator {
-                                        bottom: -5.0; top: 20.0; decimals: 2
-                                        notation: DoubleValidator.StandardNotation
-                                    }
-                                    // wire: AOConfig is immutable, so this constructs a new one and
-                                    // reassigns facility.ao rather than assigning a field.
-                                    onEditingFinished: root.magAO = parseFloat(text)
-                                }
-                            }
-                        }
-                    }
-
-                    // ── time ──────────────────────────────────────────────────
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: timePanel.implicitHeight + dp(12)
-                        color: "#fbfbfb"
-                        border.color: "#ddd"
-
-                        ColumnLayout {
-                            id: timePanel
-                            anchors.fill: parent
-                            anchors.margins: dp(6)
-                            spacing: dp(6)
-
-                            Label { text: "Time"; font.bold: true }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: dp(4)
-                                Label { text: "Date"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: dateField
-                                    Layout.preferredWidth: dp(120)
-                                    text: root.dateISO
-                                    inputMask: "9999-99-99"
-                                    // wire: recompute the dark window and every view for this date
-                                    onEditingFinished: root.dateISO = text
-                                }
-                                // Stepping is done in Julia: adding a month to 31 January has to
-                                // land on 28 February, which is calendar arithmetic and not
-                                // something to attempt on a string here.
-                                //
-                                // Double arrows move a whole month, which is the step that
-                                // matters for observability — a target's window shifts by about
-                                // two hours of LST per month, so a month is the unit in which
-                                // "is it up yet this season" gets answered.
-                                Button {
-                                    text: "◀◀"
-                                    ToolTip.visible: hovered; ToolTip.text: "one month earlier"
-                                    onClicked: root.shiftDate(0, -1)
-                                }
-                                Button {
-                                    text: "◀"
-                                    ToolTip.visible: hovered; ToolTip.text: "previous night"
-                                    onClicked: root.shiftDate(-1, 0)
-                                }
-                                Button { text: "Today"; onClicked: root.shiftDate(0, 0) }
-                                Button {
-                                    text: "▶"
-                                    ToolTip.visible: hovered; ToolTip.text: "next night"
-                                    onClicked: root.shiftDate(1, 0)
-                                }
-                                Button {
-                                    text: "▶▶"
-                                    ToolTip.visible: hovered; ToolTip.text: "one month later"
-                                    onClicked: root.shiftDate(0, 1)
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: dp(4)
-                                Label { text: "Dark window"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                 Label {
                                     Layout.fillWidth: true
-                                    // wire: sunrise_sunset(date, lat, lon) plus dark_offset — the
-                                    // same window night_observability uses. Reads "—" until it has
-                                    // been computed rather than showing a plausible default nobody
-                                    // asked for.
-                                    text: root.darkWindowText
-                                    font.family: "monospace"
+                                    text: root.nSelectedTelescopes < 2
+                                          ? "select at least 2 telescopes"
+                                          : root.configString() + "  ·  " + root.nBaselines + " baselines"
+                                    color: root.nSelectedTelescopes < 2 ? "#b00000" : "#666"
+                                    font.pointSize: pt(baseFontPt - 2)
                                     elide: Text.ElideRight
                                 }
                             }
+                        }
 
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: 4
-                                columnSpacing: dp(6)
-                                rowSpacing: dp(4)
+                        // ── conditions ────────────────────────────────────────────
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: conditionsPanel.implicitHeight + dp(12)
+                            color: "#fbfbfb"
+                            border.color: "#ddd"
 
-                                Label { text: "HA min (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: haMinField
+                            ColumnLayout {
+                                id: conditionsPanel
+                                anchors.fill: parent
+                                anchors.margins: dp(6)
+                                spacing: dp(6)
+
+                                Label { text: "Conditions"; font.bold: true }
+
+                                GridLayout {
                                     Layout.fillWidth: true
-                                    text: root.haMin.toFixed(2)
-                                    validator: DoubleValidator {
-                                        bottom: -12.0; top: 12.0; decimals: 2
-                                        notation: DoubleValidator.StandardNotation
+                                    columns: 4
+                                    columnSpacing: dp(6)
+                                    rowSpacing: dp(4)
+
+                                    Label { text: "Seeing (\")"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: seeingField
+                                        Layout.fillWidth: true
+                                        text: root.seeing.toFixed(2)
+                                        validator: DoubleValidator {
+                                            bottom: 0.1; top: 5.0; decimals: 2
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        // wire: facility.seeing = value (mutable field on FacilityConfig)
+                                        onEditingFinished: root.seeing = parseFloat(text)
                                     }
-                                    onEditingFinished: root.haMin = parseFloat(text)
+                                    Label { text: "r0 (m)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: r0Field
+                                        Layout.fillWidth: true
+                                        text: root.r0.toFixed(4)
+                                        validator: DoubleValidator {
+                                            bottom: 0.001; top: 2.0; decimals: 4
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        // wire: facility.r0 = value. seeing and r0 describe the same
+                                        // atmosphere, so whichever of the two Julia derives from the
+                                        // other has to be written back here or the readouts disagree.
+                                        onEditingFinished: root.r0 = parseFloat(text)
+                                    }
+
+                                    Label { text: "t0 (s)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: t0Field
+                                        Layout.fillWidth: true
+                                        text: root.t0.toFixed(5)
+                                        validator: DoubleValidator {
+                                            bottom: 0.0001; top: 1.0; decimals: 6
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        // wire: facility.t0 = value
+                                        onEditingFinished: root.t0 = parseFloat(text)
+                                    }
+                                    Label { text: "AO guide mag"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: magAOField
+                                        Layout.fillWidth: true
+                                        text: root.magAO.toFixed(2)
+                                        validator: DoubleValidator {
+                                            bottom: -5.0; top: 20.0; decimals: 2
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        // wire: AOConfig is immutable, so this constructs a new one and
+                                        // reassigns facility.ao rather than assigning a field.
+                                        onEditingFinished: root.magAO = parseFloat(text)
+                                    }
                                 }
-                                Label { text: "HA max (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: haMaxField
+                            }
+                        }
+
+                        // ── time ──────────────────────────────────────────────────
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: timePanel.implicitHeight + dp(12)
+                            color: "#fbfbfb"
+                            border.color: "#ddd"
+
+                            ColumnLayout {
+                                id: timePanel
+                                anchors.fill: parent
+                                anchors.margins: dp(6)
+                                spacing: dp(6)
+
+                                Label { text: "Time"; font.bold: true }
+
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: root.haMax.toFixed(2)
-                                    validator: DoubleValidator {
-                                        bottom: -12.0; top: 12.0; decimals: 2
-                                        notation: DoubleValidator.StandardNotation
+                                    spacing: dp(4)
+                                    Label { text: "Date"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: dateField
+                                        Layout.preferredWidth: dp(120)
+                                        text: root.dateISO
+                                        inputMask: "9999-99-99"
+                                        // wire: recompute the dark window and every view for this date
+                                        onEditingFinished: root.dateISO = text
                                     }
-                                    onEditingFinished: root.haMax = parseFloat(text)
+                                    // Stepping is done in Julia: adding a month to 31 January has to
+                                    // land on 28 February, which is calendar arithmetic and not
+                                    // something to attempt on a string here.
+                                    //
+                                    // Double arrows move a whole month, which is the step that
+                                    // matters for observability — a target's window shifts by about
+                                    // two hours of LST per month, so a month is the unit in which
+                                    // "is it up yet this season" gets answered.
+                                    Button {
+                                        text: "◀◀"
+                                        ToolTip.visible: hovered; ToolTip.text: "one month earlier"
+                                        onClicked: root.shiftDate(0, -1)
+                                    }
+                                    Button {
+                                        text: "◀"
+                                        ToolTip.visible: hovered; ToolTip.text: "previous night"
+                                        onClicked: root.shiftDate(-1, 0)
+                                    }
+                                    Button { text: "Today"; onClicked: root.shiftDate(0, 0) }
+                                    Button {
+                                        text: "▶"
+                                        ToolTip.visible: hovered; ToolTip.text: "next night"
+                                        onClicked: root.shiftDate(1, 0)
+                                    }
+                                    Button {
+                                        text: "▶▶"
+                                        ToolTip.visible: hovered; ToolTip.text: "one month later"
+                                        onClicked: root.shiftDate(0, 1)
+                                    }
+                                    Item { Layout.fillWidth: true }
                                 }
 
-                                Label { text: "Step (min)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                SpinBox {
-                                    id: stepBox
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    from: 1; to: 120; value: root.stepMinutes
-                                    onValueModified: root.stepMinutes = value
-                                }
-                                Label {
-                                    Layout.columnSpan: 2
-                                    Layout.fillWidth: true
-                                    // best_pop scores a count of steps, so it only reads as minutes
-                                    // at a 1-minute step. Saying so beside the control is cheaper
-                                    // than explaining a POP table whose units quietly changed.
-                                    text: root.stepMinutes === 1
-                                          ? "POP score is in minutes"
-                                          : "POP score counts steps of " + root.stepMinutes + " min"
-                                    color: "#888"; font.pointSize: pt(baseFontPt - 2)
-                                    elide: Text.ElideRight
+                                    spacing: dp(4)
+                                    Label { text: "Dark window"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        // wire: sunrise_sunset(date, lat, lon) plus dark_offset — the
+                                        // same window night_observability uses. Reads "—" until it has
+                                        // been computed rather than showing a plausible default nobody
+                                        // asked for.
+                                        text: root.darkWindowText
+                                        font.family: "monospace"
+                                        elide: Text.ElideRight
+                                    }
                                 }
 
-                                Label { text: "Elev min (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: altLimitField
+                                GridLayout {
                                     Layout.fillWidth: true
-                                    text: root.altLimit.toFixed(1)
-                                    validator: DoubleValidator {
-                                        bottom: 0.0; top: 90.0; decimals: 1
-                                        notation: DoubleValidator.StandardNotation
-                                    }
-                                    onEditingFinished: root.altLimit = parseFloat(text)
-                                }
-                                Label { text: "Elev max (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: altMaxField
-                                    Layout.fillWidth: true
-                                    text: root.altMax.toFixed(1)
-                                    validator: DoubleValidator {
-                                        bottom: 0.0; top: 90.0; decimals: 1
-                                        notation: DoubleValidator.StandardNotation
-                                    }
-                                    onEditingFinished: root.altMax = parseFloat(text)
-                                }
+                                    columns: 4
+                                    columnSpacing: dp(6)
+                                    rowSpacing: dp(4)
 
-                                Label { text: "Moon sep (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: moonSepField
-                                    Layout.fillWidth: true
-                                    text: root.moonMinSep.toFixed(1)
-                                    validator: DoubleValidator {
-                                        bottom: 0.0; top: 180.0; decimals: 1
-                                        notation: DoubleValidator.StandardNotation
+                                    Label { text: "HA min (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: haMinField
+                                        Layout.fillWidth: true
+                                        text: root.haMin.toFixed(2)
+                                        validator: DoubleValidator {
+                                            bottom: -12.0; top: 12.0; decimals: 2
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        onEditingFinished: root.haMin = parseFloat(text)
                                     }
-                                    onEditingFinished: root.moonMinSep = parseFloat(text)
-                                }
-                                Label { text: "Dark offset (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                                TextField {
-                                    id: darkOffsetField
-                                    Layout.fillWidth: true
-                                    text: root.darkOffset.toFixed(2)
-                                    validator: DoubleValidator {
-                                        bottom: 0.0; top: 6.0; decimals: 2
-                                        notation: DoubleValidator.StandardNotation
+                                    Label { text: "HA max (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: haMaxField
+                                        Layout.fillWidth: true
+                                        text: root.haMax.toFixed(2)
+                                        validator: DoubleValidator {
+                                            bottom: -12.0; top: 12.0; decimals: 2
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        onEditingFinished: root.haMax = parseFloat(text)
                                     }
-                                    onEditingFinished: root.darkOffset = parseFloat(text)
+
+                                    Label { text: "Step (min)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    SpinBox {
+                                        id: stepBox
+                                        Layout.fillWidth: true
+                                        from: 1; to: 120; value: root.stepMinutes
+                                        onValueModified: root.stepMinutes = value
+                                    }
+                                    Label {
+                                        Layout.columnSpan: 2
+                                        Layout.fillWidth: true
+                                        // best_pop scores a count of steps, so it only reads as minutes
+                                        // at a 1-minute step. Saying so beside the control is cheaper
+                                        // than explaining a POP table whose units quietly changed.
+                                        text: root.stepMinutes === 1
+                                              ? "POP score is in minutes"
+                                              : "POP score counts steps of " + root.stepMinutes + " min"
+                                        color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Label { text: "Elev min (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: altLimitField
+                                        Layout.fillWidth: true
+                                        text: root.altLimit.toFixed(1)
+                                        validator: DoubleValidator {
+                                            bottom: 0.0; top: 90.0; decimals: 1
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        onEditingFinished: root.altLimit = parseFloat(text)
+                                    }
+                                    Label { text: "Elev max (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: altMaxField
+                                        Layout.fillWidth: true
+                                        text: root.altMax.toFixed(1)
+                                        validator: DoubleValidator {
+                                            bottom: 0.0; top: 90.0; decimals: 1
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        onEditingFinished: root.altMax = parseFloat(text)
+                                    }
+
+                                    Label { text: "Moon sep (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: moonSepField
+                                        Layout.fillWidth: true
+                                        text: root.moonMinSep.toFixed(1)
+                                        validator: DoubleValidator {
+                                            bottom: 0.0; top: 180.0; decimals: 1
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        onEditingFinished: root.moonMinSep = parseFloat(text)
+                                    }
+                                    Label { text: "Dark offset (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    TextField {
+                                        id: darkOffsetField
+                                        Layout.fillWidth: true
+                                        text: root.darkOffset.toFixed(2)
+                                        validator: DoubleValidator {
+                                            bottom: 0.0; top: 6.0; decimals: 2
+                                            notation: DoubleValidator.StandardNotation
+                                        }
+                                        onEditingFinished: root.darkOffset = parseFloat(text)
+                                    }
                                 }
                             }
                         }
                     }
                 }
+
+                        // ── compute ──────────────────────────────────────────────────
+                        //
+                        // Explicit, not automatic on every edit. A night is cheap to compute once the
+                        // code is warm (0.1 ms), but recomputing on each keystroke while a coordinate
+                        // is being typed would draw a chart for every half-entered number.
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: dp(8)
+
+                            Button {
+                                text: "Compute"
+                                enabled: root.nNamedTargets > 0 && root.dateISO.length > 0
+                                ToolTip.visible: hovered && !enabled
+                                ToolTip.text: "needs a named target and a date"
+                                onClicked: root.computePlan()
+                            }
+                            CheckBox {
+                                text: "detailed"
+                                enabled: root.useDelay
+                                checked: root.detailed
+                                onToggled: { root.detailed = checked; if (root.hasPlan) root.computePlan() }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "ASPRO's detailed view: one row per BASELINE, so the " +
+                                              "baseline that closes the night is the short bar. Needs " +
+                                              "the delay check on. Off shows only the answer."
+                            }
+                            CheckBox {
+                                text: "delay lines"
+                                checked: root.useDelay
+                                onToggled: { root.useDelay = checked; if (root.hasPlan) root.computePlan() }
+                                // Opt-in for a measured reason: with an unsearched POP configuration the
+                                // check reports far less time than is available -- 0 minutes with all six
+                                // telescopes at POP 1 against 380 with the POPs best_pop finds -- so
+                                // leaving it on by default would call every target unobservable.
+                                ToolTip.visible: hovered
+                                ToolTip.text: root.popString.length > 0
+                                              ? "using POPs " + root.popString
+                                              : "no POPs searched yet — Search POPs first, or this will " +
+                                                "report far less time than is really available"
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.planText
+                                elide: Text.ElideRight
+                                color: root.planText.indexOf("!") === 0 ? "#c62828" : "#444"
+                            }
+                        }
+
+                        // ── POPs, by hand ────────────────────────────────────────────────
+                        //
+                        // Below Compute because it feeds it: the delay check uses these, and a POP set
+                        // that is not visible next to the button that consumes it is one nobody checks.
+                        // Search POPs writes here too, so the searched configuration and a hand-dialled
+                        // one are the same field rather than two competing sources of truth.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: popCol.implicitHeight + dp(12)
+                            color: "#f6f6f6"
+                            border.color: "#dcdcdc"
+                            radius: dp(3)
+
+                            ColumnLayout {
+                                id: popCol
+                                x: dp(6); y: dp(6)
+                                width: parent.width - dp(12)
+                                spacing: dp(4)
+
+                                Label { text: "POPs"; font.bold: true }
+
+                                // One dropdown per telescope, labelled with the telescope. CHARA has five
+                                // POPs; the number IS the beam path, so a free text box invites 0 and 9.
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: dp(8)
+                                    Repeater {
+                                        model: root.telescopeNames
+                                        delegate: RowLayout {
+                                            required property int index
+                                            required property string modelData
+                                            spacing: dp(3)
+                                            Label {
+                                                text: modelData
+                                                font.bold: true
+                                                color: root.telescopeConfig[index] > 0 ? "#222" : "#aaa"
+                                            }
+                                            ComboBox {
+                                                implicitWidth: dp(58)
+                                                implicitHeight: dp(26)
+                                                model: ["1", "2", "3", "4", "5"]
+                                                enabled: root.telescopeConfig[index] > 0
+                                                currentIndex: Math.max(0, root.popAt(index) - 1)
+                                                onActivated: root.setPop(index, currentIndex + 1)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // The same numbers as text, so a row can be pasted in from elsewhere or
+                                // copied out — including from the POPs table, whose Use button writes here.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: dp(6)
+                                    TextField {
+                                        id: popField
+                                        Layout.fillWidth: true
+                                        placeholderText: "paste six POP numbers, e.g. 1 3 3 4 1 1"
+                                        text: root.popString
+                                        font.family: "monospace"
+                                        onEditingFinished: root.setPopString(text)
+                                    }
+                                    Button {
+                                        text: "Copy"
+                                        enabled: root.popString.length > 0
+                                        onClicked: { popField.selectAll(); popField.copy(); popField.deselect() }
+                                    }
+                                    Button {
+                                        text: "Clear"
+                                        enabled: root.popString.length > 0
+                                        onClicked: root.popString = ""
+                                    }
+                                }
+                            }
+                        }
             }
+
 
             // ── views ─────────────────────────────────────────────────────────
             ColumnLayout {
@@ -848,59 +1015,12 @@ Item {
                 Layout.fillHeight: true
                 spacing: dp(4)
 
-                // ── compute ──────────────────────────────────────────────────
-                //
-                // Explicit, not automatic on every edit. A night is cheap to compute once the
-                // code is warm (0.1 ms), but recomputing on each keystroke while a coordinate
-                // is being typed would draw a chart for every half-entered number.
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: dp(8)
-
-                    Button {
-                        text: "Compute"
-                        enabled: root.nNamedTargets > 0 && root.dateISO.length > 0
-                        ToolTip.visible: hovered && !enabled
-                        ToolTip.text: "needs a named target and a date"
-                        onClicked: root.computePlan()
-                    }
-                    CheckBox {
-                        text: "detailed"
-                        enabled: root.useDelay
-                        checked: root.detailed
-                        onToggled: { root.detailed = checked; if (root.hasPlan) root.computePlan() }
-                        ToolTip.visible: hovered
-                        ToolTip.text: "ASPRO's detailed view: one row per BASELINE, so the " +
-                                      "baseline that closes the night is the short bar. Needs " +
-                                      "the delay check on. Off shows only the answer."
-                    }
-                    CheckBox {
-                        text: "delay lines"
-                        checked: root.useDelay
-                        onToggled: { root.useDelay = checked; if (root.hasPlan) root.computePlan() }
-                        // Opt-in for a measured reason: with an unsearched POP configuration the
-                        // check reports far less time than is available -- 0 minutes with all six
-                        // telescopes at POP 1 against 380 with the POPs best_pop finds -- so
-                        // leaving it on by default would call every target unobservable.
-                        ToolTip.visible: hovered
-                        ToolTip.text: root.popString.length > 0
-                                      ? "using POPs " + root.popString
-                                      : "no POPs searched yet — Search POPs first, or this will " +
-                                        "report far less time than is really available"
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.planText
-                        elide: Text.ElideRight
-                        color: root.planText.indexOf("!") === 0 ? "#c62828" : "#444"
-                    }
-                }
 
                 TabBar {
                     id: viewTabs
                     Layout.fillWidth: true
                     // Gantt first, because it is the view this perspective exists for.
-                    currentIndex: 1
+                    currentIndex: 0
                     Repeater {
                         model: root.viewNames
                         TabButton {
@@ -917,25 +1037,6 @@ Item {
                     currentIndex: viewTabs.currentIndex
 
                     // ── elevation / observability ─────────────────────────────
-                    Rectangle {
-                        color: "#fafafa"
-                        border.color: "#ddd"
-                        // wire: night_observability(facility, ra, dec, obsdate; alt_limit, alt_max,
-                        // moon_min_sep, dark_offset, step_minutes) -> (lst, alt, az, good_alt,
-                        // good_twilight, moon_sep, moon_fli), one curve per target, drawn by Makie.
-                        Label {
-                            anchors.centerIn: parent
-                            horizontalAlignment: Text.AlignHCenter
-                            color: "#666"
-                            text: "elevation vs time\nnight_observability()"
-                            font.family: "monospace"
-                        }
-                    }
-
-                    // ── Gantt ─────────────────────────────────────────────────
-                    //
-                    // Makie draws the bars, but the axis, the row labels and the legend are QML so
-                    // that rows stay clickable and labels stay text rather than rasterised glyphs.
                     ColumnLayout {
                         spacing: dp(4)
 
@@ -1086,7 +1187,37 @@ Item {
                         }
                     }
 
-                    // ── delay lines and POPs ──────────────────────────────────
+                    // ── delay carts (the `chara_plan` view) ──────────────────
+                    //
+                    // Where the Gantt reduces each baseline to in-or-out, this keeps the
+                    // number: a baseline running at 44 m of a 45.7 m limit is feasible and
+                    // about to stop being so, and only the cart position says that.
+                    Rectangle {
+                        color: "#ffffff"
+                        border.color: "#ddd"
+
+                        MakieArea {
+                            id: delayArea
+                            anchors.fill: parent
+                            scene: delayPlot
+                        }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            visible: !root.hasPlan || !root.useDelay
+                            color: "#ffffff"
+                            Label {
+                                anchors.centerIn: parent
+                                horizontalAlignment: Text.AlignHCenter
+                                color: "#888"
+                                text: root.hasPlan
+                                      ? "tick “delay lines”, then Compute"
+                                      : "choose a target and a date, then Compute"
+                            }
+                        }
+                    }
+
+
                     ColumnLayout {
                         spacing: dp(4)
 
@@ -1152,7 +1283,15 @@ Item {
                                     Layout.fillWidth: true
                                     spacing: dp(6)
                                     Label { Layout.preferredWidth: dp(40);  text: "#";        font.bold: true; font.pointSize: pt(baseFontPt - 2) }
-                                    Label { Layout.fillWidth: true;         text: "POPs";     font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    // The telescopes, in the order the POP numbers below are
+                                    // written. "POPs" alone leaves the reader counting columns
+                                    // to work out which number belongs to which telescope, and
+                                    // the whole point of the table is dialling those in exactly.
+                                    Label { Layout.fillWidth: true
+                                            text: root.telescopeNames.length > 0
+                                                  ? "POPs   (" + root.telescopeNames.join("  ") + ")"
+                                                  : "POPs"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.preferredWidth: dp(90);  text: "score";    font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.preferredWidth: dp(110); text: "HA range"; font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                 }
@@ -1165,16 +1304,34 @@ Item {
                                     clip: true
                                     model: popModel
                                     delegate: RowLayout {
+                                        id: popRow
                                         required property int index
                                         required property string pops
                                         required property string score
                                         required property string haRange
                                         width: popList.width
                                         spacing: dp(6)
-                                        Label { Layout.preferredWidth: dp(40);  text: index + 1; font.family: "monospace" }
-                                        Label { Layout.fillWidth: true;         text: pops;      font.family: "monospace"; elide: Text.ElideRight }
-                                        Label { Layout.preferredWidth: dp(90);  text: score;     font.family: "monospace" }
-                                        Label { Layout.preferredWidth: dp(110); text: haRange;   font.family: "monospace" }
+
+                                        // Double-click a row to adopt it, as well as the button:
+                                        // a table of configurations exists to be chosen from.
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            acceptedButtons: Qt.NoButton
+                                        }
+                                        Label { Layout.preferredWidth: dp(40);  text: popRow.index + 1; font.family: "monospace" }
+                                        Label { Layout.fillWidth: true;         text: popRow.pops;      font.family: "monospace"; elide: Text.ElideRight
+                                                color: popRow.pops === root.popString ? "#1a7f37" : "#222"
+                                                font.bold: popRow.pops === root.popString }
+                                        Label { Layout.preferredWidth: dp(90);  text: popRow.score;     font.family: "monospace" }
+                                        Label { Layout.preferredWidth: dp(110); text: popRow.haRange;   font.family: "monospace" }
+                                        Button {
+                                            text: popRow.pops === root.popString ? "in use" : "Use"
+                                            enabled: popRow.pops !== root.popString
+                                            implicitHeight: dp(20)
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "put these POPs in the field below Compute"
+                                            onClicked: root.setPopString(popRow.pops)
+                                        }
                                     }
                                 }
 
@@ -1186,111 +1343,6 @@ Item {
                                     horizontalAlignment: Text.AlignHCenter
                                 }
                             }
-                        }
-                    }
-
-                    // ── uv coverage ───────────────────────────────────────────
-                    ColumnLayout {
-                        spacing: dp(4)
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.margins: dp(4)
-                            spacing: dp(8)
-                            Label { text: "Accumulate to HA"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                            Slider {
-                                id: uvHaSlider
-                                Layout.fillWidth: true
-                                from: root.haMin
-                                to: root.haMax
-                                value: root.haMax
-                                // wire: redraw get_uv() with hour angles up to this value. The point
-                                // of the view is watching coverage fill in, so the control scrubs
-                                // over time rather than toggling the whole track on and off.
-                            }
-                            Label {
-                                Layout.preferredWidth: dp(70)
-                                text: uvHaSlider.value.toFixed(2) + " h"
-                                font.family: "monospace"
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            color: "#fafafa"
-                            border.color: "#ddd"
-                            // wire: get_uv(lat, ha, λ, dec, baselines) -> uv in cycles/rad; plot it
-                            // in Mλ, as the rest of the package does.
-                            Label {
-                                anchors.centerIn: parent
-                                horizontalAlignment: Text.AlignHCenter
-                                color: "#666"
-                                text: "uv coverage (Mλ)\nget_uv()"
-                                font.family: "monospace"
-                            }
-                        }
-                    }
-
-                    // ── predicted SNR ─────────────────────────────────────────
-                    ColumnLayout {
-                        spacing: dp(4)
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.margins: dp(4)
-                            spacing: dp(8)
-                            Label { text: "Elevation (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                            SpinBox { id: snrElevBox; from: 0; to: 90; value: 90 }
-                            Label { text: "|V|"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                            TextField {
-                                id: snrVisField
-                                Layout.preferredWidth: dp(80)
-                                text: "1.00"
-                                validator: DoubleValidator {
-                                    bottom: 0.0; top: 1.0; decimals: 3
-                                    notation: DoubleValidator.StandardNotation
-                                }
-                            }
-                            Item { Layout.fillWidth: true }
-                            Label {
-                                text: root.combiner + " · " + root.spectralSetup
-                                color: "#888"; font.pointSize: pt(baseFontPt - 2)
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            color: "#fafafa"
-                            border.color: "#ddd"
-                            // wire: predict_errors(facility, combiner, wavelength; mag, visamp,
-                            // elevation_deg, mag_ao) swept over magnitude -> σ(V²), σ(CP),
-                            // σ(visamp), σ(visphi) per channel.
-                            Label {
-                                anchors.centerIn: parent
-                                horizontalAlignment: Text.AlignHCenter
-                                color: "#666"
-                                text: "predicted σ vs magnitude\npredict_errors()"
-                                font.family: "monospace"
-                            }
-                        }
-                    }
-
-                    // ── moon ──────────────────────────────────────────────────
-                    Rectangle {
-                        color: "#fafafa"
-                        border.color: "#ddd"
-                        // wire: moon_radec(jd), moon_illumination(jd) and
-                        // angular_separation(ra1, dec1, ra2, dec2) across the night — a separation
-                        // track per target plus the single illumination fraction for the night.
-                        Label {
-                            anchors.centerIn: parent
-                            horizontalAlignment: Text.AlignHCenter
-                            color: "#666"
-                            text: "moon separation and illumination\nmoon_radec() / moon_illumination()"
-                            font.family: "monospace"
                         }
                     }
                 }
@@ -1378,6 +1430,62 @@ Item {
                     Item { Layout.fillWidth: true }
                 }
 
+                // ── source ───────────────────────────────────────────────────
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: dp(8)
+
+                    Label { text: "Source"; font.bold: true }
+                    ComboBox {
+                        Layout.preferredWidth: dp(140)
+                        model: ["Image", "Image cube", "Model"]
+                        currentIndex: root.simSource === "cube" ? 1
+                                    : root.simSource === "model" ? 2 : 0
+                        onActivated: root.simSource = ["image", "cube", "model"][currentIndex]
+                    }
+
+                    Button {
+                        text: root.simSource === "model" ? "Model file…" : "FITS…"
+                        onClicked: root.simSource === "model" ? simModelDialog.openAt("")
+                                                             : simImageDialog.openAt("")
+                    }
+                    Button {
+                        visible: root.simSource === "model"
+                        text: "From Modeling tab"
+                        // The model being edited next door, at its current values — no file, no
+                        // round trip. `simulate` wants `flat_model` and `flat_params`, which is
+                        // exactly what that perspective already holds.
+                        onClicked: { root.simModelPath = ""; root.refreshSimSource() }
+                    }
+
+                    Label { text: "pixel size"; visible: root.simSource !== "model"; color: "#666" }
+                    // A plain TextField, as everywhere else in this file: `NumField` is an
+                    // inline component of ImageTab and inline components are private to the
+                    // file that declares them.
+                    TextField {
+                        id: simPixField
+                        visible: root.simSource !== "model"
+                        Layout.preferredWidth: dp(80)
+                        text: root.simPixsize.toFixed(4)
+                        horizontalAlignment: Text.AlignRight
+                        onEditingFinished: {
+                            var v = parseFloat(text)
+                            if (!isNaN(v) && v > 0) root.simPixsize = v
+                            else text = root.simPixsize.toFixed(4)
+                        }
+                    }
+                    Label { text: "mas"; visible: root.simSource !== "model"; color: "#666"
+                            font.pointSize: pt(baseFontPt - 2) }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.simSourceText
+                        color: root.simSourceOk ? "#2e7d32" : "#b00000"
+                        elide: Text.ElideMiddle
+                        font.pointSize: pt(baseFontPt - 1)
+                    }
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: dp(8)
@@ -1430,6 +1538,24 @@ Item {
 
     // POP search results. Empty until a search runs; the first append fixes the roles, which are
     // pops, score and haRange.
+    FilePicker {
+        id: simImageDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Image or cube for the simulation"
+        filters: [{ label: "FITS files (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.simImagePath = path }
+    }
+
+    FilePicker {
+        id: simModelDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Model file for the simulation"
+        filters: [{ label: "Model files (*.toml)", patterns: "*.toml" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.simModelPath = path }
+    }
+
     ListModel { id: popModel }
 
     FileDialog {
@@ -1487,7 +1613,42 @@ Item {
                                      root.altLimit, root.altMax)
         hasPlan = planText.indexOf("!") !== 0
         ganttArea.update()
+        delayArea.update()
         root.consoleChanged()
+    }
+
+    // ── POP helpers ──────────────────────────────────────────────────────────
+    //
+    // `popString` is the single source of truth — the dropdowns, the text field and the search
+    // results all read and write it. Two representations of one setting that can disagree is
+    // how a user ends up computing a night with POPs they can see are not the ones shown.
+    function popAt(i) {
+        var f = popString.trim().split(/\s+/)
+        if (i < 0 || i >= f.length) return 1
+        var v = parseInt(f[i])
+        return (isNaN(v) || v < 1 || v > 5) ? 1 : v
+    }
+
+    function setPop(i, v) {
+        var n = telescopeNames.length
+        var f = popString.trim().length > 0 ? popString.trim().split(/\s+/) : []
+        while (f.length < n) f.push("1")
+        f[i] = String(v)
+        popString = f.slice(0, n).join(" ")
+        if (hasPlan && useDelay) computePlan()
+    }
+
+    // Accepts whatever a paste looks like — spaces, commas, tabs — because the numbers get
+    // copied out of tables and messages, not typed in a fixed format.
+    function setPopString(text) {
+        var f = text.trim().split(/[\s,]+/).filter(function (t) { return t.length > 0 })
+        var out = []
+        for (var i = 0; i < f.length && i < telescopeNames.length; ++i) {
+            var v = parseInt(f[i])
+            out.push(String(isNaN(v) || v < 1 || v > 5 ? 1 : v))
+        }
+        popString = out.join(" ")
+        if (hasPlan && useDelay) computePlan()
     }
 
     function findPops() {
@@ -1495,15 +1656,19 @@ Item {
         if (t === null) return
         popModel.clear()
         var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra,
-                                         root.selectedTelescopes.join(" "))
+                                         root.selectedTelescopes.join(" "), nBestBox.value)
+        root.consoleChanged()
         if (rows.length === 0) return
         var lines = rows.split("\n")
         for (var i = 0; i < lines.length; ++i) {
             var f = lines[i].split("\t")
-            if (f.length === 2) popModel.append({ pop: f[0], score: f[1] })
+            // The delegate declares these three as `required`, and a required role the model
+            // does not supply means the delegate is never created — no rows, no error.
+            if (f.length === 3)
+                popModel.append({ pops: f[0], score: f[1], haRange: f[2] })
         }
         // The best one is the one worth using, so take it rather than making the user copy it.
-        if (popModel.count > 0) root.popString = popModel.get(0).pop
+        if (popModel.count > 0) root.popString = popModel.get(0).pops
     }
 
     property string popString: ""

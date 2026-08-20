@@ -526,8 +526,8 @@ end
     @testset "console pane" begin
         G = GUI
         sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
-                          :uv, :baseline, "", String[], nothing, "", nothing, nothing, nothing,
-                          nothing)
+                          :uv, :baseline, false, "", String[], nothing, "", nothing, nothing, nothing,
+                          nothing, nothing, nothing, Any[])
 
         G.console!(sh, "load_dataset!(session, \"a.oifits\")"; kind = :cmd)
         G.console!(sh, "1520 points")
