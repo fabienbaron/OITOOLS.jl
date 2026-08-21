@@ -227,6 +227,26 @@ end
 # FitResult
 # ─────────────────────────────────────────────────────────────────────────────
 
+"""
+    FitResult
+
+What every point-estimate fitter returns: `fit_model`, `fit_model_lsqfit` and the grid search.
+
+| field | meaning |
+|---|---|
+| `x_opt` | best-fit values, in `list_free_params` order |
+| `list_free_params` | the names, so `x_opt[i]` is always identifiable |
+| `chi2`, `chi2r`, `ndof` | raw weighted χ², χ²/ndof, and the number of DATA POINTS |
+| `n_evals` | χ² evaluations spent |
+| `ret` | the optimiser's return code |
+| `model` | the compiled `FlatModel` the fit ran against |
+
+`ndof` counts data points and is **not** reduced by the number of free parameters, so it is not
+a degrees-of-freedom in the model-comparison sense; compute AIC or BIC from `chi2` and the
+parameter count rather than reading them off `chi2r`.
+
+See also `LsqFitResult`, [`UltraNestResult`](@ref) and [`Chi2Map`](@ref).
+"""
 struct FitResult
     x_opt      ::Vector{Float64}   # best-fit parameter values
     list_free_params ::Vector{String}    # parameter names, same order as x_opt

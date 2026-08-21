@@ -74,6 +74,10 @@ ApplicationWindow {
     // in force, so a scale worked out from this monitor's DPI is not pinned onto the next one.
     property real plotScaleUser: 0
     property real markerSizeUser: 0
+    // How far one wheel detent zooms a plot. A setting because it depends on the pointing
+    // device as much as on taste: a detented wheel, a free-spinning one and a touchpad all
+    // deliver different amounts of scroll for the same gesture.
+    property real zoomStepUser: 1.25
 
     readonly property real uiScale: uiScaleUser > 0     ? uiScaleUser
                                   : uiScaleOverride > 0 ? uiScaleOverride
@@ -267,6 +271,8 @@ ApplicationWindow {
                                 Julia.shell_set_plot_scale(win.plotScaleUser); break
             case "marker_size": win.markerSizeUser = v > 0 ? v : 0
                                 Julia.shell_set_marker_size(win.markerSizeUser); break
+            case "zoom_step":   if (v > 1) { win.zoomStepUser = v
+                                             Julia.shell_set_zoom_step(v) } break
             }
         }
         console.log("OITOOLSGUI applied saved appearance defaults")
@@ -293,7 +299,14 @@ ApplicationWindow {
             ToolButton {
                 id: settingsButton
                 text: "\u2699"                    // GEAR; see settingsPanel for the fallback
-                font.pointSize: pt(baseFontPt + 3)
+                // Sized well above the toolbar's text. This is the only control in the bar that
+                // is a symbol rather than a word, so at text size it read as punctuation next
+                // to "Dataset:" instead of as the button it is.
+                font.pointSize: pt(baseFontPt + 11)
+                // The glyph is taller than a ToolButton's default content box, so give it room
+                // rather than letting the bar clip its top and bottom.
+                implicitWidth: dp(38)
+                implicitHeight: dp(38)
                 ToolTip.visible: hovered
                 ToolTip.text: "Appearance settings"
                 onClicked: {
@@ -309,11 +322,13 @@ ApplicationWindow {
             // Plot scale and marker size live in Julia, so ask it rather than trusting the
             // number the spin box was built with.
             var f = Julia.shell_plot_scale().split("\t")
-            if (f.length === 3) {
+            if (f.length === 4) {
                 plotScaleSpin.value  = Math.round(parseFloat(f[0]) * 100)
                 win.plotScaleUser    = parseFloat(f[1])
                 win.markerSizeUser   = parseFloat(f[2])
                 markerSpin.value     = Math.round(win.markerSizeUser)
+                win.zoomStepUser     = parseFloat(f[3])
+                zoomSpin.value       = Math.round(win.zoomStepUser * 100)
             }
             settingsPanel.open()
         }
@@ -517,6 +532,27 @@ ApplicationWindow {
                 }
                 Label { text: "px"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
 
+                // ── zoom ──────────────────────────────────────────────────────
+                Label { text: "Wheel zoom"; color: "#666" }
+                SpinBox {
+                    id: zoomSpin
+                    from: 102; to: 300; stepSize: 5
+                    value: 125
+                    editable: true
+                    Layout.fillWidth: true
+                    textFromValue: function (v) { return (v / 100).toFixed(2) + "×" }
+                    valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                    onValueModified: {
+                        win.zoomStepUser = value / 100
+                        Julia.shell_set_zoom_step(win.zoomStepUser)
+                    }
+                }
+                Label {
+                    text: "per detent"
+                    color: "#888"
+                    font.pointSize: pt(baseFontPt - 2)
+                }
+
                 // ── theme ─────────────────────────────────────────────────────
                 Label { text: "Theme"; color: "#666" }
                 ComboBox {
@@ -559,7 +595,8 @@ ApplicationWindow {
                               "ui_font\t"     + win.uiFontFamily,
                               "ui_font_pt\t"  + win.baseFontPt,
                               "plot_scale\t"  + win.plotScaleUser,
-                              "marker_size\t" + win.markerSizeUser ].join("\n"))
+                              "marker_size\t" + win.markerSizeUser,
+                              "zoom_step\t"   + win.zoomStepUser ].join("\n"))
                         savedLabel.text = path.length > 0 ? "saved to " + path
                                                           : "could not save — see the console"
                     }

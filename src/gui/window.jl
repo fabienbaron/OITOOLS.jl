@@ -30,6 +30,7 @@ function __init__()
                      shell_image_colormaps, shell_image_colormap, shell_recenter_image,
                      shell_set_plot_scale, shell_set_marker_size,
                      shell_save_settings, shell_load_settings, shell_plot_scale,
+                     shell_set_zoom_step,
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param,
                      shell_component_kinds, shell_add_component, shell_remove_component,
@@ -113,12 +114,6 @@ function OITOOLS.gui(session::Session = Session();
     # 0.0 means "decide for yourself", which is the default -- see src/scaling.jl.
     uiscale = ui_scale_override()
     @info "UI scale: $(uiscale.reason)"
-
-    # Fill the glyph atlas before ANY figure exists. Makie caches only `a-z A-Z 0-9 . -`, and
-    # only for its own default fonts, so with `PLOT_FONT` pinned every character a label uses --
-    # spaces and commas included -- would otherwise be inserted into the atlas at first draw,
-    # inside the GL context Qt owns by then. That insertion is what garbles glyphs.
-    @debug "pre-warmed $(prewarm_glyphs!()) glyphs"
 
     fig = Makie.Figure(fonts = PLOT_FONTS)
     ax  = Makie.Axis(fig[1, 1]; xlabel = "", ylabel = "", title = "OITOOLS")

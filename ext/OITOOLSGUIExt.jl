@@ -65,6 +65,7 @@ export NightPlan, config_catalog, facility_telescopes, telescope_config,
        baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
        delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info
 export build_chi2_map, update_chi2_map!
+export ZOOM_STEP_USER, zoom_per_detent, set_zoom_step!
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
        picker_kind, picker_would_overwrite, picker_matches, picker_examples
 export GLOBAL_COMPONENT

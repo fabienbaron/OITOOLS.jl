@@ -11,6 +11,7 @@
 | `fit_model(model, x0, data)` | Fit a `FlatModel` via NLopt |
 | `fit_model_lsqfit(model, x0, data)` | Fit a `FlatModel` via Levenberg-Marquardt |
 | `fit_model_ultranest(model, data; lb, ub)` | Fit a `FlatModel` via nested sampling (UltraNest) |
+| `chi2_map(model_dict, free, data, p1, p2)` | Grid-search two free parameters and return the χ² surface; needs no gradient and no starting guess |
 | `model_to_obs(model, x, data)` | Compute observables (V², T3amp, T3phi) from a model |
 | `model_to_residuals(model, x, data)` | Compute normalised residuals (model - data) / error |
 | `model_to_chi2(model, x, data)` | Compute weighted chi² (alias: `chi2_flat`) |
@@ -117,6 +118,8 @@ write_model_file
 fit_model
 fit_model_lsqfit
 fit_model_ultranest
+chi2_map
+delta_chi2_levels
 model_to_obs
 model_to_residuals
 model_to_chi2
@@ -136,6 +139,8 @@ perturb_data
 resample_data
 BootstrapResult
 UltraNestResult
+FitResult
+Chi2Map
 DataBlocks
 ```
 
@@ -145,6 +150,7 @@ DataBlocks
 | `LsqFitResult` | Result from `fit_model_lsqfit` (adds `stderror`, `covar`, `converged`) |
 | `UltraNestResult` | Result from `fit_model_ultranest` (adds `logz`, `logzerr`, `posterior`, `result`) |
 | `BootstrapResult` | Result from `bootstrap_fit` (adds `samples`, `median`, `sigma_minus`, `sigma_plus`, `covar`) |
+| `Chi2Map` | χ² surface over two free parameters from `chi2_map`; `FitResult(map)` gives its best grid point |
 | `DataBlocks` | Partition of an `OIdata` into resampling blocks |
 | `ModelConstraint` | One relation between model parameters, enforced during fitting |
 

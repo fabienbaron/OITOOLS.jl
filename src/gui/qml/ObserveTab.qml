@@ -396,14 +396,8 @@ Item {
                 // blank strip: the panels sized to the ScrollView while the row below sized to
                 // its own content, so the column ended up wider than the panels it held and the
                 // difference showed as dead space against the night panel.
-                //
-                // Wide enough for the widest panel's own content rather than for the chart's
-                // convenience: at 440 the six POP dropdowns wrapped onto a second row and the
-                // panel ran past the bottom of the scroll view. The night chart stretches to
-                // whatever is left and reads fine at any width; these panels do not.
-                Layout.minimumWidth: dp(500)
-                Layout.preferredWidth: dp(560)
-                Layout.maximumWidth: dp(560)
+                Layout.preferredWidth: dp(440)
+                Layout.maximumWidth: dp(440)
                 Layout.fillHeight: true
                 spacing: dp(6)
 
@@ -412,11 +406,6 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     contentWidth: availableWidth
-                    // Always shown. These panels are taller than the viewport at any usual
-                    // window height, and a scrollbar that appears only once you scroll makes
-                    // the bottom edge read as a panel cut in half -- which is exactly how the
-                    // POPs box, the last one in the column, looked.
-                    ScrollBar.vertical.policy: ScrollBar.AlwaysOn
 
                     ColumnLayout {
                         width: settingsScroll.availableWidth

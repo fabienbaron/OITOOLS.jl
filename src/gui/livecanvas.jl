@@ -294,19 +294,47 @@ Zoom per wheel detent, and how far the view may travel from the data.
 
 Both spans are multiples of the one `autolimits!` chose, so they are absolute stops measured
 against the DATA rather than against wherever the user last left the view: zooming in stops at
-4x magnification (a quarter of the data extent on screen) and zooming out at 3x the extent.
+8x magnification (an eighth of the data extent on screen) and zooming out at 3x the extent.
 Scrolling past either does nothing, which is the intended feel -- the view cannot be lost.
 
 The ceiling is not only a convenience. Without one a few wheel clicks reach 1e49, where tick
 spacing falls below what a Float64 can represent, every tick lands on the same value, and
 Makie throws `AssertionError: vmin != vmax` out of its tick locator.
 """
-const ZOOM_PER_DETENT = 1.1
-const ZOOM_MIN_SPAN   = 1 / 4          # zoom in  ⇒ at most 4x magnification
+# 1.1 per notch was the first value that stopped the runaway, and it overshot the other way:
+# crossing the whole range took fifteen notches, which reads as the wheel not working. 1.25
+# crosses it in about six, which is roughly what a wheel is expected to do.
+const ZOOM_PER_DETENT = 1.25
+const ZOOM_MIN_SPAN   = 1 / 8          # zoom in  ⇒ at most 8x magnification
 const ZOOM_MAX_SPAN   = 3.0            # zoom out ⇒ at most 3x the data extent
 
 "One wheel detent, in the scroll units Qt delivers for a discrete mouse wheel."
 const WHEEL_DETENT = 120.0
+
+"""
+The user's zoom step, or zero to use [`ZOOM_PER_DETENT`](@ref).
+
+A setting rather than a constant because it is the one number here that is a matter of taste
+and of hardware: a wheel with detents, a free-spinning wheel and a touchpad all deliver
+different amounts of scroll for the same intent, and no single value suits them.
+"""
+const ZOOM_STEP_USER = Ref(0.0)
+
+"The zoom factor per detent actually in force."
+zoom_per_detent() = ZOOM_STEP_USER[] > 0 ? ZOOM_STEP_USER[] : ZOOM_PER_DETENT
+
+"""
+    set_zoom_step!(x) -> Float64
+
+Set the zoom factor per wheel detent; zero restores the default.
+
+Clamped to 1.02 .. 3.0. Below 1.02 the wheel does nothing perceptible, and above 3 a single
+notch crosses the whole zoom range, which is the runaway this bound exists to prevent.
+"""
+function set_zoom_step!(x::Real)
+    ZOOM_STEP_USER[] = (isfinite(x) && x > 1) ? clamp(Float64(x), 1.02, 3.0) : 0.0
+    return ZOOM_STEP_USER[]
+end
 
 """
     _install_zoom!(canvas)
@@ -361,7 +389,7 @@ function zoom_step!(c::LiveCanvas, steps::Real; at = nothing)
     (hx > 0 && hy > 0) || return false
     # One factor for both axes. Scaling them differently would quietly change the aspect
     # ratio, and uv coverage is drawn with DataAspect, where that is a lie about the sky.
-    factor = ZOOM_PER_DETENT^(-steps)
+    factor = zoom_per_detent()^(-steps)
     nwx, nwy = wx * factor, wy * factor
 
     # Refuse the whole step rather than clamping it to the bound: overzooming does NOTHING.

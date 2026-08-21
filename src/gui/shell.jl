@@ -881,15 +881,16 @@ end
 """
     shell_plot_scale() -> String
 
-`effective\tuser\tmarker`: the plot scale actually in force, the user's override behind it
-(zero when it is computed rather than chosen), and the marker size (zero for the per-view
-default).
+`effective\tuser\tmarker\tzoom`: the plot scale actually in force, the user's override behind
+it (zero when it is computed rather than chosen), the marker size (zero for the per-view
+default) and the zoom factor per wheel detent.
 
 Two scale numbers rather than one because they answer different questions -- the panel opens
 showing what is being drawn, while "Save defaults" stores the override, so a scale that was
 computed from this screen's DPI is not pinned onto the next screen.
 """
-shell_plot_scale() = string(live_plot_scale(), '\t', PLOT_SCALE_USER[], '\t', MARKER_SIZE_USER[])
+shell_plot_scale() = join((live_plot_scale(), PLOT_SCALE_USER[], MARKER_SIZE_USER[],
+                           zoom_per_detent()), '\t')
 
 """
     shell_set_plot_scale(x)  -> String
@@ -910,6 +911,23 @@ function shell_set_plot_scale(x)
     catch err
         console!(sh, "could not restyle: " * _cause(err); kind = :err)
     end
+    return ""
+end
+
+"""
+    shell_set_zoom_step(x) -> String
+
+How far one wheel detent zooms. Zero restores the default.
+
+No redraw: this changes what the NEXT scroll does, not what is on screen, and redrawing to
+show a setting that has not been used yet would be a lie about the current view.
+"""
+function shell_set_zoom_step(x)
+    v = set_zoom_step!(Float64(x))
+    sh = SHELL[]
+    sh === nothing && return ""
+    console!(sh, @sprintf("zoom step: %.2fx per detent%s", zoom_per_detent(),
+                          v == 0 ? " (default)" : ""))
     return ""
 end
 
