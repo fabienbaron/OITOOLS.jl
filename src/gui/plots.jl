@@ -70,6 +70,74 @@ out of Makie's compute graph -- `Axis.xlabelfont`, the ticklabel fonts, and
 const PLOT_FONT = "DejaVu Sans"
 
 """
+Every character the GUI's Makie labels can contain.
+
+Text that reaches the atlas AFTER the Qt window exists renders corrupted -- glyphs come out
+with a diagonal stroke through them, and the same string set before the window is clean.
+Measured with `test/gui/glyphtest.jl`, which varies one thing at a time:
+
+| configuration | result |
+|---|---|
+| labels set before the window | clean |
+| labels set after the window | corrupted |
+| after, but with Makie's default font | letters and digits clean, punctuation and Greek corrupt |
+| after, with this set pre-inserted | clean |
+| six figures instead of one | makes no difference either way |
+
+The third row is what identifies the mechanism: Makie's cached atlas pre-renders exactly
+`a-z`, `A-Z`, `0-9`, `.`, `-` and the Unicode minus, and only for its own default fonts. Those
+are precisely the characters that survive. Pinning `PLOT_FONT` removes even that safety net,
+so every character becomes a first-time insertion.
+
+The GUI cannot avoid setting labels after the window -- a plot title names the dataset, which
+is not known until one is loaded. So the atlas is filled up front instead.
+"""
+const PLOT_GLYPHS = Char[
+    # printable ASCII: every letter, digit and punctuation mark a label or tick can carry
+    (' ':'~')...,
+    # the Greek and typographic characters the axis labels, titles and readouts use
+    'λ', 'μ', 'α', 'δ', 'χ', 'Δ', 'θ', 'σ', 'π',
+    '°', '²', '³', '±', '×', '·', '—', '–', '…', '≤', '≥', '≈',
+    'ᵣ', '₀', '₁', '₂', '\u2212',                    # subscripts and the Unicode MINUS SIGN
+]
+
+"""
+    prewarm_glyphs!(fonts = PLOT_FONTS) -> Int
+
+Insert every glyph in [`PLOT_GLYPHS`](@ref) into Makie's texture atlas, and return how many
+insertions were made. **Call before the first `Figure` exists**, and call it as a statement:
+
+    prewarm_glyphs!()
+
+NOT inside a `@debug`/`@info` string. Julia's logging macros do not evaluate their
+interpolations when the level is disabled, so `@debug "\$(prewarm_glyphs!())"` silently never
+runs -- which is exactly how the first version of this shipped doing nothing.
+
+Missing glyphs are skipped rather than thrown: a font without `≥` should cost that one
+character, not the window.
+"""
+function prewarm_glyphs!(fonts = PLOT_FONTS)
+    atlas = Makie.get_texture_atlas()
+    n = 0
+    for name in unique(values(fonts))
+        font = try
+            Makie.to_font(name)
+        catch
+            continue
+        end
+        for c in PLOT_GLYPHS
+            try
+                Makie.insert_glyph!(atlas, c, font)
+                n += 1
+            catch
+                # A glyph this face does not have. Makie falls back when it is drawn.
+            end
+        end
+    end
+    return n
+end
+
+"""
     style_axis!(ax; scale = 1.0)
 
 Apply oiplot's typography to a Makie axis.

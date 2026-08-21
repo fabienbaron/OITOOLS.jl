@@ -115,6 +115,14 @@ function OITOOLS.gui(session::Session = Session();
     uiscale = ui_scale_override()
     @info "UI scale: $(uiscale.reason)"
 
+    # Fill the glyph atlas before ANY figure exists. Text first rasterised after the Qt window
+    # is up renders corrupted; the same text set beforehand is clean. See `PLOT_GLYPHS` for the
+    # measurements, and `test/gui/glyphtest.jl` for the harness that isolated it.
+    #
+    # A plain statement, deliberately: inside a `@debug` string this would never run, because
+    # Julia's logging macros skip their interpolations when the level is off.
+    nglyphs = prewarm_glyphs!()
+
     fig = Makie.Figure(fonts = PLOT_FONTS)
     ax  = Makie.Axis(fig[1, 1]; xlabel = "", ylabel = "", title = "OITOOLS")
     style_axis!(ax)
@@ -176,6 +184,7 @@ function OITOOLS.gui(session::Session = Session();
     # to see when the window looks wrong.
     console!(sh, "OITOOLSGUI ready")
     console!(sh, "graphics: $(gfx.reason)")
+    console!(sh, "glyph atlas: $(nglyphs) glyphs pre-warmed")
     console!(sh, "ui scale: $(uiscale.reason)")
     for (i, d) in enumerate(session.datasets)
         console!(sh, "load_dataset!(session, \"$(d.path)\")"; kind = :cmd)
