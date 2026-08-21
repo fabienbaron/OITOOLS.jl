@@ -23,25 +23,62 @@ ApplicationWindow {
     // itself. Pixel quantities do not, so without `dp()` the text outgrows the containers
     // holding it.
     //
-    // autoScale is exactly the ratio Qt is applying to text, so at the default the fonts are
-    // left completely alone (fontScale == 1) and only the pixels move. An explicit
-    // OITOOLSGUI_SCALE is a departure from what the screen asked for, so it has to move both
-    // -- hence fontScale, which is that departure and nothing else. Scaling pointSize by the
-    // full uiScale would apply the screen's DPI twice.
+    // qtTextScale is exactly the ratio Qt is applying to text by itself, so fontScale carries
+    // only the DEPARTURE from it and the pointSize never gets the screen's DPI twice.
     //
-    // Detection is here rather than in Julia because Screen.logicalPixelDensity is live: it
-    // is right before any window exists, and it follows the window to a monitor with a
-    // different scale. Julia supplies only uiScaleOverride (0 = decide for yourself).
-    readonly property real autoScale:
+    // It reads logicalPixelDensity, which is 96 dpi on essentially every Linux screen -- that
+    // is the point: it says what Qt did, not what the screen is.
+    readonly property real qtTextScale:
         Math.max(0.5, Math.min(4.0, Screen.logicalPixelDensity * 25.4 / 96.0))
-    // 1.25 by default, not 1.0. Measured on the development display: at autoScale == 1.0 the
-    // window is legibly too small, and every screen we have tried reports 96 dpi and a device
-    // pixel ratio of 1, so autoScale alone never grows anything. OITOOLSGUI_SCALE overrides it
-    // outright -- set it to 1.0 to get the old size back.
-    readonly property real defaultDensity: 1.25
-    readonly property real uiScale:
-        uiScaleOverride > 0 ? uiScaleOverride : autoScale * defaultDensity
-    readonly property real fontScale: uiScale / autoScale
+
+    // What the screen actually is, from PHYSICAL pixel density.
+    //
+    // `Screen.pixelDensity` comes from the EDID and genuinely differs between machines, where
+    // `logicalPixelDensity` does not. Measured: a 24" 1920x1080 desktop reports 92.6 dpi and a
+    // 16" laptop panel around 189, while BOTH report logicalPixelDensity 96 and
+    // devicePixelRatio 1. Scaling off the logical figure is why one hardcoded factor could fit
+    // one machine and be far too large on the other.
+    readonly property real physicalDpi: Screen.pixelDensity * 25.4
+
+    // Anchored on two points judged by eye, not derived: 0.875 on this 92.6 dpi desktop and
+    // 1.25 on a laptop panel of roughly 189 dpi. `refDpi`/`refScale`/`dpiExponent` ARE that
+    // fit -- move them if a screen reads wrong, rather than trying to re-derive a rule.
+    //
+    // The exponent falls out as 0.5. Matching physical SIZE would be 1.0 and give 0.61 here,
+    // too small: a desktop monitor sits further away than a laptop screen and wants larger
+    // elements to subtend the same angle. Viewing distance is not knowable, so the root splits
+    // the difference, and it happens to pass through both judgements.
+    //
+    // This governs the CHROME only. The window is sized from the screen (below) and plot text
+    // from the density (`live_plot_scale` in Julia) -- tying either to this factor was tried
+    // and both were wrong: the window shrank when the widgets did, leaving less room for the
+    // data rather than more.
+    //
+    // 189 is an estimate for the laptop, not a reading. The startup line below prints the
+    // physical dpi, so it can be replaced with the real one and the exponent refitted.
+    readonly property real refDpi:      92.6
+    readonly property real refScale:    0.875
+    readonly property real dpiExponent: 0.5
+    readonly property real autoScale:
+        Math.max(0.5, Math.min(4.0,
+            physicalDpi > 0 ? refScale * Math.pow(physicalDpi / refDpi, dpiExponent)
+                            : refScale))
+
+    // Turned by hand in the settings panel; 0 means "no override". It wins over both the
+    // startup variable and the screen, because it is the most recent thing the user said.
+    property real uiScaleUser: 0
+    property string uiFontFamily: ""
+
+    // What the plot layer was last TOLD, as opposed to what it is drawing: zero means the
+    // value is computed from the screen. "Save defaults" stores these rather than the numbers
+    // in force, so a scale worked out from this monitor's DPI is not pinned onto the next one.
+    property real plotScaleUser: 0
+    property real markerSizeUser: 0
+
+    readonly property real uiScale: uiScaleUser > 0     ? uiScaleUser
+                                  : uiScaleOverride > 0 ? uiScaleOverride
+                                                        : autoScale
+    readonly property real fontScale: uiScale / qtTextScale
 
     function dp(px)     { return Math.round(px * uiScale) }   // pixel lengths
     function pt(points) { return points * fontScale }         // explicit point sizes
@@ -52,18 +89,26 @@ ApplicationWindow {
     // multiplies it along with the spacing.
     property real baseFontPt: 11
     font.pointSize: pt(baseFontPt)
+    // Empty means whatever the platform theme chose, which is the sane default.
+    font.family: uiFontFamily.length > 0 ? uiFontFamily : Qt.application.font.family
 
-    // Never open larger than the screen: dp(1600) on a 2x panel is 3200 logical pixels, which
-    // would put the window's own edges off the desktop before the user has done anything.
+    // Sized from the SCREEN, not through `dp()`.
     //
-    // 1600 rather than something squarer because every perspective is a settings column beside
-    // a plot: Observing puts the Gantt next to the target list, Imaging the reconstruction next
-    // to the regularisers. Width is what those layouts spend, and too little of it pushes the
-    // plot into a strip.
-    width:  Math.min(Screen.desktopAvailableWidth  * 0.95, dp(1600))
+    // Passing it through the UI scale ties the window to the widgets, and the two want opposite
+    // things: asking for smaller chrome shrank the window to 1050x682 on a 1920x1080 desktop,
+    // so there was LESS room for the plot and the tick labels collided. Smaller widgets should
+    // buy more space for the data, not less.
+    //
+    // A wide fraction rather than a square one because every perspective is a settings column
+    // beside a plot: Observing puts the Gantt next to the target list, Imaging the
+    // reconstruction next to the regularisers. Width is what those layouts spend.
+    //
+    // The minimum keeps a small screen usable; the fraction keeps a large one from opening a
+    // window with its edges off the desktop.
+    width:  Math.max(900, Math.round(Screen.desktopAvailableWidth  * 0.83))
     // The plot is one of five stacked regions -- context bar, tabs, plot, pick line, console --
     // so the window needs the height to leave it more than a band.
-    height: Math.min(Screen.desktopAvailableHeight * 0.95, dp(1040))
+    height: Math.max(600, Math.round(Screen.desktopAvailableHeight * 0.95))
     visible: true
     title: "OITOOLS"
     // Test hook: fullscreen makes screen coordinates map 1:1 onto client coordinates inside a
@@ -86,9 +131,14 @@ ApplicationWindow {
 
     function afterAction() { refreshConsole(); redrawPlot(); refreshObservables() }
 
+    // What one panel of the per-group view would hold, for whichever observable is selected.
+    property string groupingNoun: ""
+
     function setView() {
+        win.groupingNoun = Julia.shell_grouping_noun(kindBox.currentText)
         win.status = Julia.shell_set_view(kindBox.currentText, colorBox.currentText,
-                                          logyBox.enabled && logyBox.checked)
+                                          logyBox.enabled && logyBox.checked,
+                                          panelsBox.enabled && panelsBox.checked)
         win.afterAction()
     }
 
@@ -96,6 +146,42 @@ ApplicationWindow {
     // and pushes the answer to every panel that gates a tick box on it. Without this the boxes
     // stay off after a load and the run buttons never enable — they have no other source of
     // truth, and defaulting them to on would offer observables the file does not contain.
+    // Plot kinds, with whether the loaded file can supply each. Julia decides availability so
+    // the menu and `canvas_data` cannot disagree; see `shell_plot_kinds`.
+    ListModel {
+        id: kindModel
+        ListElement { name: "uv";         available: true }
+        ListElement { name: "v2";         available: true }
+        ListElement { name: "t3phi";      available: true }
+        ListElement { name: "t3amp";      available: true }
+        ListElement { name: "visamp";     available: true }
+        ListElement { name: "visphi";     available: true }
+        ListElement { name: "diffphi";    available: true }
+        ListElement { name: "diffvisamp"; available: true }
+        ListElement { name: "flux";       available: true }
+    }
+
+    function refreshPlotKinds() {
+        var s = Julia.shell_plot_kinds()
+        if (s.length === 0) return                    // no dataset: leave everything selectable
+        var have = {}
+        var parts = s.split(",")
+        for (var i = 0; i < parts.length; ++i) {
+            var kv = parts[i].split("=")
+            if (kv.length === 2) have[kv[0]] = (kv[1] === "1")
+        }
+        for (var r = 0; r < kindModel.count; ++r) {
+            var n = kindModel.get(r).name
+            kindModel.setProperty(r, "available", have[n] === true)
+        }
+        // If the current view just became unavailable — a new file without that table — fall
+        // back to uv rather than leaving a selection that cannot be drawn.
+        if (!kindModel.get(kindBox.currentIndex).available) {
+            kindBox.currentIndex = 0
+            win.setView()
+        }
+    }
+
     function refreshObservables() {
         var have = { v2: false, t3amp: false, t3phi: false,
                      cvis: false, flux: false, diffvis: false }
@@ -114,6 +200,8 @@ ApplicationWindow {
         imageTab.haveFlux    = have.flux
         imageTab.haveDiffvis = have.diffvis
         imageTab.resetObservables()
+        win.refreshPlotKinds()
+        win.groupingNoun = Julia.shell_grouping_noun(kindBox.currentText)
 
         // Geometry the data suggests. A constant pixel size is not a neutral default: too
         // coarse and the image cannot represent what the data resolves, too fine and it is
@@ -145,15 +233,43 @@ ApplicationWindow {
     // remotely. If the window looks wrong, this line says whether the screen asked for it
     // (autoScale) or an override did, and OITOOLSGUI_SCALE is how you argue with it.
     Component.onCompleted: {
+        // Saved defaults first: they can override the scale, and `shell_ui_scale` below has to
+        // be told the value that actually wins.
+        applySavedSettings()
         // Hand the scale to Julia before anything is drawn: Makie font and marker sizes are
         // computed there, and they have to follow the same factor as the chrome around them.
-        Julia.shell_ui_scale(uiScale)
+        Julia.shell_ui_scale(uiScale, physicalDpi)
         console.log(
-        "OITOOLSGUI ui scale: screen=" + (Screen.logicalPixelDensity * 25.4).toFixed(1) + " dpi"
+        "OITOOLSGUI ui scale: screen=" + physicalDpi.toFixed(1) + " dpi physical, "
+        + (Screen.logicalPixelDensity * 25.4).toFixed(1) + " logical"
         + "  devicePixelRatio=" + Screen.devicePixelRatio.toFixed(2)
         + "  autoScale=" + autoScale.toFixed(3)
         + (uiScaleOverride > 0 ? "  override=" + uiScaleOverride.toFixed(3) : "  (no override)")
         + "  -> uiScale=" + uiScale.toFixed(3) + " fontScale=" + fontScale.toFixed(3))
+    }
+
+    // Applies whatever "Save defaults" last wrote. Silent when nothing has been saved, which is
+    // the normal case -- the built-in defaults are a perfectly good answer, and a settings file
+    // that cannot be read must not stop the window from opening.
+    function applySavedSettings() {
+        var txt = Julia.shell_load_settings()
+        if (txt.length === 0) return
+        var lines = txt.split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length !== 2) continue
+            var v = parseFloat(f[1])
+            switch (f[0]) {
+            case "ui_scale":    if (v > 0) win.uiScaleUser = v; break
+            case "ui_font":     win.uiFontFamily = f[1]; break
+            case "ui_font_pt":  if (v > 0) win.baseFontPt = v; break
+            case "plot_scale":  win.plotScaleUser = v > 0 ? v : 0
+                                Julia.shell_set_plot_scale(win.plotScaleUser); break
+            case "marker_size": win.markerSizeUser = v > 0 ? v : 0
+                                Julia.shell_set_marker_size(win.markerSizeUser); break
+            }
+        }
+        console.log("OITOOLSGUI applied saved appearance defaults")
     }
 
     // Reads the dataset list back from the session and selects the newest entry. Called both
@@ -171,6 +287,37 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.leftMargin: dp(8); anchors.rightMargin: dp(8)
             spacing: dp(10)
+
+            // Settings. Left of the dataset because it governs the whole window rather than
+            // any one perspective, and because the dataset is what the eye should land on.
+            ToolButton {
+                id: settingsButton
+                text: "\u2699"                    // GEAR; see settingsPanel for the fallback
+                font.pointSize: pt(baseFontPt + 3)
+                ToolTip.visible: hovered
+                ToolTip.text: "Appearance settings"
+                onClicked: {
+            if (settingsPanel.opened) { settingsPanel.close(); return }
+            // Read the live values back, so the panel opens showing what is in force rather
+            // than what it last displayed.
+            uiScaleSpin.value = Math.round(win.uiScale * 100)
+            uiFontSizeSpin.value = Math.round(win.baseFontPt)
+            // The combo only reports what was last picked FROM it, so a family that arrived
+            // from the saved defaults has to be found in the list by hand. -1 for a name that
+            // is not on the list, and 0 for none at all, both mean "(system default)".
+            uiFontBox.currentIndex = Math.max(0, uiFontBox.model.indexOf(win.uiFontFamily))
+            // Plot scale and marker size live in Julia, so ask it rather than trusting the
+            // number the spin box was built with.
+            var f = Julia.shell_plot_scale().split("\t")
+            if (f.length === 3) {
+                plotScaleSpin.value  = Math.round(parseFloat(f[0]) * 100)
+                win.plotScaleUser    = parseFloat(f[1])
+                win.markerSizeUser   = parseFloat(f[2])
+                markerSpin.value     = Math.round(win.markerSizeUser)
+            }
+            settingsPanel.open()
+        }
+            }
 
             Label { text: "Dataset:"; font.bold: true }
             ComboBox {
@@ -241,6 +388,187 @@ ApplicationWindow {
         }
     }
 
+    // ── appearance settings ───────────────────────────────────────────────────
+    //
+    // The controls show what is CURRENTLY in force, and the scale, font and plot controls
+    // change it live. Plot font and theme are shown but disabled, each for a stated reason.
+    // "Save defaults" writes the lot to a per-user file that the window reads at startup.
+    Popup {
+        id: settingsPanel
+        // Centred. Anchored to the top-left it landed on the Observing settings column, which
+        // is also a stack of labelled rows in a light panel -- close enough in appearance that
+        // it was not obvious which one had focus. The middle of the window belongs to nothing
+        // else, so a panel there reads as a dialog.
+        x: Math.round((win.width  - width)  / 2)
+        y: Math.round((win.height - height) / 2)
+        width: dp(430)
+        // Dimmed behind, for the same reason: it separates the panel from whatever it covers.
+        modal: true
+        dim: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+        padding: dp(12)
+
+        ColumnLayout {
+            width: parent.width
+            spacing: dp(10)
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "Appearance"; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Label {
+                    text: "plot font and theme need a restart"
+                    color: "#888"
+                    font.pointSize: pt(baseFontPt - 2)
+                }
+            }
+
+            GridLayout {
+                columns: 3
+                columnSpacing: dp(8)
+                rowSpacing: dp(6)
+                Layout.fillWidth: true
+
+                // ── UI ────────────────────────────────────────────────────────
+                Label { text: "UI scale"; color: "#666" }
+                SpinBox {
+                    id: uiScaleSpin
+                    from: 50; to: 400; stepSize: 5
+                    value: Math.round(win.uiScale * 100)
+                    editable: true
+                    textFromValue: function (v) { return (v / 100).toFixed(2) }
+                    valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                    Layout.fillWidth: true
+                    // Everything sized through dp()/pt() rebinds, so the window resizes as the
+                    // number changes rather than on close.
+                    onValueModified: win.uiScaleUser = value / 100
+                }
+                Button {
+                    text: "auto"
+                    enabled: win.uiScaleUser > 0
+                    ToolTip.visible: hovered
+                    ToolTip.text: uiScaleOverride > 0
+                        ? "back to OITOOLSGUI_SCALE=" + uiScaleOverride.toFixed(2)
+                        : "back to the value computed from " + physicalDpi.toFixed(0) + " dpi"
+                    onClicked: win.uiScaleUser = 0
+                }
+
+                Label { text: "UI font"; color: "#666" }
+                ComboBox {
+                    id: uiFontBox
+                    model: ["(system default)", "DejaVu Sans", "Noto Sans", "Liberation Sans",
+                            "JuliaMono"]
+                    Layout.fillWidth: true
+                    onActivated: win.uiFontFamily = currentIndex === 0 ? "" : currentText
+                }
+                SpinBox {
+                    id: uiFontSizeSpin
+                    from: 6; to: 24; stepSize: 1
+                    value: Math.round(baseFontPt)
+                    editable: true
+                    onValueModified: win.baseFontPt = value
+                }
+
+                // ── plots ─────────────────────────────────────────────────────
+                Label { text: "Plot font"; color: "#666" }
+                ComboBox {
+                    id: plotFontBox
+                    // Shown, not settable. Makie takes the font at Figure CONSTRUCTION; every
+                    // route to change it afterwards throws `Failed to resolve
+                    // data_boundingbox` out of its compute graph -- tried on the axis label,
+                    // tick label and colorbar attributes alike. Changing it means restarting.
+                    model: ["DejaVu Sans", "JuliaMono", "Noto Sans", "Liberation Sans",
+                            "(Makie default)"]
+                    enabled: false
+                    Layout.fillWidth: true
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Set at startup; Makie cannot change a figure's font once it " +
+                                  "exists. Edit PLOT_FONT in src/gui/plots.jl."
+                }
+                SpinBox {
+                    id: plotScaleSpin
+                    from: 50; to: 500; stepSize: 5
+                    value: 119                     // replaced on open by the live value
+                    editable: true
+                    textFromValue: function (v) { return (v / 100).toFixed(2) }
+                    valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                    onValueModified: {
+                        win.plotScaleUser = value / 100
+                        Julia.shell_set_plot_scale(win.plotScaleUser)
+                    }
+                }
+
+                Label { text: "Plot symbols"; color: "#666" }
+                SpinBox {
+                    id: markerSpin
+                    from: 0; to: 30; stepSize: 1
+                    value: 0
+                    editable: true
+                    Layout.fillWidth: true
+                    // 0 means "whatever the plot chooses", which differs per view -- uv
+                    // coverage draws smaller points than an observable plot.
+                    textFromValue: function (v) { return v === 0 ? "auto" : String(v) }
+                    valueFromText: function (t) { return t === "auto" ? 0 : parseInt(t) }
+                    onValueModified: {
+                        win.markerSizeUser = value
+                        Julia.shell_set_marker_size(value)
+                    }
+                }
+                Label { text: "px"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+
+                // ── theme ─────────────────────────────────────────────────────
+                Label { text: "Theme"; color: "#666" }
+                ComboBox {
+                    id: themeBox
+                    model: ["Follow the desktop", "Light", "Dark"]
+                    enabled: false
+                    Layout.fillWidth: true
+                    ToolTip.visible: hovered
+                    ToolTip.text: "The panels hardcode light colours, so choosing Dark would " +
+                                  "leave parts of the window unreadable. Needs a theming pass."
+                }
+                Label {
+                    // Honest about the state of it: the panels hardcode light colours, so a
+                    // dark desktop session leaves parts of the window unreadable today.
+                    text: "dark is unstyled"
+                    color: "#888"
+                    font.pointSize: pt(baseFontPt - 2)
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    id: savedLabel
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
+                    color: "#888"
+                    font.pointSize: pt(baseFontPt - 2)
+                }
+                Button {
+                    text: "Save defaults"
+                    ToolTip.visible: hovered
+                    ToolTip.text: "write these as the startup defaults for every project"
+                    onClicked: {
+                        // The OVERRIDES, not the values in force: a scale of 0 means "work it
+                        // out from the screen", which is the right thing to carry to a machine
+                        // with a different one.
+                        var path = Julia.shell_save_settings(
+                            [ "ui_scale\t"    + win.uiScaleUser,
+                              "ui_font\t"     + win.uiFontFamily,
+                              "ui_font_pt\t"  + win.baseFontPt,
+                              "plot_scale\t"  + win.plotScaleUser,
+                              "marker_size\t" + win.markerSizeUser ].join("\n"))
+                        savedLabel.text = path.length > 0 ? "saved to " + path
+                                                          : "could not save — see the console"
+                    }
+                }
+                Button { text: "Close"; onClicked: settingsPanel.close() }
+            }
+        }
+    }
+
     FilePicker {
         id: saveDialog
         uiScale: win.uiScale; fontScale: win.fontScale; baseFontPt: win.baseFontPt
@@ -297,11 +625,27 @@ ApplicationWindow {
                     ComboBox {
                         id: kindBox
                         Layout.preferredWidth: dp(130)
+                        textRole: "name"
                         // `diffphi` is `visphi` against WAVELENGTH — OIFITS carries differential
                         // phase in OI_VIS with PHITYP=differential, so there is no separate
                         // field, only a more useful axis.
-                        model: ["uv", "v2", "t3phi", "t3amp", "visamp", "visphi",
-                                "diffphi", "diffvisamp", "flux"]
+                        //
+                        // Entries the loaded file cannot supply are shown but disabled, rather
+                        // than hidden: which observables a file carries is worth seeing, and a
+                        // list that changes length between files is hard to aim at.
+                        model: kindModel
+                        delegate: ItemDelegate {
+                            required property var model
+                            required property int index
+                            width: kindBox.width
+                            text: model.name
+                            enabled: model.available
+                            highlighted: kindBox.highlightedIndex === index
+                            // The greyed rows still need a reason, or an unavailable kind looks
+                            // like a broken menu rather than a file without that table.
+                            ToolTip.visible: hovered && !model.available
+                            ToolTip.text: "this file has no " + model.name + " data"
+                        }
                         onActivated: win.setView()
                     }
                     Label { text: "Colour by:" }
@@ -317,6 +661,17 @@ ApplicationWindow {
                         // axis on one drops half the points rather than rescaling them.
                         enabled: ["v2", "visamp", "t3amp", "flux", "diffvisamp"]
                                  .indexOf(kindBox.currentText) >= 0
+                        onToggled: win.setView()
+                    }
+                    CheckBox {
+                        id: panelsBox
+                        // Labelled from Julia, because the grouping is not always a baseline:
+                        // closure quantities group by triplet and flux by station, and a tick
+                        // reading "per baseline" over a grid of triangles is simply wrong.
+                        text: "per " + (win.groupingNoun.length > 0 ? win.groupingNoun : "group")
+                        // uv coverage has no groups to split by — it is geometry, not an
+                        // observable — and a single-wavelength file gives one point per panel.
+                        enabled: win.groupingNoun.length > 0
                         onToggled: win.setView()
                     }
                     Item { Layout.fillWidth: true }

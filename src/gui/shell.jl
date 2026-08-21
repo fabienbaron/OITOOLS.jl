@@ -32,6 +32,7 @@ mutable struct ShellState
     kind    :: Symbol
     color   :: Symbol
     logy    :: Bool             # log y axis, where the observable allows one
+    panels  :: Bool             # one panel per baseline/triplet/station, against wavelength
     status  :: String
     console :: Vector{String}   # what the bottom pane shows: commands and outcomes, in order
     canvas  :: Any              # LiveCanvas once the window exists; nothing when headless
@@ -42,6 +43,7 @@ mutable struct ShellState
     gantt   :: Any              # the Observe perspective's Gantt chart
     delayplot :: Any            # ...and its delay-cart chart
     modelcanvas :: Any          # the Model perspective's rendering canvas
+    plan    :: Any              # the NightPlan behind the current Gantt, for the hover readout
     fits    :: Vector{Any}      # completed fits, newest last
 end
 
@@ -100,8 +102,18 @@ function refresh_plot!(sh::ShellState = _shell())
                                          color = sh.color, logscale = sh.logy,
                                          extras = sh.extras)
         Makie.autolimits!(sh.axis)
+    elseif sh.panels
+        # One panel per group, against wavelength. The pool of axes already exists; this only
+        # fills it, for the same reason nothing else here creates a plot.
+        show_panels!(sh.canvas, true)
+        n = update_panels!(sh.canvas, d, sh.kind)
+        sh.info = String[]                      # picking is per-point on the single plot only
+        total = length(panel_data(d, sh.kind).panels)
+        return string(e.name, " — ", basename(e.path), " — ", sh.kind,
+                      " (", n, " of ", total, " ", grouping_noun(sh.kind), "s)")
     else
         # Live: assignment only. See src/livecanvas.jl for why nothing may be created here.
+        show_panels!(sh.canvas, false)
         sh.info    = update_canvas!(sh.canvas, d, sh.kind; color = sh.color,
                                     logscale = sh.logy)
         sh.plotobj = sh.canvas.scatterplot
@@ -200,23 +212,27 @@ function shell_open(path::AbstractString)
 end
 
 """Switch the view (`"uv"`, `"v2"`, `"t3phi"`, `"t3amp"`) and/or the colour encoding."""
-function shell_set_view(kind::AbstractString, color::AbstractString, logy::Bool = false)
+function shell_set_view(kind::AbstractString, color::AbstractString, logy::Bool = false,
+                        panels::Bool = false)
     sh = _shell()
-    old_kind, old_color, old_log = sh.kind, sh.color, sh.logy
+    old_kind, old_color, old_log, old_pan = sh.kind, sh.color, sh.logy, sh.panels
     sh.kind  = Symbol(kind)
     sh.color = Symbol(color)
     # Silently ignored where it would be wrong rather than refused: a phase takes both signs,
     # and a log axis on one drops half the points without saying so.
     sh.logy  = logy && Symbol(kind) in LOG_Y_KINDS
+    # uv coverage has no groups to split by -- it is geometry, not an observable.
+    sh.panels = panels && haskey(OBS_SPECS, Symbol(kind))
     # An exception thrown out of a QML callback terminates the application. Report it in the
     # status bar and roll back instead, so a dataset without T3 or a colour mode that does
     # not apply is an inconvenience rather than a crash.
-    console!(sh, "plot $(kind), coloured by $(color)" * (sh.logy ? ", log y" : ""); kind = :cmd)
+    console!(sh, "plot $(kind), coloured by $(color)" * (sh.logy ? ", log y" : "") *
+                 (sh.panels ? ", per " * grouping_noun(sh.kind) : ""); kind = :cmd)
     try
         sh.status = refresh_plot!(sh)
         console!(sh, sh.status)
     catch err
-        sh.kind, sh.color, sh.logy = old_kind, old_color, old_log
+        sh.kind, sh.color, sh.logy, sh.panels = old_kind, old_color, old_log, old_pan
         sh.status = "cannot plot $(kind)/$(color): " * _cause(err)
         console!(sh, sh.status; kind = :err)
         try; refresh_plot!(sh); catch; end
@@ -494,6 +510,233 @@ function shell_fit_rows()
     return join(rows, "\n")
 end
 
+# ── the live model ───────────────────────────────────────────────────────────
+#
+# ONE model, owned by the session, which the panel reads and edits through these calls. It
+# replaces a round trip through text: the table used to serialise itself to `key=value` lines
+# that the fitter re-parsed, so the dict the inspector described and the dict the fitter saw
+# were two different objects that merely tended to agree. They cannot disagree now.
+
+"The model the panel is editing, created empty on first use so there is always one."
+function _model(sh::ShellState = _shell())
+    isempty(sh.session.models) &&
+        push!(sh.session.models, ModelEntry("untitled", Dict{String,Any}(), String[],
+                                            Dict{String,Float64}(), Dict{String,Float64}(), Any[]))
+    return sh.session.models[end]
+end
+
+"""
+    shell_model_rows() -> String
+
+The parameter table, one row per line, as
+`comp \t param \t key \t mode \t value \t expr \t lb \t ub \t fitindex \t atbound`.
+
+Ten fields, no `kind`: that belongs to a COMPONENT, not to one of its parameters, and
+`shell_model_components` reports it there along with the key that decided it.
+
+Straight from `model_rows`, which resolves derived values and flags a parameter sitting on its
+bound — so the panel reports what the PARSER made of the model rather than what was typed.
+"""
+function shell_model_rows()
+    m = _model()
+    isempty(m.dict) && return ""
+    # `nothing`, not an empty Dict: `model_rows` reads a supplied dict as authoritative, so
+    # handing it an empty one suppresses `default_bounds` and every bound comes back 0/0.
+    rows = try
+        model_rows(m.dict, m.free;
+                   lb = isempty(m.lb) ? nothing : m.lb,
+                   ub = isempty(m.ub) ? nothing : m.ub)
+    catch err
+        console!(_shell(), "! model: " * _cause(err); kind = :err)
+        return ""
+    end
+    return join((join((r.component, r.param, r.key, _mode_name(r.mode),
+                       _num(r.value), r.expr, _num(r.lb), _num(r.ub),
+                       string(r.fitindex), string(r.atbound)), "\t")
+                 for r in rows), "\n")
+end
+
+_mode_name(m) = m === PARAM_FREE ? "free" : m === PARAM_EXPR ? "expr" : "fixed"
+_num(x) = isfinite(x) ? string(x) : "0.0"
+
+"""
+    shell_model_components() -> String
+
+`name \t kind \t geometry_key \t nparams \t nunrecognised` per component, from
+`model_inspection` — including the key that DECIDED the kind, which is the part that catches a
+`gaussian_ring` silently becoming a plain Gaussian.
+"""
+function shell_model_components()
+    m = _model()
+    isempty(m.dict) && return ""
+    insp = try
+        model_inspection(m.dict)
+    catch err
+        console!(_shell(), "! inspection: " * _cause(err); kind = :err)
+        return ""
+    end
+    return join((join((c.name, string(c.kind), c.geometry_key,
+                       string(length(c.params)), string(length(c.unrecognised))), "\t")
+                 for c in insp.components), "\n")
+end
+
+"""
+    shell_model_inspection() -> String
+
+Three lines: unrecognised keys, whether the resolver broadcasts, and the globals. Each is a
+fact about the model the user cannot see any other way.
+"""
+function shell_model_inspection()
+    m = _model()
+    isempty(m.dict) && return "\n\n"
+    insp = try
+        model_inspection(m.dict)
+    catch
+        return "\n\n"
+    end
+    return join((join(insp.unrecognised, " "),
+                 string(insp.broadcasting),
+                 join(insp.globals, " ")), "\n")
+end
+
+"""
+    shell_model_chi2() -> String
+
+Reduced chi2 of the model as it stands, against the current dataset, or `""` when either is
+missing. Cheap for analytic components, which is what makes it worth recomputing on every edit.
+"""
+function shell_model_chi2()
+    sh = _shell()
+    m = _model(sh)
+    e = current_dataset(sh)
+    (e === nothing || isempty(m.dict)) && return ""
+    return try
+        d = e.data[1, 1]
+        # `parse_model`, the same call `render_model_image` makes: it takes the free list too,
+        # because which parameters are free changes what the flat model IS.
+        fm = parse_model(Dict{String,Any}(String(k) => v for (k, v) in m.dict),
+                         String.(m.free); nB_workspace = 1)
+        x = Float64[_row_value(m, k) for k in m.free]
+        chi2 = model_to_chi2(fm, x, d)
+        @sprintf("%.4f", chi2 / max(1, _chi2_ndof(d)))
+    catch err
+        # A model mid-edit is not an error, it is simply not evaluable yet — but say so once,
+        # or a permanently blank chi2 looks like the number rather than the model being absent.
+        console!(_shell(), "  chi2 not available: " * _cause(err))
+        ""
+    end
+end
+
+_row_value(m, key) = get(m.dict, key, 0.0) isa Real ? Float64(m.dict[key]) : 0.0
+
+"Data points the chi2 is taken over. Counts VALID points, which is what `ndof` means here."
+_chi2_ndof(d) = d.nv2 + d.nt3amp + d.nt3phi + d.nvisamp + d.nvisphi
+
+"""
+    shell_set_param(key, field, value) -> String
+
+Edit one cell of the model: `field` is `value`, `mode`, `lb`, `ub` or `expr`.
+
+`mode` is where the exclusions live. A parameter listed in `list_free_params` MUST be numeric —
+the resolver raises on a string there — so going free drops any expression, and going derived
+drops it from the fit vector. Doing that here rather than in QML keeps the rule in one place.
+"""
+function shell_set_param(key::AbstractString, field::AbstractString, value)
+    sh = _shell(); m = _model(sh); k = String(key)
+    haskey(m.dict, k) || return "! no such parameter: " * k
+    f = String(field)
+    if f == "value"
+        m.dict[k] = Float64(value)
+    elseif f == "expr"
+        m.dict[k] = String(value)
+        filter!(!=(k), m.free)                 # derived and free are exclusive
+    elseif f == "lb"
+        m.lb[k] = Float64(value)
+    elseif f == "ub"
+        m.ub[k] = Float64(value)
+    elseif f == "mode"
+        mode = String(value)
+        if mode == "free"
+            m.dict[k] isa Real || (m.dict[k] = 0.0)   # a free parameter must be numeric
+            k in m.free || push!(m.free, k)
+        else
+            filter!(!=(k), m.free)
+        end
+    else
+        return "! unknown field: " * f
+    end
+    return ""
+end
+
+"""
+    shell_open_model(path)   -> String
+    shell_save_model(path)   -> String
+    shell_import_pmoired(path) -> String
+    shell_export_pmoired(path) -> String
+
+Model files. TOML carries the model, the free list, the bounds, the constraints and the priors
+together; PMOIRED carries the model alone, and export warns about what it cannot represent
+rather than writing something that means a different thing on the other side.
+"""
+function shell_open_model(path::AbstractString)
+    sh = _shell()
+    r = try
+        read_model_file(String(path))
+    catch err
+        msg = "! could not read model: " * _cause(err); console!(sh, msg; kind = :err); return msg
+    end
+    m = _model(sh)
+    m.dict = r.model; m.free = collect(r.free)
+    m.lb = Dict{String,Float64}(r.lb); m.ub = Dict{String,Float64}(r.ub)
+    m.name = isempty(r.name) ? basename(String(path)) : r.name
+    console!(sh, "> read_model_file(\"" * String(path) * "\")")
+    console!(sh, "  $(m.name): $(length(m.dict)) keys, $(length(m.free)) free")
+    return m.name
+end
+
+function shell_save_model(path::AbstractString)
+    sh = _shell(); m = _model(sh)
+    isempty(m.dict) && return "! no model to save"
+    try
+        write_model_file(String(path), m.dict; free = m.free, lb = m.lb, ub = m.ub, name = m.name)
+    catch err
+        msg = "! could not write model: " * _cause(err); console!(sh, msg; kind = :err); return msg
+    end
+    console!(sh, "> write_model_file(\"" * String(path) * "\", model; free = $(m.free))")
+    return ""
+end
+
+function shell_import_pmoired(path::AbstractString)
+    sh = _shell()
+    md = try
+        pmoired_to_dict(read(String(path), String))
+    catch err
+        msg = "! PMOIRED import: " * _cause(err); console!(sh, msg; kind = :err); return msg
+    end
+    m = _model(sh)
+    m.dict = md; m.free = String[]; empty!(m.lb); empty!(m.ub)
+    m.name = basename(String(path))
+    console!(sh, "> pmoired_to_dict(read(\"" * String(path) * "\", String))")
+    # Import is a transpiler, not a validator, so say at once what the parser made of it.
+    insp = try model_inspection(md) catch; nothing end
+    insp === nothing || isempty(insp.unrecognised) ||
+        console!(sh, "  ! keys the parser does not recognise: " *
+                     join(insp.unrecognised, ", "); kind = :err)
+    return m.name
+end
+
+function shell_export_pmoired(path::AbstractString)
+    sh = _shell(); m = _model(sh)
+    isempty(m.dict) && return "! no model to export"
+    try
+        dict_to_pmoired_file(String(path), m.dict)
+    catch err
+        msg = "! PMOIRED export: " * _cause(err); console!(sh, msg; kind = :err); return msg
+    end
+    console!(sh, "> dict_to_pmoired_file(\"" * String(path) * "\", model)")
+    return ""
+end
+
 """
     shell_model_image(model_json, nx, pixsize, wl, mjd) -> String
 
@@ -584,6 +827,171 @@ function shell_simbad(name::AbstractString)
 end
 
 """
+    shell_plot_scale() -> String
+
+`effective\tuser\tmarker`: the plot scale actually in force, the user's override behind it
+(zero when it is computed rather than chosen), and the marker size (zero for the per-view
+default).
+
+Two scale numbers rather than one because they answer different questions -- the panel opens
+showing what is being drawn, while "Save defaults" stores the override, so a scale that was
+computed from this screen's DPI is not pinned onto the next screen.
+"""
+shell_plot_scale() = string(live_plot_scale(), '\t', PLOT_SCALE_USER[], '\t', MARKER_SIZE_USER[])
+
+"""
+    shell_set_plot_scale(x)  -> String
+    shell_set_marker_size(x) -> String
+
+Apply a value from the settings panel and redraw. Zero restores the computed default.
+
+Both redraw immediately rather than waiting for the next action: the panel is being used to
+judge a size by eye, so the plot has to change while the user is looking at it.
+"""
+function shell_set_plot_scale(x)
+    v = set_plot_scale!(Float64(x))
+    sh = SHELL[]
+    sh === nothing && return ""
+    console!(sh, @sprintf("plot scale: %.2f%s", live_plot_scale(), v == 0 ? " (auto)" : ""))
+    current_dataset(sh) === nothing || try
+        sh.status = refresh_plot!(sh)
+    catch err
+        console!(sh, "could not restyle: " * _cause(err); kind = :err)
+    end
+    return ""
+end
+
+function shell_set_marker_size(x)
+    v = set_marker_size!(Float64(x))
+    sh = SHELL[]
+    sh === nothing && return ""
+    console!(sh, v == 0 ? "marker size: auto" : @sprintf("marker size: %.0f pt", v))
+    current_dataset(sh) === nothing || try
+        sh.status = refresh_plot!(sh)
+    catch err
+        console!(sh, "could not restyle: " * _cause(err); kind = :err)
+    end
+    return ""
+end
+
+"""
+    gui_settings_file() -> String
+
+Where the appearance defaults live: `oitools/gui.toml` under the platform's per-user config
+directory.
+
+Deliberately not `LocalPreferences.toml`: these are the user's window, not the project's, and
+they should follow the user across every project that launches the GUI.
+"""
+function gui_settings_file()
+    base = Sys.iswindows() ? get(ENV, "APPDATA", homedir()) :
+           get(ENV, "XDG_CONFIG_HOME", joinpath(homedir(), ".config"))
+    return joinpath(base, "oitools", "gui.toml")
+end
+
+"""
+    shell_save_settings(payload) -> String
+
+Write the settings panel's values to `gui_settings_file()`, and say where they went.
+
+`payload` is `key\tvalue` lines, the same tab-separated shape the rest of this bridge uses.
+Values are stored as they arrive: QML owns what the keys mean, and a key this version does not
+recognise is kept rather than dropped, so an older build cannot silently erase a newer one's
+settings.
+"""
+function shell_save_settings(payload)
+    sh = SHELL[]
+    path = gui_settings_file()
+    try
+        d = isfile(path) ? TOML.parsefile(path) : Dict{String,Any}()
+        for line in split(String(payload), '\n')
+            isempty(line) && continue
+            f = split(line, '\t')
+            length(f) == 2 || continue
+            v = tryparse(Float64, f[2])
+            d[f[1]] = v === nothing ? f[2] : v
+        end
+        mkpath(dirname(path))
+        open(io -> TOML.print(io, d), path, "w")
+        sh === nothing || console!(sh, "saved appearance defaults to " * path)
+        return path
+    catch err
+        sh === nothing || console!(sh, "could not save settings: " * _cause(err); kind = :err)
+        return ""
+    end
+end
+
+"""
+    shell_load_settings() -> String
+
+Read the saved defaults back as `key\tvalue` lines, empty if none have been saved.
+
+Called from QML before the first plot is drawn. A missing or unreadable file is not an error:
+the built-in defaults are a perfectly good answer, and a corrupt settings file should not stop
+the window from opening.
+"""
+function shell_load_settings()
+    path = gui_settings_file()
+    isfile(path) || return ""
+    try
+        d = TOML.parsefile(path)
+        return join((string(k, '\t', v) for (k, v) in sort(collect(d), by = first)), '\n')
+    catch
+        return ""
+    end
+end
+
+"""
+    shell_recenter_image() -> String
+
+Recentre the reconstructed image on its centroid and redraw.
+
+Nothing in the reconstruction holds the image still: V² and closure phase are both invariant
+under translation, so the image is free to drift anywhere in the field and routinely does.
+`recenter` circularly shifts the centroid back to the middle. That leaves the fit untouched for
+the same invariance -- as long as no flux wraps around the edge, which is what a centred image
+is for in the first place.
+"""
+function shell_recenter_image()
+    sh = SHELL[]
+    sh === nothing && return ""
+    r = sh.imaging
+    r === nothing && return "nothing reconstructed yet"
+    img = recenter(r.image)
+    # ImagingResult is immutable, so rebuild it. Every other field survives the shift: the
+    # χ², the point count and the timings all describe the run that produced the pixels, and
+    # moving them does not change what that run did.
+    sh.imaging = ImagingResult(img, r.chi2, r.chi2_start, r.ndof, r.flux, r.maxiter,
+                               r.seconds, r.setup, r.weights, r.breakdown)
+    sh.imcanvas === nothing || show_image!(sh.imcanvas, img, r.setup.pixsize)
+    console!(sh, "> image = recenter(image)")
+    return "recentred on the centroid"
+end
+
+"""
+    shell_image_colormaps() -> String
+    shell_image_colormap(name) -> String
+
+The colormaps offered for the reconstructed image, and the setter for one of them.
+
+Applies to the imaging canvas — the one the reconstruction is drawn on — not to the explore
+view, whose colours mean baselines rather than flux.
+"""
+shell_image_colormaps() = image_colormap_names()
+
+function shell_image_colormap(name)
+    sh = SHELL[]
+    sh === nothing && return ""
+    cv = sh.imcanvas
+    cv === nothing && return "no image canvas"
+    if set_colormap!(cv, String(name))
+        console!(sh, "colormap: " * String(name))
+        return String(name)
+    end
+    return "unknown colormap"
+end
+
+"""
     shell_ui_scale(x) -> String
 
 Record the UI scale QML worked out from the screen, so anything drawn in Julia matches it.
@@ -591,12 +999,13 @@ Record the UI scale QML worked out from the screen, so anything drawn in Julia m
 Called once from `Component.onCompleted`, which runs before the first plot is drawn — the
 canvas is built earlier still, but every redraw restyles from the live value.
 """
-function shell_ui_scale(x)
+function shell_ui_scale(x, dpi = 0.0)
     before = live_plot_scale()
-    v = set_ui_scale!(Float64(x))
+    v = set_ui_scale!(Float64(x), Float64(dpi))
     sh = SHELL[]
     sh === nothing && return ""
-    console!(sh, @sprintf("plot scale: %.2f (ui %.2f)", live_plot_scale(), v))
+    console!(sh, @sprintf("plot scale: %.2f (ui %.2f, %.0f dpi)",
+                         live_plot_scale(), v, SCREEN_DPI_LIVE[]))
 
     # Restyle. `gui()` draws the first plot before `exec()`, so by the time QML reports the
     # scale the figure already exists at whatever the default was -- and `makieArea.update()`
@@ -662,6 +1071,7 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
     # The delay chart is drawn from the same plan, so both views are always of one night.
     sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p)
 
+    sh.plan = p          # the hover readout reads this; see shell_gantt_hover
     h = observable_hours(p)
     console!(sh, "> night_plan(\"$(facility)\", \"$(name)\", $(round(Float64(ra); digits=4)), " *
                  "$(round(Float64(dec); digits=4)), DateTime(\"$(dateiso)\"))")
@@ -679,7 +1089,14 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
     line = @sprintf("%s: %.2f h observable%s   moon %d%% lit",
                     name, h, why, round(Int, 100 * p.moon_fli))
     console!(sh, "  " * line)
-    return line
+
+    # `summary \t dark window`. The summary is for the console, which keeps a transcript; the
+    # dark window is a readout the panel shows on its own. Returning both from the one call
+    # avoids a second pass over the night to recompute what this one already knows.
+    dark = isempty(p.good_twilight) ? "no astronomical night" :
+           string(_hhmm(p.lst[first(p.good_twilight)]), " – ",
+                  _hhmm(p.lst[last(p.good_twilight)]), " LST")
+    return line * "\t" * dark
 end
 
 "The best POP configurations for this array and declination, as `pop\tscore` rows."
@@ -867,6 +1284,114 @@ end
 "The last reconstruction, or an empty string when there is none."
 shell_imaging_summary() =
     _shell().imaging === nothing ? "" : sprint(show, _shell().imaging)
+
+"""
+    shell_gantt_hover() -> String
+
+What the Gantt says at the cursor, as lines, or `""` when the pointer is off a row.
+
+Read from Makie's event stream rather than from a QML mouse handler, the same route picking
+takes: QMLMakie forwards mouse moves into the scene, so the position is already in the axis's
+own coordinates and no conversion between the two coordinate systems is needed.
+
+Reports what was COMPUTED, not what was typed. A row shows the elevation window in force and
+the night's totals; the cursor's x gives the instant — LST, hour angle, altitude, azimuth, and
+whether the delay lines reach at that moment, which is the question a Gantt is read to answer.
+"""
+function shell_gantt_hover()
+    sh = SHELL[]
+    (sh === nothing || sh.gantt === nothing || sh.plan === nothing) && return ""
+    p = sh.plan
+    ax = sh.gantt.axis
+    mp = try
+        Makie.mouseposition(ax.scene)
+    catch
+        return ""
+    end
+    x, y = Float64(mp[1]), Float64(mp[2])
+    (isfinite(x) && isfinite(y)) || return ""
+
+    # Summary geometry: the rows are what the hover needs to name, and in the detailed view
+    # the extra rows are baselines whose own labels are already on the y axis.
+    geo = gantt_geometry(p)
+    # Which row: the nearest, and only if the pointer is actually within half a row of it.
+    isempty(geo.rows) && return ""
+    _, k = findmin(r -> abs(r[1] - y), geo.rows)
+    row = geo.rows[k]
+    abs(row[1] - y) > 0.6 && return ""
+
+    # Nearest sample in time. The grid is regular, so this is the instant under the cursor.
+    isempty(p.lst) && return ""
+    _, i = findmin(t -> abs(t - x), p.lst)
+
+    out = String[]
+    push!(out, row[2])
+    push!(out, @sprintf("LST %s   HA %+.2f h", _hhmm(p.lst[i]), p.ha[i]))
+    push!(out, @sprintf("alt %.1f°   az %.1f°", p.alt[i], p.az[i]))
+    push!(out, @sprintf("elevation window %.0f–%.0f°", p.alt_limit, p.alt_max))
+    inside(v, idx) = i in idx ? v : "no " * v
+    push!(out, join((inside("dark", p.good_twilight),
+                     inside("above limits", p.good_alt),
+                     inside("moon ok", p.good_moon),
+                     p.delay_applied ? inside("in delay", p.good_delay) : "delay not checked"),
+                    " · "))
+    push!(out, @sprintf("night: %.2f h observable   moon %d%% lit",
+                        observable_hours(p), round(Int, 100 * p.moon_fli)))
+    isempty(p.pop) || push!(out, "POPs " * pop_label(p))
+    return join(out, "\n")
+end
+
+"""
+    shell_grouping_noun(kind) -> String
+
+What one panel would contain for this observable: `baseline`, `triplet` or `station`. The tick
+box is labelled from it, so it never reads "per baseline" over a grid of closure triangles.
+"""
+shell_grouping_noun(kind::AbstractString) =
+    haskey(OBS_SPECS, Symbol(kind)) ? grouping_noun(Symbol(kind)) : ""
+
+"""
+    shell_plot_kinds() -> String
+
+`kind=1` or `kind=0` for every entry of the Explore plot menu, comma-separated.
+
+Computed HERE rather than in QML so the menu cannot disagree with `canvas_data`: the two rules
+that are easy to get wrong both live in the same file as the plotting. A kind greyed out for a
+file that would in fact plot is as unhelpful as one offered that throws.
+
+A "differential" plot is one against WAVELENGTH, so it needs more than one wavelength in the
+data — which is a property of the file, not of how it was binned on load.
+
+`visphi` and `diffphi` read the SAME field. Which of the two is meaningful is decided by
+`PHITYP`: a differential phase is measured against the other channels, so it belongs against
+wavelength and `canvas_data` refuses it against baseline. Exactly one of the pair is available
+for any given file.
+"""
+function shell_plot_kinds()
+    e = current_dataset()
+    e === nothing && return ""
+    d = e.data[1, 1]
+    a = try
+        observable_availability(e.data)
+    catch
+        return ""
+    end
+    diff = occursin("differential", lowercase(String(d.phityp)))
+    # Distinct wavelengths in the data, NOT `size(e.data, 1)` -- that is the spectral BINNING
+    # dimension, and `readoifits` leaves it at 1 unless asked to bin, so a 119-channel file
+    # reported as monochromatic and `diffvisamp` was greyed out on exactly the files it is for.
+    poly = length(unique(d.uv_lam)) > 1
+    flags = ("uv"         => true,                      # geometry, present whenever data is
+             "v2"         => a.v2,
+             "t3phi"      => a.t3phi,
+             "t3amp"      => a.t3amp,
+             "visamp"     => d.nvisamp > 0,
+             "visphi"     => d.nvisphi > 0 && !diff,
+             "diffphi"    => d.nvisphi > 0 && diff,
+             "diffvisamp" => d.nvisamp > 0 && poly,
+             "flux"       => a.flux)
+    return join((string(k, "=", v ? 1 : 0) for (k, v) in flags), ",")
+end
 
 """
     shell_observables() -> String

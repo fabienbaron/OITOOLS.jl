@@ -30,7 +30,7 @@ using OITOOLS: OIdata, OBS_PLOT_SPECS, oiplot_colors, canonical_color, as_datave
 # cast that keeps a starting image loadable by the Fourier plan, and the criterion the
 # panel reports before and after a run.
 using OITOOLS: to_ft_precision, image_to_chi2
-using Printf, Dates
+using Printf, Dates, TOML
 using Makie
 using QML, QMLMakie, GLMakie
 
@@ -40,8 +40,11 @@ export Session, DatasetEntry, ModelEntry, ImageEntry, Selection, LogEntry
 export log!, export_script, load_dataset!, filter_dataset!, dataset
 export uv_figure, observable_figure, point_info, uv_point_labels, plot_into!
 export OBS_SPECS, group_names, baseline_names, triplet_names, station_names
+export panel_data, grouping_noun
 export baseline_color_map, style_axis!, add_baseline_legend!
 export LiveCanvas, build_canvas, update_canvas!, canvas_data, zoom_step!,
+       set_colormap!, image_colormap_names, IMAGE_COLORMAPS,
+       show_panels!, update_panels!, MAX_PANELS,
        ZOOM_MIN_SPAN, ZOOM_MAX_SPAN, ZOOM_PER_DETENT
 export ParamRow, ParamMode, PARAM_FIXED, PARAM_FREE, PARAM_EXPR
 export model_rows, model_inspection, ComponentInfo, free_parameter_vector
@@ -132,6 +135,14 @@ using PrecompileTools
             gantt_geometry(plan; show_alt = true)
             gantt_geometry(plan; show_alt = false)
             plan_rows([plan])
+
+            # The POP search, which AutoPOPs now runs on every Compute rather than only when
+            # asked. 11.6 ms of work at six telescopes and far more than that to compile the
+            # first time, and it happens while the user is waiting for a Gantt.
+            let f = read_facility_file("CHARA"),
+                obs = night_observability(f, 279.2347, 38.7837, DateTime(2026, 6, 21))
+                best_pops(f, 38.7837, obs.ha, [1, 1, 1, 1, 0, 0]; n = 3)
+            end
             gfig = Makie.Figure()
             gax  = Makie.Axis(gfig[1, 1])
             gg   = build_gantt(gfig, gax)

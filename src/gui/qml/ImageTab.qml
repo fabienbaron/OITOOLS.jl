@@ -23,6 +23,17 @@ Item {
     // Same contract as Main.qml: the window has already worked out the screen's scale, and a
     // tab that re-derived it would drift away from the chrome around it. Every pixel length
     // goes through dp() and every explicit point size through pt().
+    // Colormap for the reconstruction. The list comes from Julia so the buttons and
+    // `set_colormap!` cannot disagree about the names.
+    property var colormapNames: []
+    property string colormap: "viridis"
+
+    // Names come from Julia so the buttons and `set_colormap!` cannot disagree.
+    Component.onCompleted:
+        root.colormapNames = Julia.shell_image_colormaps()
+                                  .split("\n")
+                                  .filter(function (t) { return t.length > 0 })
+
     property real uiScale:   1.0
     property real fontScale: 1.0
     property real baseFontPt: 11
@@ -1472,55 +1483,81 @@ Item {
             // ── run (§5.4) ────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: dp(44)
+                Layout.preferredHeight: dp(70)
                 color: "#f4f4f4"
                 border.color: "#ddd"
 
-                RowLayout {
+                // Two rows: the controls, then what they had to say. On one row the feedback
+                // shared its width with four buttons and a progress bar, so anything longer
+                // than "ready" was elided down to nothing exactly when it mattered.
+                ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: dp(6)
-                    spacing: dp(8)
+                    spacing: dp(4)
 
-                    Item {
-                        implicitWidth: runButton.implicitWidth
-                        implicitHeight: runButton.implicitHeight
-                        Button {
-                            id: runButton
-                            text: "Run"
-                            enabled: root.canRun
-                            onClicked: root.startRun(false)
-                        }
-                        ReasonTip { reason: root.blockedReason }
-                    }
-                    // Continue rather than restart: x_start is the image already on screen, so
-                    // more iterations can be added, or a regulariser introduced part-way,
-                    // without going back to a generic start.
-                    Button {
-                        id: continueButton
-                        text: "Run from previous"
-                        enabled: root.canRun && root.hasResult
-                        ToolTip.visible: hovered
-                        ToolTip.text: root.hasResult
-                                      ? "continue from the current image"
-                                      : "nothing reconstructed yet"
-                        onClicked: root.startRun(true)
-                    }
-                    Button {
-                        id: stopButton
-                        text: "Stop"
-                        enabled: root.running
-                        // wire: ask the running task to stop; SQUEEZE can return its best chain so far
-                        onClicked: { }
-                    }
-                    // Only while a run is going. Afterwards the space belongs to the result
-                    // line, which otherwise overruns the bar and prints on top of it.
-                    ProgressBar {
+                    RowLayout {
                         Layout.fillWidth: true
-                        visible: root.running
-                        from: 0; to: 1
-                        value: Math.max(0, root.progress)
-                        indeterminate: root.running && root.progress < 0
+                        spacing: dp(8)
+
+                        Item {
+                            implicitWidth: runButton.implicitWidth
+                            implicitHeight: runButton.implicitHeight
+                            Button {
+                                id: runButton
+                                text: "Run"
+                                enabled: root.canRun
+                                onClicked: root.startRun(false)
+                            }
+                            ReasonTip { reason: root.blockedReason }
+                        }
+                        // Continue rather than restart: x_start is the image already on screen, so
+                        // more iterations can be added, or a regulariser introduced part-way,
+                        // without going back to a generic start.
+                        Button {
+                            id: continueButton
+                            text: "Run from previous"
+                            enabled: root.canRun && root.hasResult
+                            ToolTip.visible: hovered
+                            ToolTip.text: root.hasResult
+                                          ? "continue from the current image"
+                                          : "nothing reconstructed yet"
+                            onClicked: root.startRun(true)
+                        }
+                        Button {
+                            id: stopButton
+                            text: "Stop"
+                            enabled: root.running
+                            // wire: ask the running task to stop; SQUEEZE can return its best chain so far
+                            onClicked: { }
+                        }
+                        // Nothing in the reconstruction holds the image still -- V² and closure
+                        // phase are both translation-invariant -- so a result routinely sits off
+                        // to one side of the field. This puts it back in the middle.
+                        Button {
+                            id: recenterButton
+                            text: "Recenter"
+                            enabled: root.hasResult && !root.running
+                            ToolTip.visible: hovered
+                            ToolTip.text: root.hasResult
+                                          ? "shift the centroid to the centre of the field"
+                                          : "nothing reconstructed yet"
+                            onClicked: {
+                                root.statusText = Julia.shell_recenter_image()
+                                imageArea.update()
+                                root.consoleChanged()
+                            }
+                        }
+                        // Only while a run is going. Afterwards the space belongs to the result
+                        // line, which otherwise overruns the bar and prints on top of it.
+                        ProgressBar {
+                            Layout.fillWidth: true
+                            visible: root.running
+                            from: 0; to: 1
+                            value: Math.max(0, root.progress)
+                            indeterminate: root.running && root.progress < 0
+                        }
                     }
+
                     Label {
                         // Once a run has finished, show what it produced. "ready" is what the
                         // control said before the run and says nothing a user wants after it.
@@ -1651,6 +1688,45 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                         color: "#888"
                         text: "no reconstruction yet"
+                    }
+                }
+            }
+
+            // ── colormap ──────────────────────────────────────────────────────
+            //
+            // Under the image because it describes what is on it. "hot" is `gist_heat`, which
+            // is what `imdisp` uses, so a figure here and a figure from a script are the same
+            // picture rather than merely similar ones. The two greys are for faint structure:
+            // which of them reads better depends on whether it will end up on a white page.
+            // A Flow rather than a row, so the names wrap onto a second line on a narrow
+            // image panel instead of being pushed off the edge.
+            Flow {
+                Layout.fillWidth: true
+                // A Flow's implicit height covers one row: it is computed before the layout
+                // hands it a width, so it cannot know how many rows the buttons wrap onto.
+                // childrenRect is measured after the arrangement, when the width is known.
+                Layout.preferredHeight: childrenRect.height
+                spacing: dp(4)
+                enabled: root.hasResult
+
+                Label {
+                    text: "Colour map"
+                    color: "#666"
+                    font.pointSize: pt(baseFontPt - 1)
+                    anchors.verticalCenter: undefined
+                }
+                Repeater {
+                    model: root.colormapNames
+                    Button {
+                        required property string modelData
+                        text: modelData
+                        checkable: true
+                        checked: root.colormap === modelData
+                        onClicked: {
+                            root.colormap = modelData
+                            Julia.shell_image_colormap(modelData)
+                            imageArea.update()
+                        }
                     }
                 }
             }

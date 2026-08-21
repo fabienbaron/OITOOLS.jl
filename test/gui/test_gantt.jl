@@ -86,11 +86,13 @@
         # observe", and only a per-baseline row says which baseline is the reason.
         det = gantt_geometry(plan; detailed = true)
         @test length(plan.baselines) == 6            # four telescopes -> six baselines
-        # a row for the answer, one for altitude, one for the moon, and one per baseline
+        # a row for the answer, one for elevation, one for the moon, and one per baseline
         @test length(det.rows) == 3 + length(plan.baselines)
         ticks = [r[2] for r in det.rows]
         @test ticks[1] == "Vega"
-        @test "altitude" in ticks && "moon" in ticks
+        # "elevation", not "altitude": the row carries the alt_limit/alt_max window, and
+        # elevation is the word the observing panel puts on the same pair of numbers.
+        @test "elevation" in ticks && "moon" in ticks
         for b in plan.baselines
             @test b.name in ticks
         end
@@ -146,14 +148,72 @@
             @test r.widths[2] ≈ Float32(b.height)    rtol = 1e-6
             @test r.origin[2] ≈ Float32(b.y - b.height/2) rtol = 1e-5
         end
-        # the annotations are split by kind, and together they are all of them
-        @test length(g.tstxt[]) + length(g.tetxt[]) + length(g.aztxt[]) + length(g.alttxt[]) ==
-              length(geo.labels)
-        # start and end times anchor opposite ways, so they are separate plots
-        @test length(g.tstxt[]) == length(g.tetxt[])
+        # the annotations are split by kind AND by side, and together they are all of them
+        @test length(g.tstxt[]) + length(g.tetxt[]) +
+              length(g.azstxt[]) + length(g.azetxt[]) +
+              length(g.altstxt[]) + length(g.altetxt[]) == length(geo.labels)
+        # start and end anchor opposite ways, so each pair is a separate plot
+        @test length(g.tstxt[])   == length(g.tetxt[])
+        @test length(g.azstxt[])  == length(g.azetxt[])
+        @test length(g.altstxt[]) == length(g.altetxt[])
         # the target names its own row, as a y tick rather than a title
         @test g.axis.yticks[][2] == ["Vega"]
-        # one legend entry per named bar
-        @test length(g.legtxt[]) == count(b -> !isempty(b.label), geo.bars)
+        # No legend, deliberately: every row is named by its own y tick, so the legend
+        # restated the axis while covering the right-hand end of the chart. The plots stay
+        # and are fed nothing, so this is the assertion that they stay empty.
+        @test isempty(g.legtxt[])
+        @test isempty(g.legcols[])
+        @test isempty(g.legpos[])
+    end
+
+    # ── glyph coverage ───────────────────────────────────────────────────────
+    #
+    # Every character the chart draws has to exist in the font the figure was BUILT with.
+    # Makie falls back per glyph when it does not, and under QMLMakie the fallback comes out
+    # as a box or as strokes of neighbouring atlas cells — which is how `°` and `μ` arrived
+    # garbled on this very chart. A missing glyph is silent in every other test: the string
+    # compares equal, the geometry is right, and only the pixels are wrong.
+    #
+    # U+00B5 MICRO SIGN vs U+03BC GREEK SMALL LETTER MU is the specific trap. They are
+    # indistinguishable in an editor, and DejaVu Sans has both — but Makie's DEFAULT face has
+    # only the Greek letter, so a stray micro sign renders as a blank box on any figure built
+    # without `fonts = GUI.PLOT_FONTS`.
+    @testset "no unrenderable glyphs on the chart" begin
+        face = Makie.FreeTypeAbstraction.findfont(GUI.PLOT_FONT)
+        @test face !== nothing            # the pinned font must be installed at all
+
+        renderable(c) = c == ' ' || Makie.FreeTypeAbstraction.glyph_index(face, c) != 0
+
+        fig = Makie.Figure(fonts = GUI.PLOT_FONTS)
+        ax  = Makie.Axis(fig[1, 1])
+        g   = build_gantt(fig, ax)
+
+        for det in (false, true)
+            update_gantt!(g, plan; detailed = det)
+            # x label, y tick labels, title, and every annotation drawn inside the axes
+            drawn = vcat(String[g.axis.xlabel[], g.axis.ylabel[], g.axis.title[]],
+                         String.(g.axis.yticks[][2]),
+                         g.tstxt[], g.tetxt[],
+                         g.azstxt[], g.azetxt[], g.altstxt[], g.altetxt[],
+                         g.legtxt[])
+            @test !isempty(filter(!isempty, drawn))     # something is actually being checked
+            for s in drawn, c in s
+                @test renderable(c)
+                # The micro sign never belongs in a label, whatever the font can draw.
+                @test c != '\u00b5'
+            end
+        end
+
+        # The delay chart carries the degree sign on its right-hand axis, which is the other
+        # character that came out wrong, so it is checked by the same rule.
+        dfig = Makie.Figure(fonts = GUI.PLOT_FONTS)
+        dax  = Makie.Axis(dfig[1, 1])
+        dp   = build_delay_plot(dfig, dax)
+        update_delay_plot!(dp, plan)
+        for s in (dp.axis.xlabel[], dp.axis.ylabel[], dp.altaxis.ylabel[]), c in s
+            @test renderable(c)
+            @test c != '\u00b5'
+        end
+        @test occursin('°', dp.altaxis.ylabel[])          # the sign is really there to be tested
     end
 end

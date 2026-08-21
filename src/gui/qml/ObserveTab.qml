@@ -93,10 +93,6 @@ Item {
     // binding the instant the user clicks, so the control is the source of truth and this is a
     // read-only mirror of it.
     readonly property int currentView: viewTabs.currentIndex
-    // One Gantt row is one target, and the Makie mount has to agree with the QML row labels
-    // beside it. Fixing the row height here is what keeps the two columns level.
-    property real ganttRowHeight: dp(26)
-
     // ── simulation output ─────────────────────────────────────────────────────
     property string outputFile: ""
     property string lastSimulatedFile: ""
@@ -396,15 +392,25 @@ Item {
             // scrolls out of view is one the user has to hunt for, and this one sits where
             // Run sits on the Imaging tab.
             ColumnLayout {
+                // One width for the column and everything in it. Two different numbers left a
+                // blank strip: the panels sized to the ScrollView while the row below sized to
+                // its own content, so the column ended up wider than the panels it held and the
+                // difference showed as dead space against the night panel.
                 Layout.preferredWidth: dp(440)
+                Layout.maximumWidth: dp(440)
                 Layout.fillHeight: true
                 spacing: dp(6)
 
                 ScrollView {
                     id: settingsScroll
-                    Layout.preferredWidth: dp(430)
+                    Layout.fillWidth: true
                     Layout.fillHeight: true
                     contentWidth: availableWidth
+                    // Always shown. These panels are taller than the viewport at any usual
+                    // window height, and a scrollbar that appears only once you scroll makes
+                    // the bottom edge read as a panel cut in half -- which is exactly how the
+                    // POPs box, the last one in the column, looked.
+                    ScrollBar.vertical.policy: ScrollBar.AlwaysOn
 
                     ColumnLayout {
                         width: settingsScroll.availableWidth
@@ -699,6 +705,103 @@ Item {
                             }
                         }
 
+                        // ── POPs, by hand ────────────────────────────────────────────────
+                        //
+                        // Beside the Instrument panel that determines them: a POP is a beam
+                        // path through the array, so it belongs with the telescopes it routes
+                        // rather than with the button that consumes it.
+                        //
+                        // Search POPs writes here too, so the searched configuration and a
+                        // hand-dialled one are the same field rather than two competing
+                        // sources of truth.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: popCol.implicitHeight + dp(12)
+                            color: "#f6f6f6"
+                            border.color: "#dcdcdc"
+                            radius: dp(3)
+
+                            ColumnLayout {
+                                id: popCol
+                                x: dp(6); y: dp(6)
+                                width: parent.width - dp(12)
+                                spacing: dp(4)
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: "POPs"; font.bold: true }
+                                    Item { Layout.fillWidth: true }
+                                    CheckBox {
+                                        text: "AutoPOPs"
+                                        checked: root.autoPops
+                                        onToggled: root.autoPops = checked
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Search for the best POPs each time the " +
+                                                      "plan is computed, and adopt them below. " +
+                                                      "Untick to use the numbers as set here."
+                                    }
+                                }
+
+                                // One dropdown per telescope, labelled with the telescope. CHARA has five
+                                // POPs; the number IS the beam path, so a free text box invites 0 and 9.
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: dp(8)
+                                    Repeater {
+                                        model: root.telescopeNames
+                                        delegate: RowLayout {
+                                            required property int index
+                                            required property string modelData
+                                            spacing: dp(3)
+                                            Label {
+                                                text: modelData
+                                                font.bold: true
+                                                color: root.telescopeConfig[index] > 0 ? "#222" : "#aaa"
+                                            }
+                                            ComboBox {
+                                                implicitWidth: dp(58)
+                                                implicitHeight: dp(26)
+                                                model: ["1", "2", "3", "4", "5"]
+                                                // Output, not input, while AutoPOPs is on: the
+                                                // next Compute would overwrite anything set here.
+                                                enabled: root.telescopeConfig[index] > 0 && !root.autoPops
+                                                currentIndex: Math.max(0, root.popAt(index) - 1)
+                                                onActivated: root.setPop(index, currentIndex + 1)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // The same numbers as text, so a row can be pasted in from elsewhere or
+                                // copied out — including from the POPs table, whose Use button writes here.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: dp(6)
+                                    TextField {
+                                        id: popField
+                                        Layout.fillWidth: true
+                                        enabled: !root.autoPops
+                                        placeholderText: root.autoPops
+                                            ? "set by AutoPOPs"
+                                            : "paste six POP numbers, e.g. 1 3 3 4 1 1"
+                                        text: root.popString
+                                        font.family: "monospace"
+                                        onEditingFinished: root.setPopString(text)
+                                    }
+                                    Button {
+                                        text: "Copy"
+                                        enabled: root.popString.length > 0
+                                        onClicked: { popField.selectAll(); popField.copy(); popField.deselect() }
+                                    }
+                                    Button {
+                                        text: "Clear"
+                                        enabled: root.popString.length > 0
+                                        onClicked: root.popString = ""
+                                    }
+                                }
+                            }
+                        }
+
                         // ── conditions ────────────────────────────────────────────
                         Rectangle {
                             Layout.fillWidth: true
@@ -716,7 +819,10 @@ Item {
 
                                 GridLayout {
                                     Layout.fillWidth: true
-                                    columns: 4
+                                    // One pair per row. At four columns the two labels and their two fields
+                                    // set a minimum width the panel could not meet, so it pushed
+                                    // into the Gantt beside it. Taller is free here; wider is not.
+                                    columns: 2
                                     columnSpacing: dp(6)
                                     rowSpacing: dp(4)
 
@@ -813,22 +919,40 @@ Item {
                                     // "is it up yet this season" gets answered.
                                     Button {
                                         text: "◀◀"
+                                        // Sized to the glyph. A default-width button here is
+                                        // mostly padding, and five of them pushed the panel
+                                        // wider than the column that holds it.
+                                        implicitWidth: dp(30)
                                         ToolTip.visible: hovered; ToolTip.text: "one month earlier"
                                         onClicked: root.shiftDate(0, -1)
                                     }
                                     Button {
                                         text: "◀"
+                                        // Sized to the glyph. A default-width button here is
+                                        // mostly padding, and five of them pushed the panel
+                                        // wider than the column that holds it.
+                                        implicitWidth: dp(30)
                                         ToolTip.visible: hovered; ToolTip.text: "previous night"
                                         onClicked: root.shiftDate(-1, 0)
                                     }
+                                    // Sized to its own label. Only the arrows needed shrinking;
+                                    // this one carries a word.
                                     Button { text: "Today"; onClicked: root.shiftDate(0, 0) }
                                     Button {
                                         text: "▶"
+                                        // Sized to the glyph. A default-width button here is
+                                        // mostly padding, and five of them pushed the panel
+                                        // wider than the column that holds it.
+                                        implicitWidth: dp(30)
                                         ToolTip.visible: hovered; ToolTip.text: "next night"
                                         onClicked: root.shiftDate(1, 0)
                                     }
                                     Button {
                                         text: "▶▶"
+                                        // Sized to the glyph. A default-width button here is
+                                        // mostly padding, and five of them pushed the panel
+                                        // wider than the column that holds it.
+                                        implicitWidth: dp(30)
                                         ToolTip.visible: hovered; ToolTip.text: "one month later"
                                         onClicked: root.shiftDate(0, 1)
                                     }
@@ -848,6 +972,13 @@ Item {
                                         text: root.darkWindowText
                                         font.family: "monospace"
                                         elide: Text.ElideRight
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Astronomical night: the hours between " +
+                                            "evening and morning twilight, which is the window " +
+                                            "observability is computed in and the grey band " +
+                                            "behind the Gantt."
+                                        HoverHandler { id: dwHover }
+                                        property bool hovered: dwHover.hovered
                                     }
                                 }
 
@@ -968,7 +1099,7 @@ Item {
                                 onClicked: root.computePlan()
                             }
                             CheckBox {
-                                text: "detailed"
+                                text: "Show details"
                                 enabled: root.useDelay
                                 checked: root.detailed
                                 onToggled: { root.detailed = checked; if (root.hasPlan) root.computePlan() }
@@ -977,103 +1108,18 @@ Item {
                                               "baseline that closes the night is the short bar. Needs " +
                                               "the delay check on. Off shows only the answer."
                             }
-                            CheckBox {
-                                text: "delay lines"
-                                checked: root.useDelay
-                                onToggled: { root.useDelay = checked; if (root.hasPlan) root.computePlan() }
-                                // Opt-in for a measured reason: with an unsearched POP configuration the
-                                // check reports far less time than is available -- 0 minutes with all six
-                                // telescopes at POP 1 against 380 with the POPs best_pop finds -- so
-                                // leaving it on by default would call every target unobservable.
-                                ToolTip.visible: hovered
-                                ToolTip.text: root.popString.length > 0
-                                              ? "using POPs " + root.popString
-                                              : "no POPs searched yet — Search POPs first, or this will " +
-                                                "report far less time than is really available"
-                            }
+                            // Errors only. The summary that used to sit here was longer than the
+                            // strip and elided to nothing useful; it is in the console, and the
+                            // chart answers the question better than a sentence about it does.
                             Label {
                                 Layout.fillWidth: true
+                                visible: root.planText.indexOf("!") === 0
                                 text: root.planText
                                 elide: Text.ElideRight
-                                color: root.planText.indexOf("!") === 0 ? "#c62828" : "#444"
+                                color: "#c62828"
                             }
                         }
 
-                        // ── POPs, by hand ────────────────────────────────────────────────
-                        //
-                        // Below Compute because it feeds it: the delay check uses these, and a POP set
-                        // that is not visible next to the button that consumes it is one nobody checks.
-                        // Search POPs writes here too, so the searched configuration and a hand-dialled
-                        // one are the same field rather than two competing sources of truth.
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: popCol.implicitHeight + dp(12)
-                            color: "#f6f6f6"
-                            border.color: "#dcdcdc"
-                            radius: dp(3)
-
-                            ColumnLayout {
-                                id: popCol
-                                x: dp(6); y: dp(6)
-                                width: parent.width - dp(12)
-                                spacing: dp(4)
-
-                                Label { text: "POPs"; font.bold: true }
-
-                                // One dropdown per telescope, labelled with the telescope. CHARA has five
-                                // POPs; the number IS the beam path, so a free text box invites 0 and 9.
-                                Flow {
-                                    Layout.fillWidth: true
-                                    spacing: dp(8)
-                                    Repeater {
-                                        model: root.telescopeNames
-                                        delegate: RowLayout {
-                                            required property int index
-                                            required property string modelData
-                                            spacing: dp(3)
-                                            Label {
-                                                text: modelData
-                                                font.bold: true
-                                                color: root.telescopeConfig[index] > 0 ? "#222" : "#aaa"
-                                            }
-                                            ComboBox {
-                                                implicitWidth: dp(58)
-                                                implicitHeight: dp(26)
-                                                model: ["1", "2", "3", "4", "5"]
-                                                enabled: root.telescopeConfig[index] > 0
-                                                currentIndex: Math.max(0, root.popAt(index) - 1)
-                                                onActivated: root.setPop(index, currentIndex + 1)
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // The same numbers as text, so a row can be pasted in from elsewhere or
-                                // copied out — including from the POPs table, whose Use button writes here.
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: dp(6)
-                                    TextField {
-                                        id: popField
-                                        Layout.fillWidth: true
-                                        placeholderText: "paste six POP numbers, e.g. 1 3 3 4 1 1"
-                                        text: root.popString
-                                        font.family: "monospace"
-                                        onEditingFinished: root.setPopString(text)
-                                    }
-                                    Button {
-                                        text: "Copy"
-                                        enabled: root.popString.length > 0
-                                        onClicked: { popField.selectAll(); popField.copy(); popField.deselect() }
-                                    }
-                                    Button {
-                                        text: "Clear"
-                                        enabled: root.popString.length > 0
-                                        onClicked: root.popString = ""
-                                    }
-                                }
-                            }
-                        }
             }
 
 
@@ -1150,12 +1196,10 @@ Item {
                             }
                         }
 
-                        // Time axis. Indented by exactly the row-label width so a tick sits over
-                        // the instant it labels inside the mount.
+                        // Time axis, running the full width of the mount below it.
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 0
-                            Item { Layout.preferredWidth: dp(110); Layout.preferredHeight: dp(20) }
                             Item {
                                 id: ganttAxis
                                 Layout.fillWidth: true
@@ -1190,37 +1234,10 @@ Item {
                             Layout.fillHeight: true
                             spacing: 0
 
-                            // Row labels, one per target at exactly ganttRowHeight — which is what
-                            // keeps them level with the bars Makie draws beside them.
-                            ColumnLayout {
-                                Layout.preferredWidth: dp(110)
-                                Layout.alignment: Qt.AlignTop
-                                spacing: 0
-                                Repeater {
-                                    model: targetModel
-                                    Rectangle {
-                                        required property int index
-                                        required property string name
-                                        Layout.preferredWidth: dp(110)
-                                        Layout.preferredHeight: root.ganttRowHeight
-                                        color: index === root.currentTargetIndex ? "#eef4fb" : "transparent"
-                                        Label {
-                                            anchors.fill: parent
-                                            anchors.leftMargin: dp(4)
-                                            verticalAlignment: Text.AlignVCenter
-                                            text: name.length > 0 ? name : "(unnamed)"
-                                            color: name.length > 0 ? "#000" : "#aaa"
-                                            elide: Text.ElideRight
-                                        }
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            onClicked: root.currentTargetIndex = index
-                                        }
-                                    }
-                                }
-                                Item { Layout.fillHeight: true }
-                            }
-
+                            // No row-label column: the chart names its own rows on the y axis,
+                            // so a second list of the same names beside it said nothing and took
+                            // width the night could have used. Targets are selected in the
+                            // Targets panel, which is where the rest of their settings are.
                             Rectangle {
                                 id: ganttMount
                                 // This perspective's own figure, `ganttPlot`, built beside the
@@ -1236,6 +1253,30 @@ Item {
                                     id: ganttArea
                                     anchors.fill: parent
                                     scene: ganttPlot
+
+                                    // What the chart says under the pointer. Julia reads the
+                                    // position from Makie's own event stream -- the route
+                                    // picking already uses -- so there is no second coordinate
+                                    // system to keep in step with this one.
+                                    HoverHandler { id: ganttHover }
+                                    ToolTip.visible: ganttHover.hovered &&
+                                                     root.hoverText.length > 0
+                                    ToolTip.text: root.hoverText
+                                    ToolTip.delay: 250
+
+                                    // Polled rather than pushed: Makie has no QML-visible signal
+                                    // for a mouse move, and 120 ms is imperceptible for a
+                                    // readout while costing nothing when the pointer is still.
+                                    Timer {
+                                        interval: 120
+                                        repeat: true
+                                        running: ganttHover.hovered && root.hasPlan
+                                        onTriggered: {
+                                            var t = Julia.shell_gantt_hover()
+                                            if (t.length > 0) t += root.magnitudeLine(t)
+                                            if (t !== root.hoverText) root.hoverText = t
+                                        }
+                                    }
                                 }
 
                                 // Over the canvas until a night has been computed: an empty
@@ -1272,14 +1313,14 @@ Item {
 
                         Rectangle {
                             anchors.fill: parent
-                            visible: !root.hasPlan || !root.useDelay
+                            visible: !root.hasPlan
                             color: "#ffffff"
                             Label {
                                 anchors.centerIn: parent
                                 horizontalAlignment: Text.AlignHCenter
                                 color: "#888"
                                 text: root.hasPlan
-                                      ? "tick “delay lines”, then Compute"
+                                      ? "choose a target and a date, then Compute"
                                       : "choose a target and a date, then Compute"
                             }
                         }
@@ -1361,7 +1402,7 @@ Item {
                                                   : "POPs"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.preferredWidth: dp(90);  text: "score";    font.bold: true; font.pointSize: pt(baseFontPt - 2) }
-                                    Label { Layout.preferredWidth: dp(110); text: "HA range"; font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: dp(130); text: "HA range"; font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                 }
                                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: dp(1); color: "#ddd" }
 
@@ -1378,27 +1419,25 @@ Item {
                                         required property string score
                                         required property string haRange
                                         width: popList.width
+                                        // A ListView sizes delegates horizontally only, and a
+                                        // RowLayout outside a layout parent keeps height 0, so
+                                        // the rows exist but draw nothing without this.
+                                        height: implicitHeight
                                         spacing: dp(6)
 
-                                        // Double-click a row to adopt it, as well as the button:
-                                        // a table of configurations exists to be chosen from.
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            acceptedButtons: Qt.NoButton
-                                        }
                                         Label { Layout.preferredWidth: dp(40);  text: popRow.index + 1; font.family: "monospace" }
                                         Label { Layout.fillWidth: true;         text: popRow.pops;      font.family: "monospace"; elide: Text.ElideRight
                                                 color: popRow.pops === root.popString ? "#1a7f37" : "#222"
                                                 font.bold: popRow.pops === root.popString }
                                         Label { Layout.preferredWidth: dp(90);  text: popRow.score;     font.family: "monospace" }
-                                        Label { Layout.preferredWidth: dp(110); text: popRow.haRange;   font.family: "monospace" }
+                                        Label { Layout.preferredWidth: dp(130); text: popRow.haRange;   font.family: "monospace" }
                                         Button {
                                             text: popRow.pops === root.popString ? "in use" : "Use"
                                             enabled: popRow.pops !== root.popString
                                             implicitHeight: dp(20)
                                             ToolTip.visible: hovered
-                                            ToolTip.text: "put these POPs in the field below Compute"
-                                            onClicked: root.setPopString(popRow.pops)
+                                            ToolTip.text: "use these POPs, and stop AutoPOPs from replacing them"
+                                            onClicked: root.adoptPops(popRow.pops)
                                         }
                                     }
                                 }
@@ -1659,11 +1698,25 @@ Item {
     // six telescopes at POP 1, against 380 with the POPs `best_pop` finds -- so a panel that
     // applied it by default would call every target unobservable.
     property bool hasPlan: false
-    property bool useDelay: false
+    // Always on. The delay lines are what makes a Gantt an OBSERVABILITY chart rather than a
+    // horizon chart: a target above the horizon that no cart can reach is not observable, and
+    // showing it as though it were is the one answer this panel must not give. Measured at
+    // 0.1 ms on top of a 0.1 ms plan, so there is nothing to opt out of.
+    property bool useDelay: true
+
+    // AutoPOPs: search for the POPs whenever the plan is REGENERATED, not when it is redrawn.
+    // Measured at 0.5 ms for four telescopes and 11.6 ms for six, which is inside a frame --
+    // so the beam paths can simply always be the best ones, the way ASPRO treats them, rather
+    // than something the user has to remember to search for and then apply.
+    property bool autoPops: true
     // Summary by default, as in ASPRO: "when can I observe this" is the question asked first.
     // Detailed is the delay view -- one row per baseline -- and answers "why not".
     property bool detailed: false
     property string planText: ""
+
+    // The Gantt hover readout: what was computed at the row and instant under the pointer.
+    // Magnitudes are added here because they belong to the target list, which QML owns.
+    property string hoverText: ""
 
     // Stepping the date recomputes if a plan is already showing: the chart is what the date
     // control is FOR, and leaving it stale after a step is how a user reads last week's night.
@@ -1676,9 +1729,21 @@ Item {
         var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
         if (t === null) { planText = "no target"; return }
         var tels = root.selectedTelescopes.join(" ")
-        planText = Julia.shell_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
-                                     tels, root.popString, root.useDelay, root.detailed,
-                                     root.altLimit, root.altMax)
+
+        // Search BEFORE planning, so the night is computed with the POPs it reports rather
+        // than with the previous ones. Assigning popString is enough for the dropdowns and the
+        // text field to follow: they read `popAt`, which reads popString.
+        if (root.autoPops) root.searchAndAdoptPops(t, tels)
+
+        var reply = Julia.shell_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
+                                      tels, root.popString, root.useDelay, root.detailed,
+                                      root.altLimit, root.altMax)
+        // `summary \t dark window`. The summary is not shown here: it is long, it overflowed
+        // the strip it sat in, and the console already keeps it. The chart itself is the
+        // answer, and hovering a bar gives the numbers.
+        var f = reply.split("\t")
+        planText = f[0]
+        if (f.length > 1 && f[1].length > 0) root.darkWindowText = f[1]
         hasPlan = planText.indexOf("!") !== 0
         ganttArea.update()
         delayArea.update()
@@ -1690,6 +1755,34 @@ Item {
     // `popString` is the single source of truth — the dropdowns, the text field and the search
     // results all read and write it. Two representations of one setting that can disagree is
     // how a user ends up computing a night with POPs they can see are not the ones shown.
+    // Runs the POP search and takes the best row. Returns quietly on failure -- an empty
+    // result means no configuration reaches the target, which the plan itself then reports as
+    // zero observable hours rather than as an error here.
+    function searchAndAdoptPops(t, tels) {
+        var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra, tels, 3)
+        if (!rows || rows.length === 0) return false
+        var best = rows.split("\n")[0].split("\t")[0]
+        if (!best || best.length === 0) return false
+        root.popString = best
+        return true
+    }
+
+    // The magnitudes for whichever target the hover names. They live in `targetModel`, so
+    // Julia has never seen them and cannot put them in the readout itself.
+    function magnitudeLine(hover) {
+        var name = hover.split("\n")[0]
+        for (var i = 0; i < targetModel.count; ++i) {
+            var t = targetModel.get(i)
+            if (t.name !== name) continue
+            var parts = []
+            var bands = [["V", t.magV], ["J", t.magJ], ["H", t.magH], ["K", t.magK]]
+            for (var b = 0; b < bands.length; ++b)
+                if (!isNaN(bands[b][1])) parts.push(bands[b][0] + " " + bands[b][1].toFixed(2))
+            return parts.length > 0 ? "\n" + parts.join("   ") : ""
+        }
+        return ""
+    }
+
     function popAt(i) {
         var f = popString.trim().split(/\s+/)
         if (i < 0 || i >= f.length) return 1
@@ -1717,6 +1810,14 @@ Item {
         }
         popString = out.join(" ")
         if (hasPlan && useDelay) computePlan()
+    }
+
+    // Taking a row from the search table by hand. AutoPOPs has to stop, or the next plan runs
+    // the search again and replaces what was just chosen -- and the left-panel dropdowns, which
+    // are disabled while AutoPOPs is on, would show a setting the user cannot touch.
+    function adoptPops(text) {
+        root.autoPops = false
+        setPopString(text)
     }
 
     function findPops() {

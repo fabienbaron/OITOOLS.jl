@@ -87,11 +87,28 @@ function plot_visphi_residuals end
 function set_oiplot_defaults end
 function plot_ultranest_corner end
 
-# The GUI. Defined by OITOOLSGUIExt, which loads with GLMakie + QMLMakie + QML:
-#     using OITOOLS, GLMakie, QMLMakie, QML
-#     gui()
-# A function can be declared here and given methods by an extension; the GUI's types
-# (Session, ShellState, LiveCanvas) cannot, and stay inside the extension.
+"""
+    gui()
+    gui(session)
+
+Open the OITOOLS window: four perspectives — Exploring, Observing, Modeling, Imaging — over one
+session, so a dataset moves between them without being written out and read back.
+
+Defined by `OITOOLSGUIExt`, so the GUI stack has to be loaded for it to have any methods:
+
+    using OITOOLS, GLMakie, QMLMakie, QML
+    gui()
+
+With no argument it builds its own session. Pass one to open on datasets already loaded, which
+is what `bin/oitoolsgui.jl` does with the files named on its command line.
+
+A function can be declared here and given methods by an extension; a TYPE cannot, which is why
+`Session`, `ShellState` and `LiveCanvas` stay inside the extension and are reached through
+`Base.get_extension(OITOOLS, :OITOOLSGUIExt)`.
+
+See also [`configure_graphics!`](@ref), which must run before the first OpenGL context exists
+and therefore before `using GLMakie` — not from inside the window.
+"""
 function gui end
 function uvplot end
 function empty_night end

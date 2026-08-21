@@ -54,6 +54,33 @@ keeping it the most prominent row, which it should be — it is the answer.
 const TARGET_BAR_HEIGHT = 1.2
 
 """
+Gap between a bar edge and the az/alt numbers printed against it, in row units.
+
+The label heights are DERIVED from the bar rather than written down: they were once fixed at
+3.3 and 0.7 against a taller bar, and when the bar was slimmed to $TARGET_BAR_HEIGHT they
+stayed put and drifted away from the thing they annotate. One constant, two positions.
+
+Small on purpose. These numbers belong to the bar and should read as attached to it; the
+vertical times sit right against the ends already, and a horizontal number floating a third of
+a row away looks like it belongs to the row above.
+"""
+const LABEL_PAD = 0.05
+
+"Row centre of a target bar, and the two label heights that follow from its height."
+const TARGET_ROW = 2.0
+az_label_y()  = TARGET_ROW + TARGET_BAR_HEIGHT / 2 + LABEL_PAD
+alt_label_y() = TARGET_ROW - TARGET_BAR_HEIGHT / 2 - LABEL_PAD
+
+"""
+Shortest run that gets start/end annotations, in hours.
+
+A sliver is a few minutes wide and its six labels land on top of each other and on those of the
+next run -- the pile of overlapping digits that reads as broken glyph rendering rather than as
+crowding. The bar itself is still drawn; only its numbers are dropped.
+"""
+const MIN_LABELLED_RUN = 0.4
+
+"""
 Lowest elevation worth observing at, in degrees.
 
 25 rather than the library's 30: it is what ASPRO defaults to, and the last five degrees are a
@@ -395,17 +422,25 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
         lbl = "Observable"
         push!(rows, (y, p.name))
 
-        y += 1.4
-        isempty(p.good_alt) || add!(p.good_alt, y, 0.9, "orange", "Altitude")
-        push!(rows, (y, "altitude")); y += 1.1
+        # Clear of the az number printed above the target bar, rather than a fixed 1.4: in the
+        # detailed view the rows stack tightly, and at 1.4 the altitude bar's lower edge landed
+        # exactly on `az_label_y()` with the digits printed across it.
+        y = az_label_y() + 1.0
+        # The elevation LIMITS row: when the target sits between alt_limit and alt_max, which
+        # is what the two fields in the Time panel set. Named to match them.
+        isempty(p.good_alt) || add!(p.good_alt, y, 0.9, "orange", "Elevation")
+        push!(rows, (y, "elevation")); y += 1.1
 
         isempty(p.good_moon) || add!(p.good_moon, y, 0.9, "mediumpurple", "Moon sep.")
         push!(rows, (y, "moon")); y += 1.1
 
-        first_bl = true
+        # One colour per baseline, and the SAME colour Explore gives it: a baseline that closes
+        # the night here is the one to go looking for in the V² plot, and having to translate
+        # between two colour schemes to do that is a step that should not exist. The bar carries
+        # its own name as the colour key; `update_gantt!` resolves it through
+        # `baseline_color_map`, which is what the observable plots use.
         for b in p.baselines
-            isempty(b.good) || add!(b.good, y, 0.9, "blue", first_bl ? "In Delay" : "")
-            first_bl = false
+            isempty(b.good) || add!(b.good, y, 0.9, b.name, "")
             push!(rows, (y, b.name))
             y += 1.1
         end
@@ -421,12 +456,17 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
         # Every run is annotated, not just the outermost pair: each is one observing block, and
         # its own start and end times with their az/alt are what goes on a schedule.
         for (i0, i1) in index_runs(show_idx)
-            push!(labels, GanttLabel(lst[i0], 2.0, _hhmm(lst[i0]), :time, :start))
-            push!(labels, GanttLabel(lst[i1], 2.0, _hhmm(lst[i1]), :time, :end))
-            push!(labels, GanttLabel(lst[i0], 3.3, string(round(Int, p.az[i0])),  :az,  :start))
-            push!(labels, GanttLabel(lst[i0], 0.7, string(round(Int, p.alt[i0])), :alt, :start))
-            push!(labels, GanttLabel(lst[i1], 3.3, string(round(Int, p.az[i1])),  :az,  :end))
-            push!(labels, GanttLabel(lst[i1], 0.7, string(round(Int, p.alt[i1])), :alt, :end))
+            # Slivers are drawn but not annotated: six labels inside a few minutes overprint
+            # each other and the next run's, which looks like broken text rather than crowding.
+            if lst[i1] - lst[i0] >= MIN_LABELLED_RUN
+                azy, alty = az_label_y(), alt_label_y()
+                push!(labels, GanttLabel(lst[i0], TARGET_ROW, _hhmm(lst[i0]), :time, :start))
+                push!(labels, GanttLabel(lst[i1], TARGET_ROW, _hhmm(lst[i1]), :time, :end))
+                push!(labels, GanttLabel(lst[i0], azy,  string(round(Int, p.az[i0])),  :az,  :start))
+                push!(labels, GanttLabel(lst[i0], alty, string(round(Int, p.alt[i0])), :alt, :start))
+                push!(labels, GanttLabel(lst[i1], azy,  string(round(Int, p.az[i1])),  :az,  :end))
+                push!(labels, GanttLabel(lst[i1], alty, string(round(Int, p.alt[i1])), :alt, :end))
+            end
         end
     end
 

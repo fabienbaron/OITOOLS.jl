@@ -30,6 +30,13 @@ with none bound. So the chart is a fixed set of plots whose Observables are rewr
 figure that is rebuilt per target.
 """
 function build_gantt(fig, ax)
+    # Not zoomable. This is a night at a fixed scale, not a plot to explore: the x axis
+    # IS the night and the y axis is a list of rows, so panning either only loses the
+    # thing being read. Makie gives every Axis these by default.
+    for it in (:scrollzoom, :dragpan, :rectanglezoom, :limitreset)
+        Makie.deregister_interaction!(ax, it)
+    end
+
     bandrects = Makie.Observable(Makie.Rect2f[])
     bandcols  = Makie.Observable(Makie.RGBAf[])
     barrects  = Makie.Observable(Makie.Rect2f[])
@@ -41,8 +48,13 @@ function build_gantt(fig, ax)
     # avoids with ha="right" / ha="left".
     tspos     = Makie.Observable(Makie.Point2f[]);  tstxt   = Makie.Observable(String[])
     tepos     = Makie.Observable(Makie.Point2f[]);  tetxt   = Makie.Observable(String[])
-    azpos     = Makie.Observable(Makie.Point2f[]);  aztxt   = Makie.Observable(String[])
-    altpos    = Makie.Observable(Makie.Point2f[]);  alttxt  = Makie.Observable(String[])
+    # Split by side, like the times: an az number centred ON the bar edge lands under the
+    # vertical time already anchored there, and on a short run the two ends collide as well.
+    # Anchored outward, each label leans away from the bar and away from its opposite number.
+    azspos    = Makie.Observable(Makie.Point2f[]);  azstxt  = Makie.Observable(String[])
+    azepos    = Makie.Observable(Makie.Point2f[]);  azetxt  = Makie.Observable(String[])
+    altspos   = Makie.Observable(Makie.Point2f[]);  altstxt = Makie.Observable(String[])
+    altepos   = Makie.Observable(Makie.Point2f[]);  altetxt = Makie.Observable(String[])
 
     legpos    = Makie.Observable(Makie.Point2f[]);  legtxt  = Makie.Observable(String[])
     legcols   = Makie.Observable(Makie.RGBAf[])
@@ -63,8 +75,14 @@ function build_gantt(fig, ax)
                 align = (:center, :center), offset = (-0.75fs, 0), fontsize = fs)
     Makie.text!(ax, tepos; text = tetxt, rotation = Float32(π/2),
                 align = (:center, :center), offset = (0.75fs, 0), fontsize = fs)
-    Makie.text!(ax, azpos;   text = aztxt,   align = (:center, :top),    fontsize = fs)
-    Makie.text!(ax, altpos;  text = alttxt,  align = (:center, :bottom), fontsize = fs)
+    Makie.text!(ax, azspos;  text = azstxt,  align = (:right,  :bottom),
+                offset = (-0.4fs, 0), fontsize = fs)
+    Makie.text!(ax, azepos;  text = azetxt,  align = (:left,   :bottom),
+                offset = (0.4fs, 0),  fontsize = fs)
+    Makie.text!(ax, altspos; text = altstxt, align = (:right,  :top),
+                offset = (-0.4fs, 0), fontsize = fs)
+    Makie.text!(ax, altepos; text = altetxt, align = (:left,   :top),
+                offset = (0.4fs, 0),  fontsize = fs)
 
     # A hand-drawn legend, for the reason build_canvas has one: a Makie Legend fixes its entry
     # count at construction, and this chart's varies with which constraints apply.
@@ -86,7 +104,7 @@ function build_gantt(fig, ax)
     Makie.ylims!(ax, 0, 10)
 
     return (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
-              tspos, tstxt, tepos, tetxt, azpos, aztxt, altpos, alttxt,
+              tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
               legpos, legtxt, legcols)
 end
 
@@ -101,23 +119,37 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false)
     _rect(b) = Makie.Rect2f(b.x0, b.y - b.height/2, max(b.x1 - b.x0, 1e-6), b.height)
 
     g.bandrects[] = [_rect(b) for b in geo.bands]
+    # Baselines colour by name through Explore's map, everything else by the named palette.
+    # Built from the ROWS, not from the bars, so a baseline that is never in delay -- and so
+    # draws no bar -- still consumes its colour and the others keep theirs.
+    blmap = baseline_color_map([r[2] for r in geo.rows if occursin('-', r[2])])
+    # `baseline_color_map` yields colour NAMES, as the observable plots take them; convert the
+    # same way `canvas_data` does so the two end up byte-identical rather than merely similar.
+    barcol(b) = haskey(GANTT_COLORS, b.color) ? GANTT_COLORS[b.color] :
+                haskey(blmap, b.color)       ? Makie.RGBAf(Makie.to_color(blmap[b.color])) :
+                                               _gantt_color(b.color)
+
     g.bandcols[]  = [_gantt_color(b.color) for b in geo.bands]
     g.barrects[]  = [_rect(b) for b in geo.bars]
-    g.barcols[]   = [_gantt_color(b.color) for b in geo.bars]
+    g.barcols[]   = [barcol(b) for b in geo.bars]
     g.midline[]   = [Makie.Point2f(geo.midnight, 0), Makie.Point2f(geo.midnight, geo.ymax)]
 
     for (pick, pos, txt) in ((l -> l.kind === :time && l.side === :start, g.tspos, g.tstxt),
                              (l -> l.kind === :time && l.side === :end,   g.tepos, g.tetxt),
-                             (l -> l.kind === :az,                        g.azpos, g.aztxt),
-                             (l -> l.kind === :alt,                       g.altpos, g.alttxt))
+                             (l -> l.kind === :az   && l.side === :start, g.azspos,  g.azstxt),
+                             (l -> l.kind === :az   && l.side === :end,   g.azepos,  g.azetxt),
+                             (l -> l.kind === :alt  && l.side === :start, g.altspos, g.altstxt),
+                             (l -> l.kind === :alt  && l.side === :end,   g.altepos, g.altetxt))
         sel = filter(pick, geo.labels)
         pos[] = [Makie.Point2f(l.x, l.y) for l in sel]
         txt[] = [l.text for l in sel]
     end
 
-    # One legend entry per NAMED bar, which is the first run of each category — the same rule
-    # matplotlib applies with "_nolegend_".
-    named = [b for b in geo.bars if !isempty(b.label)]
+    # No legend, in either view. Every row is named by its own y tick, so the legend restated
+    # what the axis already said while covering the right-hand end of the chart -- exactly
+    # where a target that stays up late puts its bar. The plots stay (removing them would mean
+    # rebuilding the figure) and are simply fed nothing.
+    named = eltype(geo.bars)[]
     x0 = geo.xlim[1] + 0.80 * (geo.xlim[2] - geo.xlim[1])   # top right, as in the original
     ytop = geo.ymax - 0.6
     g.legpos[]  = [Makie.Point2f(x0, ytop - 0.06 * geo.ymax * (k - 1)) for k in eachindex(named)]
@@ -173,6 +205,13 @@ A fixed pool of `MAX_BASELINES` curves, hidden until used: the count changes wit
 and creating a line per baseline on demand is what allocates GL buffers with no context bound.
 """
 function build_delay_plot(fig, ax)
+    # Not zoomable. This is a night at a fixed scale, not a plot to explore: the x axis
+    # IS the night and the y axis is a list of rows, so panning either only loses the
+    # thing being read. Makie gives every Axis these by default.
+    for it in (:scrollzoom, :dragpan, :rectanglezoom, :limitreset)
+        Makie.deregister_interaction!(ax, it)
+    end
+
     curves = [Makie.Observable(Makie.Point2f[]) for _ in 1:MAX_BASELINES]
     lines  = [Makie.lines!(ax, curves[i];
                            color = DELAY_COLORS[mod1(i, length(DELAY_COLORS))],

@@ -90,16 +90,57 @@ exists, and every later `update_canvas!` restyles from the live value anyway.
 const UI_SCALE_LIVE = Ref(1.25)
 
 """
-The UI scale the plot sizes were tuned against.
+Physical density of the screen, in dpi, as QML read it. Zero until the window reports in.
 
-`PLOT_SCALE_AT_REFERENCE / UI_SCALE_REFERENCE` is the ratio carried forward to any other
-screen, so plot text and markers keep their proportion to the chrome around them.
+Plot typography is sized from THIS rather than from the UI scale, so the two can be judged
+and retuned separately -- they were tied together at first, and every adjustment to one then
+moved the other. Both happen to follow the same square root of density; they simply carry
+their own anchors.
 """
-const UI_SCALE_REFERENCE       = 1.25
-const PLOT_SCALE_AT_REFERENCE  = 1.7
+const SCREEN_DPI_LIVE = Ref(0.0)
 
-"Record the scale QML computed. Called once, from the window's `Component.onCompleted`."
-function set_ui_scale!(x::Real)
+"""
+Plot scale, anchored on the same desktop the UI scale is: 1.19 at `PLOT_REF_DPI`.
+
+The exponent is 0.5, which carries it to 1.7 at 189 dpi. Chrome uses ~0.9 -- see
+`src/gui/qml/Main.qml`, which owns that half.
+"""
+const PLOT_REF_DPI          = 92.6
+const PLOT_SCALE_AT_REF_DPI = 1.19
+
+"Fallback ratio for a screen whose density is unknown, so plots still track the chrome."
+const UI_SCALE_REFERENCE       = 0.656
+const PLOT_SCALE_AT_REFERENCE  = 1.19
+
+"""
+Record what QML measured. Called once, from the window's `Component.onCompleted`.
+
+`dpi` is the physical density and may be 0 where the screen does not report one -- a virtual
+display, say -- in which case plot sizing falls back to the UI scale.
+"""
+function set_ui_scale!(x::Real, dpi::Real = 0.0)
+    isfinite(dpi) && dpi > 0 && (SCREEN_DPI_LIVE[] = Float64(dpi))
     (isfinite(x) && x > 0) || return UI_SCALE_LIVE[]
     return UI_SCALE_LIVE[] = clamp(Float64(x), UI_SCALE_MIN, UI_SCALE_MAX)
+end
+
+"""
+Live overrides from the settings panel. Zero means "no override, compute it".
+
+Separate from the environment variables, which are read once at startup: these are turned by
+hand while the window is open, and have to win over both the detected value and the variable.
+"""
+const PLOT_SCALE_USER  = Ref(0.0)
+const MARKER_SIZE_USER = Ref(0.0)
+
+"Set the plot scale by hand. Zero restores the value computed from the screen."
+function set_plot_scale!(x::Real)
+    PLOT_SCALE_USER[] = (isfinite(x) && x > 0) ? clamp(Float64(x), 0.2, 5.0) : 0.0
+    return PLOT_SCALE_USER[]
+end
+
+"Set the data-point size by hand, in points. Zero restores each plot's own default."
+function set_marker_size!(x::Real)
+    MARKER_SIZE_USER[] = (isfinite(x) && x > 0) ? clamp(Float64(x), 1.0, 40.0) : 0.0
+    return MARKER_SIZE_USER[]
 end

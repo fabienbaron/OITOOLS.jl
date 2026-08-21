@@ -3,16 +3,37 @@
 # Split from the rest of src/gui/ because everything else describes what to draw, while this
 # builds the thing that draws it and hands control to Qt's event loop.
 
+"""
+Font set every figure in the window is built with.
+
+`μ` and `°` are not in Makie's default face, so it fetches them from a fallback -- and under
+QMLMakie a fallback glyph renders as overlapping strokes. Naming a face that has them means no
+fallback is consulted. Set at Figure construction because every per-attribute route
+(`Axis.xlabelfont`, the ticklabel fonts, `Colorbar.ticklabelfont`) throws `Failed to resolve
+data_boundingbox` out of Makie's compute graph, before and after the first plot alike.
+
+See `PLOT_FONT` in src/gui/plots.jl for the measurements behind the choice.
+"""
+const PLOT_FONTS = (regular = PLOT_FONT, bold = PLOT_FONT,
+                    italic = PLOT_FONT, bold_italic = PLOT_FONT)
+
 function __init__()
     # Callbacks must be registered before any QML file that calls them is loaded.
     QML.@qmlfunction(shell_open, shell_set_view, shell_select_dataset,
                      shell_dataset_names, shell_script, shell_export, shell_pick,
                      shell_console, shell_ready, shell_reset_zoom, shell_pick_text,
-                     shell_observables, shell_reconstruct, shell_imaging_summary,
+                     shell_observables, shell_plot_kinds, shell_grouping_noun, shell_gantt_hover, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
                      shell_facilities, shell_telescopes, shell_gantt, shell_best_pops,
                      shell_shift_date, shell_sim_source, shell_model_image, shell_simbad, shell_ui_scale,
                      shell_fit_model, shell_fit_values, shell_fit_rows,
+                     shell_image_colormaps, shell_image_colormap, shell_recenter_image,
+                     shell_set_plot_scale, shell_set_marker_size,
+                     shell_save_settings, shell_load_settings, shell_plot_scale,
+                     shell_model_rows, shell_model_components, shell_model_inspection,
+                     shell_model_chi2, shell_set_param,
+                     shell_open_model, shell_save_model,
+                     shell_import_pmoired, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
                      # Julia for everything the toolkit would otherwise supply.
@@ -91,7 +112,7 @@ function OITOOLS.gui(session::Session = Session();
     uiscale = ui_scale_override()
     @info "UI scale: $(uiscale.reason)"
 
-    fig = Makie.Figure()
+    fig = Makie.Figure(fonts = PLOT_FONTS)
     ax  = Makie.Axis(fig[1, 1]; xlabel = "", ylabel = "", title = "OITOOLS")
     style_axis!(ax)
     # Build every plot BEFORE the window exists. Once QML is up, GLMakie allocates GPU buffers
@@ -103,7 +124,7 @@ function OITOOLS.gui(session::Session = Session();
     # own result appears somewhere else. Both figures are built here, before the window: the
     # GL context belongs to Qt's render thread afterwards, and inserting a plot then is what
     # allocates buffers with no context bound.
-    imfig = Makie.Figure()
+    imfig = Makie.Figure(fonts = PLOT_FONTS)
     imax  = Makie.Axis(imfig[1, 1]; xlabel = "α (mas)", ylabel = "δ (mas)",
                        title = "reconstruction")
     style_axis!(imax)
@@ -112,26 +133,26 @@ function OITOOLS.gui(session::Session = Session();
     # And a third for the Gantt. Three figures rather than one shared: a reconstruction must
     # not wipe the plot being read on another tab, and a night plan is not a scatter — it needs
     # its own axis limits, its own y ticks and its own set of plots.
-    gfig = Makie.Figure()
+    gfig = Makie.Figure(fonts = PLOT_FONTS)
     gax  = Makie.Axis(gfig[1, 1]; xlabel = "LST (h)", title = "")
     style_axis!(gax)
     gantt = build_gantt(gfig, gax)
 
-    dfig = Makie.Figure()
+    dfig = Makie.Figure(fonts = PLOT_FONTS)
     dax  = Makie.Axis(dfig[1, 1])
     style_axis!(dax)
     delayplot = build_delay_plot(dfig, dax)
 
     # And one for the model rendering. `build_canvas` gives an axis with a heatmap already on
     # it, which is all this needs; `show_image!` then draws into it.
-    mfig = Makie.Figure()
+    mfig = Makie.Figure(fonts = PLOT_FONTS)
     max_ = Makie.Axis(mfig[1, 1]; title = "model")
     style_axis!(max_)
     modelcanvas = build_canvas(mfig, max_)
 
-    sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false,
+    sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false, false,
                      "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
-                     delayplot, modelcanvas, Any[])
+                     delayplot, modelcanvas, nothing, Any[])
     SHELL[] = sh
     install_interactions!(sh)
 

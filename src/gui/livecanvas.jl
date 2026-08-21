@@ -66,6 +66,13 @@ struct LiveCanvas
     imagex      :: Makie.Observable{Vector{Float32}}
     imagey      :: Makie.Observable{Vector{Float32}}
     imageplot   :: Any
+    # Colormap for the image and its colorbar, so both move together.
+    colormap    :: Makie.Observable{Any}
+    # Colormap the colorbar draws. The scatter's continuous modes carry oiplot's ramps while
+    # the image carries whatever the colormap buttons last chose, so the two cannot share one.
+    cbarmap     :: Makie.Observable{Any}
+    # The per-group panel grid: one axis per baseline / triplet / station.
+    panels      :: Any
     # Width and height of the view `autolimits!` chose for the current data. The zoom clamp
     # measures against this, so "10x out" means ten times the data extent rather than ten
     # times whatever the user last left on screen.
@@ -114,8 +121,16 @@ function build_canvas(fig, ax)
     Makie.text!(legax, legtpos; text = legtxt, align = (:left, :center), fontsize = legfs)
 
     cblim = Makie.Observable((0.0f0, 1.0f0))
-    cblab = Makie.Observable("")
-    cbar  = Makie.Colorbar(fig[1, 2]; colormap = LIVE_COLORMAP, limits = cblim, label = cblab)
+    # Seeded with the label it will eventually carry, then blanked by `_show_colorbar!` at the
+    # end of this function. This is glyph-atlas pre-warming, and it is the same argument as
+    # everything else built here: Makie keeps one texture atlas, and a glyph first met AFTER
+    # the window exists has to extend it inside Qt's GL context. Measured, `μ` came out with
+    # strokes of neighbouring atlas cells through it while `λ` -- already drawn by the axis
+    # labels -- was clean. Meeting the character up front is what avoids the extension.
+    cblab = Makie.Observable(WAVELENGTH_LABEL)
+    cmap  = Makie.Observable{Any}(LIVE_COLORMAP)
+    cbmap = Makie.Observable{Any}(WAV_COLORMAP)
+    cbar  = Makie.Colorbar(fig[1, 2]; colormap = cbmap, limits = cblim, label = cblab)
 
     # The reconstructed image, created here and hidden, like everything else on this canvas.
     # Building a plot after the window exists allocates GL buffers with no context bound, which
@@ -123,13 +138,15 @@ function build_canvas(fig, ax)
     imdata = Makie.Observable(zeros(Float32, 2, 2))
     imx    = Makie.Observable(Float32[0, 1])
     imy    = Makie.Observable(Float32[0, 1])
-    implot = Makie.heatmap!(ax, imx, imy, imdata; colormap = LIVE_COLORMAP, visible = false)
+    implot = Makie.heatmap!(ax, imx, imy, imdata; colormap = cmap, visible = false)
+
+    panels = _build_panels(fig)
 
     canvas = LiveCanvas(fig, ax, points, colors, msize, sc,
                         errpts, errlo, errhi, errplot,
                         legax, legmarks, legcols, legtpos, legtxt, legfs,
                         cblim, cblab, cbar,
-                        imdata, imx, imy, implot,
+                        imdata, imx, imy, implot, cmap, cbmap, panels,
                         Base.RefValue((1.0, 1.0)))
     _install_zoom!(canvas)
 
@@ -141,6 +158,7 @@ function build_canvas(fig, ax)
     end
     set_legend!(canvas, Pair{String,Makie.RGBAf}[])
     _show_colorbar!(canvas, false)
+    show_panels!(canvas, false)
     return canvas
 end
 
@@ -176,6 +194,7 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::A
     mx = maximum(img)
     c.cbarlimits[] = (0.0f0, Float32(mx > 0 ? mx : 1))
     c.cbarlabel[] = isempty(label) ? "flux / pixel" : String(label)
+    c.cbarmap[] = c.colormap[]
     _show_colorbar!(c, true)
 
     c.axis.xlabel = "α (mas)"
@@ -198,7 +217,20 @@ function hide_image!(c::LiveCanvas)
     return c
 end
 
-"Colormap used for the continuous colour modes; also what the colorbar shows."
+"""
+Wavelength ramp for the `wav` colour option: matplotlib's `gist_rainbow`, which runs red at
+short λ through green and blue to magenta at long λ. A spectral ramp for a spectral axis, so
+the colour of a point reads as its wavelength rather than as a position on an arbitrary scale.
+
+Resampled to 256 steps because `ramp_colors` bins onto whatever ramp it is given, and Makie's
+`gist_rainbow` carries only 101 colours.
+"""
+const WAV_COLORMAP = Makie.resample_cmap(:gist_rainbow, 256)
+
+"MJD ramp, matching `oiplot.jl`'s `cmap=\"plasma\"`."
+const MJD_COLORMAP = :plasma
+
+"Colormap the image starts with, and the fallback ramp for `ramp_colors`."
 const LIVE_COLORMAP = :viridis
 
 """
@@ -214,13 +246,24 @@ the offline builders are untouched and still match oiplot exactly.
 Override with `OITOOLSGUI_PLOT_SCALE=2.0` (or 1.0 to get the publication sizes on screen).
 """
 function live_plot_scale()
+    # A value dialled in the settings panel wins over everything: it is the most recent thing
+    # the user said, and the other two are a startup variable and a guess from the screen.
+    PLOT_SCALE_USER[] > 0 && return PLOT_SCALE_USER[]
     v = tryparse(Float64, get(ENV, "OITOOLSGUI_PLOT_SCALE", ""))
     (v === nothing || !isfinite(v) || v <= 0) || return clamp(v, 0.5, 5.0)
-    # Follow the UI. The constant is a ratio, not a size: 1.7 was tuned where the UI scale was
-    # 1.25, so on a screen asking for 0.875 the plot lands at 1.19 and keeps the same relation
-    # to the buttons beside it. Without this the chrome shrinks and the tick labels do not.
-    return clamp(PLOT_SCALE_AT_REFERENCE * UI_SCALE_LIVE[] / UI_SCALE_REFERENCE, 0.5, 5.0)
+    # From the screen's PHYSICAL density, on its own anchors -- not from the UI scale.
+    #
+    # Judged by eye: 1.19 on a 92.6 dpi desktop and 1.7 on a ~189 dpi laptop. Keeping this
+    # separate from the chrome factor is what lets either be retuned without disturbing the
+    # other, which tying them together did.
+    dpi = SCREEN_DPI_LIVE[]
+    dpi > 0 || return clamp(PLOT_SCALE_AT_REFERENCE * UI_SCALE_LIVE[] / UI_SCALE_REFERENCE,
+                            0.5, 5.0)
+    return clamp(PLOT_SCALE_AT_REF_DPI * sqrt(dpi / PLOT_REF_DPI), 0.5, 5.0)
 end
+
+"Colorbar label for wavelength colouring. Also the glyph-atlas seed -- see `build_canvas`."
+const WAVELENGTH_LABEL = "λ (μm)"
 
 """
 Legend swatch size, as a fraction of the legend font size.
@@ -347,8 +390,173 @@ function zoom_step!(c::LiveCanvas, steps::Real; at = nothing)
     # every redraw, so nothing stays pinned once the data changes.
     x0 = ox + fx * (wx - nwx)
     y0 = oy + fy * (wy - nwy)
-    Makie.limits!(ax, x0, x0 + nwx, y0, y0 + nwy)
+    # Emit each pair in the axis's own direction. `finallimits` always reports positive
+    # widths, so a reversed axis is a FLAG rather than an ordering, and handing `limits!` an
+    # ascending pair silently clears it -- which mirrored the reconstruction east-for-west the
+    # first time anyone zoomed one, since `show_image!` reverses x to put East on the left.
+    xlo, xhi = ax.xreversed[] ? (x0 + nwx, x0) : (x0, x0 + nwx)
+    ylo, yhi = ax.yreversed[] ? (y0 + nwy, y0) : (y0, y0 + nwy)
+    Makie.limits!(ax, xlo, xhi, ylo, yhi)
     return true
+end
+
+"""
+Colormaps offered for the reconstructed image, in the order the buttons show them.
+
+Named as matplotlib names them, because that is what `imdisp` takes: whatever reads best here
+can be copied straight into `imdisp(image; colormap = "gist_heat")` and give the same picture.
+`gist_heat` is `imdisp`'s own default.
+
+Each has its `_r` reverse. Which way round works is not a matter of taste — it depends on
+whether the figure ends up on a screen or on a white page, and faint structure that is obvious
+one way can vanish the other.
+"""
+const IMAGE_COLORMAPS = ["viridis"      => :viridis,
+                         "gist_earth"   => :gist_earth,
+                         "gist_earth_r" => Makie.Reverse(:gist_earth),
+                         "gist_gray"    => :gist_gray,
+                         "gist_gray_r"  => Makie.Reverse(:gist_gray),
+                         "gist_heat"    => :gist_heat,
+                         "gist_heat_r"  => Makie.Reverse(:gist_heat)]
+
+"""
+    set_colormap!(canvas, name) -> Bool
+
+Switch the image colormap by its button label. Unknown names are ignored rather than thrown:
+this arrives from QML, and a typo there should not take the window down.
+"""
+function set_colormap!(c::LiveCanvas, name::AbstractString)
+    i = findfirst(p -> first(p) == name, IMAGE_COLORMAPS)
+    i === nothing && return false
+    c.colormap[] = last(IMAGE_COLORMAPS[i])
+    c.cbarmap[]  = c.colormap[]
+    return true
+end
+
+"Button labels for the image colormaps, newline-separated, for QML to build a row from."
+image_colormap_names() = join(first.(IMAGE_COLORMAPS), "\n")
+
+"""
+Most panels the per-group view will draw.
+
+21 covers a six-telescope closure set (20 triplets) and its 15 baselines whole. Beyond that the
+panels are too small to read anyway, and `update_panels!` says how many it dropped rather than
+quietly showing a subset.
+
+Chosen for legibility, not cost: measured, a grid of 25 axes costs the same 130 ms at
+construction as a grid of 15, because the time is first-figure overhead rather than per-axis
+work -- against a launch already several seconds long.
+"""
+const MAX_PANELS = 21
+
+"""
+    _build_panels(figure) -> NamedTuple
+
+Every panel the view can ever need, created before the window exists.
+
+Same rule as the rest of this file: once Qt owns the GL context, adding a plot allocates buffers
+with none bound. So the pool is fixed and redraws only assign to it -- axes are REPOSITIONED
+into the shape the data wants, which Makie allows, rather than created to fit it.
+"""
+function _build_panels(fig)
+    gl = Makie.GridLayout(fig[3, 1])
+    axes = Any[]; pts = Makie.Observable{Vector{Makie.Point2f}}[]
+    cols = Makie.Observable{Makie.RGBAf}[]
+    epts = Makie.Observable{Vector{Makie.Point2f}}[]
+    elo  = Makie.Observable{Vector{Float32}}[]
+    ehi  = Makie.Observable{Vector{Float32}}[]
+    for k in 1:MAX_PANELS
+        a = Makie.Axis(gl[fld(k - 1, 5) + 1, mod(k - 1, 5) + 1])
+        p = Makie.Observable(Makie.Point2f[])
+        c = Makie.Observable(Makie.RGBAf(0, 0, 0, 1))
+        ep = Makie.Observable(Makie.Point2f[])
+        el = Makie.Observable(Float32[]); eh = Makie.Observable(Float32[])
+        Makie.errorbars!(a, ep, el, eh; color = OIPLOT_ECOLOR)
+        Makie.scatter!(a, p; color = c, marker = OIPLOT_MARKER, markersize = 5)
+        push!(axes, a); push!(pts, p); push!(cols, c)
+        push!(epts, ep); push!(elo, el); push!(ehi, eh)
+    end
+    return (; grid = gl, axes, points = pts, colors = cols,
+              errpoints = epts, errlow = elo, errhigh = ehi)
+end
+
+"An Axis has no `visible`; like every Block it draws into a Scene, and that Scene has one."
+_set_axis_visible!(ax, on) = (getfield(ax, :blockscene).visible[] = on; nothing)
+
+"""
+    show_panels!(canvas, on)
+
+Swap between the single plot and the panel grid. Rows are collapsed rather than the contents
+destroyed, the same way the legend and colorbar are hidden.
+"""
+function show_panels!(c::LiveCanvas, on::Bool)
+    _set_axis_visible!(c.axis, !on)
+    Makie.rowsize!(c.figure.layout, 1, on ? Makie.Fixed(0) : Makie.Auto())
+    Makie.rowsize!(c.figure.layout, 3, on ? Makie.Auto() : Makie.Fixed(0))
+    on && set_legend!(c, Pair{String,Makie.RGBAf}[])
+    on && _show_colorbar!(c, false)
+    for a in c.panels.axes
+        _set_axis_visible!(a, false)
+    end
+    return nothing
+end
+
+"""
+    update_panels!(canvas, d, kind) -> Int
+
+Fill the grid with one panel per group and return how many were drawn.
+
+Independent y ranges: each panel autoscales to its own group. A shared range would make the
+panels comparable, but it also flattens the one thing this view is for -- the structure within
+a single baseline's spectrum, which sits well inside the spread across all of them.
+"""
+function update_panels!(c::LiveCanvas, d, kind::Symbol)
+    pd = panel_data(d, kind)
+    n  = min(length(pd.panels), MAX_PANELS)
+    sc = live_plot_scale()
+
+    # A near-square grid sized to what is actually there: six baselines in a 3x2 read far
+    # better than six scattered along a row of five.
+    ncol = max(1, ceil(Int, sqrt(n)))
+    nrow = max(1, cld(n, ncol))
+
+    for k in 1:MAX_PANELS
+        a = c.panels.axes[k]
+        if k > n
+            _set_axis_visible!(a, false)
+            c.panels.points[k][] = Makie.Point2f[]
+            c.panels.errpoints[k][] = Makie.Point2f[]
+            continue
+        end
+        g = pd.panels[k]
+        c.panels.grid[fld(k - 1, ncol) + 1, mod(k - 1, ncol) + 1] = a
+        _set_axis_visible!(a, true)
+        style_axis!(a; scale = sc * 0.75)      # smaller type: many panels, little room each
+        # Three ticks, not the ten `style_axis!` sets to match matplotlib's density on a full
+        # figure. At panel size those ten overprint each other into a grey smear and the axis
+        # stops being readable at all -- which is worse than a coarse scale.
+        a.xticks[] = Makie.LinearTicks(3)
+        a.yticks[] = Makie.LinearTicks(3)
+        a.title = g.name
+        a.titlesize = OIPLOT_LABELSIZE * sc * 0.7
+        # Labels only on the edges, or every panel spends its width on repeated axis text.
+        a.xlabel = (fld(k - 1, ncol) + 1 == nrow) ? pd.xlabel : ""
+        a.ylabel = (mod(k - 1, ncol) == 0)        ? pd.ylabel : ""
+        c.panels.colors[k][]    = g.color
+        c.panels.points[k][]    = Makie.Point2f.(g.x, g.y)
+        c.panels.errpoints[k][] = Makie.Point2f.(g.x, g.y)
+        c.panels.errlow[k][]    = Float32.(g.err)
+        c.panels.errhigh[k][]   = Float32.(g.err)
+        Makie.autolimits!(a)
+    end
+    for r in 1:5, cc in 1:5
+        # Collapse the rows and columns the layout no longer uses.
+        r <= nrow || Makie.rowsize!(c.panels.grid, r, Makie.Fixed(0))
+        cc <= ncol || Makie.colsize!(c.panels.grid, cc, Makie.Fixed(0))
+    end
+    for r in 1:nrow;  Makie.rowsize!(c.panels.grid, r, Makie.Auto()); end
+    for cc in 1:ncol; Makie.colsize!(c.panels.grid, cc, Makie.Auto()); end
+    return n
 end
 
 """
@@ -425,23 +633,26 @@ function _show_colorbar!(c::LiveCanvas, on::Bool)
     c.colorbar.labelvisible[]     = on
     c.colorbar.ticklabelsize[]    = OIPLOT_TICKLABELSIZE * sc
     c.colorbar.labelsize[]        = OIPLOT_LABELSIZE * sc
-    # The spine too. At width 0 the left and right spines land on the same pixel column and
-    # draw a bare vertical line down the side of every baseline-coloured plot -- a stray axis
-    # with nothing in it. `Colorbar` has no `visible`, so each side is named individually.
-    c.colorbar.leftspinevisible[]   = on
-    c.colorbar.rightspinevisible[]  = on
-    c.colorbar.topspinevisible[]    = on
-    c.colorbar.bottomspinevisible[] = on
+    # Hide the whole Block. Switching decorations off one at a time does not do it -- ticks,
+    # tick labels, label and all four spines were named individually and a bare vertical line
+    # still ran down the side of every baseline-coloured plot, because at width 0 what remains
+    # is the gradient's own outline. A Block draws into its own Scene, and that Scene has the
+    # `visible` a Colorbar lacks.
+    getfield(c.colorbar, :blockscene).visible[] = on
     on || (c.cbarlabel[] = "")
     Makie.colsize!(c.figure.layout, 2, on ? Makie.Auto() : Makie.Fixed(0))
     # Sit beside the axis, not adrift from it. The default column gap is generous for a
     # figure with several panels and looks detached with one.
     Makie.colgap!(c.figure.layout, 1, on ? 8 : 0)
+    # Hug the colorbar rather than sit centred in the cell. An isotropic plot -- uv coverage --
+    # is square, so under DataAspect it fills only part of a wide cell and a colorbar pinned to
+    # the cell's right edge ends up hundreds of pixels adrift of the data it describes.
+    c.axis.halign[] = on ? :right : :center
     return nothing
 end
 
 """
-    ramp_colors(values; colormap = LIVE_COLORMAP) -> Vector{RGBAf}
+    ramp_colors(values; colormap = WAV_COLORMAP) -> Vector{RGBAf}
 
 Map numbers onto colours here rather than handing Makie a numeric vector.
 
@@ -451,7 +662,7 @@ change the attribute's type and force the plot to be rebuilt, which is the very 
 file exists to avoid. So every colour mode resolves to RGBAf, and the colorbar is a standalone
 block carrying its own limits instead of being attached to the plot.
 """
-function ramp_colors(values::AbstractVector{<:Real}; colormap = LIVE_COLORMAP)
+function ramp_colors(values::AbstractVector{<:Real}; colormap = WAV_COLORMAP)
     cm = Makie.to_colormap(colormap)
     isempty(values) && return Makie.RGBAf[]
     lo, hi = extrema(values)
@@ -481,6 +692,7 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
         legend = Pair{String,Makie.RGBAf}[]
         cvals  = Float64[]
         clabel = ""
+        cmap   = WAV_COLORMAP
         cols = if color === :baseline
             cmap = baseline_color_map(names)
             legend = [n => Makie.RGBAf(Makie.to_color(cmap[n])) for n in sort(unique(names))]
@@ -489,18 +701,19 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
         elseif color === :wav
             w = Float64.(d.uv_lam) .* 1e6
             cvals = conjugate ? vcat(w, w) : w
-            clabel = "λ (μm)"
-            ramp_colors(cvals)
+            clabel = WAVELENGTH_LABEL
+            ramp_colors(cvals; colormap = cmap)
         elseif color === :mjd
             m = Float64.(d.uv_mjd)
             cvals = conjugate ? vcat(m, m) : m
             clabel = "MJD"
-            ramp_colors(cvals)
+            cmap   = MJD_COLORMAP
+            ramp_colors(cvals; colormap = cmap)
         else
             fill(Makie.RGBAf(Makie.to_color("#1f77b4")), length(x))
         end
 
-        return (; x, y, err = Float64[], colors = cols, info = inf, legend, cvals, clabel,
+        return (; x, y, err = Float64[], colors = cols, info = inf, legend, cvals, clabel, cmap,
                 xlabel = "U (Mλ)", ylabel = "V (Mλ)",
                 title = "uv coverage — " * basename(d.filename),
                 isotropic = true, logscale = false, ylims = nothing, markersize = 6.0f0)
@@ -527,12 +740,14 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
     legend = Pair{String,Makie.RGBAf}[]
     cvals  = Float64[]
     clabel = ""
+    cmap   = WAV_COLORMAP
     cols = if color === :wav || color === :mjd
         v = Float64.(getfield(d, color === :wav ? spec.lam : spec.mjd))
         color === :wav && (v = v .* 1e6)
         cvals  = v
-        clabel = color === :wav ? "λ (μm)" : "MJD"
-        ramp_colors(v)
+        clabel = color === :wav ? WAVELENGTH_LABEL : "MJD"
+        cmap   = color === :wav ? WAV_COLORMAP : MJD_COLORMAP
+        ramp_colors(v; colormap = cmap)
     elseif color === :none
         fill(Makie.RGBAf(Makie.to_color("#1f77b4")), length(x))
     else
@@ -568,7 +783,7 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
     end
 
     return (; x, y = yv, err = e, errlow = lo_err, colors = cols, info, legend, cvals, clabel,
-            xlabel = spec.xlabel, ylabel = spec.ylabel,
+            cmap, xlabel = spec.xlabel, ylabel = spec.ylabel,
             title = string(kind) * " — " * basename(d.filename),
             isotropic = false, logscale, ylims, markersize = 7.0f0)
 end
@@ -600,7 +815,11 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
     # `identity` accepts anything, so it is the only safe state in which to swap the data.
     ax.yscale[] = identity
 
-    c.markersize[] = Float32(something(markersize, pd.markersize) * sc)
+    # The panel's size is absolute, in points, and does NOT take the plot scale on top: it is
+    # set by eye against what is on screen, so scaling it again would move it as soon as the
+    # window changed monitors.
+    c.markersize[] = MARKER_SIZE_USER[] > 0 ? Float32(MARKER_SIZE_USER[]) :
+                     Float32(something(markersize, pd.markersize) * sc)
     c.points[]     = Makie.Point2f.(pd.x, pd.y)
     c.colors[]     = pd.colors
 
@@ -631,6 +850,7 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
             c.cbarlimits[] = (Float32(lo), Float32(hi))
         end
         c.cbarlabel[]  = pd.clabel
+        c.cbarmap[]    = hasproperty(pd, :cmap) ? pd.cmap : WAV_COLORMAP
         _show_colorbar!(c, true)
     end
 

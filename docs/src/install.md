@@ -169,10 +169,17 @@ no `/dev/dri` render node and Mesa would otherwise fall through to software rend
 would otherwise put GLMakie on XWayland while Qt runs native Wayland — two windowing systems in
 one process. Either can be switched off:
 
+
 ```bash
 OITOOLSGUI_NO_GPU_SETUP=1   # skip the Mesa setup
 OITOOLSGUI_GLFW_X11=1       # keep GLMakie on XWayland
 QSG_INFO=1                  # make Qt report which GL renderer it actually got
+```
+
+```@docs
+gui
+configure_graphics!
+is_wsl
 ```
 
 The GUI's own types (`Session`, `LiveCanvas`, `ShellState`) are defined inside the extension,

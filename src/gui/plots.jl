@@ -54,6 +54,22 @@ const UVPLOT_LEGEND_NCOL   = 5
 const OIPLOT_XTICKS        = 10     # matplotlib's default density; Makie's is far sparser
 
 """
+Font for plot text.
+
+Chosen for coverage, not for looks: it has to carry `μ` and `°` as well as `λ`. The default
+face does not, so Makie fetches them from a fallback -- and under QMLMakie those come out as
+overlapping strokes, while `λ`, which the default face does carry, is clean in the same
+string. The identical strings render correctly through GLMakie's offscreen `save()`, so it is
+the fallback path and not the glyphs.
+
+Applied through `Figure(fonts = ...)` at construction, NOT by assigning to `*font` attributes.
+Every per-attribute route was tried and all of them throw `Failed to resolve data_boundingbox`
+out of Makie's compute graph -- `Axis.xlabelfont`, the ticklabel fonts, and
+`Colorbar.ticklabelfont` alike -- whether set before or after the first plot.
+"""
+const PLOT_FONT = "DejaVu Sans"
+
+"""
     style_axis!(ax; scale = 1.0)
 
 Apply oiplot's typography to a Makie axis.
@@ -213,6 +229,60 @@ group_names(d, spec::ObsSpec) =
     spec.grouping === :triplet ? triplet_names(d, spec.sta) :
     spec.grouping === :station ? station_names(d, spec.sta) :
                                  baseline_names(d, spec.sta)
+
+"""
+    grouping_noun(kind) -> String
+
+What one panel of the per-group view contains, for the control that switches it on.
+
+Not always a baseline: closure quantities group by TRIPLET and flux by STATION, and a tick box
+reading "per baseline" over a grid of closure triangles is simply wrong. `ObsSpec.grouping`
+already knows, so the label follows it.
+"""
+function grouping_noun(kind::Symbol)
+    spec = get(OBS_SPECS, kind, nothing)
+    spec === nothing && return "group"
+    return spec.grouping === :triplet ? "triplet" :
+           spec.grouping === :station ? "station" : "baseline"
+end
+
+"""
+    panel_data(d, kind; color = nothing) -> (; panels, xlabel, ylabel, grouping)
+
+One entry of `panels` per group, each `(; name, x, y, err, color)` with `x` in μm.
+
+Against WAVELENGTH always, whatever the observable's usual x axis is. That is the point of the
+view: a baseline's spectrum is what shows a line, or a slope that says the calibration drifted,
+and neither is visible when every baseline is piled onto one axis against its length.
+
+Groups are ordered by name so the panels keep their positions between redraws — a panel that
+moves when the colour mode changes is one the eye has to find again.
+"""
+function panel_data(d, kind::Symbol; color = nothing)
+    spec = get(OBS_SPECS, kind, nothing)
+    spec === nothing && throw(ArgumentError(
+        "no per-group view for $(repr(kind)); it is not an observable"))
+
+    names = group_names(d, spec)
+    lam   = Float64.(getfield(d, spec.lam)) .* 1e6      # μm
+    y     = Float64.(getfield(d, spec.y))
+    e     = Float64.(getfield(d, spec.yerr))
+    isempty(y) && throw(ArgumentError("no $(kind) data in $(basename(d.filename))"))
+
+    cmap = baseline_color_map(names)
+    panels = NamedTuple[]
+    for g in sort(unique(names))
+        idx = findall(==(g), names)
+        # Sorted by wavelength, so a line through the points is the spectrum rather than the
+        # order the rows happen to sit in the table.
+        perm = sortperm(lam[idx])
+        k = idx[perm]
+        push!(panels, (; name = g, x = lam[k], y = y[k], err = e[k],
+                         color = Makie.RGBAf(Makie.to_color(cmap[g]))))
+    end
+    return (; panels, xlabel = "λ (μm)", ylabel = spec.ylabel,
+              grouping = grouping_noun(kind))
+end
 
 """Generic click description for any observable."""
 obs_info(d, spec::ObsSpec, i::Integer, names) =

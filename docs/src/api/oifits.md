@@ -61,11 +61,22 @@ dict_to_pmoired_file
 | `query_target_from_simbad(name)` | Query SIMBAD for target information |
 | `ra_dec_from_simbad(name)` | Resolve a target through SIMBAD; returns RA and Dec in **decimal degrees** |
 | `sexagesimal_to_degrees(s)` | Parse `"-46 28 00.5"` or `"12:34:56"` to decimal degrees (sign applies to the whole value) |
-| `magnitudes_from_simbad(name)` | Query SIMBAD for photometric magnitudes (V, J, H, K, L, M, N) |
+| `magnitudes_from_simbad(name)` | Query SIMBAD for photometric magnitudes (B through N) |
+| `simbad_target(name)` | Full SIMBAD record: coordinates, proper motion, parallax, spectral type, magnitudes |
+| `SIMBAD_BANDS` | Photometric bands `simbad_target` asks for, in panel order |
+
+`simbad_target` is the one to reach for when planning: proper motion places the target at the
+epoch actually being observed, parallax turns an angular diameter into a physical one, and the
+spectral type is what a surface-brightness relation needs to predict a diameter before anything
+is measured. Coordinates come back in **decimal degrees**, and a value SIMBAD does not hold is
+`NaN` rather than an error — not knowing a parallax is a fact about the target, and has to be
+distinguishable from the query having failed.
 
 ```@docs
 recenter
 magnitudes_from_simbad
 ra_dec_from_simbad
 sexagesimal_to_degrees
+simbad_target
+SIMBAD_BANDS
 ```
