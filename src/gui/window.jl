@@ -33,6 +33,7 @@ function __init__()
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param,
                      shell_component_kinds, shell_add_component, shell_remove_component,
+                     shell_chi2_map_info, shell_free_names,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
@@ -113,6 +114,12 @@ function OITOOLS.gui(session::Session = Session();
     uiscale = ui_scale_override()
     @info "UI scale: $(uiscale.reason)"
 
+    # Fill the glyph atlas before ANY figure exists. Makie caches only `a-z A-Z 0-9 . -`, and
+    # only for its own default fonts, so with `PLOT_FONT` pinned every character a label uses --
+    # spaces and commas included -- would otherwise be inserted into the atlas at first draw,
+    # inside the GL context Qt owns by then. That insertion is what garbles glyphs.
+    @debug "pre-warmed $(prewarm_glyphs!()) glyphs"
+
     fig = Makie.Figure(fonts = PLOT_FONTS)
     ax  = Makie.Axis(fig[1, 1]; xlabel = "", ylabel = "", title = "OITOOLS")
     style_axis!(ax)
@@ -151,9 +158,17 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(max_)
     modelcanvas = build_canvas(mfig, max_)
 
+    # And a sixth for the χ² map. Its own figure for the same reason as the Gantt: it is not a
+    # scatter and not an image -- it needs a colorbar of its own, contour levels of its own, and
+    # axes labelled with parameter names rather than coordinates.
+    ofig = Makie.Figure(fonts = PLOT_FONTS)
+    oax  = Makie.Axis(ofig[1, 1])
+    style_axis!(oax)
+    chi2map = build_chi2_map(ofig, oax)
+
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false, false,
                      "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
-                     delayplot, modelcanvas, nothing, Any[])
+                     delayplot, modelcanvas, nothing, Any[], chi2map)
     SHELL[] = sh
     install_interactions!(sh)
 
@@ -182,6 +197,7 @@ function OITOOLS.gui(session::Session = Session();
                 ganttPlot       = gfig,
                 delayPlot       = dfig,
                 modelPlot       = mfig,
+                chi2MapPlot     = ofig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,

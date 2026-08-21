@@ -45,6 +45,7 @@ mutable struct ShellState
     modelcanvas :: Any          # the Model perspective's rendering canvas
     plan    :: Any              # the NightPlan behind the current Gantt, for the hover readout
     fits    :: Vector{Any}      # completed fits, newest last
+    chi2map :: Any              # the Model perspective's χ² map chart
 end
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
@@ -424,7 +425,9 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
                          constraint_lines::AbstractString, prior_lines::AbstractString,
                          v2::Bool, t3amp::Bool, t3phi::Bool,
                          cvis::Bool, flux::Bool, diffvis::Bool,
-                         optimiser::AbstractString, maxeval::Integer)
+                         optimiser::AbstractString, maxeval::Integer,
+                         gridp1::AbstractString = "", gridp2::AbstractString = "",
+                         gridn::Integer = 60)
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
@@ -451,10 +454,27 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
          "enforced by NLopt (they hold at the optimum)" :
          "SOFT penalty with this fitter — a steep chi2 can overrule them"))
 
-    console!(sh, "> fit_model(model, $(free), data; " *
-                 "weights = $(weights), method = :$(opt))")
+    # The grid is not a call to `fit_model`, so it does not claim to be one: the console line is
+    # the call that was actually made, which is what makes the exported script reproduce it.
+    gp1, gp2 = String(gridp1), String(gridp2)
+    if opt == "grid"
+        length(free) >= 2 || return "! grid search needs two free parameters"
+        isempty(gp1) && (gp1 = free[1])
+        isempty(gp2) && (gp2 = free[findfirst(!=(gp1), free)])
+        console!(sh, "> chi2_map(model, $(free), data, $(repr(gp1)), $(repr(gp2)); " *
+                     "n1 = $(Int(gridn)), n2 = $(Int(gridn)), weights = $(weights))")
+    else
+        console!(sh, "> fit_model(model, $(free), data; " *
+                     "weights = $(weights), method = :$(opt))")
+    end
+
+    themap = nothing
     t = @elapsed r = try
-        if opt == "lsqfit"
+        if opt == "grid"
+            themap = chi2_map(md, free, data, gp1, gp2;
+                              lb, ub, weights, n1 = Int(gridn), n2 = Int(gridn))
+            FitResult(themap)
+        elseif opt == "lsqfit"
             fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons,
                              maxIter = Int(maxeval))
         elseif opt == "ultranest"
@@ -468,7 +488,10 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
         msg = "! fit failed: " * _cause(err); console!(sh, msg); return msg
     end
 
-    push!(sh.fits, (; result = r, optimiser = opt, seconds = t, free))
+    # The map belongs to the fit that produced it, not to the shell: two grid fits over
+    # different parameter pairs both stay reachable, and selecting an older fit can redraw it.
+    themap === nothing || sh.chi2map === nothing || update_chi2_map!(sh.chi2map, themap)
+    push!(sh.fits, (; result = r, optimiser = opt, seconds = t, free, map = themap))
     for (k, v) in zip(r.list_free_params, r.x_opt)
         console!(sh, @sprintf("    %-22s = %.6g", k, v))
     end
@@ -476,6 +499,35 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
                     r.chi2r, r.ndof, length(free), t)
     console!(sh, "  " * line)
     return line
+end
+
+"""
+    shell_chi2_map_info() -> String
+
+`p1\tp2\tbest1\tbest2\tchi2r` for the most recent grid fit, or `""` when the last fit was not
+one. QML uses it to decide whether the map panel has anything to show.
+"""
+function shell_chi2_map_info()
+    sh = _shell()
+    isempty(sh.fits) && return ""
+    f = last(sh.fits)
+    m = hasproperty(f, :map) ? f.map : nothing
+    m === nothing && return ""
+    b = argmin(m.chi2)
+    return join((m.p1, m.p2, string(m.v1[b[1]]), string(m.v2[b[2]]),
+                 string(minimum(m.chi2) / m.ndof)), "\t")
+end
+
+"""
+    shell_free_names() -> String
+
+The free parameters, newline-separated, in fit-vector order — the two axis pickers for the
+grid choose from these, and only these, because `chi2_map` maps free parameters.
+"""
+function shell_free_names()
+    m = _model()
+    isempty(m.free) && return ""
+    return join(m.free, "\n")
 end
 
 "The fitted values as `key=value` lines, so the table can adopt them."
@@ -1030,6 +1082,26 @@ function shell_remove_component(name)
 end
 
 """
+    _parse_options(text) -> Dict{String,String}
+
+The engine settings panel's `key\tvalue` lines.
+
+Values stay strings here and are converted by whichever engine branch reads them: the panel
+sends what its controls hold, and only the engine knows whether a given key is an integer, a
+weight or a file path.
+"""
+function _parse_options(text::AbstractString)
+    o = Dict{String,String}()
+    for line in split(String(text), '\n')
+        isempty(line) && continue
+        f = split(line, '\t')
+        length(f) == 2 || continue
+        o[String(f[1])] = String(f[2])
+    end
+    return o
+end
+
+"""
     shell_recenter_image() -> String
 
 Recentre the reconstructed image on its centroid and redraw.
@@ -1281,7 +1353,9 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
                            v2::Bool, t3amp::Bool, t3phi::Bool, maxiter::Integer,
                            regularizers::AbstractString = "",
                            startfwhm::Real = AUTO_FWHM, startseed::Integer = 1,
-                           from_previous::Bool = false)
+                           from_previous::Bool = false,
+                           engine::AbstractString = "vmlmb",
+                           options::AbstractString = "")
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "no dataset loaded"
@@ -1289,7 +1363,14 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     weights = imaging_weights(; v2, t3amp, t3phi)
     all(iszero, weights) && return "no observables selected"
 
-    setup = ImagingSetup(; nx = Int(nx), pixsize = Float64(pixsize),
+    eng = Symbol(engine)
+    haskey(IMAGING_ENGINES, eng) ||
+        return "! $(engine) is not wired; pick one of " *
+               join(sort(string.(keys(IMAGING_ENGINES))), ", ")
+    opts = _parse_options(options)
+
+    setup = ImagingSetup(; engine = eng,
+                           nx = Int(nx), pixsize = Float64(pixsize),
                            mode = Symbol(mode), startkind = Symbol(startkind),
                            startfwhm = Float64(startfwhm), startseed = Int(startseed))
     regs = try
@@ -1300,9 +1381,12 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     regtext = isempty(regs) ? "positivity only" :
               "regularizers = [" * join((string(r) for r in regs), ", ") * "]"
     startdesc = from_previous ? "x_start = previous image" : "x_start = $(startkind)"
-    console!(sh, "> reconstruct(x_start, data, ft; maxiter = $(Int(maxiter)))  " *
+    # The call that was actually made, named by the engine that made it. A console that said
+    # `reconstruct` for every engine would be a log of something that did not happen.
+    console!(sh, "> $(IMAGING_ENGINES[eng])(x_start, data, ft; maxiter = $(Int(maxiter)))  " *
                  "# $(Int(nx))×$(Int(nx)) at $(round(Float64(pixsize); digits=4)) mas, " *
                  "$startdesc, " * regtext)
+    isempty(opts) || console!(sh, "  " * join(("$k = $v" for (k, v) in sort(collect(opts), by = first)), ", "))
     # Continue from the last image rather than from a fresh start.
     xprev = nothing
     if from_previous
@@ -1317,7 +1401,7 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     ft     = (cached !== nothing && cached.key == ftkey) ? cached.ft : nothing
     r = try
         reconstruct_image(e.data, setup; weights, maxiter = Int(maxiter),
-                          regularizers = regs, ft, x_start = xprev)
+                          regularizers = regs, ft, x_start = xprev, options = opts)
     catch err
         msg = "! reconstruction failed: " * _cause(err)
         console!(sh, msg)

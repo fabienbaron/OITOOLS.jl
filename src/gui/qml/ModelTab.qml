@@ -94,6 +94,15 @@ Item {
     // the parser's own rather than a copy that can fall behind it.
     property var componentKinds: []
 
+    // Free-parameter names, for the grid's two axis pickers. Refreshed with the model, because
+    // freeing or fixing a parameter changes what a grid can be run over.
+    property var freeNames: []
+
+    // What the last grid fit mapped, or empty when the last fit was not one. The map panel
+    // shows the chart only when there is a chart to show.
+    property string chi2MapP1: ""
+    property string chi2MapP2: ""
+
     Component.onCompleted: {
         var out = []
         var txt = Julia.shell_component_kinds()
@@ -221,9 +230,11 @@ Item {
                 root.constraintsAsLines(), root.priorsAsLines(),
                 root.useV2, root.useT3amp, root.useT3phi,
                 root.useCvis, root.useFlux, root.useDiffvis,
-                root.optimiser, root.maxeval)
+                root.optimiser, root.maxeval,
+                gridP1.currentText, gridP2.currentText, gridN.value)
             root.running = false
             root.refreshFits()
+            root.refreshChi2Map()
             root.consoleChanged()
         }
     }
@@ -1456,6 +1467,62 @@ Item {
                                     }
                                 }
 
+                                // The grid's own settings, on their own row: five more controls
+                                // beside the optimiser pushed the Fit button off the edge of the
+                                // window, and a row that only exists for one optimiser should not
+                                // cost the others their width.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: root.dp(8)
+                                    visible: root.optimiser === "grid"
+
+                                    // Two parameters only: the cost is exponential, and three axes
+                                    // is a picture nobody can read. Every other free parameter is
+                                    // held at its current value, which makes this a SLICE through
+                                    // the χ² surface rather than a profile.
+                                    Label { text: "Grid over"; font.bold: true }
+                                    ComboBox {
+                                        id: gridP1
+                                        Layout.preferredWidth: root.dp(170)
+                                        model: root.freeNames
+                                    }
+                                    Label { text: "×"; color: "#666" }
+                                    ComboBox {
+                                        id: gridP2
+                                        Layout.preferredWidth: root.dp(170)
+                                        model: root.freeNames
+                                        currentIndex: Math.min(1, Math.max(0, root.freeNames.length - 1))
+                                    }
+                                    Label { text: "points/axis"; color: "#666" }
+                                    SpinBox {
+                                        id: gridN
+                                        from: 8; to: 400; stepSize: 4
+                                        value: 60
+                                        editable: true
+                                        Layout.preferredWidth: root.dp(120)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "the grid costs this squared: 60 is 3600 χ² evaluations"
+                                    }
+                                    Label {
+                                        text: gridN.value + "² = " + (gridN.value * gridN.value) + " evaluations"
+                                        color: "#888"
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Label {
+                                        visible: root.nFree < 2
+                                        text: "needs two free parameters"
+                                        color: root.cBad
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                    Label {
+                                        visible: root.nFree >= 2 && gridP1.currentText === gridP2.currentText
+                                        text: "pick two different parameters"
+                                        color: root.cBad
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                }
+
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: root.dp(8)
@@ -1478,6 +1545,7 @@ Item {
                                         model: ["Levenberg-Marquardt  ·  lsqfit",
                                                 "Nelder-Mead  ·  derivative-free",
                                                 "Nested sampling  ·  UltraNest",
+                                                "Grid search  ·  two parameters, χ² map",
                                                 "──────────",
                                                 "L-BFGS  ·  gradient",
                                                 "MMA  ·  gradient, takes constraints",
@@ -1492,6 +1560,7 @@ Item {
                                         color: root.cBad
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
+
 
                                     ToolSeparator {}
 
@@ -1663,7 +1732,61 @@ Item {
                                 }
                             }
                         }
-                        Item { Layout.fillHeight: true }
+                        // What the optimiser had to say, beyond one row in the table. Grid
+                        // search is the one that produces a picture today; the others each
+                        // have one worth drawing here (a corner plot for nested sampling,
+                        // residuals for the rest) and this is the space for them.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumHeight: root.dp(220)
+                            color: "#f4f4f4"
+                            border.color: root.cLine
+                            radius: root.dp(3)
+
+                            MakieArea {
+                                id: chi2MapArea
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                scene: chi2MapPlot
+                            }
+
+                            // Covers the chart until there is one. The Makie figure exists from
+                            // startup -- it has to, the GL context belongs to Qt afterwards --
+                            // so without this an empty axis reads as a finished, featureless map.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                visible: root.chi2MapP1.length === 0
+                                color: "#f4f4f4"
+                                ColumnLayout {
+                                    anchors.centerIn: parent
+                                    spacing: root.dp(4)
+                                    Label {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: "χ² map"
+                                        color: "#888"
+                                    }
+                                    Label {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: "run a grid search to see the surface"
+                                        color: "#aaa"
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                }
+                            }
+
+                            // The contours are the quantitative part, so they are named.
+                            Label {
+                                visible: root.chi2MapP1.length > 0
+                                anchors.left: parent.left
+                                anchors.bottom: parent.bottom
+                                anchors.margins: root.dp(6)
+                                text: "contours: Δχ² = 2.30, 6.17, 11.8  (68.3, 95.4, 99.7% for two parameters)"
+                                color: "#666"
+                                font.pointSize: root.pt(root.baseFontPt - 2)
+                            }
+                        }
                     }
                 }
             }
@@ -1737,6 +1860,20 @@ Item {
 
         var chi2 = Julia.shell_model_chi2()
         root.currentChi2r = chi2.length > 0 ? parseFloat(chi2) : NaN
+
+        var fn = Julia.shell_free_names()
+        root.freeNames = fn.length > 0 ? fn.split("\n") : []
+    }
+
+    // Whether the most recent fit left a χ² map behind, and over what.
+    function refreshChi2Map() {
+        var info = Julia.shell_chi2_map_info()
+        if (info.length === 0) { root.chi2MapP1 = ""; root.chi2MapP2 = ""; return }
+        var f = info.split("\t")
+        if (f.length !== 5) { root.chi2MapP1 = ""; root.chi2MapP2 = ""; return }
+        root.chi2MapP1 = f[0]
+        root.chi2MapP2 = f[1]
+        chi2MapArea.update()
     }
 
     // `x[i] ↔ list_free_params[i]` holds throughout OITOOLS, so the free rows IN ORDER are the
@@ -1811,7 +1948,7 @@ Item {
     // Index 3 is the separator, which is not an optimiser: selecting it keeps whatever was
     // chosen before rather than silently switching to something else.
     function optimiserKey(i) {
-        var k = ["lsqfit", "LN_NELDERMEAD", "ultranest", "",
+        var k = ["lsqfit", "LN_NELDERMEAD", "ultranest", "grid", "",
                  "LD_LBFGS", "LD_MMA", "LD_SLSQP", "LN_COBYLA"][i]
         return (k === undefined || k.length === 0) ? optimiser : k
     }

@@ -396,8 +396,14 @@ Item {
                 // blank strip: the panels sized to the ScrollView while the row below sized to
                 // its own content, so the column ended up wider than the panels it held and the
                 // difference showed as dead space against the night panel.
-                Layout.preferredWidth: dp(440)
-                Layout.maximumWidth: dp(440)
+                //
+                // Wide enough for the widest panel's own content rather than for the chart's
+                // convenience: at 440 the six POP dropdowns wrapped onto a second row and the
+                // panel ran past the bottom of the scroll view. The night chart stretches to
+                // whatever is left and reads fine at any width; these panels do not.
+                Layout.minimumWidth: dp(500)
+                Layout.preferredWidth: dp(560)
+                Layout.maximumWidth: dp(560)
                 Layout.fillHeight: true
                 spacing: dp(6)
 

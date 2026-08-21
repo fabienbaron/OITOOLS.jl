@@ -766,7 +766,10 @@ ApplicationWindow {
                     CheckBox {
                         id: logToggle
                         text: "Console"
-                        checked: true
+                        // Off by default: the transcript is still recorded either way -- this
+                        // only decides whether the pane is filled -- and the plot is what the
+                        // window should open on.
+                        checked: false
                         onToggled: if (checked) win.afterAction()
                     }
                     Label {

@@ -166,7 +166,11 @@ Item {
     // weight is how a block is switched off, so there is no separate enable flag.
     property real   bsdmmMuTv: 0.0
     property real   bsdmmMuGroup: 0.0
-    property real   bsdmmMuCen: 0.0
+    // Non-zero by default. Centering is what pins the image against the translation degeneracy
+    // of the bispectrum, and ADMM needs at least one proximal block to split across, so a run
+    // with it at zero is either unpinned or has nothing to solve. 1e2 is what the shipped BSDMM
+    // demos use alongside mu_reg = 1e5.
+    property real   bsdmmMuCen: 1e2
     property string bsdmmRegType: "tv"          // tv | l2smooth
     property string bsdmmGroupType: "sparsity"  // sparsity | tv
     property int    bsdmmMaxiter: 200
@@ -371,8 +375,74 @@ Item {
     // The VMLMB regulariser rows as `name,mu[,extra];name,mu` — one string, because that is
     // what crosses into Julia cleanly. Only this engine's rows are sent: the other engines
     // take their regularisation in shapes that are not a named list at all.
+    // The iteration count the chosen engine actually reads. They are not the same control:
+    // VMLMB counts gradient steps, BSMEM MEM iterations, ADMM splittings and SQUEEZE sweeps,
+    // and a shared "maxiter" would silently mean four different amounts of work.
+    function engineMaxiter() {
+        if (engine === "bsmem") return bsmemMaxiter
+        if (engine === "bsdmm") return bsdmmMaxiter
+        if (isSqueeze)          return niter
+        return vmlmbMaxiter
+    }
+
+    // Everything the chosen engine needs beyond the shared geometry and observables, as
+    // `key\tvalue` lines. Only the current engine's settings are sent: an engine that received
+    // another's keys would ignore them, which is fine, but the console line that echoes them
+    // would then describe settings that had no effect.
+    function engineOptions() {
+        var o = []
+        function put(k, v) { o.push(k + "\t" + v) }
+
+        if (engine === "bsmem") {
+            put("method1", bsmemMethod[0]); put("method2", bsmemMethod[1])
+            put("method3", bsmemMethod[2]); put("method4", bsmemMethod[3])
+            put("maxiter", bsmemMaxiter)
+            if (bsmemUsePrior && bsmemPriorPath.length > 0) put("prior", bsmemPriorPath)
+
+        } else if (engine === "bsdmm") {
+            put("mu_reg", bsdmmMuTv); put("mu_cen", bsdmmMuCen)
+            put("reg_type", bsdmmRegType); put("maxiter", bsdmmMaxiter)
+
+        } else if (engine === "sparco") {
+            put("lambda0", sparcoLambda0); put("f_star", sparcoFStar)
+            put("f_bg", sparcoFBg); put("env_indx", sparcoEnvIndx)
+            put("ud", sparcoUd); put("rounds", sparcoRounds)
+
+        } else if (isSqueeze) {
+            put("nelements", nelements); put("niter", niter); put("nchains", nchains)
+            put("tmin", tmin); put("f_anywhere", fAnywhere); put("f_copycat", fCopycat)
+            put("cent_mult", centMult); put("auto_centering", autoCentering ? 1 : 0)
+            put("seed", startSeed)
+            if (squeezePriorPath.length > 0) put("prior", squeezePriorPath)
+            if (engine === "squeeze_sparco") {
+                put("lambda0", sparcoLambda0); put("f_star", sparcoFStar)
+                put("ud", sparcoUd); put("env_indx", sparcoEnvIndx)
+                put("f_bg", sparcoFBg); put("bg_indx", sparcoBgIndx)
+                put("free_f_star", sparcoFreeFStar ? 1 : 0)
+                put("free_ud", sparcoFreeUd ? 1 : 0)
+                put("free_env_indx", sparcoFreeEnvIndx ? 1 : 0)
+                put("free_f_bg", sparcoFreeFBg ? 1 : 0)
+                put("free_bg_indx", sparcoFreeBgIndx ? 1 : 0)
+            }
+        }
+        return o.join("\n")
+    }
+
     function regulariserSpec() {
-        if (engine !== "vmlmb") return ""
+        // SQUEEZE's names are spelled like oichi2.jl's but act on the integer histogram, so it
+        // has its own closed list and its own model behind it.
+        if (isSqueeze) {
+            var sq = []
+            for (var s = 0; s < squeezeRegModel.count; ++s) {
+                var q = squeezeRegModel.get(s)
+                if (!q.use) continue
+                sq.push(q.name + "," + q.lambda)
+            }
+            return sq.join(";")
+        }
+        // BSMEM ignores the spec list -- its entropy mode is the `method` vector, and its prior
+        // travels as an option -- so sending it regularisers would describe a run it did not do.
+        if (engine !== "vmlmb" && engine !== "sparco") return ""
         var out = []
         for (var i = 0; i < regModel.count; ++i) {
             var r = regModel.get(i)
@@ -449,10 +519,11 @@ Item {
             var line = Julia.shell_reconstruct(root.nx, root.pixsize, root.ftMode,
                                                root.startImage,
                                                root.useV2, root.useT3amp, root.useT3phi,
-                                               root.vmlmbMaxiter,
+                                               root.engineMaxiter(),
                                                root.regulariserSpec(),
                                                root.startFwhm, root.startSeed,
-                                               root._continueRun)
+                                               root._continueRun,
+                                               root.engine, root.engineOptions())
             root.statusText = line
             root.hasResult = line.indexOf("chi2r") >= 0
             root.refreshBreakdown()

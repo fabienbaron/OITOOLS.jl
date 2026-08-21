@@ -36,7 +36,10 @@ function load_dataset!(s::Session, path::AbstractString; kwargs...)
                          get(kw, :spectralbin, nothing), get(kw, :temporalbin, nothing), nothing)
     push!(s.datasets, entry)
 
-    kwstr = _kwargs([k => v for (k, v) in sort(collect(kw), by = first)];
+    # `Pair{Symbol,Any}[...]`, not a bare comprehension: over an EMPTY `kw` the comprehension
+    # infers `Vector{Any}`, which `_kwargs(::Vector{<:Pair})` does not accept — so loading a
+    # file with no read options at all threw a MethodError rather than logging the plain call.
+    kwstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(kw), by = first)];
                     defaults = _READOIFITS_DEFAULTS)
     call  = isempty(kwstr) ? "readoifits($(_literal(path)))" :
                              "readoifits($(_literal(path)); $kwstr)"

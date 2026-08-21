@@ -56,13 +56,15 @@ export parse_model_lines, parse_free_lines, parse_constraint_lines, parse_prior_
        fitting_weights
 export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        start_image, reconstruct_image, observable_availability, observable_flags_string,
-       parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start
+       parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start,
+       IMAGING_ENGINES, run_engine, prior_image
 export NightPlan, config_catalog, facility_telescopes, telescope_config,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,
        pop_label,
        baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
        delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info
+export build_chi2_map, update_chi2_map!
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
        picker_kind, picker_would_overwrite, picker_matches, picker_examples
 export GLOBAL_COMPONENT
@@ -81,6 +83,7 @@ include(joinpath(GUIDIR, "observing.jl"))   # Observe perspective: configs, targ
 include(joinpath(GUIDIR, "gantt.jl"))       # the Gantt chart, in Makie
 include(joinpath(GUIDIR, "plots.jl"))
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
+include(joinpath(GUIDIR, "chi2map.jl"))       # the grid-search chi2 surface, in Makie
 include(joinpath(GUIDIR, "shell.jl"))
 include(joinpath(GUIDIR, "window.jl"))        # gui(): builds the window and runs Qt
 

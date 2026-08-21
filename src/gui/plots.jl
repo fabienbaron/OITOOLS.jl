@@ -70,6 +70,66 @@ out of Makie's compute graph -- `Axis.xlabelfont`, the ticklabel fonts, and
 const PLOT_FONT = "DejaVu Sans"
 
 """
+Every character the GUI's Makie labels can contain.
+
+Makie's cached texture atlas pre-renders **only** `a-z`, `A-Z`, `0-9`, `.`, `-` and the Unicode
+minus (`render_default_glyphs!`), and only for the fonts in its own default theme. Every other
+character -- the space included -- is inserted into the atlas the first time it is drawn.
+
+Under QMLMakie that runtime insertion is what corrupts: the glyph arrives with strokes of a
+neighbouring atlas cell drawn through it. The same string rendered by plain GLMakie to a PNG is
+clean, so it is the shared-context upload rather than the font or the text itself. And because
+this GUI pins `PLOT_FONT` rather than Makie's default, NONE of the pre-rendered glyphs apply --
+every character is a runtime insertion, which is why the corruption is widespread rather than
+occasional, and why it varies by driver.
+
+`prewarm_glyphs!` renders all of these into the atlas before the window exists, so the initial
+texture upload carries the complete set and nothing has to be added afterwards.
+"""
+const PLOT_GLYPHS = Char[
+    # printable ASCII: letters, digits, and every punctuation mark a label or tick can carry
+    (' ':'~')...,
+    # the Greek and typographic characters the axis labels, titles and readouts use
+    'λ', 'μ', 'α', 'δ', 'χ', 'Δ', 'θ', 'σ', 'π',
+    '°', '²', '³', '±', '×', '·', '—', '–', '…', '≤', '≥', '≈', '∈', '→', '←',
+    'ᵣ', '₀', '₁', '₂', '\u2212',                    # subscripts and the Unicode MINUS SIGN
+]
+
+"""
+    prewarm_glyphs!(fonts = PLOT_FONTS)
+
+Insert every glyph in [`PLOT_GLYPHS`](@ref) into Makie's texture atlas. **Call before the
+window exists.**
+
+Once QML is up the GL context belongs to Qt's render thread, and a glyph met after that point
+is uploaded into a texture that is not ours to touch. Filling the atlas first is what makes the
+labels render as themselves — see `PLOT_GLYPHS` for the measurements behind this.
+
+Missing glyphs are skipped rather than thrown: a font without `≥` should cost that one
+character, not the window.
+"""
+function prewarm_glyphs!(fonts = PLOT_FONTS)
+    atlas = Makie.get_texture_atlas()
+    n = 0
+    for name in unique(values(fonts))
+        font = try
+            Makie.to_font(name)
+        catch
+            continue
+        end
+        for c in PLOT_GLYPHS
+            try
+                Makie.insert_glyph!(atlas, c, font)
+                n += 1
+            catch
+                # A glyph this face does not have. Makie will fall back when it is drawn.
+            end
+        end
+    end
+    return n
+end
+
+"""
     style_axis!(ax; scale = 1.0)
 
 Apply oiplot's typography to a Makie axis.

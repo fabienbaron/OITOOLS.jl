@@ -28,13 +28,32 @@ struct ImagingSetup
     startfwhm :: Float64       # mas; NEGATIVE means "choose it from the field of view"
     startpath :: String
     startseed :: Int           # for :random, so a run can be repeated
+    engine    :: Symbol        # which reconstructor runs; see IMAGING_ENGINES
 end
 
 ImagingSetup(; nx = 64, pixsize = 0.25, mode = :nfft,
                startkind = :gaussian, startfwhm = AUTO_FWHM, startpath = "",
-               startseed = 1) =
+               startseed = 1, engine = :vmlmb) =
     ImagingSetup(nx, Float64(pixsize), Symbol(mode), Symbol(startkind),
-                 Float64(startfwhm), String(startpath), Int(startseed))
+                 Float64(startfwhm), String(startpath), Int(startseed), Symbol(engine))
+
+"""
+The reconstructors the Image perspective can run, and the call each one makes.
+
+Every engine here is genuinely dispatched to. A name that appears in the panel but falls
+through to `reconstruct` would be worse than an absent one: the run succeeds, the image looks
+plausible, and the label on it is wrong.
+
+`:tempering` and `:vi` are deliberately absent. Both need a package that is not a dependency --
+Pigeons and OIVI -- so the panel blocks them with that reason rather than offering them here.
+"""
+const IMAGING_ENGINES = Dict{Symbol,String}(
+    :vmlmb          => "reconstruct",
+    :bsmem          => "reconstruct_bsmem",
+    :bsdmm          => "reconstruct_bsdmm",
+    :sparco         => "reconstruct_sparco",
+    :squeeze        => "reconstruct_squeeze",
+    :squeeze_sparco => "reconstruct_squeeze (model = SqueezeSparco)")
 
 """
 Sentinel for "work the starting width out from the field of view".
@@ -196,7 +215,15 @@ struct ImagingResult
     setup       :: ImagingSetup
     weights     :: Vector{Float64}
     breakdown   :: Vector{NamedTuple}   # reduced chi2 per observable
+    # Whatever the engine returned beyond the image: SQUEEZE's diagnostics NamedTuple, SPARCO's
+    # fitted parametric values. `nothing` for the engines that hand back an image and no more.
+    extra       :: Any
 end
+
+# The engine is on `setup`, so a result always says which reconstructor made it.
+ImagingResult(image, chi2, chi2_start, ndof, flux, maxiter, seconds, setup, weights, breakdown) =
+    ImagingResult(image, chi2, chi2_start, ndof, flux, maxiter, seconds, setup, weights,
+                  breakdown, nothing)
 
 "Reduced χ², against the points actually fitted. `NaN` when nothing was."
 chi2r(r::ImagingResult) = r.ndof > 0 ? r.chi2 / r.ndof : NaN
@@ -275,6 +302,7 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
                            regularizers = [],
                            ft           = nothing,
                            x_start      = nothing,
+                           options      ::AbstractDict = Dict{String,String}(),
                            verb         ::Bool = false)
     regularizers = parse_regularizers(regularizers)
     all(iszero, weights) &&
@@ -297,16 +325,239 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
     end
 
     chi2_start = image_to_chi2(x0, ft, data; weights, verb = false)
-    t = @elapsed x = reconstruct(x0, data, ft; weights, regularizers, maxiter, verb)
-    chi2 = image_to_chi2(x, ft, data; weights, verb = false)
+    t = @elapsed (xraw, extra, own_chi2) = run_engine(setup.engine, x0, data, ft;
+                                                     weights, regularizers, maxiter, verb, options)
+    # The engines hand back different shapes and precisions -- a Float32 matrix from VMLMB, a
+    # Float64 one from SQUEEZE and BSDMM, an (nx, nx, 1) slice from BSMEM. The shared χ² path
+    # takes one shape, so normalise once here; comparing two engines on the same number is the
+    # reason they share a panel at all.
+    x = to_ft_precision(Float64.(xraw), ft)
 
-    img = Float64.(x)
     bd  = chi2_breakdown(x, ft, data, Float64.(weights))
     # Only the observables that were actually in the criterion: dividing by points the fit
-    # never saw would flatter it.
+    # never saw would flatter it. The point counts do not depend on the image, so this is right
+    # even for the engines whose χ² is not computed from the image.
     ndof = sum(b -> b.used ? b.n : 0, bd; init = 0)
-    return ImagingResult(img, Float64(chi2), Float64(chi2_start), ndof, sum(img),
-                         Int(maxiter), t, setup, Float64.(weights), bd)
+
+    # SPARCO's model is the image PLUS a parametric component, so the image alone does not
+    # predict the data and `image_to_chi2` of it is meaningless -- measured at χ²r ≈ 2.7e7
+    # against the engine's own 1.2. Those engines report their own χ², and their per-observable
+    # breakdown is dropped rather than shown as an image-only split that would not sum to it.
+    chi2 = own_chi2 === nothing ? Float64(image_to_chi2(x, ft, data; weights, verb = false)) :
+                                  Float64(own_chi2)
+    own_chi2 === nothing || (bd = NamedTuple[])
+
+    img = Float64.(x)
+    return ImagingResult(img, chi2, Float64(chi2_start), ndof, sum(img),
+                         Int(maxiter), t, setup, Float64.(weights), bd, extra)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The engines
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Each branch below makes ONE call to a real OITOOLS reconstructor and returns `(image, extra)`.
+# The χ², the per-observable breakdown and the point count are then computed the same way for
+# all of them, by `reconstruct_image` above -- so two engines can be compared on the same
+# number, which is the whole point of having them in one panel.
+#
+# Options arrive as a `Dict{String,String}` from the panel rather than as a keyword each: the
+# engines take wildly different settings (BSMEM a four-integer method vector, BSDMM three μ
+# weights and two mode symbols, SQUEEZE move probabilities), and threading every one of them
+# through a shared signature would put BSDMM's knobs in BSMEM's call.
+
+_optstr(o, k, d::AbstractString = "") = (v = get(o, k, ""); isempty(v) ? d : v)
+_optbool(o, k, d::Bool) = (v = get(o, k, ""); isempty(v) ? d : lowercase(v) in ("1", "true", "yes"))
+_optint(o, k, d::Integer) = (v = get(o, k, ""); isempty(v) ? Int(d) : something(tryparse(Int, v), Int(d)))
+_optreal(o, k, d::Real) = (v = get(o, k, ""); isempty(v) ? Float64(d) : something(tryparse(Float64, v), Float64(d)))
+
+"""
+The dataset's single bin, checked for a spread of wavelengths.
+
+The test is on `uv_lam`, NOT on the number of wavelength BINS. OITOOLS keeps a chromatic
+dataset as one `OIdata` whose points each carry their own λ, and that is the form SPARCO wants:
+it weights each point by its wavelength, so a file read into one bin spanning 1.5-1.7 μm is
+exactly right and `size(data, 1) == 1` says nothing about it. Splitting the same file into 35
+bins instead makes `reconstruct_sparco` fail on mismatched per-channel point counts.
+"""
+function _require_chromatic(data, engine)
+    d = _require_mono(data, engine)
+    length(unique(d.uv_lam)) > 1 || error(
+        "$(get(IMAGING_ENGINES, engine, engine)) separates its components by their spectral " *
+        "indices, so it needs a spread of wavelengths; every point in this dataset is at " *
+        "$(round(Float64(first(d.uv_lam)) * 1e6, digits = 4)) μm.")
+    return d
+end
+
+"Every engine but VMLMB is monochromatic here; say so rather than failing inside the engine."
+function _require_mono(data, engine)
+    size(data) == (1, 1) || error(
+        "$(get(IMAGING_ENGINES, engine, engine)) runs on one wavelength bin; this dataset has " *
+        "$(size(data, 1))×$(size(data, 2)). Use VMLMB, or read the file with a single bin.")
+    return data[1, 1]
+end
+
+"""
+    run_engine(engine, x0, data, ft; weights, regularizers, maxiter, verb, options)
+      -> (image, extra, chi2)
+
+Dispatch one reconstruction.
+
+`extra` carries whatever the engine returned beyond the image — SQUEEZE's diagnostics, SPARCO's
+fitted parameters — and `chi2` is the engine's own raw χ², or `nothing` to have it computed
+from the image. Only the engines with a parametric component need to supply it: for those the
+image is half the model, and χ² of the image alone is not a number about anything.
+"""
+function run_engine(engine::Symbol, x0, data, ft;
+                    weights, regularizers, maxiter::Integer, verb::Bool,
+                    options::AbstractDict = Dict{String,String}())
+    o = options
+
+    if engine === :vmlmb
+        return (reconstruct(x0, data, ft; weights, regularizers, maxiter, verb), nothing, nothing)
+
+    elseif engine === :bsmem
+        d = _require_mono(data, engine)
+        # BSMEM ignores the spec list except for a `["mem", prior]` entry, and takes its
+        # entropy mode as the four-integer `method` vector instead. Passing the panel's
+        # regularisers here would silently do nothing, so only the prior is forwarded.
+        regs = Any[]
+        prior = _optstr(o, "prior")
+        isempty(prior) || push!(regs, ["mem", prior_image(prior, size(x0, 1))])
+        method = [_optint(o, "method1", 4), _optint(o, "method2", 1),
+                  _optint(o, "method3", 1), _optint(o, "method4", 2)]
+        # `ft[1, 1]`, not `ft`: BSMEM reads the geometry off `ft[1].N`, so it wants the CELL
+        # for this bin, whose first element is the NFFT plan. Handing it the whole `OIft` makes
+        # `ft[1]` the cell itself, which has no `N`.
+        img = reconstruct_bsmem(x0, d, ft[1, 1]; regularizers = regs, method,
+                                maxiter = _optint(o, "maxiter", maxiter), verbose = verb)
+        # (nx, nx, nwav) even for one channel.
+        return (img[:, :, 1], nothing, nothing)
+
+    elseif engine === :bsdmm
+        _require_mono(data, engine)
+        # Not string specs at all: ADMM takes μ weights and two mode symbols.
+        mu_reg, mu_cen = _optreal(o, "mu_reg", 0.0), _optreal(o, "mu_cen", 0.0)
+        # Centering specifically, not just any block. ADMM splits the problem across proximal
+        # blocks and a weight of zero creates none, so all-zero weights leave nothing to solve
+        # -- but beyond that, the centering block is what pins the image against the translation
+        # degeneracy of the bispectrum. Without it the image is free to wander the field, and
+        # the run is unreproducible even when it converges.
+        mu_cen > 0 || error(
+            "BSDMM needs a non-zero mu_cen: the centering block is what holds the image " *
+            "against the translation degeneracy of the bispectrum, and with every weight at " *
+            "zero there are no ADMM blocks to solve at all.")
+        img = reconstruct_bsdmm(x0, data, ft;
+                                mu_reg, mu_cen,
+                                reg_type = Symbol(_optstr(o, "reg_type", "tv")),
+                                maxit    = _optint(o, "maxiter", maxiter),
+                                verb)
+        return (img, nothing, nothing)
+
+    elseif engine === :sparco
+        d = _require_chromatic(data, engine)
+        r = reconstruct_sparco(x0, d, ft[1, 1];
+                               lambda_ref = _optreal(o, "lambda0", 1.65e-6),
+                               star_flux  = _optreal(o, "f_star", 0.5),
+                               bg_flux    = _optreal(o, "f_bg", 0.0),
+                               d_env      = _optreal(o, "env_indx", 0.0),
+                               star_di    = _optreal(o, "ud", 4.0),
+                               weights, regularizers, maxiter = Int(maxiter),
+                               rounds = _optint(o, "rounds", 3), verb)
+        return (r.image, (; r.params, r.param_names, r.free_params), r.chi2)
+
+    elseif engine === :squeeze || engine === :squeeze_sparco
+        d = _require_mono(data, engine)
+        # `SqueezeSparco` carries spectral indices for the star, the environment and the
+        # background, so it separates them across the band exactly as `reconstruct_sparco`
+        # does -- and is just as degenerate at a single wavelength.
+        engine === :squeeze_sparco && _require_chromatic(data, engine)
+        model = engine === :squeeze_sparco ?
+            SqueezeSparco(; f_star   = _optreal(o, "f_star", 0.5),
+                            ud       = _optreal(o, "ud", 0.0),
+                            env_indx = _optreal(o, "env_indx", 0.0),
+                            lambda0  = _optreal(o, "lambda0", 1.65e-6),
+                            f_bg     = _optreal(o, "f_bg", 0.0),
+                            bg_indx  = _optreal(o, "bg_indx", 0.0),
+                            free     = _sparco_free(o)) : nothing
+        prior = _optstr(o, "prior")
+        img, diag = reconstruct_squeeze(x0, d, ft[1, 1];      # the bin's cell, as BSMEM takes
+            weights, regularizers,
+            nelements  = _optint(o, "nelements", 0),
+            niter      = _optint(o, "niter", maxiter),
+            nchains    = _optint(o, "nchains", 1),
+            tmin       = _optreal(o, "tmin", 1.0),
+            f_anywhere = _optreal(o, "f_anywhere", 0.05),
+            f_copycat  = _optreal(o, "f_copycat", 0.1),
+            cent_mult  = _optreal(o, "cent_mult", 1.0),
+            auto_centering = _optbool(o, "auto_centering", true),
+            prior_image = isempty(prior) ? nothing : prior_image(prior, size(x0, 1)),
+            model,
+            # The in-package monitor draws with matplotlib, and matplotlib called off the main
+            # thread segfaults inside PythonCall -- measured. The GUI draws the result itself.
+            monitor = 0, print_every = 0, verb,
+            seed = _optint(o, "seed", 12345))
+        # The plain sampler's image IS the whole model, so the shared χ² applies. With a SPARCO
+        # component it is not, and the sampler's own reduced χ² is the honest number.
+        own = engine === :squeeze_sparco ? _squeeze_chi2(diag) : nothing
+        return (img, diag, own)
+    end
+
+    error("Unknown imaging engine $(repr(engine)); known ones are " *
+          join(sort(string.(keys(IMAGING_ENGINES))), ", "))
+end
+
+"""
+    prior_image(path, nx) -> Matrix{Float64}
+
+A prior or mask image from a FITS file, checked against the reconstruction geometry.
+
+BSMEM takes it as the MEM prior; SQUEEZE takes it as a per-pixel prior probability, where a
+zero makes the pixel unreachable — the same file therefore doubles as a hard mask there. Both
+need it on the image grid, so a size mismatch is an error rather than something to interpolate.
+"""
+function prior_image(path::AbstractString, nx::Integer)
+    isfile(path) || error("No prior image at '$path'")
+    m = Float64.(readfits(String(path)))
+    size(m) == (nx, nx) ||
+        error("The prior image is $(size(m,1))×$(size(m,2)) but nx is $nx")
+    all(isfinite, m) || error("The prior image at '$path' has non-finite pixels")
+    return m
+end
+
+"""
+The sampler's own raw χ², from its diagnostics, or `nothing` when they do not carry one.
+
+Per-chain quantities come back as vectors, so the best chain is the one to quote: the ensemble
+mean includes chains that are still hot, and reporting it would understate a run that found the
+answer on one chain.
+"""
+function _squeeze_chi2(diag)
+    hasproperty(diag, :ndf) || return nothing
+    r = if hasproperty(diag, :chi2r_last) && diag.chi2r_last isa AbstractVector &&
+           !isempty(diag.chi2r_last)
+        best = hasproperty(diag, :best_chain) ? diag.best_chain : argmin(diag.chi2r_last)
+        Float64(diag.chi2r_last[clamp(Int(best), 1, length(diag.chi2r_last))])
+    elseif hasproperty(diag, :chi2r_mean)
+        m = diag.chi2r_mean
+        Float64(m isa AbstractVector ? (isempty(m) ? NaN : minimum(m)) : m)
+    else
+        return nothing
+    end
+    return isfinite(r) ? r * Float64(diag.ndf) : nothing
+end
+
+"Which SPARCO parameters SQUEEZE samples, from the panel's tick boxes."
+function _sparco_free(o)
+    free = Symbol[]
+    for (key, name) in (("free_f_star", :f_star), ("free_ud", :ud),
+                        ("free_env_indx", :env_indx), ("free_f_bg", :f_bg),
+                        ("free_bg_indx", :bg_indx))
+        _optbool(o, key, key == "free_f_star") && push!(free, name)
+    end
+    # SqueezeSparco with nothing free is a fixed parametric component, which is legitimate but
+    # is almost never what a tick-box panel meant to say.
+    isempty(free) ? (:f_star,) : Tuple(free)
 end
 
 
