@@ -942,6 +942,94 @@ function shell_load_settings()
 end
 
 """
+    shell_component_kinds() -> String
+
+The component kinds "+ component" offers, as `kind\tlabel` lines.
+
+Taken from the parser's own table rather than a list written here, so a kind OITOOLS gains --
+or loses -- cannot leave the two disagreeing about what can be built.
+"""
+function shell_component_kinds()
+    labels = Dict(:point => "point source", :ud => "uniform disk", :gaussian => "Gaussian",
+                  :ldlin => "linear limb darkening", :ldquad => "quadratic limb darkening",
+                  :ldpow => "power-law limb darkening", :ring => "uniform ring",
+                  :gaussian_ring => "Gaussian ring", :crescent => "crescent",
+                  :resolved => "fully resolved")
+    order = [:point, :ud, :gaussian, :ldlin, :ldquad, :ldpow,
+             :ring, :gaussian_ring, :crescent, :resolved]
+    return join((string(k, '\t', get(labels, k, string(k)))
+                 for k in order if haskey(_ANALYTIC_PARAM_SUFFIXES, k)), "\n")
+end
+
+# Starting values for a freshly added component. Not physics -- somewhere sane for a fit to
+# begin, in the spirit of `default_bounds`. Sizes in mas; the outer of a pair is put clear of
+# the inner so a new ring is a ring rather than an error.
+const _COMPONENT_SEEDS = Dict{String,Float64}(
+    "diamout" => 4.0, "fwhmout" => 4.0, "crout" => 4.0,
+    "croff" => 0.5, "crprojang" => 0.0,
+    "u" => 0.3, "w" => 0.1, "alpha" => 0.15, "resolved" => 1.0)
+
+_component_seed(suffix) = get(_COMPONENT_SEEDS, suffix, 2.0)
+
+"""
+    shell_add_component(name, kind) -> String
+
+Add a component of `kind`, with the keys the parser identifies that kind by, and a flux
+fraction. Returns `""` on success or a message beginning with `!`.
+
+The geometry key is written even when the kind consumes no geometry parameters: `_identify_kind`
+looks the key up by name, so a `resolved` component without a `resolved` key is not a resolved
+component -- it is a parse error.
+"""
+function shell_add_component(name, kind)
+    sh = _shell(); m = _model(sh)
+    nm = strip(String(name))
+    isempty(nm) && return "! a component needs a name"
+    occursin(',', nm) && return "! a component name cannot contain a comma"
+    nm == GLOBAL_COMPONENT && return "! that name is reserved for globals"
+    k = Symbol(String(kind))
+    haskey(_ANALYTIC_PARAM_SUFFIXES, k) || return "! unknown component kind: " * String(kind)
+    pre = nm * ","
+    any(startswith(key, pre) for key in keys(m.dict)) &&
+        return "! there is already a component called " * nm
+
+    gk = get(_KIND_GEOMETRY, k, "")
+    suffixes = copy(_ANALYTIC_PARAM_SUFFIXES[k])
+    isempty(gk) || gk in suffixes || pushfirst!(suffixes, gk)
+    for s in suffixes
+        m.dict[pre * s] = _component_seed(s)
+    end
+    # Every component carries a flux fraction: it is what `:point` is identified BY, and what
+    # makes a second component mean anything relative to the first.
+    m.dict[pre * "f"] = 1.0
+    console!(sh, "  added $(nm): $(k), keys " * join((pre * s for s in suffixes), ", "))
+    return ""
+end
+
+"""
+    shell_remove_component(name) -> String
+
+Delete a component and every key belonging to it, including its bounds and its place in the
+free list.
+
+Expressions elsewhere that referenced it are deliberately NOT rewritten: a dangling `\$name,ud`
+shows up in the inspector's unrecognised list, which is a visible problem, where a silent
+substitution would be an invisible one.
+"""
+function shell_remove_component(name)
+    sh = _shell(); m = _model(sh)
+    nm = String(name); pre = nm * ","
+    ks = [k for k in keys(m.dict) if startswith(k, pre)]
+    isempty(ks) && return "! no component called " * nm
+    for k in ks
+        delete!(m.dict, k); delete!(m.lb, k); delete!(m.ub, k)
+    end
+    filter!(p -> !startswith(p, pre), m.free)
+    console!(sh, "  removed $(nm): $(length(ks)) keys")
+    return ""
+end
+
+"""
     shell_recenter_image() -> String
 
 Recentre the reconstructed image on its centroid and redraw.

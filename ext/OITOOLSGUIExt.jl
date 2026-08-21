@@ -30,6 +30,9 @@ using OITOOLS: OIdata, OBS_PLOT_SPECS, oiplot_colors, canonical_color, as_datave
 # cast that keeps a starting image loadable by the Fourier plan, and the criterion the
 # panel reports before and after a run.
 using OITOOLS: to_ft_precision, image_to_chi2
+# The component-kind tables, so "+ component" builds the exact key set the parser identifies a
+# kind by. Duplicating them here would mean the GUI could offer a component OITOOLS cannot read.
+using OITOOLS: _KIND_GEOMETRY, _ANALYTIC_PARAM_SUFFIXES
 using Printf, Dates, TOML
 using Makie
 using QML, QMLMakie, GLMakie

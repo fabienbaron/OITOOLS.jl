@@ -62,23 +62,17 @@ Item {
     property bool   modelDirty: false
     property string modelPath: ""
 
+    // Starts empty. A model invented by the interface is a model the user did not write, and
+    // there is no way to tell it apart from one they did once it is on screen -- the fitted
+    // numbers, the χ² and the exported script would all describe a star nobody asked about.
+    // Open a model file (demos/models has a uniform disc and a limb-darkened one) or add
+    // components.
     ListModel {
         id: paramModel
         // roles: comp, param, key, mode, value, expr, lb, ub, fitindex, atbound, kind
         // (`comp` is ParamRow.component renamed: `component` is a QML keyword)
+        // Roles are defined by the first append, so every append must carry all eleven.
         // wire: model_rows(model_dict, list_free_params; lb, ub) → these rows, in order
-        ListElement { comp: "__global__"; param: "PA"; key: "PA"; mode: "fixed"
-                      value: 30.0; expr: ""; lb: 0.0; ub: 0.0; fitindex: 0; atbound: false; kind: "" }
-        ListElement { comp: "star"; param: "ud"; key: "star,ud"; mode: "free"
-                      value: 6.5; expr: ""; lb: 0.0; ub: 20.0; fitindex: 1; atbound: false; kind: "ud" }
-        ListElement { comp: "star"; param: "f"; key: "star,f"; mode: "fixed"
-                      value: 0.8; expr: ""; lb: 0.0; ub: 0.0; fitindex: 0; atbound: false; kind: "" }
-        ListElement { comp: "disk"; param: "fwhm"; key: "disk,fwhm"; mode: "expr"
-                      value: 19.5; expr: "$star,ud * 3"; lb: 0.0; ub: 0.0; fitindex: 0; atbound: false; kind: "fwhm" }
-        ListElement { comp: "disk"; param: "pa"; key: "disk,pa"; mode: "free"
-                      value: 45.0; expr: ""; lb: -180.0; ub: 180.0; fitindex: 2; atbound: false; kind: "" }
-        ListElement { comp: "disk"; param: "f"; key: "disk,f"; mode: "fixed"
-                      value: 0.2; expr: ""; lb: 0.0; ub: 0.0; fitindex: 0; atbound: false; kind: "" }
     }
 
     // Components, as the parser identified them (§3.3 (i)). `geometryKey` is the key that
@@ -88,15 +82,30 @@ Item {
         id: componentModel
         // roles: name, kind, geometryKey, nparams, nunrecognised
         // wire: model_inspection(model_dict).components
-        ListElement { name: "star"; kind: "ud";       geometryKey: "ud";   nparams: 2; nunrecognised: 0 }
-        ListElement { name: "disk"; kind: "gaussian"; geometryKey: "fwhm"; nparams: 2; nunrecognised: 0 }
     }
 
     // Keys the parser ignored. Not an error, and that is the whole problem: they change what
     // the component IS, silently.
     property var unrecognisedKeys: []          // wire: model_inspection(...).unrecognised
     property bool broadcasting: false          // wire: model_inspection(...).broadcasting
-    property var globalKeys: ["PA"]            // wire: model_inspection(...).globals
+    property var globalKeys: []                // wire: model_inspection(...).globals
+
+    // Kinds the "+ component" dialog offers, as {key, label}. Read from Julia so the list is
+    // the parser's own rather than a copy that can fall behind it.
+    property var componentKinds: []
+
+    Component.onCompleted: {
+        var out = []
+        var txt = Julia.shell_component_kinds()
+        if (txt.length > 0) {
+            var lines = txt.split("\n")
+            for (var i = 0; i < lines.length; ++i) {
+                var f = lines[i].split("\t")
+                if (f.length === 2) out.push({ key: f[0], label: f[1] })
+            }
+        }
+        root.componentKinds = out
+    }
 
     readonly property int nFree: {
         var n = 0
@@ -481,27 +490,45 @@ Item {
                             color: model.name === root.selectedComponent ? "#e8f0fe" : root.cPanel
                             border.color: model.nunrecognised > 0 ? root.cBad : root.cLine
 
-                            ColumnLayout {
-                                id: cardCol
-                                anchors.centerIn: parent
-                                spacing: 0
-                                Label { text: model.name; font.bold: true }
-                                Label {
-                                    text: model.kind + " ← " + model.geometryKey
-                                    color: "#666"
-                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                }
-                            }
+                            // Declared BEFORE the content: later siblings sit on top and are
+                            // offered the click first, so the − button is reachable instead of
+                            // being swallowed by the card's own select-on-click.
                             MouseArea {
                                 anchors.fill: parent
                                 onClicked: root.selectedComponent = model.name
+                            }
+                            RowLayout {
+                                id: cardCol
+                                anchors.centerIn: parent
+                                spacing: root.dp(6)
+
+                                ColumnLayout {
+                                    spacing: 0
+                                    Label { text: model.name; font.bold: true }
+                                    Label {
+                                        text: model.kind + " ← " + model.geometryKey
+                                        color: "#666"
+                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                    }
+                                }
+                                ToolButton {
+                                    text: "−"
+                                    implicitWidth: root.dp(22)
+                                    implicitHeight: root.dp(22)
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "remove " + model.name + " and its parameters"
+                                    onClicked: root.removeComponent(model.name)
+                                }
                             }
                         }
                     }
 
                     Button {
                         text: "+ component"
-                        // wire: add a component to model_dict, then re-run model_rows
+                        onClicked: {
+                            addComponentDialog.suggestName()
+                            addComponentDialog.open()
+                        }
                     }
                 }
 
@@ -1647,7 +1674,7 @@ Item {
     // state the panels above read
     // ═════════════════════════════════════════════════════════════════════════
 
-    property string selectedComponent: "star"
+    property string selectedComponent: ""
 
     property real   profileRMin: 0.0
     property real   profileRMax: 1.0
@@ -1658,6 +1685,95 @@ Item {
     ListModel {
         id: azModel
         // roles: n, amp, projang — always both, never one
+    }
+
+    // Re-read the whole model from Julia. QML keeps no model of its own -- every edit goes to
+    // the shell and comes back through here, so the table cannot drift from what a fit or an
+    // exported script would use.
+    function refreshModel() {
+        paramModel.clear()
+        var rows = Julia.shell_model_rows()
+        if (rows.length > 0) {
+            var lines = rows.split("\n")
+            for (var i = 0; i < lines.length; ++i) {
+                var f = lines[i].split("\t")
+                if (f.length !== 10) continue
+                paramModel.append({ comp: f[0], param: f[1], key: f[2], mode: f[3],
+                                    value: parseFloat(f[4]), expr: f[5],
+                                    lb: parseFloat(f[6]), ub: parseFloat(f[7]),
+                                    fitindex: parseInt(f[8]), atbound: f[9] === "true",
+                                    kind: "" })
+            }
+        }
+
+        componentModel.clear()
+        var comps = Julia.shell_model_components()
+        if (comps.length > 0) {
+            var clines = comps.split("\n")
+            for (var c = 0; c < clines.length; ++c) {
+                var g = clines[c].split("\t")
+                if (g.length !== 5) continue
+                componentModel.append({ name: g[0], kind: g[1], geometryKey: g[2],
+                                        nparams: parseInt(g[3]),
+                                        nunrecognised: parseInt(g[4]) })
+            }
+        }
+
+        // Three facts the model does not otherwise show: keys the parser ignored, whether the
+        // resolver broadcasts every parameter over wavelength, and the globals.
+        var insp = Julia.shell_model_inspection().split("\n")
+        root.unrecognisedKeys = (insp.length > 0 && insp[0].length > 0) ? insp[0].split(" ") : []
+        root.broadcasting     = (insp.length > 1 && insp[1] === "true")
+        root.globalKeys       = (insp.length > 2 && insp[2].length > 0) ? insp[2].split(" ") : []
+
+        if (root.selectedComponent.length > 0) {
+            var still = false
+            for (var k = 0; k < componentModel.count; ++k)
+                if (componentModel.get(k).name === root.selectedComponent) still = true
+            if (!still) root.selectedComponent = ""
+        }
+        if (root.selectedComponent.length === 0 && componentModel.count > 0)
+            root.selectedComponent = componentModel.get(0).name
+
+        var chi2 = Julia.shell_model_chi2()
+        root.currentChi2r = chi2.length > 0 ? parseFloat(chi2) : NaN
+    }
+
+    // `x[i] ↔ list_free_params[i]` holds throughout OITOOLS, so the free rows IN ORDER are the
+    // parameter vector every optimiser sees and every `x_opt` reports against. Anything that
+    // adds, frees or removes a row has to renumber, or the index shown beside a row stops
+    // being the index the fitter uses -- which is the one thing the column is there to say.
+    function renumberFree() {
+        var n = 0
+        for (var i = 0; i < paramModel.count; ++i) {
+            var free = paramModel.get(i).mode === "free"
+            paramModel.setProperty(i, "fitindex", free ? ++n : 0)
+        }
+    }
+
+    // Removing a component takes its parameters with it. A row keyed "disk,fwhm" with no disk
+    // component is not a model, and leaving it behind would keep fitting something the cards
+    // no longer show.
+    function removeComponent(name) {
+        var err = Julia.shell_remove_component(name)
+        if (err.length > 0) { root.fitText = err; return }
+        if (root.selectedComponent === name) root.selectedComponent = ""
+        root.modelDirty = true
+        refreshModel()
+        root.consoleChanged()
+    }
+
+    // Adding goes through Julia too, which builds the key set the parser identifies the kind
+    // by. A component assembled in QML could name keys OITOOLS does not recognise, and the
+    // failure would be a silently different component rather than an error.
+    function addComponent(name, kind) {
+        var err = Julia.shell_add_component(name, kind)
+        if (err.length > 0) { root.fitText = err; return false }
+        root.selectedComponent = name
+        root.modelDirty = true
+        refreshModel()
+        root.consoleChanged()
+        return true
     }
 
     // ── mode changes, where the cleverness lives (§3.2) ──────────────────────
@@ -1761,6 +1877,65 @@ Item {
         onAccepted: root.applyMode(row, "expr")
     }
 
+    // Name and kind together: the kind decides which keys are written, and the parser reads the
+    // kind back OFF those keys, so choosing it afterwards is not a thing that can be done.
+    Dialog {
+        id: addComponentDialog
+        title: "Add a component"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: root.dp(320)
+
+        // "c1", "c2", ... — unique against what is already there, so OK is never rejected for
+        // a reason the dialog could have avoided.
+        function suggestName() {
+            var i = 1, taken = true
+            while (taken) {
+                taken = false
+                for (var k = 0; k < componentModel.count; ++k)
+                    if (componentModel.get(k).name === "c" + i) { taken = true; i++; break }
+            }
+            nameField.text = "c" + i
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: root.dp(6)
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "name"; color: "#666"; Layout.preferredWidth: root.dp(50) }
+                TextField {
+                    id: nameField
+                    Layout.fillWidth: true
+                    selectByMouse: true
+                    onAccepted: addComponentDialog.accept()
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "kind"; color: "#666"; Layout.preferredWidth: root.dp(50) }
+                ComboBox {
+                    id: kindField
+                    Layout.fillWidth: true
+                    textRole: "label"
+                    valueRole: "key"
+                    model: root.componentKinds
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#666"
+                font.pointSize: root.pt(root.baseFontPt - 2)
+                text: "Values start somewhere sane rather than at anything measured; set them " +
+                      "in the table, then free what should be fitted."
+            }
+        }
+
+        onAccepted: root.addComponent(nameField.text, kindField.currentValue)
+    }
+
     // FilePicker, not QtQuick.Dialogs.FileDialog. That dialog sets `visible = false` and
     // emits `accepted` while leaving its window on screen on some systems -- measured with
     // `test/gui/filepicker_min.jl`. A Popup has no window of its own to leave behind.
@@ -1770,8 +1945,16 @@ Item {
         title: "Open model file"
         filters: [{ label: "Model files (*.toml)", patterns: "*.toml" },
                   { label: "All files", patterns: "*" }]
-        onAccepted: function (path) { root.modelPath = path; root.modelName = path }
-        // wire: read_model_file(path) -> model, free, lb, ub, constraints, priors, name
+        onAccepted: function (path) {
+            var name = Julia.shell_open_model(path)
+            root.consoleChanged()
+            if (name.length === 0 || name.charAt(0) === "!") { root.fitText = name; return }
+            root.modelPath = path
+            root.modelName = name
+            root.modelDirty = false
+            root.selectedComponent = ""
+            root.refreshModel()
+        }
     }
 
     FilePicker {
@@ -1782,8 +1965,13 @@ Item {
         defaultSuffix: "toml"
         filters: [{ label: "Model files (*.toml)", patterns: "*.toml" },
                   { label: "All files", patterns: "*" }]
-        onAccepted: function (path) { root.modelPath = path }
-        // wire: write_model_file(path, model_dict; free, lb, ub, constraints, priors, name)
+        onAccepted: function (path) {
+            var err = Julia.shell_save_model(path)
+            root.consoleChanged()
+            if (err.length > 0) { root.fitText = err; return }
+            root.modelPath = path
+            root.modelDirty = false
+        }
     }
 
     FilePicker {

@@ -116,6 +116,10 @@ function picker_places()
                          # The only shipped files with differential phase and OI_FLUX, so the
                          # only ones on which the diffphi and flux views show anything.
                          ("Beauty Contest 2026", joinpath("demos", "data", "BC2026")),
+                         # Starting points for the Model perspective, in the TOML format
+                         # `read_model_file` takes -- a model to open and edit rather than one
+                         # to build from an empty table.
+                         ("OITOOLS models", joinpath("demos", "models")),
                          ("OITOOLS test data", joinpath("test", "gui", "data")))
         p = joinpath(pkgdir(OITOOLS), sub)
         isdir(p) && push!(rows, (label, p))

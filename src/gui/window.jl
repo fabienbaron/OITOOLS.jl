@@ -32,6 +32,7 @@ function __init__()
                      shell_save_settings, shell_load_settings, shell_plot_scale,
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param,
+                     shell_component_kinds, shell_add_component, shell_remove_component,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
