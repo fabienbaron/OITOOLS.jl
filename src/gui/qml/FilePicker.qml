@@ -434,9 +434,20 @@ Popup {
         modal: true
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Yes | Dialog.No
+        // An explicit width, and a Label sized from it. Without both, Qt reports
+        //
+        //     QML Dialog: Binding loop detected for property "implicitWidth"
+        //
+        // on every open: a wrapping Label's implicitWidth depends on the width it is given,
+        // the Dialog takes its own implicitWidth from its content, and the two chase each
+        // other. Fixing the width breaks the cycle and gives the path something to wrap
+        // against — which it needs anyway, since a long path would otherwise stretch the
+        // dialog off the screen rather than wrap.
+        width: root.dp(380)
         Label {
+            width: parent.width
             text: overwriteDialog.target + "\nalready exists."
-            wrapMode: Text.WordWrap
+            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         }
         onAccepted: root.finish(overwriteDialog.target)
     }

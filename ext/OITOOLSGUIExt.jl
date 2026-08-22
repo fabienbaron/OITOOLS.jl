@@ -167,6 +167,26 @@ using PrecompileTools
             update_canvas!(c, d, :v2; color = :wav)
             show_image!(c, zeros(Float32, 8, 8), 0.3)
             hide_image!(c)
+
+            # The delay-cart chart and the χ² map, for the same reason as the two above: both
+            # are built before the window exists, so their compilation is time the user spends
+            # looking at nothing. Measured on a cold session, `build_chi2_map` alone was 1.72 s
+            # -- the most expensive single step in `gui()` -- because `contour!` is a recipe
+            # that had never been compiled anywhere else in the package.
+            dfig = Makie.Figure()
+            dax  = Makie.Axis(dfig[1, 1])
+            build_delay_plot(dfig, dax)
+
+            ofig = Makie.Figure()
+            oax  = Makie.Axis(ofig[1, 1])
+            om   = build_chi2_map(ofig, oax)
+            # Drawing one too: `update_chi2_map!` is where the heatmap, the contour levels and
+            # the marker actually get their data, and that is a separate specialisation.
+            let mdl = Dict{String,Any}("s,ud" => 3.0, "s,f" => 1.0),
+                mp = chi2_map(mdl, ["s,ud", "s,f"], d, "s,ud", "s,f";
+                              range1 = (1.0, 5.0), range2 = (0.5, 1.5), n1 = 4, n2 = 4)
+                update_chi2_map!(om, mp)
+            end
         end
     end
 end
