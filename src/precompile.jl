@@ -55,6 +55,29 @@
             dmono = readoifits(mono; verbose=false, warn=false)
             ftm = setup_ft(dmono, 32, 0.3)
             image_to_chi2(gaussian2d(32, 32, 32 ÷ 6), ftm, dmono, verb=false)
+
+            # The other reconstructors. The GUI's engine selector reaches all of them, and each
+            # is a separate criterion with its own specialisations -- `reconstruct` above shares
+            # almost nothing with them. Measured on a fresh session, first call against second:
+            #
+            #     reconstruct_bsmem    4.55 s of compilation
+            #     reconstruct_bsdmm    3.92 s
+            #     reconstruct_squeeze  2.11 s
+            #
+            # Two iterations each; the cost being bought off is compilation, not iteration.
+            # Note the argument shapes differ between them and are not interchangeable: BSMEM
+            # and SQUEEZE want the bin's cell (`ft[1,1]`) and one `OIdata`, BSDMM the whole
+            # plan and the array.
+            x32 = Float32.(gaussian2d(32, 32, 32 ÷ 6))
+            x64 = Float64.(x32)
+            reconstruct_bsmem(x64, dmono[1, 1], ftm[1, 1]; maxiter=2, verbose=false)
+            # `mu_cen > 0` is a precondition, not a preference: with every weight at zero ADMM
+            # has no proximal block and reduces over an empty collection.
+            reconstruct_bsdmm(x32, dmono, ftm; mu_cen=1e2, maxit=2, verb=false)
+            # `monitor = 0`: the in-package monitor draws with matplotlib, and precompilation
+            # must not reach for Python.
+            reconstruct_squeeze(x64, dmono[1, 1], ftm[1, 1];
+                                niter=2, nchains=1, verb=false, monitor=0)
         end
 
         # Planning. Measured, the computation is free and the wait is entirely compilation:

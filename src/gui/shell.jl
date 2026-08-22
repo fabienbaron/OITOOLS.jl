@@ -48,6 +48,7 @@ mutable struct ShellState
     chi2map :: Any              # the Model perspective's χ² map chart
     enginelog :: String         # everything the last reconstruction printed
     fitlog    :: String          # ...and everything the last model fit printed
+    job       :: Any             # the running GuiJob, or nothing
 end
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
@@ -474,18 +475,20 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
                      "weights = $(weights), method = :$(opt))")
     end
 
-    themap = nothing
-    local fitout
-    t = @elapsed r = try
-        res, fitout = _capture_stdout() do
-        if opt == "grid"
+    # `verb = true` throughout: the console under the results table shows what the optimiser
+    # printed, so it has to print. The fit runs on a worker — see `GuiJob` — so the window
+    # stays alive and its output can be read while it is produced.
+    sh.fitlog = ""
+    optsym = Symbol(opt)
+    start_job!(sh, :fit, function (_stop)
+        t0 = time()
+        themap = nothing
+        r = if opt == "grid"
             themap = chi2_map(md, free, data, gp1, gp2;
                               lb, ub, weights, n1 = Int(gridn),
                               n2 = gridn2 > 1 ? Int(gridn2) : Int(gridn))
             FitResult(themap)
         elseif opt == "lsqfit"
-            # `verb = true` throughout: the console under the results table shows what the
-            # optimiser printed, so it has to print. Nothing else reads this.
             fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons,
                              maxIter = Int(maxeval), verb = true)
         elseif opt == "ultranest"
@@ -493,32 +496,47 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
                                 verb = true, cornerplot = false)
         else
             fit_model(md, free, data; lb, ub, weights, priors, constraints = cons,
-                      method = Symbol(opt), maxeval = Int(maxeval), verb = true)
+                      method = optsym, maxeval = Int(maxeval), verb = true)
         end
-        end
-        res
-    catch err
-        sh.fitlog = "the fit failed:\n  " * _cause(err)
-        msg = "! fit failed: " * _cause(err); console!(sh, msg); return msg
+        # The map travels with the result rather than being drawn here: `update_chi2_map!`
+        # touches Makie, which belongs to the GUI thread.
+        return (; result = r, map = themap, seconds = time() - t0, optimiser = opt, free)
+    end)
+    return "fitting…"
+end
+
+"""
+    finish_fit!(sh, res) -> String
+
+Record a finished fit and draw whatever it produced. **GUI thread only**: `update_chi2_map!` is
+a Makie call.
+"""
+function finish_fit!(sh::ShellState, res)
+    if !res.ok
+        msg = "! fit failed: " * _cause(res.err)
+        sh.fitlog = isempty(res.output) ? msg : res.output * "\n" * msg
+        console!(sh, msg)
+        return msg
     end
-    # What the optimiser printed, verbatim, for the console under the results table. Captured
-    # the same way the reconstructors are; see `_capture_stdout` for why nothing simpler works.
-    # The grid search prints nothing -- it is a comprehension over `chi2_flat`, not an
-    # optimiser with a trace -- so the console gets the one thing worth saying about it.
-    sh.fitlog = isempty(strip(fitout)) && opt == "grid" ?
+    f = res.result
+    r = f.result
+    # The grid search prints nothing -- it is a comprehension over `chi2_flat`, not an optimiser
+    # with a trace -- so the console gets the one thing worth saying about it.
+    sh.fitlog = isempty(strip(res.output)) && f.optimiser == "grid" ?
         "grid search evaluates χ² on a fixed grid and has no iteration trace to report.\n" *
         "the surface itself is the output: see the χ² map below." :
-        fitout
+        res.output
 
     # The map belongs to the fit that produced it, not to the shell: two grid fits over
     # different parameter pairs both stay reachable, and selecting an older fit can redraw it.
-    themap === nothing || sh.chi2map === nothing || update_chi2_map!(sh.chi2map, themap)
-    push!(sh.fits, (; result = r, optimiser = opt, seconds = t, free, map = themap))
+    f.map === nothing || sh.chi2map === nothing || update_chi2_map!(sh.chi2map, f.map)
+    push!(sh.fits, (; result = r, optimiser = f.optimiser, seconds = f.seconds,
+                      free = f.free, map = f.map))
     for (k, v) in zip(r.list_free_params, r.x_opt)
         console!(sh, @sprintf("    %-22s = %.6g", k, v))
     end
     line = @sprintf("chi2r %.4f   ndof %d   %d free   %.2f s",
-                    r.chi2r, r.ndof, length(free), t)
+                    r.chi2r, r.ndof, length(f.free), f.seconds)
     console!(sh, "  " * line)
     return line
 end
@@ -1209,6 +1227,156 @@ function _parse_options(text::AbstractString)
 end
 
 """
+    shell_job_poll() -> String
+
+`state\toutput` — what the running job has printed, and whether it is still going.
+
+`state` is `running`, `done`, or `idle`. On `done` the job has already been wound up and its
+result applied: the canvas is drawn, the fit recorded, the console written. QML calls this from
+a Timer, which is what makes the output appear while it is produced rather than at the end.
+
+The capture file is written unbuffered, so `output` is everything printed up to this instant
+rather than up to the last buffer flush.
+"""
+function shell_job_poll()
+    sh = SHELL[]
+    (sh === nothing || sh.job === nothing) && return "idle\t"
+    j = sh.job
+    istaskdone(j.task) || return "running\t" * job_output(sh)
+
+    stopped = j.stop[]
+    kind = j.kind
+    res  = job_finish!(sh)
+    if stopped
+        # Abandoned rather than aborted; see `shell_job_stop`. Whatever came back is discarded,
+        # because the user asked to stop looking at it.
+        line = "stopped"
+        kind === :image ? (sh.enginelog = res.output) : (sh.fitlog = res.output)
+        console!(sh, "  " * line)
+    else
+        line = kind === :image ? finish_reconstruct!(sh, res) : finish_fit!(sh, res)
+    end
+    return "done\t" * line
+end
+
+"""
+    shell_job_stop() -> String
+
+Ask the running job to stop.
+
+None of the engines takes a cancellation token -- there is no callback API anywhere in the
+reconstruction or fitting code -- so this cannot abort the computation. What it does is
+ABANDON it: the flag is set, an interrupt is thrown at the task in case it is at a yield point,
+the GUI returns to idle immediately, and whatever the worker eventually produces is discarded.
+
+The CPU may stay busy until the current run ends. Saying so is better than a Stop button that
+appears to work and silently leaves a thread running, and better than no button at all.
+"""
+function shell_job_stop()
+    sh = SHELL[]
+    (sh === nothing || sh.job === nothing) && return "nothing is running"
+    sh.job.stop[] = true
+    # Only lands if the task is at a yield point; a blocking ccall will not see it. Harmless
+    # when it does not.
+    try
+        Base.schedule(sh.job.task, InterruptException(); error = true)
+    catch
+    end
+    console!(sh, "> stop requested")
+    return "stopping…"
+end
+
+"True while a job is running, so the panel can disable what must not be touched."
+shell_job_running() = (sh = SHELL[]; sh !== nothing && sh.job !== nothing)
+
+"""
+    GuiJob
+
+A long-running Julia call, off the GUI thread, with its output readable while it runs.
+
+Reconstructions and fits used to run ON the GUI thread. The window froze for the duration, the
+engine's output could only appear once it was over, and Stop could not do anything because
+nothing was listening. Moving the call to a worker fixes all three at once.
+
+The split matters: the worker computes and NOTHING else. Every canvas update stays on the GUI
+thread, in `job_finish!`, because GL calls from a worker are the crash §5.4b of the design
+documents. `stop` is a flag the GUI sets and the finish path reads.
+"""
+mutable struct GuiJob
+    task      :: Task
+    kind      :: Symbol           # :image or :fit — decides what `job_finish!` does with it
+    path      :: String           # capture file, read while it grows
+    io        :: Base.Filesystem.File
+    saved     :: Any              # the `Base.stdout` to put back
+    savedfd   :: Cint             # ...and the descriptor
+    stop      :: Base.RefValue{Bool}
+    started   :: Float64
+end
+
+"""
+    start_job!(sh, kind, f) -> String
+
+Redirect output to a file, run `f` on a worker thread, and remember the job.
+
+The redirect is set up HERE, on the GUI thread, and taken down in `job_finish!`, also on the
+GUI thread. `Base.stdout` is a global: assigning it from the worker would race with whatever
+the GUI thread is doing.
+"""
+function start_job!(sh::ShellState, kind::Symbol, f)
+    path, tmp = mktemp(); close(tmp)
+    # A `Filesystem.File`, NOT the `IOStream` mktemp hands back. An IOStream buffers, and the
+    # whole point here is that the console fills while the run is going: measured, a 54 kB
+    # VMLMB trace arrived in a single lump at the end through an IOStream, and line by line
+    # through this. Each write is a syscall, which is affordable for a progress log.
+    io = Base.Filesystem.open(path, Base.Filesystem.JL_O_WRONLY |
+                                    Base.Filesystem.JL_O_CREAT |
+                                    Base.Filesystem.JL_O_TRUNC, 0o644)
+    saved   = Base.stdout
+    savedfd = Sys.isunix() ? ccall(:dup, Cint, (Cint,), 1) : Cint(-1)
+    flush(stdout)
+    Base.stdout = IOContext(io, :color => true)
+    savedfd >= 0 && ccall(:dup2, Cint, (Cint, Cint),
+                          Base.cconvert(Cint, Base.fd(io)), Cint(1))
+    stop = Ref(false)
+    task = Threads.@spawn f(stop)
+    sh.job = GuiJob(task, kind, path, io, saved, savedfd, stop, time())
+    return ""
+end
+
+"Whatever the running job has printed so far. Buffered, so it arrives in chunks."
+function job_output(sh::ShellState)
+    j = sh.job
+    j === nothing && return ""
+    return try; read(j.path, String); catch; ""; end
+end
+
+"""
+    job_finish!(sh) -> (; ok, result, err, output)
+
+Put stdout back, collect what the worker produced, and delete the job. **GUI thread only.**
+"""
+function job_finish!(sh::ShellState)
+    j = sh.job
+    j === nothing && return (; ok = false, result = nothing, err = nothing, output = "")
+    Base.stdout = j.saved
+    if j.savedfd >= 0
+        ccall(:dup2, Cint, (Cint, Cint), j.savedfd, Cint(1))
+        ccall(:close, Cint, (Cint,), j.savedfd)
+    end
+    try; close(j.io); catch; end
+    out = try; read(j.path, String); catch; ""; end
+    rm(j.path; force = true)
+    res, err = nothing, nothing
+    try
+        res = fetch(j.task)
+    catch e
+        err = e isa TaskFailedException ? e.task.exception : e
+    end
+    sh.job = nothing
+    return (; ok = err === nothing, result = res, err, output = out)
+end
+
+"""
     _capture_stdout(f) -> (result, output)
 
 Run `f` with `stdout` on a temp file, and return everything it printed.
@@ -1650,24 +1818,33 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     ftkey  = (objectid(e.data), setup.nx, setup.pixsize, setup.mode)
     ft     = (cached !== nothing && cached.key == ftkey) ? cached.ft : nothing
     # `verb = true`: the console below the panel shows what the engine printed, so it has to
-    # print. The capture is at the descriptor level -- see `_capture_fd1` for why nothing above
-    # that layer works here.
-    local out
-    r = try
-        res, out = _capture_stdout() do
-            reconstruct_image(e.data, setup; weights, maxiter = Int(maxiter),
-                              regularizers = regs, ft, x_start = xprev, options = opts,
-                              verb = true)
-        end
-        res
-    catch err
-        sh.enginelog = "the run failed:\n  " * _cause(err)
-        msg = "! reconstruction failed: " * _cause(err)
+    # print. The run itself goes to a worker thread — see `GuiJob` — so the window stays alive,
+    # the output can be read while it is produced, and Stop has something to act on.
+    sh.enginelog = ""
+    start_job!(sh, :image, function (_stop)
+        reconstruct_image(e.data, setup; weights, maxiter = Int(maxiter),
+                          regularizers = regs, ft, x_start = xprev, options = opts,
+                          verb = true)
+    end)
+    return "reconstructing…"
+end
+
+"""
+    finish_reconstruct!(sh, res) -> String
+
+Take a finished reconstruction and put it on screen. **GUI thread only** — `show_image!` is a
+GL call, and §5.4b of the design has the measurement for what happens when those run on a
+worker.
+"""
+function finish_reconstruct!(sh::ShellState, res)
+    r = res.result
+    sh.enginelog = res.output
+    if !res.ok
+        msg = "! reconstruction failed: " * _cause(res.err)
+        sh.enginelog = isempty(res.output) ? msg : res.output * "\n" * msg
         console!(sh, msg)
         return msg
     end
-    sh.enginelog = out
-
     sh.imcanvas === nothing || show_image!(sh.imcanvas, r.image, r.setup.pixsize)
     sh.imaging = r
 

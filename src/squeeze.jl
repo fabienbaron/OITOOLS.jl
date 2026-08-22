@@ -1413,7 +1413,7 @@ function reconstruct_squeeze(x_start, data::OIdata{T}, ft;
         seed::Integer = 12345,
         verb::Bool = true) where {T<:AbstractFloat}
 
-    A, nx, pixsize = _squeeze_operator(ft, data, pixsize)
+    A, nx, pixsize = _squeeze_operator(ft, data, pixsize; verb)
 
     if x_start isa AbstractMatrix && size(x_start, 1) != nx
         throw(DimensionMismatch("x_start is $(size(x_start,1))×$(size(x_start,2)) but " *
@@ -1627,7 +1627,7 @@ function _parse_squeeze_regularizers(regularizers; fov = 1.0, cent_mult = 1.0, t
 end
 
 """
-    _squeeze_operator(ft, data, pixsize) -> (A, nx, pixsize)
+    _squeeze_operator(ft, data, pixsize; verb = true) -> (A, nx, pixsize)
 
 Resolve the image geometry and the dense DFT matrix from whatever Fourier
 operator the caller passed, following `reconstruct_bsmem`'s convention of taking
@@ -1638,7 +1638,7 @@ needs single-column access to the transform (`rank1_update!`), which no
 transform-based operator provides, so a DFT matrix is built and the memory cost
 is reported.
 """
-function _squeeze_operator(ft, data::OIdata{T}, pixsize::Real) where {T}
+function _squeeze_operator(ft, data::OIdata{T}, pixsize::Real; verb::Bool = true) where {T}
     # Unwrap the 1×1 containers setup_ft returns for the monochromatic case.
     while (ft isa AbstractArray) && !(ft isa AbstractMatrix{<:Complex}) &&
           !(ft isa AbstractVector{<:NFFT.NFFTPlan}) && length(ft) == 1
@@ -1668,8 +1668,11 @@ function _squeeze_operator(ft, data::OIdata{T}, pixsize::Real) where {T}
         ps = pixsize > 0 ? Float64(pixsize) :
              (norm(ft.k[:, j]) / norm(data.uv[:, j])) / (pi / 180.0 / 3600000.0)
         A = setup_dft(data, nx, ps)
-        @info @sprintf("reconstruct_squeeze: NFFT plan given; building the DFT matrix the \
-                        sampler needs (nx=%d, pixsize=%.4f mas, %.1f MB)", nx, ps, sizeof(A)/1e6)
+        # Under `verb`: it is worth saying, since the caller passed an NFFT plan and gets a
+        # dense DFT built behind it, but a caller that asked for silence should get silence.
+        verb && @info @sprintf("reconstruct_squeeze: NFFT plan given; building the DFT matrix \
+                                the sampler needs (nx=%d, pixsize=%.4f mas, %.1f MB)",
+                               nx, ps, sizeof(A)/1e6)
         return A, nx, ps
     end
 

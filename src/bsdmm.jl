@@ -545,7 +545,11 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
         end
     end
 
-    @printf("Best objective: %.2f\n", best_obj)
+    # Under `verb`, like every other line this prints. It used to be unconditional, which made
+    # `verb = false` a half-promise: a caller that asked for silence still got one line, and a
+    # precompile workload or a batch script had to redirect stdout to get the silence it asked
+    # for.
+    verb && @printf("Best objective: %.2f\n", best_obj)
     result = reshape(best_x, nx, nx)
     return history ? (result, hist) : result
 end
@@ -775,7 +779,7 @@ function _reconstruct_bsdmm_poly(x_init, data, ft;
         end
     end
 
-    @printf("Best objective: %.2f\n", best_obj)
+    verb && @printf("Best objective: %.2f\n", best_obj)
     result = reshape(best_x, nx, nx, nwav, 1)
     return history ? (result, hist) : result
 end

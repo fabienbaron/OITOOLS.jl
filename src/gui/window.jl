@@ -29,6 +29,7 @@ function __init__()
                      shell_fit_model, shell_fit_values, shell_fit_rows,
                      shell_image_colormaps, shell_image_colormap, shell_recenter_image,
                      shell_show_start_image, shell_save_image, shell_engine_output,
+                     shell_job_poll, shell_job_stop, shell_job_running,
                      shell_reset_image_zoom,
                      shell_set_plot_scale, shell_set_marker_size,
                      shell_save_settings, shell_load_settings, shell_plot_scale,
@@ -177,7 +178,7 @@ function OITOOLS.gui(session::Session = Session();
 
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false, false,
                      "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
-                     delayplot, modelcanvas, nothing, Any[], chi2map, "", "")
+                     delayplot, modelcanvas, nothing, Any[], chi2map, "", "", nothing)
     SHELL[] = sh
     install_interactions!(sh)
 

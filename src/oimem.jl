@@ -299,7 +299,8 @@ end
     set_dataspace!(s, ctx, data;
                    biserrtype=:full,
                    force_extrapolate=false,
-                   flux_err=0.01)
+                   flux_err=0.01,
+                   verbose=true)
 
 Fill `s.data` and `s.acc_vec` from OIFITS observables.  The total data vector
 length must equal `ctx.npow + 2·ctx.nbis`.
@@ -341,7 +342,8 @@ function set_dataspace!(s   :: MaximENTState,
                         data;           # OIdata from OITOOLS
                         biserrtype        :: Symbol = :full,
                         force_extrapolate :: Bool   = false,
-                        flux_err          :: Float64 = 0.01)
+                        flux_err          :: Float64 = 0.01,
+                        verbose           :: Bool   = true)
 
     npow = ctx.npow   # = nuv + 1  (last slot = flux constraint)
     nbis = ctx.nbis
@@ -371,8 +373,12 @@ function set_dataspace!(s   :: MaximENTState,
     end
 
     # ── Bispectrum ────────────────────────────────────────────────────────────
-    biserrtype == :full && println("Bispectrum noise:\tFull elliptic approximation")
-    biserrtype == :classic && println("Bispectrum noise:\tClassic elliptic approximation")
+    # Under `verbose`, like everything else BSMEM prints. Unconditional, this made
+    # `verbose = false` a half-promise: a caller asking for silence still got a line.
+    verbose && biserrtype == :full &&
+        println("Bispectrum noise:\tFull elliptic approximation")
+    verbose && biserrtype == :classic &&
+        println("Bispectrum noise:\tClassic elliptic approximation")
     warn_extrap = false
 
     for i in 1:nbis
@@ -488,6 +494,7 @@ function maxent_setup(data,
                      flux_err          :: Float64 = 0.01,
                      mackay_alpha      :: Bool    = false,
                      ritz_alpha        :: Bool    = false,
+                     verbose     :: Bool        = true,
                      T           :: Type{<:AbstractFloat} = Float64,
                      fftflags    = FFT_FLAGS)
 
@@ -508,7 +515,7 @@ function maxent_setup(data,
     s.h     .= model
 
     set_dataspace!(s, ctx, data;
-                   biserrtype, force_extrapolate, flux_err)
+                   biserrtype, force_extrapolate, flux_err, verbose)
 
     return ctx, s, p
 end
@@ -699,7 +706,7 @@ function reconstruct_bsmem(x_start, data::OIdata, ft;
     ctx, s, p = maxent_setup(data, nx, pixsize, prior_image;
                              methd=methd_vec, nrand, iseed, aim, rate, utol, alpha,
                              biserrtype, force_extrapolate, flux_err, mackay_alpha, ritz_alpha,
-                             T = ft_eltype(ft), fftflags)
+                             verbose, T = ft_eltype(ft), fftflags)
 
     # The solver is Float64 throughout; hand the image back at the caller's precision.
     return to_ft_precision(maxent_reconstruct!(ctx, s, p; maxiter, verbose, history), ft)

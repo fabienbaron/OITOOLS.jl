@@ -248,8 +248,30 @@ Item {
                 root.useCvis, root.useFlux, root.useDiffvis,
                 root.optimiser, root.maxeval,
                 gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value)
+            root.fitOutput = ""
+            if (root.fitText.length > 0 && root.fitText.charAt(0) === "!") {
+                root.running = false
+                root.consoleChanged()
+                return
+            }
+            // The call starts the fit on a worker and returns; this follows it, so the
+            // optimiser's trace appears while it runs rather than after.
+            fitJobTimer.start()
+        }
+    }
+
+    Timer {
+        id: fitJobTimer
+        interval: 200
+        repeat: true
+        running: false
+        onTriggered: {
+            var f = Julia.shell_job_poll().split("\t")
+            if (f[0] === "running") { root.fitOutput = f[1]; return }
+            stop()
             root.running = false
             root.fitOutput = Julia.shell_fit_output()
+            if (f[0] === "done") root.fitText = f[1]
             root.refreshFits()
             root.refreshChi2Map()
             root.consoleChanged()

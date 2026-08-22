@@ -91,9 +91,10 @@ The first three rule out the lifecycle, the native hand-off and QML object owner
 which leaves the backend itself -- and the fourth names it.
 
 Pinning xcb also removes a mismatch rather than creating one. GLFW hard-codes X11 unless told
-otherwise, which is why [`prefer_native_wayland!`](@ref) exists: to push it onto Wayland so it
-matches Qt. With Qt on XWayland both stacks are X11 already, and that function becomes a no-op
-by its own check.
+otherwise, which is why `prefer_native_wayland!` exists: to push it onto Wayland so it matches
+Qt. With Qt on XWayland both stacks are X11 already, and that function becomes a no-op by its
+own check. (No `@ref` on that name: it is declared here but documented on its method in the
+`GLFW_jll` extension, which Documenter does not load.)
 
 The cost is XWayland's: fractional HiDPI scaling is done by the compositor rather than the
 application, and native Wayland features are unavailable. On a 1:1 display neither shows.

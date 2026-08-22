@@ -148,6 +148,7 @@ versions back later.
 ```julia
 using OITOOLS
 configure_graphics!()            # before the first OpenGL context exists
+configure_qt_platform!()         # before Qt starts
 
 using GLFW_jll
 prefer_native_wayland!()         # before `using GLMakie`
@@ -163,22 +164,39 @@ that extension, so anything inside it would already be too late. `configure_grap
 the core package and needs nothing; `prefer_native_wayland!` needs only `libglfw` and lives in
 a one-function extension that `GLFW_jll` alone activates.
 
-Both are no-ops where they do not apply. `configure_graphics!` acts only on WSL, where there is
-no `/dev/dri` render node and Mesa would otherwise fall through to software rendering;
-`prefer_native_wayland!` acts only in a Wayland session, where GLFW.jl's hard-coded X11 default
-would otherwise put GLMakie on XWayland while Qt runs native Wayland — two windowing systems in
-one process. Either can be switched off:
+All three are no-ops where they do not apply. `configure_graphics!` acts only on WSL, where
+there is no `/dev/dri` render node and Mesa would otherwise fall through to software rendering.
+`configure_qt_platform!` acts only in a Wayland session.
 
+The Wayland pair is worth reading together, because the second decides what the third does.
+Qt's Wayland backend does not release the windows it opens: a `QtQuick.Dialogs.FileDialog`
+closes as far as QML is concerned — `visibleChanged -> false` arrives before `accepted`, and
+`visible` stays false — while its window remains on screen. Measured with
+`test/gui/filepicker_min.jl`, one mode per run: leaving the dialog to manage itself, forcing
+`DontUseNativeDialog`, and destroying the QML object outright all leave the window up, and the
+same run under `QT_QPA_PLATFORM=xcb` closes it properly. So `configure_qt_platform!` pins xcb
+on a Wayland session.
+
+That also settles the third call. `prefer_native_wayland!` exists because GLFW.jl hard-codes
+X11, which would put GLMakie on XWayland while Qt ran native Wayland — two windowing systems in
+one process. With Qt pinned to xcb, GLFW's X11 default already matches, so the function stands
+down of its own accord. The cost of the pin is XWayland's: fractional HiDPI scaling is done by
+the compositor rather than the application. On a 1:1 display it does not show.
+
+Any of them can be switched off:
 
 ```bash
-OITOOLSGUI_NO_GPU_SETUP=1   # skip the Mesa setup
-OITOOLSGUI_GLFW_X11=1       # keep GLMakie on XWayland
-QSG_INFO=1                  # make Qt report which GL renderer it actually got
+OITOOLSGUI_NO_GPU_SETUP=1      # skip the Mesa setup
+OITOOLSGUI_NO_QT_PLATFORM=1    # stay on Qt's Wayland backend
+QT_QPA_PLATFORM=wayland        # ...or say so explicitly; an existing setting is never touched
+OITOOLSGUI_GLFW_X11=1          # keep GLMakie on XWayland
+QSG_INFO=1                     # make Qt report which GL renderer it actually got
 ```
 
 ```@docs
 gui
 configure_graphics!
+configure_qt_platform!
 is_wsl
 ```
 

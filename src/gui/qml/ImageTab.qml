@@ -530,17 +530,43 @@ Item {
                                                root.startFwhm, root.startSeed,
                                                root._continueRun,
                                                root.engine, root.engineOptions())
-            root.engineOutput = Julia.shell_engine_output()
+            root.engineOutput = ""
             root.showingStart = false
             root.statusText = line
-            root.hasResult = line.indexOf("chi2r") >= 0
-            root.refreshBreakdown()
+            // `shell_reconstruct` now STARTS the run on a worker and returns at once, so there
+            // is nothing to read yet; `jobTimer` follows it from here. That is what lets the
+            // engine's output appear while it is produced and gives Stop something to act on.
+            if (line.length > 0 && line.charAt(0) === "!") {
+                root.running = false
+                root.consoleChanged()
+                return
+            }
+            jobTimer.start()
+        }
+    }
+
+    // Follows the running job: pulls the engine's output as it appears, and applies the result
+    // once the worker is done. 200 ms reads as live and costs nothing to re-render.
+    Timer {
+        id: jobTimer
+        interval: 200
+        repeat: true
+        running: false
+        onTriggered: {
+            var f = Julia.shell_job_poll().split("\t")
+            if (f[0] === "running") { root.engineOutput = f[1]; return }
+            stop()
             root.running = false
-            // The console pane belongs to the window, and the reconstruction wrote to it.
+            root.engineOutput = Julia.shell_engine_output()
+            if (f[0] === "done") {
+                root.statusText = f[1]
+                root.hasResult = f[1].indexOf("chi2r") >= 0
+                root.refreshBreakdown()
+                // Makie draws on demand; without this the new image is not painted until
+                // something else invalidates the area.
+                imageArea.update()
+            }
             root.consoleChanged()
-            // Makie draws on demand here; without this the new image is not painted until
-            // something else happens to invalidate the area.
-            imageArea.update()
         }
     }
 
@@ -1632,8 +1658,18 @@ Item {
                             id: stopButton
                             text: "Stop"
                             enabled: root.running
-                            // wire: ask the running task to stop; SQUEEZE can return its best chain so far
-                            onClicked: { }
+                            ToolTip.visible: hovered
+                            // Say what it does. None of the engines takes a cancellation token,
+                            // so this ABANDONS the run rather than aborting it: the panel comes
+                            // back at once and the result is discarded, but the thread finishes
+                            // what it started. A button claiming otherwise would be lying.
+                            ToolTip.text: "stop waiting for this run and discard it — the engine " +
+                                          "has no way to be interrupted, so it finishes in the " +
+                                          "background"
+                            onClicked: {
+                                root.statusText = Julia.shell_job_stop()
+                                root.consoleChanged()
+                            }
                         }
                         // Nothing in the reconstruction holds the image still -- V² and closure
                         // phase are both translation-invariant -- so a result routinely sits off

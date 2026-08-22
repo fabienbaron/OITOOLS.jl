@@ -3,7 +3,7 @@ uuid = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 keywords = ["astronomy", "interferometry"]
 license = "GPLv3"
 desc = "The all-in-one data analysis package for optical interferometry"
-version = "0.12.0"
+version = "0.13.0"
 authors = ["Fabien Baron <fbaron@gsu.edu>"]
 
 # One resolution for the package and the two environments that live beside it, sharing this
