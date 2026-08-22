@@ -117,6 +117,25 @@ Missing glyphs are skipped rather than thrown: a font without `≥` should cost 
 character, not the window.
 """
 function prewarm_glyphs!(fonts = PLOT_FONTS)
+    # A warmed atlas is worth keeping. Rasterising is a signed-distance field per glyph --
+    # measured at ~23 ms each, so 121 of them cost 2.4 s of every launch, before the first
+    # plot. Storing the result and loading it back costs 0.02 s.
+    #
+    # The cache is keyed on the glyph set AND the Makie version, because it is Makie's own
+    # binary format: a stale file after an upgrade would be silently wrong, and silently wrong
+    # here means the corrupted glyphs this function exists to prevent. Anything unexpected
+    # falls through to rasterising, which is always correct if slower.
+    cache = _glyph_cache_path()
+    if cache !== nothing && isfile(cache)
+        try
+            Makie.TEXTURE_ATLASES[(ATLAS_RESOLUTION, ATLAS_PIX_PER_GLYPH)] =
+                Makie.load_texture_atlas(cache)
+            return 0
+        catch
+            rm(cache; force = true)
+        end
+    end
+
     atlas = Makie.get_texture_atlas()
     n = 0
     for name in unique(values(fonts))
@@ -134,7 +153,35 @@ function prewarm_glyphs!(fonts = PLOT_FONTS)
             end
         end
     end
+    if cache !== nothing
+        try
+            mkpath(dirname(cache))
+            Makie.store_texture_atlas(cache, atlas)
+        catch
+            # A cache that cannot be written costs 2.4 s next launch and nothing else.
+        end
+    end
     return n
+end
+
+"The atlas `get_texture_atlas()` returns by default, and the key it is stored under."
+const ATLAS_RESOLUTION    = 2048
+const ATLAS_PIX_PER_GLYPH = 64
+
+"""
+Where the warmed glyph atlas is cached, or `nothing` if there is nowhere to put it.
+
+Keyed on the glyph set and the Makie version: the file is Makie's own binary format, so one
+written by a different version — or covering a different set of characters — must not be
+loaded. A wrong atlas does not fail loudly; it draws wrong glyphs.
+"""
+function _glyph_cache_path()
+    base = Sys.iswindows() ? get(ENV, "LOCALAPPDATA", get(ENV, "APPDATA", "")) :
+           get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
+    isempty(base) && return nothing
+    key = string(hash((PLOT_GLYPHS, PLOT_FONT, string(pkgversion(Makie)),
+                       ATLAS_RESOLUTION, ATLAS_PIX_PER_GLYPH)); base = 16)
+    return joinpath(base, "oitools", "glyph_atlas_$(key).bin")
 end
 
 """
