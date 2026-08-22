@@ -169,8 +169,9 @@ and read back, which matters because the importer is a transpiler and not a vali
 it cannot read fails at the point of use.
 """
 function picker_examples(kind::AbstractString)
-    sub = lowercase(strip(String(kind))) == "pmoired" ?
-          joinpath("demos", "data", "pmoired") : ""
+    k = lowercase(strip(String(kind)))
+    sub = k == "pmoired" ? joinpath("demos", "data", "pmoired") :
+          k == "model"   ? joinpath("demos", "models")          : ""
     isempty(sub) && return ""
     p = joinpath(pkgdir(OITOOLS), sub)
     return isdir(p) ? p : ""

@@ -32,6 +32,11 @@ ApplicationWindow {
     //              second window, so there is nothing that can be left behind. This is the
     //              candidate that cannot fail the observed way, at the cost of being our own
     //              picker rather than the platform's.
+    //   nonnative -- the platform dialog with `DontUseNativeDialog`, managed by open()/close()
+    //              and nothing else. This is the discriminator: QtQuick.Dialogs hands off to a
+    //              native dialog by default, whose window lifecycle is the platform's rather
+    //              than Qt's, so `accepted` can arrive before the native window has gone. If
+    //              the non-native path is clean, the fault is that hand-off and not Qt.
     property string mode: pickerMode
 
     function log(s) { Julia.picker_log(s) }
@@ -75,6 +80,9 @@ ApplicationWindow {
         title: "Pick a file"
         currentFolder: initialFolder
         nameFilters: ["All files (*)"]
+        // Qt's own widget dialog instead of the desktop's, in `nonnative` mode only, so the
+        // two can be compared in one run of the same file.
+        options: win.mode === "nonnative" ? FileDialog.DontUseNativeDialog : 0
 
         // The claim in Main.qml is that this never fires. Test it rather than repeat it.
         onVisibleChanged: win.log("  signal: visibleChanged -> " + visible)
@@ -93,6 +101,11 @@ ApplicationWindow {
                 openDialog.close()
                 win.log("  after close(), visible = " + visible)
                 workTimer.restart()
+            } else if (win.mode === "nonnative") {
+                // open()/close() only, exactly as the docs prescribe; nothing else touched.
+                win.log("  calling close() on the non-native dialog")
+                openDialog.close()
+                win.log("  after close(), visible = " + visible)
             } else {
                 win.log("  mode=none: not touching the dialog")
             }

@@ -11,6 +11,25 @@
 // hiding it does not unmap it, and destroying the QML object does not either. Nothing in QML
 // can close a window Qt will not close.
 //
+// Re-measured since, one mode per run, on a Wayland session. Three handles were tried and none
+// of them reaches the window:
+//
+//     open() and nothing else, the documented lifecycle    — window stays
+//     options: FileDialog.DontUseNativeDialog              — window stays
+//     built per click, then destroy() on the object        — window stays
+//
+// The second matters most: `QtQuick.Dialogs` hands off to the desktop's own dialog by default,
+// whose window belongs to the platform rather than to Qt, and that was the obvious suspect.
+// Keeping the dialog inside Qt changes nothing, so the hand-off is not the cause.
+//
+// What DOES change it is the QPA plugin. The same `destroy` run under `QT_QPA_PLATFORM=xcb`
+// closes the window properly, so this is Qt's WAYLAND backend specifically, not Qt. That is
+// worth knowing and does not change the choice here: the GUI cannot ask users to pin a
+// platform plugin, and a Popup is correct on every backend without being told which one it is.
+//
+// Note the failure does NOT reproduce under Xvfb — with no window manager there is nothing to
+// leave a window behind — so `filepicker_min.jl` has to be run on a real session to see it.
+//
 // A Popup is drawn on the parent window's own scene graph. No second window is created, so
 // none can be left behind, and the failure mode is gone by construction rather than by
 // workaround. The cost is that the listing, the places and the filtering come from Julia

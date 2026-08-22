@@ -50,6 +50,12 @@ function OITOOLS.prefer_native_wayland!(; verbose::Bool = true)
     Sys.islinux()             || return no("not Linux")
     haskey(ENV, "WAYLAND_DISPLAY") || return no("not a Wayland session; GLFW's X11 default is right")
     _isset(FORCE_X11)         && return no("$FORCE_X11 is set; leaving GLMakie on XWayland")
+    # Qt on XWayland and GLMakie on native Wayland is the very split this function exists to
+    # avoid, just the other way round. `configure_qt_platform!` pins Qt to xcb on a Wayland
+    # session because Qt's Wayland backend does not release the windows it opens, and once it
+    # has, GLFW's own X11 default already matches.
+    lowercase(get(ENV, "QT_QPA_PLATFORM", "")) == "xcb" &&
+        return no("Qt is on xcb; GLFW's X11 default already matches it")
 
     # GLFW_jll is a direct dependency: loading it only dlopens libglfw, which needs no display
     # (glfwInit is the part that does), so this stays safe on a headless machine. The library

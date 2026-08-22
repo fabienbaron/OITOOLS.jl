@@ -576,7 +576,7 @@ end
         G = GUI
         sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
                           :uv, :baseline, false, false, "", String[], nothing, "", nothing, nothing, nothing,
-                          nothing, nothing, nothing, nothing, Any[], nothing)
+                          nothing, nothing, nothing, nothing, Any[], nothing, "", "")
 
         G.console!(sh, "load_dataset!(session, \"a.oifits\")"; kind = :cmd)
         G.console!(sh, "1520 points")

@@ -30,6 +30,9 @@
 "Environment variable that disables everything in this file."
 const NO_GPU_SETUP = "OITOOLSGUI_NO_GPU_SETUP"
 
+"Opt out of pinning Qt to xcb on a Wayland session; see [`configure_qt_platform!`](@ref)."
+const NO_QT_PLATFORM = "OITOOLSGUI_NO_QT_PLATFORM"
+
 "An environment variable is 'set' only if it says something other than off."
 _isset(name) = !(lowercase(strip(get(ENV, name, ""))) in ("", "0", "false", "no"))
 
@@ -66,6 +69,58 @@ File existence rather than `nvidia-smi`: this runs on every start, and the subpr
 cost more than everything else in this file put together — and can block on a busy GPU.
 """
 has_wsl_nvidia() = isfile("/usr/lib/wsl/lib/libnvidia-ml.so.1")
+
+"""
+    configure_qt_platform!(; verbose = true) -> (; applied, reason, vars)
+
+On a Wayland session, run Qt through XWayland rather than the Wayland backend.
+
+Qt's Wayland plugin does not release the windows it opens. A `QtQuick.Dialogs.FileDialog`
+closes as far as QML is concerned -- `visibleChanged -> false` arrives before `accepted`, and
+`visible` stays false afterwards -- while its window remains on screen. Measured with
+`test/gui/filepicker_min.jl`, one mode per run on a real Wayland session:
+
+| what was tried | result |
+|---|---|
+| `open()` and nothing else, the documented lifecycle | window stays |
+| `options: FileDialog.DontUseNativeDialog` | window stays |
+| built per click, then `destroy()` on the object | window stays |
+| the same run under `QT_QPA_PLATFORM=xcb` | **closes properly** |
+
+The first three rule out the lifecycle, the native hand-off and QML object ownership in turn,
+which leaves the backend itself -- and the fourth names it.
+
+Pinning xcb also removes a mismatch rather than creating one. GLFW hard-codes X11 unless told
+otherwise, which is why [`prefer_native_wayland!`](@ref) exists: to push it onto Wayland so it
+matches Qt. With Qt on XWayland both stacks are X11 already, and that function becomes a no-op
+by its own check.
+
+The cost is XWayland's: fractional HiDPI scaling is done by the compositor rather than the
+application, and native Wayland features are unavailable. On a 1:1 display neither shows.
+
+Nothing is forced. Any of
+
+    QT_QPA_PLATFORM=wayland          # or any explicit choice
+    OITOOLSGUI_NO_QT_PLATFORM=1      # leave the platform alone entirely
+
+wins, which is what you want when the question is whether a bug is the backend's fault.
+"""
+function configure_qt_platform!(; verbose::Bool = true)
+    vars = Dict{String,String}()
+    no(reason) = (applied = false, reason = reason, vars = vars)
+
+    _isset(NO_QT_PLATFORM) && return no("disabled by $NO_QT_PLATFORM")
+    haskey(ENV, "QT_QPA_PLATFORM") &&
+        return no("QT_QPA_PLATFORM already set to $(ENV["QT_QPA_PLATFORM"])")
+    haskey(ENV, "WAYLAND_DISPLAY") ||
+        return no("not a Wayland session; Qt picks its own platform")
+
+    vars["QT_QPA_PLATFORM"] = "xcb"
+    merge!(ENV, vars)
+    verbose && @info "Wayland session: running Qt through XWayland, whose windows close " *
+                     "properly — set OITOOLSGUI_NO_QT_PLATFORM=1 to stay on the Wayland backend"
+    return (applied = true, reason = "Wayland session; Qt pinned to xcb", vars = vars)
+end
 
 """
     configure_graphics!(; verbose = true) -> NamedTuple

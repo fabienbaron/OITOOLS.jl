@@ -28,11 +28,13 @@ function __init__()
                      shell_shift_date, shell_sim_source, shell_model_image, shell_simbad, shell_ui_scale,
                      shell_fit_model, shell_fit_values, shell_fit_rows,
                      shell_image_colormaps, shell_image_colormap, shell_recenter_image,
+                     shell_show_start_image, shell_save_image, shell_engine_output,
+                     shell_reset_image_zoom,
                      shell_set_plot_scale, shell_set_marker_size,
                      shell_save_settings, shell_load_settings, shell_plot_scale,
                      shell_set_zoom_step,
                      shell_model_rows, shell_model_components, shell_model_inspection,
-                     shell_model_chi2, shell_set_param,
+                     shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component,
                      shell_chi2_map_info, shell_free_names,
                      shell_open_model, shell_save_model,
@@ -112,6 +114,10 @@ function OITOOLS.gui(session::Session = Session();
 
     # QML works the scale out from Screen.logicalPixelDensity; this is only the override.
     # 0.0 means "decide for yourself", which is the default -- see src/scaling.jl.
+    # Backstop for a session started by hand rather than through bin/oitoolsgui.jl. Both are
+    # no-ops once the variables are set, and set variables are left alone.
+    qt = configure_qt_platform!(verbose = false)
+
     uiscale = ui_scale_override()
     @info "UI scale: $(uiscale.reason)"
 
@@ -171,7 +177,7 @@ function OITOOLS.gui(session::Session = Session();
 
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false, false,
                      "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
-                     delayplot, modelcanvas, nothing, Any[], chi2map)
+                     delayplot, modelcanvas, nothing, Any[], chi2map, "", "")
     SHELL[] = sh
     install_interactions!(sh)
 
@@ -184,6 +190,7 @@ function OITOOLS.gui(session::Session = Session();
     # to see when the window looks wrong.
     console!(sh, "OITOOLSGUI ready")
     console!(sh, "graphics: $(gfx.reason)")
+    console!(sh, "qt platform: $(qt.reason)")
     console!(sh, "glyph atlas: $(nglyphs) glyphs pre-warmed")
     console!(sh, "ui scale: $(uiscale.reason)")
     for (i, d) in enumerate(session.datasets)

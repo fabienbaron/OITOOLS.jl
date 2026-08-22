@@ -98,8 +98,24 @@ Item {
     // freeing or fixing a parameter changes what a grid can be run over.
     property var freeNames: []
 
+    // The grid's step size on each axis, from the bounds and the step count. A user thinks in
+    // "how fine is this", and the answer is the bound span divided by the steps — which the
+    // panel can work out and they should not have to.
+    function _spanOf(key) {
+        for (var i = 0; i < paramModel.count; ++i) {
+            var r = paramModel.get(i)
+            if (r.key === key) return (isFinite(r.ub) && isFinite(r.lb)) ? (r.ub - r.lb) : NaN
+        }
+        return NaN
+    }
+    readonly property real gridStep1: _spanOf(gridP1.currentText) / Math.max(1, gridN.value - 1)
+    readonly property real gridStep2: _spanOf(gridP2.currentText) / Math.max(1, gridN2.value - 1)
+
     // What the last grid fit mapped, or empty when the last fit was not one. The map panel
     // shows the chart only when there is a chart to show.
+    // Everything the last fit printed, shown verbatim in the console under the results table.
+    property string fitOutput: ""
+
     property string chi2MapP1: ""
     property string chi2MapP2: ""
 
@@ -231,8 +247,9 @@ Item {
                 root.useV2, root.useT3amp, root.useT3phi,
                 root.useCvis, root.useFlux, root.useDiffvis,
                 root.optimiser, root.maxeval,
-                gridP1.currentText, gridP2.currentText, gridN.value)
+                gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value)
             root.running = false
+            root.fitOutput = Julia.shell_fit_output()
             root.refreshFits()
             root.refreshChi2Map()
             root.consoleChanged()
@@ -246,11 +263,12 @@ Item {
         var lines = rows.split("\n")
         for (var i = 0; i < lines.length; ++i) {
             var f = lines[i].split("\t")
-            if (f.length === 7)
+            if (f.length === 8)
                 fitModel.append({ label: f[0], optimiser: f[1], chi2r: parseFloat(f[2]),
                                   ndof: parseInt(f[3]), nevals: parseInt(f[4]),
                                   ret: "", chi2: 0.0,
-                                  aic: parseFloat(f[5]), bic: parseFloat(f[6]) })
+                                  aic: parseFloat(f[5]), bic: parseFloat(f[6]),
+                                  params: f[7] })
         }
     }
 
@@ -310,7 +328,6 @@ Item {
     property real ftolRel: 1e-8
     property real xtolRel: 1e-6
     property int  maxIter: 200
-    property bool vonmises: false
 
     property int    nboot: 200
     property string bootMode: "replacement"     // replacement | halfsample | weights | pmoired
@@ -353,7 +370,7 @@ Item {
     // ── fit history (§3.9) ───────────────────────────────────────────────────
     ListModel {
         id: fitModel
-        // roles: label, optimiser, chi2, chi2r, ndof, nevals, ret, aic, bic
+        // roles: label, optimiser, chi2, chi2r, ndof, nevals, ret, aic, bic, params
         // wire: one row per completed fit, so competing models compare side by side
     }
 
@@ -384,12 +401,17 @@ Item {
             // constraints and the priors all change the answer. The TOML file carries all five.
             Button {
                 text: "Open…"
-                onClicked: openModelDialog.openAt("")
+                // Open where the models are, not where the last dialog happened to be: the
+                // shipped starting points live in demos/models, and a model file is what this
+                // button is for. A path already in use wins, so re-opening returns to it.
+                onClicked: openModelDialog.openAt(root.modelPath.length > 0 ? root.modelPath
+                                                  : Julia.picker_examples("model"))
             }
             Button {
                 text: "Save…"
                 enabled: paramModel.count > 0
-                onClicked: saveModelDialog.openAt("")
+                onClicked: saveModelDialog.openAt(root.modelPath.length > 0 ? root.modelPath
+                                                  : Julia.picker_examples("model"))
             }
 
             ToolSeparator {}
@@ -643,6 +665,7 @@ Item {
 
                                     Label {
                                         Layout.preferredWidth: root.dp(150)
+                                        Layout.maximumWidth: root.dp(150)
                                         text: rowItem.rParam
                                         elide: Text.ElideRight
                                         color: rowItem.rAtBound ? root.cWarn : "#222"
@@ -655,6 +678,7 @@ Item {
                                     ComboBox {
                                         id: modeBox
                                         Layout.preferredWidth: root.dp(78)
+                                        Layout.maximumWidth: root.dp(78)
                                         implicitHeight: root.dp(22)
                                         font.pointSize: root.pt(root.baseFontPt - 2)
                                         model: ["fixed", "free", "expr"]
@@ -667,51 +691,59 @@ Item {
                                     // read-only display, since editing it would mean nothing.
                                     TextField {
                                         Layout.preferredWidth: root.dp(96)
+                                        Layout.maximumWidth: root.dp(96)
                                         implicitHeight: root.dp(22)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         readOnly: rowItem.rMode === "expr"
                                         color: rowItem.rMode === "expr" ? root.cExpr : "#222"
                                         text: isNaN(rowItem.rValue) ? "—" : rowItem.rValue.toFixed(4)
                                         horizontalAlignment: Text.AlignRight
-                                        // wire: commit the edited value into model_dict, then
-                                        // re-resolve and refresh chi2
-                                        onEditingFinished: root.modelDirty = true
+                                        onEditingFinished: root.commitParam(rowItem.rIndex, "value", text)
                                     }
 
                                     TextField {
                                         Layout.preferredWidth: root.dp(76)
+                                        Layout.maximumWidth: root.dp(76)
                                         implicitHeight: root.dp(22)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
                                         text: rowItem.rMode === "free" ? root.fmt(rowItem.rLb, 3) : ""
                                         horizontalAlignment: Text.AlignRight
-                                        onEditingFinished: root.modelDirty = true   // wire: lb
+                                        onEditingFinished: root.commitParam(rowItem.rIndex, "lb", text)
                                     }
                                     TextField {
                                         Layout.preferredWidth: root.dp(76)
+                                        Layout.maximumWidth: root.dp(76)
                                         implicitHeight: root.dp(22)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
                                         text: rowItem.rMode === "free" ? root.fmt(rowItem.rUb, 3) : ""
                                         horizontalAlignment: Text.AlignRight
-                                        onEditingFinished: root.modelDirty = true   // wire: ub
+                                        onEditingFinished: root.commitParam(rowItem.rIndex, "ub", text)
                                     }
 
                                     // Where the value sits inside its box. `default_bounds` is
                                     // deliberately generous, so a span-relative test would call
                                     // every small diameter pinned; what is worth showing is the
                                     // value landing ON a bound, which is what `atbound` means.
+                                    // Always present, even on a fixed row that has no range to
+                                    // show. A RowLayout ignores INVISIBLE items, so hiding this
+                                    // one removed the only `fillWidth` item from the row and the
+                                    // leftover width was redistributed across the fields --
+                                    // which is why fixed rows sat wider and further right than
+                                    // free ones. It stays in the layout and draws nothing.
                                     Rectangle {
+                                        readonly property bool showRange: rowItem.rMode === "free"
                                         Layout.fillWidth: true
                                         implicitHeight: root.dp(6)
-                                        visible: rowItem.rMode === "free"
-                                        color: "#e9e9e9"
+                                        color: showRange ? "#e9e9e9" : "transparent"
                                         radius: root.dp(3)
 
                                         Rectangle {
-                                            visible: isFinite(rowItem.rLb) && isFinite(rowItem.rUb)
+                                            visible: parent.showRange
+                                                     && isFinite(rowItem.rLb) && isFinite(rowItem.rUb)
                                                      && rowItem.rUb > rowItem.rLb
                                             width: root.dp(6)
                                             height: parent.height
@@ -729,7 +761,8 @@ Item {
                                         // and saying so beats drawing a marker that means nothing.
                                         Label {
                                             anchors.centerIn: parent
-                                            visible: !(isFinite(rowItem.rLb) && isFinite(rowItem.rUb))
+                                            visible: parent.showRange
+                                                     && !(isFinite(rowItem.rLb) && isFinite(rowItem.rUb))
                                             text: "unbounded"
                                             color: "#999"
                                             font.pointSize: root.pt(root.baseFontPt - 3)
@@ -939,16 +972,60 @@ Item {
                                 ColumnLayout {
                                     spacing: root.dp(8)
 
-                                    Label {
-                                        text: root.selectedComponent === ""
-                                              ? "Select a component"
-                                              : "Component: " + root.selectedComponent
-                                        font.bold: true
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: root.dp(8)
+                                        Label {
+                                            text: root.selectedComponent === ""
+                                                  ? "Select a component"
+                                                  : "Component: " + root.selectedComponent
+                                            font.bold: true
+                                        }
+                                        Label {
+                                            visible: root.selectedKind.length > 0
+                                            text: root.selectedKind + " ← " + root.selectedGeometryKey
+                                            color: "#666"
+                                            font.pointSize: root.pt(root.baseFontPt - 2)
+                                        }
+                                        Item { Layout.fillWidth: true }
                                     }
+
+                                    // Only a Hankel component HAS a radial profile. Offering the
+                                    // I(r) box for a Gaussian invites writing one, which would add
+                                    // a `profile` key and silently re-identify the component as
+                                    // :hankel -- the same class of quiet misparse the Structure
+                                    // panel exists to catch.
+                                    Label {
+                                        Layout.fillWidth: true
+                                        visible: root.selectedComponent !== "" &&
+                                                 root.selectedGeometryKey !== "profile"
+                                        wrapMode: Text.WordWrap
+                                        color: "#666"
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                        text: root.selectedComponent + " is a " + root.selectedKind +
+                                              ", which has no radial profile and no azimuthal " +
+                                              "modes. Both belong to a component built from a " +
+                                              "`profile` key."
+                                    }
+
+                                    // Editors left, pictures right. The three previews are the same
+                                    // kind of thing -- what the numbers on the left look like -- so
+                                    // they belong in one column where they can be compared, rather
+                                    // than buried one inside each editor.
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: root.dp(8)
+                                        visible: root.selectedGeometryKey === "profile"
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignTop
+                                        spacing: root.dp(8)
 
                                     // ── freeform radial profile (§3.4) ───────────────
                                     GroupBox {
                                         Layout.fillWidth: true
+                                        visible: root.selectedGeometryKey === "profile"
                                         title: "Radial profile"
 
                                         ColumnLayout {
@@ -990,40 +1067,6 @@ Item {
                                             // wire: r_min from diamin/2; r_max and the key that set it;
                                             // nr (default 100)
 
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: root.dp(6)
-                                                // I(r) and V(B) side by side: editing the profile and
-                                                // seeing both the brightness distribution and its
-                                                // visibility signature update together is the whole
-                                                // point of a GUI here.
-                                                Rectangle {
-                                                    Layout.fillWidth: true
-                                                    Layout.preferredHeight: root.dp(120)
-                                                    color: "white"; border.color: root.cLine
-                                                    Label {
-                                                        anchors.centerIn: parent; color: "#999"
-                                                        text: "I(r), with μ axis"
-                                                        font.pointSize: root.pt(root.baseFontPt - 2)
-                                                    }
-                                                    // wire: MAKIE MOUNT. $MU = sqrt(1-(r/r_max)²), so
-                                                    // both axes are shown — limb-darkening profiles are
-                                                    // written in μ and users need both readings.
-                                                }
-                                                Rectangle {
-                                                    Layout.fillWidth: true
-                                                    Layout.preferredHeight: root.dp(120)
-                                                    color: "white"; border.color: root.cLine
-                                                    Label {
-                                                        anchors.centerIn: parent; color: "#999"
-                                                        text: "V(B)"
-                                                        font.pointSize: root.pt(root.baseFontPt - 2)
-                                                    }
-                                                    // wire: MAKIE MOUNT — the Hankel transform of what
-                                                    // was typed
-                                                }
-                                            }
-
                                             // compile_profile treats every name that is not $R/$MU as
                                             // a parameter. Listing what it found makes a typo surface
                                             // as a spurious new parameter instead of a confusing error.
@@ -1044,6 +1087,7 @@ Item {
                                     // ── azimuthal modes (§3.5) ───────────────────────
                                     GroupBox {
                                         Layout.fillWidth: true
+                                        visible: root.selectedGeometryKey === "profile"
                                         title: "Azimuthal modes"
 
                                         ColumnLayout {
@@ -1118,19 +1162,57 @@ Item {
                                                 text: "Convention: OITOOLS uses +π/2 where PMOIRED uses −π/2."
                                             }
 
-                                            Rectangle {
-                                                Layout.fillWidth: true
-                                                Layout.preferredHeight: root.dp(110)
-                                                color: "white"; border.color: root.cLine
-                                                Label {
-                                                    anchors.centerIn: parent; color: "#999"
-                                                    text: "brightness preview of the asymmetry"
-                                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                                }
-                                                // wire: MAKIE MOUNT — model_to_image of this component
-                                            }
                                         }
                                     }
+
+                                    }   // end of the left column
+
+                                    // The pictures. Editing a profile and watching the brightness
+                                    // distribution, its visibility signature and the asymmetry move
+                                    // together is the whole point of doing this in a GUI.
+                                    ColumnLayout {
+                                        Layout.preferredWidth: root.dp(260)
+                                        Layout.maximumWidth: root.dp(320)
+                                        Layout.alignment: Qt.AlignTop
+                                        spacing: root.dp(6)
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: root.dp(120)
+                                            color: "white"; border.color: root.cLine
+                                            Label {
+                                                anchors.centerIn: parent; color: "#999"
+                                                text: "I(r), with μ axis"
+                                                font.pointSize: root.pt(root.baseFontPt - 2)
+                                            }
+                                            // wire: MAKIE MOUNT. $MU = sqrt(1-(r/r_max)²), so both
+                                            // axes are shown — limb-darkening profiles are written
+                                            // in μ and users need both readings.
+                                        }
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: root.dp(120)
+                                            color: "white"; border.color: root.cLine
+                                            Label {
+                                                anchors.centerIn: parent; color: "#999"
+                                                text: "V(B)"
+                                                font.pointSize: root.pt(root.baseFontPt - 2)
+                                            }
+                                            // wire: MAKIE MOUNT — the Hankel transform of what was typed
+                                        }
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: root.dp(110)
+                                            color: "white"; border.color: root.cLine
+                                            Label {
+                                                anchors.centerIn: parent; color: "#999"
+                                                text: "brightness preview of the asymmetry"
+                                                font.pointSize: root.pt(root.baseFontPt - 2)
+                                            }
+                                            // wire: MAKIE MOUNT — model_to_image of this component
+                                        }
+                                    }
+                                    }   // end of the two-column row
                                 }
 
                                 Label {
@@ -1458,13 +1540,6 @@ Item {
 
                                     Item { Layout.fillWidth: true }
 
-                                    CheckBox {
-                                        text: "von Mises"
-                                        checked: root.vonmises
-                                        onToggled: root.vonmises = checked
-                                        ToolTip.visible: hovered
-                                        ToolTip.text: "circular statistic for T3phi instead of a wrapped difference"
-                                    }
                                 }
 
                                 // The grid's own settings, on their own row: five more controls
@@ -1493,22 +1568,47 @@ Item {
                                         model: root.freeNames
                                         currentIndex: Math.min(1, Math.max(0, root.freeNames.length - 1))
                                     }
-                                    Label { text: "points/axis"; color: "#666" }
+                                    // One count per axis. The two parameters rarely deserve the
+                                    // same resolution — a diameter may need 200 steps where its
+                                    // darkening coefficient needs 40 — and tying them together
+                                    // spends the budget on whichever axis did not need it.
+                                    Label { text: "steps"; color: "#666" }
                                     SpinBox {
                                         id: gridN
-                                        from: 8; to: 400; stepSize: 4
+                                        from: 4; to: 500; stepSize: 4
                                         value: 60
                                         editable: true
-                                        Layout.preferredWidth: root.dp(120)
+                                        Layout.preferredWidth: root.dp(110)
                                         ToolTip.visible: hovered
-                                        ToolTip.text: "the grid costs this squared: 60 is 3600 χ² evaluations"
+                                        ToolTip.text: "steps along " + gridP1.currentText
                                     }
+                                    Label { text: "×"; color: "#666" }
+                                    SpinBox {
+                                        id: gridN2
+                                        from: 4; to: 500; stepSize: 4
+                                        value: 60
+                                        editable: true
+                                        Layout.preferredWidth: root.dp(110)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "steps along " + gridP2.currentText
+                                    }
+                                    // fillWidth + elide, NOT a natural width. At its full length
+                                    // this label made the row wider than the panel, which widened
+                                    // the whole column and pushed the Fit button off the right
+                                    // edge of the window. The step sizes move to the tooltip.
                                     Label {
-                                        text: gridN.value + "² = " + (gridN.value * gridN.value) + " evaluations"
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                        text: "= " + (gridN.value * gridN2.value) + " evaluations"
                                         color: "#888"
                                         font.pointSize: root.pt(root.baseFontPt - 1)
+                                        ToolTip.visible: gridStepHover.hovered
+                                        ToolTip.text: "step size: " + root.fmt(root.gridStep1, 4) +
+                                                      " in " + gridP1.currentText + ", " +
+                                                      root.fmt(root.gridStep2, 4) +
+                                                      " in " + gridP2.currentText
+                                        HoverHandler { id: gridStepHover }
                                     }
-                                    Item { Layout.fillWidth: true }
                                     Label {
                                         visible: root.nFree < 2
                                         text: "needs two free parameters"
@@ -1687,8 +1787,18 @@ Item {
                                                  enabled: fitModel.count > 0 }  // wire: plot_residuals
                                         Button { text: "χ² map";     implicitHeight: root.dp(20)
                                                  enabled: root.nFree >= 2 }     // wire: grid search over two free params
-                                        Button { text: "Model image"; implicitHeight: root.dp(20)
-                                                 enabled: fitModel.count > 0 }  // wire: model_to_image
+                                        // Not a second image surface. The Model visualization tab
+                                        // already renders `model_to_image` of the current values,
+                                        // and "Adopt" writes a fit's values into the table — so
+                                        // this shows the fitted model by going there, rather than
+                                        // by drawing the same picture somewhere else.
+                                        Button {
+                                            text: "Model image"; implicitHeight: root.dp(20)
+                                            enabled: paramModel.count > 0
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "render the model as it stands, in Model visualization"
+                                            onClicked: { modelTabs.currentIndex = 1; root.renderModel() }
+                                        }
                                         Button { text: "SED";        implicitHeight: root.dp(20)
                                                  enabled: fitModel.count > 0 }  // wire: model_to_sed
                                         Button {
@@ -1698,6 +1808,34 @@ Item {
                                             ToolTip.text: "write the fitted values into the table"
                                             onClicked: root.adoptFit()
                                         }
+                                    }
+                                }
+
+                                // Column headers. Six numbers in a row are unreadable without
+                                // them, and `ndof` in particular is a DATA-POINT count rather
+                                // than a degrees-of-freedom, which the label has to say.
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    implicitHeight: root.dp(18)
+                                    color: "#f7f7f7"
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        spacing: root.dp(6)
+                                        Label { Layout.preferredWidth: root.dp(140); text: "fit"
+                                                leftPadding: root.dp(6); color: "#777"
+                                                font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.preferredWidth: root.dp(130); text: "optimiser"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.preferredWidth: root.dp(80); text: "χ²r"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.preferredWidth: root.dp(90); text: "points"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.preferredWidth: root.dp(80); text: "AIC"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.preferredWidth: root.dp(80); text: "BIC"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.fillWidth: true; text: "optimised parameters"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
                                     }
                                 }
 
@@ -1727,11 +1865,40 @@ Item {
                                                 color: "#666" }
                                         Label { Layout.preferredWidth: root.dp(80);  text: root.fmt(model.bic, 1)
                                                 color: "#666" }
-                                        Label { Layout.fillWidth: true; text: model.ret; color: "#666" }
+                                        // Where the parameters landed. Two fits that differ only
+                                        // in χ² are two numbers; this is what makes them two
+                                        // models. `± σ` appears only where the fitter actually
+                                        // produced one — LM's Jacobian, or a posterior.
+                                        Label {
+                                            Layout.fillWidth: true
+                                            text: model.params
+                                            font.family: "monospace"
+                                            font.pointSize: root.pt(root.baseFontPt - 2)
+                                            elide: Text.ElideRight
+                                            ToolTip.visible: fitParamHover.hovered && text.length > 0
+                                            ToolTip.text: model.params
+                                            HoverHandler { id: fitParamHover }
+                                        }
                                     }
                                 }
                             }
                         }
+                        // What the optimiser printed, verbatim. The table says where the fit
+                        // landed; this says how it got there — NLopt's evaluation trace, the
+                        // sampler's progress, whatever the fitter chose to report.
+                        GroupBox {
+                            title: "Optimiser output"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: root.dp(150)
+                            visible: root.fitOutput.length > 0
+
+                            OutputConsole {
+                                anchors.fill: parent
+                                text: root.fitOutput
+                                fontPointSize: root.pt(root.baseFontPt - 2)
+                            }
+                        }
+
                         // What the optimiser had to say, beyond one row in the table. Grid
                         // search is the one that produces a picture today; the others each
                         // have one worth drawing here (a corner plot for nested sampling,
@@ -1799,6 +1966,22 @@ Item {
 
     property string selectedComponent: ""
 
+    // The geometry key that DECIDED the selected component's kind, or "" when nothing is
+    // selected. `_identity_kind` searches the keys in order and the first match wins, so this
+    // is the key that made the component what it is.
+    readonly property string selectedGeometryKey: {
+        for (var i = 0; i < componentModel.count; ++i)
+            if (componentModel.get(i).name === selectedComponent)
+                return componentModel.get(i).geometryKey
+        return ""
+    }
+    readonly property string selectedKind: {
+        for (var i = 0; i < componentModel.count; ++i)
+            if (componentModel.get(i).name === selectedComponent)
+                return componentModel.get(i).kind
+        return ""
+    }
+
     property real   profileRMin: 0.0
     property real   profileRMax: 1.0
     property string profileRMaxKey: "r_max"
@@ -1808,6 +1991,23 @@ Item {
     ListModel {
         id: azModel
         // roles: n, amp, projang — always both, never one
+    }
+
+    // Send one edited field to Julia and re-read what came back. Not a local assignment: the
+    // resolver may change other rows -- a derived parameter referencing this one moves with it --
+    // so the table is refreshed from the model rather than patched in place.
+    //
+    // A field that will not parse is refused and the row redrawn with the old value, which is
+    // how the box shows that nothing was accepted.
+    function commitParam(row, field, text) {
+        if (row < 0 || row >= paramModel.count) return
+        var v = parseFloat(text)
+        if (isNaN(v)) { refreshModel(); return }
+        var err = Julia.shell_set_param(paramModel.get(row).key, field, v)
+        if (err.length > 0 && err.charAt(0) === "!") root.fitText = err
+        root.modelDirty = true
+        refreshModel()
+        root.consoleChanged()
     }
 
     // Re-read the whole model from Julia. QML keeps no model of its own -- every edit goes to
@@ -1863,6 +2063,12 @@ Item {
 
         var fn = Julia.shell_free_names()
         root.freeNames = fn.length > 0 ? fn.split("\n") : []
+
+        // What is wrong with the model before anyone fits it. The flux-sum check is the one
+        // that matters most: a second component added with f = 1 doubles the model's flux, and
+        // the only other symptom is a χ² in the hundreds of millions.
+        var w = Julia.shell_model_warnings()
+        root.validationWarnings = w.length > 0 ? w.split("\n") : []
     }
 
     // Whether the most recent fit left a χ² map behind, and over what.
@@ -2075,7 +2281,8 @@ Item {
 
     // FilePicker, not QtQuick.Dialogs.FileDialog. That dialog sets `visible = false` and
     // emits `accepted` while leaving its window on screen on some systems -- measured with
-    // `test/gui/filepicker_min.jl`. A Popup has no window of its own to leave behind.
+    // `test/gui/filepicker_min.jl`, and see FilePicker.qml for what else was ruled out.
+    // A Popup has no window of its own to leave behind.
     FilePicker {
         id: openModelDialog
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt

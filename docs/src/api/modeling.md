@@ -120,6 +120,7 @@ fit_model_lsqfit
 fit_model_ultranest
 chi2_map
 delta_chi2_levels
+model_warnings
 model_to_obs
 model_to_residuals
 model_to_chi2

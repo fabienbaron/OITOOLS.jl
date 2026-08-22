@@ -47,6 +47,7 @@ end
 using OITOOLS
 
 configure_graphics!()          # before the first GL context — see src/graphics.jl
+configure_qt_platform!()       # before Qt starts — pins xcb on Wayland, see src/graphics.jl
 
 using GLFW_jll                 # activates OITOOLSGLFWExt; dlopens libglfw, needs no display
 prefer_native_wayland!()       # before `using GLMakie` — GLFW.jl would otherwise pick XWayland

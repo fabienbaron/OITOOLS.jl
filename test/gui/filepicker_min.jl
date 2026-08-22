@@ -2,9 +2,21 @@
 #
 #     PICKER_MODE=close julia --project=bin test/gui/filepicker_min.jl
 #
-# `PICKER_MODE` is one of `none`, `close` or `timer` (default `close`, which is what the real
-# GUI does). The transcript goes to stdout and to $PICKER_LOG if set, so an automated run can
-# read it after the window is gone.
+# `PICKER_MODE` is one of `none`, `close`, `timer`, `nonnative`, `destroy` or `inline`
+# (default `close`, which is what the real GUI does). `nonnative` is the one that discriminates:
+# QtQuick.Dialogs hands off to the desktop's own dialog by default, whose window lifecycle
+# belongs to the platform rather than to Qt, so `accepted` can arrive before that window has
+# gone. `FileDialog.DontUseNativeDialog` keeps it inside Qt.
+#
+# The transcript goes to stdout and to $PICKER_LOG if set, so an automated run can read it
+# after the window is gone.
+#
+# Two things this harness has established that are easy to get wrong:
+#
+#   * it does NOT reproduce under Xvfb. With no window manager there is nothing to leave a
+#     window behind, and every mode looks clean. Run it on a real session.
+#   * the leftover window is Qt's WAYLAND backend. The same run under `QT_QPA_PLATFORM=xcb`
+#     closes properly, while `none`, `nonnative` and `destroy` all leave it up on Wayland.
 #
 # This deliberately loads NOTHING from the GUI: no Makie, no GL, no session. QML.jl and
 # QtQuick.Dialogs are the entire surface under test.

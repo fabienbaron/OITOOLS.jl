@@ -118,7 +118,7 @@ function empty_night end
 # deliberately, because this has to be callable BEFORE `using GLMakie`. See src/graphics.jl.
 function prefer_native_wayland! end
 
-export configure_graphics!, prefer_native_wayland!, is_wsl
+export configure_graphics!, configure_qt_platform!, prefer_native_wayland!, is_wsl
 
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
@@ -140,7 +140,7 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
 export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
 export fit_model, fit_model_lsqfit, fit_model_ultranest
 export ModelConstraint, parse_constraints, check_constraints, DEFAULT_CONSTRAINT_TOL
-export read_model_file, write_model_file
+export read_model_file, write_model_file, model_warnings
 export Chi2Map, chi2_map, delta_chi2_levels
 export FitResult, LsqFitResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,

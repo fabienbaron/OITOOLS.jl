@@ -34,6 +34,7 @@ using OITOOLS: to_ft_precision, image_to_chi2
 # kind by. Duplicating them here would mean the GUI could offer a component OITOOLS cannot read.
 using OITOOLS: _KIND_GEOMETRY, _ANALYTIC_PARAM_SUFFIXES
 using Printf, Dates, TOML
+using Statistics: std          # posterior spread, for the fit table's ± column
 using Makie
 using QML, QMLMakie, GLMakie
 

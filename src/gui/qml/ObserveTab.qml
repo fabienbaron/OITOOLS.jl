@@ -1099,9 +1099,8 @@ Item {
                                 checked: root.detailed
                                 onToggled: { root.detailed = checked; if (root.hasPlan) root.computePlan() }
                                 ToolTip.visible: hovered
-                                ToolTip.text: "ASPRO's detailed view: one row per BASELINE, so the " +
-                                              "baseline that closes the night is the short bar. Needs " +
-                                              "the delay check on. Off shows only the answer."
+                                ToolTip.text: "One row per BASELINE, so the baseline that closes " +
+                                              "the night is the short bar. Off shows only the answer."
                             }
                             // Errors only. The summary that used to sit here was longer than the
                             // strip and elided to nothing useful; it is in the console, and the

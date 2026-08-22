@@ -240,7 +240,13 @@ Item {
 
     // ── results (§5.5) ────────────────────────────────────────────────────────
     property bool   hasResult: false
+    // The display is showing the STARTING image rather than a reconstruction. Tracked so the
+    // "no reconstruction yet" cover does not sit on top of something the user just asked to see.
+    property bool   showingStart: false
     property bool   resultIsPosterior: false   // set by Julia; only the stochastic engines produce one
+
+    // Everything the last run printed, shown verbatim in the Engine output console.
+    property string engineOutput: ""
     property string resultMode: "mean"         // mean | sigma | sample
     property int    sampleCount: 0
     property int    sampleIndex: 0
@@ -524,6 +530,8 @@ Item {
                                                root.startFwhm, root.startSeed,
                                                root._continueRun,
                                                root.engine, root.engineOptions())
+            root.engineOutput = Julia.shell_engine_output()
+            root.showingStart = false
             root.statusText = line
             root.hasResult = line.indexOf("chi2r") >= 0
             root.refreshBreakdown()
@@ -646,6 +654,20 @@ Item {
 
     // FilePicker throughout: QtQuick.Dialogs.FileDialog leaves its window mapped on some
     // systems even after reporting itself closed -- see FilePicker.qml.
+    FilePicker {
+        id: saveImageDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save the reconstruction"
+        saveMode: true
+        defaultSuffix: "fits"
+        filters: [{ label: "FITS images (*.fits)", patterns: "*.fits" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            root.statusText = Julia.shell_save_image(path)
+            root.consoleChanged()
+        }
+    }
+
     FilePicker {
         id: startImageDialog
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
@@ -982,6 +1004,36 @@ Item {
                                 }
                                 Item { Layout.fillWidth: true; visible: root.startImage === "dirac" }
                             }
+
+                            // The start is not a formality: a Dirac, a Gaussian and a random
+                            // field lead a reconstruction to different places, and a Gaussian's
+                            // width is a real prior. Looking at it costs nothing; discovering it
+                            // was wrong after a run costs the run.
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: dp(6)
+                                Button {
+                                    text: "Show start image"
+                                    enabled: nx > 0 && pixsize > 0
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "draw the starting image on the display, without running anything"
+                                    onClicked: {
+                                        root.statusText = Julia.shell_show_start_image(
+                                            root.nx, root.pixsize, root.ftMode, root.startImage,
+                                            root.startFwhm, root.startSeed, root.startImagePath)
+                                        root.showingStart = true
+                                        imageArea.update()
+                                        root.consoleChanged()
+                                    }
+                                }
+                                Label {
+                                    visible: root.showingStart
+                                    text: "showing the starting image — Run replaces it"
+                                    color: "#888"
+                                    font.pointSize: pt(baseFontPt - 2)
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
                         }
                     }
 
@@ -1151,41 +1203,23 @@ Item {
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
                                         text: "MaxEnt ignores named regularisers: the prior image is the regularisation, " +
-                                              "and the stopping criterion is the 4-element method vector."
+                                              "and the entropy mode below is the stopping criterion."
                                         color: "#888"; font.pointSize: pt(baseFontPt - 2)
                                     }
+                                    // The entropy mode, and nothing else. The remaining three
+                                    // entries of BSMEM's method vector are its defaults and have
+                                    // no meaning worth exposing here -- four spin boxes invited
+                                    // typing combinations the engine has never been run with.
                                     RowLayout {
                                         spacing: dp(8)
-                                        Label { text: "method preset" }
+                                        Label { text: "entropy mode" }
                                         ComboBox {
                                             id: bsmemPreset
-                                            Layout.preferredWidth: dp(200)
-                                            model: ["1 — classic known noise", "4 — χ² = N", "custom"]
+                                            Layout.preferredWidth: dp(220)
+                                            model: ["classic, known noise", "χ² = N"]
                                             currentIndex: 1
-                                            onActivated: {
-                                                if (currentIndex === 0) root.bsmemMethod = [1, 1, 1, 2]
-                                                else if (currentIndex === 1) root.bsmemMethod = [4, 1, 1, 2]
-                                            }
-                                        }
-                                    }
-                                    RowLayout {
-                                        spacing: dp(4)
-                                        Label { text: "method" }
-                                        Repeater {
-                                            model: 4
-                                            delegate: SpinBox {
-                                                id: methodBox
-                                                required property int index
-                                                from: 0; to: 9
-                                                value: root.bsmemMethod[methodBox.index]
-                                                implicitWidth: dp(80)
-                                                enabled: bsmemPreset.currentIndex === 2
-                                                onValueModified: {
-                                                    var m = root.bsmemMethod.slice()
-                                                    m[methodBox.index] = value
-                                                    root.bsmemMethod = m
-                                                }
-                                            }
+                                            onActivated: root.bsmemMethod =
+                                                currentIndex === 0 ? [1, 1, 1, 2] : [4, 1, 1, 2]
                                         }
                                     }
                                     RowLayout {
@@ -1723,8 +1757,7 @@ Item {
                 Button {
                     text: "Save FITS…"
                     enabled: root.hasResult
-                    // wire: write the current image (or the whole ensemble) to disk
-                    onClicked: { }
+                    onClicked: saveImageDialog.openAt("")
                 }
             }
 
@@ -1752,7 +1785,7 @@ Item {
                 // broken reconstruction rather than as one that has not been run.
                 Rectangle {
                     anchors.fill: parent
-                    visible: !root.hasResult
+                    visible: !root.hasResult && !root.showingStart
                     color: "#f4f4f4"
                     Label {
                         anchors.centerIn: parent
@@ -1760,6 +1793,14 @@ Item {
                         color: "#888"
                         text: "no reconstruction yet"
                     }
+                }
+
+                // Right-click resets the view, as it does on the Exploring canvas. A zoomed
+                // image with no way back is the one interaction that can strand a user.
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton
+                    onClicked: { Julia.shell_reset_image_zoom(); imageArea.update() }
                 }
             }
 
@@ -1806,81 +1847,23 @@ Item {
             //
             // Only the stochastic engines have these: "χ² stopped moving" is not convergence
             // for a sampler, and a tempering run fails in ways no χ² trace can show.
+            // What the engine itself said, verbatim.
+            //
+            // The reconstructors have no callback API -- they report by printing -- so this is
+            // their stdout, captured for the duration of the run. It replaces a diagnostics
+            // panel that could only ever show the fields SQUEEZE happens to return; MaxEnt's
+            // alpha and entropy per iteration, ADMM's primal and dual residuals and VMLMB's
+            // step trace are all here instead, whichever engine ran.
             GroupBox {
-                title: root.engine === "tempering" ? "Tempering diagnostics"
-                     : root.isSqueeze              ? "Annealing diagnostics"
-                                                   : "Inference diagnostics"
+                title: "Engine output"
                 Layout.fillWidth: true
-                visible: root.stochastic
+                Layout.preferredHeight: dp(200)
+                visible: root.engineOutput.length > 0
 
-                ColumnLayout {
+                OutputConsole {
                     anchors.fill: parent
-                    spacing: dp(4)
-
-                    Repeater {
-                        model: root.diagRows
-
-                        delegate: RowLayout {
-                            id: diagRow
-                            required property var modelData
-                            Layout.fillWidth: true
-                            spacing: dp(8)
-
-                            Rectangle {
-                                implicitWidth: dp(12); implicitHeight: dp(12)
-                                radius: width / 2
-                                color: root.lightColor(diagRow.modelData.state)
-                                border.color: "#999"
-                            }
-                            Label {
-                                Layout.preferredWidth: dp(120)
-                                text: diagRow.modelData.label
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: diagRow.modelData.value
-                                color: "#666"
-                                font.family: "monospace"
-                                font.pointSize: pt(baseFontPt - 2)
-                                elide: Text.ElideRight
-                            }
-                            ReasonTip { reason: diagRow.modelData.tip }
-                        }
-                    }
-
-                    // A single min(α) says a rung is blocked; it does not say which. The ladder
-                    // does, which is the difference between a diagnosis and a complaint.
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: root.engine === "tempering"
-                        spacing: dp(2)
-                        Label {
-                            Layout.preferredWidth: dp(120)
-                            text: "ladder"
-                        }
-                        Repeater {
-                            model: root.diagSwapPerRung
-                            delegate: Rectangle {
-                                id: rung
-                                required property var modelData
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: dp(14)
-                                color: root.lightColor(rung.modelData <= 0 ? "bad"
-                                                     : (rung.modelData < 0.3 ? "warn" : "ok"))
-                                border.color: "#fff"
-                                ReasonTip { reason: "rung swap acceptance " + root.fmt(rung.modelData, 2) }
-                            }
-                        }
-                        Label {
-                            visible: root.diagSwapPerRung.length === 0
-                            Layout.fillWidth: true
-                            text: "no rounds completed yet"
-                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
-                        }
-                        // wire: Julia pushes the Pigeons report — restarts, Λ, swap and explorer
-                        //       acceptance, autocorrelation, log(Z₁/Z₀) — or SQUEEZE's
-                        //       diagnostics NamedTuple, once per round
-                    }
+                    text: root.engineOutput
+                    fontPointSize: pt(baseFontPt - 2)
                 }
             }
 

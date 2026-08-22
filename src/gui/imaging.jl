@@ -429,10 +429,15 @@ function run_engine(engine::Symbol, x0, data, ft;
         # `ft[1, 1]`, not `ft`: BSMEM reads the geometry off `ft[1].N`, so it wants the CELL
         # for this bin, whose first element is the NFFT plan. Handing it the whole `OIft` makes
         # `ft[1]` the cell itself, which has no `N`.
+        # `history` is BSMEM's own per-iteration record — entropy, χ², α, ω. The engines have no
+        # callback API, but the ones that keep a history will fill a vector you pass in, and
+        # that is structured data rather than scraped text.
+        hist = NamedTuple[]
         img = reconstruct_bsmem(x0, d, ft[1, 1]; regularizers = regs, method,
-                                maxiter = _optint(o, "maxiter", maxiter), verbose = verb)
+                                maxiter = _optint(o, "maxiter", maxiter), verbose = verb,
+                                history = hist)
         # (nx, nx, nwav) even for one channel.
-        return (img[:, :, 1], nothing, nothing)
+        return (img[:, :, 1], (; history = hist), nothing)
 
     elseif engine === :bsdmm
         _require_mono(data, engine)
@@ -451,7 +456,10 @@ function run_engine(engine::Symbol, x0, data, ft;
                                 mu_reg, mu_cen,
                                 reg_type = Symbol(_optstr(o, "reg_type", "tv")),
                                 maxit    = _optint(o, "maxiter", maxiter),
-                                verb)
+                                verb, history = true)
+        # With `history = true` ADMM returns `(image, trace)`; the trace carries the primal and
+        # dual residuals and ρ, which are what actually say whether it is converging.
+        img isa Tuple && return (img[1], (; history = img[2]), nothing)
         return (img, nothing, nothing)
 
     elseif engine === :sparco

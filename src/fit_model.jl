@@ -84,6 +84,47 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
+    model_warnings(model_dict, list_free_params; lb, ub) -> Vector{String}
+
+Everything wrong with a model that can be seen without fitting it, one sentence each.
+
+Four checks, and every one of them describes a setup that runs happily and answers the wrong
+question: a starting value outside its own bounds, bounds that exclude everything, and flux
+fractions that do not sum to one. The last is the quiet one -- a second component added with
+`f = 1` doubles the model's flux, and the only symptom is a χ² in the millions.
+
+Shared with [`display_model`](@ref), which prints these to a terminal, so a GUI and a script
+cannot disagree about what is wrong with the same model.
+
+Flux fractions given as expressions are not checked: their values depend on the resolver, so
+summing the literals would be summing the wrong things.
+"""
+function model_warnings(model_dict::Dict{String}, list_free_params::AbstractVector{<:AbstractString};
+                        lb = Dict{String,Float64}(), ub = Dict{String,Float64}())
+    w = String[]
+    for p in list_free_params
+        v = get(model_dict, p, nothing)
+        v isa Number || continue
+        lo, hi = get(lb, p, nothing), get(ub, p, nothing)
+        lo !== nothing && v < lo && push!(w, "$p starts at $v, below its lower bound $lo")
+        hi !== nothing && v > hi && push!(w, "$p starts at $v, above its upper bound $hi")
+        lo !== nothing && hi !== nothing && lo >= hi &&
+            push!(w, "$p has an empty box: lower $lo is not below upper $hi")
+    end
+
+    fkeys = [k for k in keys(model_dict) if endswith(k, ",f")]
+    numeric = [model_dict[k] for k in fkeys if model_dict[k] isa Number]
+    if !isempty(numeric) && length(numeric) == length(fkeys)
+        fsum = sum(numeric)
+        abs(fsum - 1.0) > 0.01 && push!(w,
+            "flux fractions sum to $(round(fsum; digits = 4)), not 1 — every component is " *
+            "carrying its own full flux, which inflates χ² rather than sharing the source " *
+            "between them")
+    end
+    return w
+end
+
+"""
     display_model(model_dict, list_free_params; lb, ub)
 
 Print a human-readable summary of the model setup, grouped by component.

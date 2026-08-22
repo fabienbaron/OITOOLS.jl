@@ -46,6 +46,8 @@ mutable struct ShellState
     plan    :: Any              # the NightPlan behind the current Gantt, for the hover readout
     fits    :: Vector{Any}      # completed fits, newest last
     chi2map :: Any              # the Model perspective's χ² map chart
+    enginelog :: String         # everything the last reconstruction printed
+    fitlog    :: String          # ...and everything the last model fit printed
 end
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
@@ -427,7 +429,7 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
                          cvis::Bool, flux::Bool, diffvis::Bool,
                          optimiser::AbstractString, maxeval::Integer,
                          gridp1::AbstractString = "", gridp2::AbstractString = "",
-                         gridn::Integer = 60)
+                         gridn::Integer = 60, gridn2::Integer = 0)
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
@@ -461,32 +463,52 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
         length(free) >= 2 || return "! grid search needs two free parameters"
         isempty(gp1) && (gp1 = free[1])
         isempty(gp2) && (gp2 = free[findfirst(!=(gp1), free)])
+        # A step count per axis: the two parameters rarely deserve the same resolution -- a
+        # diameter may need 200 points where its darkening coefficient needs 40, and forcing
+        # them equal spends the whole budget on the axis that did not need it.
+        n2 = gridn2 > 1 ? Int(gridn2) : Int(gridn)
         console!(sh, "> chi2_map(model, $(free), data, $(repr(gp1)), $(repr(gp2)); " *
-                     "n1 = $(Int(gridn)), n2 = $(Int(gridn)), weights = $(weights))")
+                     "n1 = $(Int(gridn)), n2 = $(n2), weights = $(weights))")
     else
         console!(sh, "> fit_model(model, $(free), data; " *
                      "weights = $(weights), method = :$(opt))")
     end
 
     themap = nothing
+    local fitout
     t = @elapsed r = try
+        res, fitout = _capture_stdout() do
         if opt == "grid"
             themap = chi2_map(md, free, data, gp1, gp2;
-                              lb, ub, weights, n1 = Int(gridn), n2 = Int(gridn))
+                              lb, ub, weights, n1 = Int(gridn),
+                              n2 = gridn2 > 1 ? Int(gridn2) : Int(gridn))
             FitResult(themap)
         elseif opt == "lsqfit"
+            # `verb = true` throughout: the console under the results table shows what the
+            # optimiser printed, so it has to print. Nothing else reads this.
             fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons,
-                             maxIter = Int(maxeval))
+                             maxIter = Int(maxeval), verb = true)
         elseif opt == "ultranest"
             fit_model_ultranest(md, free, data; lb, ub, weights, constraints = cons,
-                                verb = false, cornerplot = false)
+                                verb = true, cornerplot = false)
         else
             fit_model(md, free, data; lb, ub, weights, priors, constraints = cons,
-                      method = Symbol(opt), maxeval = Int(maxeval))
+                      method = Symbol(opt), maxeval = Int(maxeval), verb = true)
         end
+        end
+        res
     catch err
+        sh.fitlog = "the fit failed:\n  " * _cause(err)
         msg = "! fit failed: " * _cause(err); console!(sh, msg); return msg
     end
+    # What the optimiser printed, verbatim, for the console under the results table. Captured
+    # the same way the reconstructors are; see `_capture_stdout` for why nothing simpler works.
+    # The grid search prints nothing -- it is a comprehension over `chi2_flat`, not an
+    # optimiser with a trace -- so the console gets the one thing worth saying about it.
+    sh.fitlog = isempty(strip(fitout)) && opt == "grid" ?
+        "grid search evaluates χ² on a fixed grid and has no iteration trace to report.\n" *
+        "the surface itself is the output: see the χ² map below." :
+        fitout
 
     # The map belongs to the fit that produced it, not to the shell: two grid fits over
     # different parameter pairs both stay reachable, and selecting an older fit can redraw it.
@@ -539,9 +561,56 @@ function shell_fit_values()
 end
 
 """
+    _fit_params(r) -> String
+
+A fit's optimised parameters as `name = value` pairs, with an uncertainty where the fitter
+produced one.
+
+The point of a row per fit is comparing fits, and two fits that differ only in χ² are two
+numbers, not two models. What separates them is where the parameters landed.
+
+`± σ` appears only when it was actually computed: Levenberg-Marquardt carries `stderror` from
+the Jacobian, nested sampling has a posterior to take a standard deviation of, and the plain
+NLopt methods have neither. Writing `±` on a number that came from nowhere would be worse than
+leaving it off.
+"""
+function _fit_params(r)
+    names = r.list_free_params
+    vals  = r.x_opt
+    # `stderror` on the LM result; a posterior column-wise for nested sampling.
+    errs = if hasproperty(r, :stderror) && r.stderror !== nothing &&
+              length(r.stderror) == length(vals)
+        Float64.(r.stderror)
+    elseif hasproperty(r, :posterior) && r.posterior isa AbstractMatrix &&
+           size(r.posterior, 2) == length(vals)
+        [std(@view r.posterior[:, j]) for j in eachindex(vals)]
+    else
+        nothing
+    end
+    parts = String[]
+    for (j, n) in enumerate(names)
+        v = @sprintf("%.5g", vals[j])
+        push!(parts, errs === nothing || !isfinite(errs[j]) ? "$n = $v" :
+                     "$n = $v ± " * @sprintf("%.3g", errs[j]))
+    end
+    return join(parts, "   ")
+end
+
+"""
+    shell_fit_output() -> String
+
+Everything the last model fit printed, for the console under the results table.
+
+Same mechanism as the reconstructors' output; `_capture_stdout` documents why the obvious
+approaches do not work inside a Qt event loop.
+"""
+shell_fit_output() = (sh = SHELL[]; sh === nothing ? "" : sh.fitlog)
+
+"""
     shell_fit_rows() -> String
 
-Completed fits as `label\toptimiser\tchi2r\tndof\tnfree\taic\tbic` rows, newest first.
+Completed fits as `label\toptimiser\tchi2r\tndof\tnfree\taic\tbic\tparams` rows, newest
+first.
 
 AIC and BIC are computed here rather than read off `chi2r`, because `ndof` counts DATA POINTS
 and is not reduced by the free-parameter count — so a comparison that used it as a degrees-of-
@@ -557,7 +626,8 @@ function shell_fit_rows()
         bic = r.chi2 + k * log(max(r.ndof, 1))
         push!(rows, join((string("fit ", length(sh.fits) - i + 1), f.optimiser,
                           string(round(r.chi2r; digits = 4)), string(r.ndof), string(k),
-                          string(round(aic; digits = 1)), string(round(bic; digits = 1))), "\t"))
+                          string(round(aic; digits = 1)), string(round(bic; digits = 1)),
+                          _fit_params(r)), "\t"))
     end
     return join(rows, "\n")
 end
@@ -630,6 +700,25 @@ function shell_model_components()
     return join((join((c.name, string(c.kind), c.geometry_key,
                        string(length(c.params)), string(length(c.unrecognised))), "\t")
                  for c in insp.components), "\n")
+end
+
+"""
+    shell_model_warnings() -> String
+
+What is wrong with the model as it stands, one per line, or `""` when nothing is.
+
+The same checks `display_model` prints to a terminal — [`model_warnings`](@ref) is shared, so
+the panel and a script cannot disagree about the same model.
+"""
+function shell_model_warnings()
+    m = _model()
+    isempty(m.dict) && return ""
+    w = try
+        model_warnings(m.dict, m.free; lb = m.lb, ub = m.ub)
+    catch err
+        return "could not check the model: " * _cause(err)
+    end
+    return join(w, "\n")
 end
 
 """
@@ -1120,6 +1209,149 @@ function _parse_options(text::AbstractString)
 end
 
 """
+    _capture_stdout(f) -> (result, output)
+
+Run `f` with `stdout` on a temp file, and return everything it printed.
+
+The engines have no callback API -- they report by printing -- so this is what puts their own
+account in front of the user. Getting it took four attempts, and the three that failed are
+properties of this environment rather than carelessness:
+
+  * `redirect_stdout()` onto a PIPE hangs. Not the cooperative-scheduling deadlock it looks
+    like: it hangs with the reader on a spawned thread too. Inside `QML.exec()` Qt owns the
+    thread and libuv's event loop is never pumped, so a libuv pipe read cannot progress at all.
+    Measured both ways in a standalone QML app; both variants work in a plain Julia process,
+    which is what makes it Qt's doing.
+  * `redirect_stdout(io)` onto a file throws `ArgumentError: invalid stdio type` here, because
+    QML.jl has already put the Core streams in place.
+  * `dup2` on descriptor 1 alone captures nothing from Julia: `println` goes through the libuv
+    handle bound at startup, not through the descriptor.
+
+Assigning the binding is what QML.jl itself does (`Base.stdout = Core.stdout`), and a plain
+`IOStream` needs no event loop. `dup2` is layered on top so that C-level printing -- OptimPack
+and the MaxEnt kernel write with `printf` -- lands in the same file rather than escaping to the
+terminal.
+
+The captured text keeps its ANSI escapes: the console renders them, so the colours OITOOLS
+chose survive the trip instead of being flattened to black.
+"""
+function _capture_stdout(f)
+    path, io = mktemp()
+    old = Base.stdout
+    saved = Sys.isunix() ? ccall(:dup, Cint, (Cint,), 1) : Cint(-1)
+    result = nothing
+    try
+        # `IOContext(:color => true)`, not the bare stream. `printstyled` emits ANSI escapes
+        # only when `get(stdout, :color, false)` is true, and an `IOStream` says false -- so
+        # capturing to a plain file silently threw away every colour OITOOLS chose. chi2_flat
+        # prints V2 red, T3amp blue and T3phi green, and that is worth keeping.
+        Base.stdout = IOContext(io, :color => true)
+        # Same file for the C side. `Base.fd` yields a `RawFD`, which has no `Int32`
+        # constructor; `cconvert` is the way down to the Cint the syscall wants.
+        saved >= 0 && ccall(:dup2, Cint, (Cint, Cint),
+                            Base.cconvert(Cint, Base.fd(io)), Cint(1))
+        result = f()
+    finally
+        Base.stdout = old
+        if saved >= 0
+            ccall(:dup2, Cint, (Cint, Cint), saved, Cint(1))
+            ccall(:close, Cint, (Cint,), saved)
+        end
+        try; close(io); catch; end
+    end
+    out = try; read(path, String); catch; ""; end
+    rm(path; force = true)
+    return (result, out)
+end
+
+
+"""
+    shell_reset_image_zoom() -> String
+
+Return the imaging display to the whole image.
+
+Separate from [`shell_reset_zoom`](@ref), which resets the Exploring canvas: the two are
+different axes on different figures, and a right click on one must not move the other.
+"""
+function shell_reset_image_zoom()
+    sh = _shell()
+    cv = sh.imcanvas
+    cv === nothing && return ""
+    try
+        Makie.autolimits!(cv.axis)
+    catch err
+        console!(sh, "could not reset the view: " * _cause(err); kind = :err)
+    end
+    return ""
+end
+
+"""
+    shell_show_start_image(nx, pixsize, mode, startkind, startfwhm, startseed) -> String
+
+Draw the starting image on the imaging canvas, without running anything.
+
+The start is not a formality: a Dirac, a Gaussian and a random field lead a reconstruction to
+different places, and the width of a Gaussian start is a real prior. Being able to look at it
+before spending a run is the point.
+"""
+function shell_show_start_image(nx::Integer, pixsize::Real, mode::AbstractString,
+                                startkind::AbstractString, startfwhm::Real = AUTO_FWHM,
+                                startseed::Integer = 1, startpath::AbstractString = "")
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    setup = ImagingSetup(; nx = Int(nx), pixsize = Float64(pixsize), mode = Symbol(mode),
+                           startkind = Symbol(startkind), startfwhm = Float64(startfwhm),
+                           startseed = Int(startseed), startpath = String(startpath))
+    img = try
+        ft, _, _ = ensure_ft!(sh.ftcache, e.data, setup)
+        Float64.(start_image(setup, ft))
+    catch err
+        msg = "! could not build the starting image: " * _cause(err)
+        console!(sh, msg; kind = :err); return msg
+    end
+    sh.imcanvas === nothing || show_image!(sh.imcanvas, img, setup.pixsize;
+                                           label = "starting image")
+    console!(sh, "> start_image(setup, ft)   # $(startkind), $(Int(nx))×$(Int(nx))")
+    return "showing the starting image"
+end
+
+"""
+    shell_save_image(path) -> String
+
+Write the reconstructed image to FITS, with the pixel size in the header.
+
+`pixsize` is passed so the file carries its own scale: an image without one is a picture, not
+a measurement, and nothing downstream can put it back.
+"""
+function shell_save_image(path::AbstractString)
+    sh = _shell()
+    r = sh.imaging
+    r === nothing && return "! nothing reconstructed yet"
+    p = String(path); startswith(p, "file://") && (p = p[8:end])
+    try
+        writefits(r.image, p; pixsize = r.setup.pixsize)
+    catch err
+        msg = "! could not write the image: " * _cause(err)
+        console!(sh, msg; kind = :err); return msg
+    end
+    console!(sh, "> writefits(image, \"" * p * "\"; pixsize = $(r.setup.pixsize))")
+    return "saved " * basename(p)
+end
+
+"""
+    shell_engine_output() -> String
+
+Everything the last reconstruction printed.
+
+The engines report their progress by printing -- there is no callback API -- so this is
+captured from stdout for the duration of the run and handed back whole. It is the engine's own
+account of what it did: MaxEnt's α and entropy per iteration, ADMM's primal and dual residuals,
+the sampler's temperature and acceptance.
+"""
+shell_engine_output() = (sh = SHELL[]; sh === nothing ? "" : sh.enginelog)
+
+"""
     shell_recenter_image() -> String
 
 Recentre the reconstructed image on its centroid and redraw.
@@ -1417,14 +1649,24 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     cached = sh.ftcache
     ftkey  = (objectid(e.data), setup.nx, setup.pixsize, setup.mode)
     ft     = (cached !== nothing && cached.key == ftkey) ? cached.ft : nothing
+    # `verb = true`: the console below the panel shows what the engine printed, so it has to
+    # print. The capture is at the descriptor level -- see `_capture_fd1` for why nothing above
+    # that layer works here.
+    local out
     r = try
-        reconstruct_image(e.data, setup; weights, maxiter = Int(maxiter),
-                          regularizers = regs, ft, x_start = xprev, options = opts)
+        res, out = _capture_stdout() do
+            reconstruct_image(e.data, setup; weights, maxiter = Int(maxiter),
+                              regularizers = regs, ft, x_start = xprev, options = opts,
+                              verb = true)
+        end
+        res
     catch err
+        sh.enginelog = "the run failed:\n  " * _cause(err)
         msg = "! reconstruction failed: " * _cause(err)
         console!(sh, msg)
         return msg
     end
+    sh.enginelog = out
 
     sh.imcanvas === nothing || show_image!(sh.imcanvas, r.image, r.setup.pixsize)
     sh.imaging = r
