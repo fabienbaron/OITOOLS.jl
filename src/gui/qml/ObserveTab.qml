@@ -16,7 +16,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import jlqml
 import Makie            // MakieArea, for this perspective's own Gantt canvas
 

@@ -35,6 +35,7 @@ include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
 
 
 include("utils.jl")
+include("simbad.jl")         # SIMBAD over TAP: one HTTP request, no Python
 include("oichi2.jl")
 include("sparco_flat.jl")
 include("astrometry.jl")
@@ -209,8 +210,8 @@ export strehl_ratio, coupling_efficiency, fried_parameter, seeing_from_r0, atm_t
 export PhotometricBand, PHOTOMETRIC_BANDS, band_for_wavelength, band_by_name, zero_point_flux
 export gantt_onenight
 export sunrise_sunset, alt_az, opd_limits, airmass, datetime_to_jd, datetime_to_mjd
-export query_target_from_simbad, ra_dec_from_simbad, magnitudes_from_simbad, sexagesimal_to_degrees
-export simbad_target, SIMBAD_BANDS
+export ra_dec_from_simbad, magnitudes_from_simbad, sexagesimal_to_degrees
+export simbad_target, SIMBAD_BANDS, simbad_tap, SIMBAD_TAP_URL
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
 export night_observability, compute_delays, in_delay, best_pop, observable_epochs

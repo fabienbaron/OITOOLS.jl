@@ -125,8 +125,10 @@ function run_plan(interp::TclInterp, args::TclObj)
             ra, dec, mags = simbad_cache[key]
         else
             set_status!(interp, "Querying SIMBAD for $(targetname)...")
-            ra, dec = ra_dec_from_simbad(targetname)   # decimal degrees
-            mags = magnitudes_from_simbad(targetname)
+            # One request for coordinates and photometry together: simbad_target sends a
+            # single ADQL query, where the two wrappers would send one each.
+            t = simbad_target(targetname)
+            ra, dec, mags = t.ra, t.dec, t.mags        # decimal degrees
             simbad_cache[key] = (ra, dec, mags)
         end
         ra_h = ra / 15.0

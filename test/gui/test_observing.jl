@@ -152,9 +152,12 @@
             @test isnan(t.mags["R"])
             @test t.mags["K"] < 0
             @test t.plx > 700                       # the nearest star system
+
+            @test_throws Exception simbad_target("NoSuchStarXYZ")
         end
 
-        @test_throws Exception simbad_target("NoSuchStarXYZ")
+        # Rejected before the network, so this costs nothing and runs everywhere
+        @test_throws ArgumentError simbad_target("  ")
         @test issorted(indexin(["V", "J", "H", "K"], SIMBAD_BANDS))   # panel order
     end
 

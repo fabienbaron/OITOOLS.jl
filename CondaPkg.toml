@@ -2,14 +2,13 @@
 #
 #   matplotlib-base                       -> fit_model.jl sets rcParams around UltraNest's
 #                                            corner plot; ultranest.plot needs it too
-#   astroquery.simbad                     -> utils.jl, magnitudes_from_simbad
 #   ultranest, ultranest.plot,
 #   ultranest.stepsampler                 -> fit_model.jl, fit_model_ultranest
 #   scipy                                 -> imported at module level by ultranest.plot
 #
 # EVERYTHING IS A CONDA DEPENDENCY ON PURPOSE — there is no [pip.deps] section.
 #
-# astroquery and ultranest used to come from pip. Mixing pip and conda dependencies makes
+# ultranest comes from conda-forge, not pip. Mixing pip and conda dependencies makes
 # pixi fetch a conda->PyPI name mapping from a remote service before it can solve, and that
 # fetch fails here:
 #
@@ -28,8 +27,8 @@
 # failed resolve makes `using OITOOLS` itself unloadable, not merely the Python-facing
 # functions.
 #
-# Taking the pip layer out removes the mapping fetch and with it the whole failure mode.
-# Both packages are on conda-forge for every platform CI builds on (linux-64, osx-64,
+# Keeping the pip layer out removes the mapping fetch and with it the whole failure mode.
+# ultranest is on conda-forge for every platform CI builds on (linux-64, osx-64,
 # osx-arm64, win-64). The cost is that conda-forge's ultranest can lag PyPI slightly
 # (4.4.0 vs 4.5.0 at the time of writing); the API OITOOLS uses — ReactiveNestedSampler,
 # stepsampler.RegionSliceSampler(adaptive_nsteps=...), plot.cornerplot — is present and
@@ -73,5 +72,4 @@ python = ">=3.9,<4"
 matplotlib-base = ">=3.5"
 numpy = ">=2"
 scipy = ">=1.9"
-astroquery = ">=0.4.6"
 ultranest = ">=3.6"

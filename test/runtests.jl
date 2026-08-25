@@ -21,7 +21,8 @@ BLAS.set_num_threads(1)
     include("test_oifits_tdim.jl")       # OIFITS writing interoperability
     include("test_simulate.jl")          # simulate(): geometry, noise model, observability
     include("test_planning.jl")          # astrometry, twilight, observability conventions
-    include("test_python_boundary.jl")   # Julia<->Python crossings (plots, UltraNest, SIMBAD)
+    include("test_simbad.jl")            # SIMBAD over TAP: parsing, offline fixture
+    include("test_python_boundary.jl")   # Julia<->Python crossings (plots, UltraNest)
     include("test_plotting.jl")          # every figure: renders, plotted values, options
     include("test_squeeze.jl")           # SQUEEZE MCMC sampler
     include("test_squeeze_tempering.jl") # SQUEEZE + Pigeons (skipped if absent)

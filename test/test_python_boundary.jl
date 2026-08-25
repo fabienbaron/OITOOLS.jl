@@ -1,7 +1,7 @@
 # test_python_boundary.jl — exercise every Julia↔Python crossing.
 #
 # Why this exists: without it the suite only proves that the Python stack *loads*. Nothing
-# else calls a plotting function, runs UltraNest, or queries SIMBAD, so the entire plotting
+# else calls a plotting function or runs UltraNest, so the entire plotting
 # layer could break and CI would stay green. Julia<->Python breakage surfaces at call time,
 # not compile time, so it has to be called to be caught.
 #
@@ -211,30 +211,5 @@ else
         @test filesize(p) > 3000
     end
 
-    # ── SIMBAD: network + a notoriously version-sensitive Python stack ───────
-    # Skipped on CI (network) and tolerated locally if the Python env is inconsistent —
-    # astroquery/astropy/numpy drift breaks this independently of anything Julia does.
-    @testset "SIMBAD magnitudes" begin
-        if _ONCI
-            @test_skip false
-        else
-            m = try
-                magnitudes_from_simbad("Vega")
-            catch err
-                @info "SIMBAD unavailable, skipping (Python env or network): " *
-                      first(sprint(showerror, err), 120)
-                nothing
-            end
-            if m === nothing
-                @test_skip false
-            else
-                @test m isa Dict{String,Float64}
-                @test haskey(m, "V")
-                # the point of the assertion: real Float64s, not Python handles
-                @test all(v -> v isa Float64, values(m))
-                @test isfinite(m["V"])
-            end
-        end
-    end
 end   # _THREAD_UNSAFE
 end

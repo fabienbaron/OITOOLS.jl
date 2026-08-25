@@ -13,8 +13,9 @@
 | LsqFit | Levenberg–Marquardt least-squares fitting |
 | UltraNest | Bayesian model selection via nested sampling |
 | SpecialFunctions | Bessel functions for visibility calculations |
-| PythonCall | Julia↔Python bridge (SIMBAD queries, UltraNest) |
+| PythonCall | Julia↔Python bridge (UltraNest, matplotlib) |
 | PythonPlot | **optional** — matplotlib plotting, see [Plotting](@ref plotting-install) |
+| Downloads | *(standard library)* SIMBAD queries, over its TAP service |
 | Crayons | Coloured terminal output |
 
 ## Step 1: Python packages
@@ -26,7 +27,6 @@ project-local environment the first time you `using OITOOLS`:
 | Package | Used by |
 |---|---|
 | matplotlib-base | `fit_model_ultranest`'s corner plot, and the plotting extension below |
-| astroquery | `magnitudes_from_simbad`, `ra_dec_from_simbad` |
 | ultranest | `fit_model_ultranest` |
 | scipy | imported at module level by `ultranest.plot` |
 
@@ -38,8 +38,8 @@ arrives with it if you want one.
 !!! tip "Reusing an existing Python"
 
     Set `JULIA_PYTHONCALL_EXE` to your interpreter to reuse an existing installation. Note
-    that doing so opts out of `CondaPkg`, so you become responsible for keeping matplotlib,
-    astroquery and ultranest installed and mutually consistent.
+    that doing so opts out of `CondaPkg`, so you become responsible for keeping matplotlib
+    and ultranest installed and mutually consistent.
 
 ## Step 2: Julia packages
 

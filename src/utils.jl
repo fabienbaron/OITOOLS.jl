@@ -2,7 +2,7 @@
 # This file includes general purpose functions
 #
 
-using LinearAlgebra,SparseArrays, PythonCall
+using LinearAlgebra, SparseArrays
 
 function x_start_from_V2_dft(data, dft; λ = 1e7 , μ = 1e6 )
 # estimate V and 1/sigma_V^2 from V2 and V2_err using equation 3.98a in Data Analysis (Sivia/Skilling)
@@ -51,10 +51,6 @@ function recenter(x::AbstractArray{<:Real}; mask=[], max=false)
     end
 end
 
-function query_target_from_simbad(targetname)
-    return pyimport("astroquery.simbad").Simbad.query_object(targetname)
-end
-
 """
     sexagesimal_to_degrees(s) -> Float64
 
@@ -87,158 +83,6 @@ function sexagesimal_to_degrees(s::AbstractString)
         scale /= 60
     end
     return neg ? -value : value
-end
-
-"""
-    ra_dec_from_simbad(targetname) -> (ra_deg, dec_deg)
-
-Resolve a target name through SIMBAD and return its J2000 right ascension and declination
-in **decimal degrees**.
-
-Both astroquery layouts are handled: releases up to ~0.4.7 return sexagesimal strings in
-`RA`/`DEC` columns (RA in hours), newer ones return decimal degrees in `ra`/`dec`.
-
-!!! note "Changed in 0.11"
-    This used to return two `Vector{Float64}` of sexagesimal components, leaving the
-    conversion to the caller. Every caller did it with a dot product that mishandled the
-    sign of southern declinations. It now returns degrees directly.
-"""
-function ra_dec_from_simbad(targetname)
-    res = query_target_from_simbad(targetname)
-    pyis(res, pybuiltins.None) && error("SIMBAD returned no match for \"$targetname\"")
-    cols = Set(pyconvert(Vector{String}, res.colnames))
-    if ("ra" in cols) && ("dec" in cols)            # astroquery >= 0.4.8: decimal degrees
-        return pyconvert(Float64, res["ra"][0]), pyconvert(Float64, res["dec"][0])
-    elseif ("RA" in cols) && ("DEC" in cols)        # older: sexagesimal strings, RA in hours
-        ra_h = sexagesimal_to_degrees(pyconvert(String, res["RA"][0]))
-        dec  = sexagesimal_to_degrees(pyconvert(String, res["DEC"][0]))
-        return 15 * ra_h, dec
-    else
-        error("SIMBAD result for \"$targetname\" has no recognised coordinate columns; " *
-              "got $(sort(collect(cols)))")
-    end
-end
-
-"""
-    magnitudes_from_simbad(targetname)
-
-Query SIMBAD for photometric magnitudes (V, J, H, K, L, M, N).
-Returns a Dict{String,Float64} with band names as keys.
-Missing magnitudes are set to NaN.
-"""
-function magnitudes_from_simbad(targetname)
-    Simbad = pyimport("astroquery.simbad").Simbad
-    # B through N: V is what the adaptive optics guides on, R appears in older catalogues,
-    # and the near-infrared bands are what the observation is actually made in.
-    bands = ["B", "V", "R", "I", "J", "H", "K", "L", "M", "N"]
-    mags = Dict{String,Float64}(b => NaN for b in bands)
-    try
-        # Use TAP query to get all available fluxes for this object
-        query = """
-        SELECT f.filter, f.flux
-        FROM basic AS b
-        JOIN ident AS i ON i.oidref = b.oid
-        JOIN flux AS f ON f.oidref = b.oid
-        WHERE i.id = '$(replace(targetname, "'" => "''"))'
-        """
-        result = Simbad.query_tap(query)
-        # query_tap returns Python None when there is no match; ask Python rather than
-        # comparing against Julia's nothing.
-        if !pyis(result, pybuiltins.None)
-            filters = result["filter"]
-            fluxes  = result["flux"]
-            nrows   = pylen(filters)
-            for row in 0:(nrows-1)          # Python row index, passed through by Py getindex
-                filt = uppercase(strip(pyconvert(String, filters[row])))
-                for b in bands
-                    if filt == b
-                        try
-                            mags[b] = pyconvert(Float64, fluxes[row])
-                        catch; end
-                    end
-                end
-            end
-        end
-    catch err
-        # NOT swallowed. A network failure and a target with no photometry are different
-        # answers, and reporting them the same way is how "this star has no K magnitude"
-        # comes to mean "the query never ran".
-        throw(ErrorException("SIMBAD photometry query failed for \"$targetname\": " *
-                             first(split(sprint(showerror, err), "\n"))))
-    end
-    return mags
-end
-
-"""
-Photometric bands `simbad_target` asks for, in the order a panel should show them.
-
-B through N. The near-infrared ones are what an interferometric observation is actually made
-in, and V is what the adaptive optics guides on, so both matter and for different reasons.
-"""
-const SIMBAD_BANDS = ["B", "V", "R", "I", "J", "H", "K", "L", "M", "N"]
-
-"""
-    simbad_target(name) -> NamedTuple
-
-Everything SIMBAD holds that an observation needs: `(; name, main_id, ra, dec, pmra, pmdec,
-plx, rv, sptype, otype, mags)`.
-
-`ra`/`dec` are DEGREES, proper motions mas/yr, parallax mas, radial velocity km/s. Missing
-values are `NaN` and a missing string is `""` — SIMBAD not knowing a target's parallax is a
-fact about the target, not a failure, and it has to be distinguishable from the query failing.
-
-Beyond coordinates and magnitudes this returns what ASPRO also reads, and for the same reasons:
-proper motion places the target at the epoch actually being observed, parallax turns an angular
-diameter into a physical one, and the spectral type is what a surface-brightness relation needs
-to predict a diameter before anything is measured.
-"""
-function simbad_target(targetname::AbstractString)
-    Simbad = pyimport("astroquery.simbad").Simbad
-    name = String(targetname)
-    esc  = replace(name, "'" => "''")
-
-    num(x) = try
-        v = pyconvert(Float64, x); isfinite(v) ? v : NaN
-    catch
-        NaN
-    end
-    str(x) = try
-        strip(pyconvert(String, x))
-    catch
-        ""
-    end
-
-    row = try
-        Simbad.query_tap("""
-            SELECT b.main_id, b.ra, b.dec, b.pmra, b.pmdec, b.plx_value, b.rvz_radvel,
-                   b.sp_type, b.otype
-            FROM basic AS b JOIN ident AS i ON i.oidref = b.oid
-            WHERE i.id = '$esc'
-            """)
-    catch err
-        throw(ErrorException("SIMBAD query failed for \"$name\": " *
-                             first(split(sprint(showerror, err), "\n"))))
-    end
-    (pyis(row, pybuiltins.None) || pylen(row) == 0) &&
-        error("SIMBAD returned no match for \"$name\"")
-
-    mags = try
-        magnitudes_from_simbad(name)
-    catch
-        Dict{String,Float64}()          # coordinates are still worth returning
-    end
-
-    return (; name,
-              main_id = str(row["main_id"][0]),
-              ra      = num(row["ra"][0]),
-              dec     = num(row["dec"][0]),
-              pmra    = num(row["pmra"][0]),
-              pmdec   = num(row["pmdec"][0]),
-              plx     = num(row["plx_value"][0]),
-              rv      = num(row["rvz_radvel"][0]),
-              sptype  = str(row["sp_type"][0]),
-              otype   = str(row["otype"][0]),
-              mags    = Dict{String,Float64}(b => get(mags, b, NaN) for b in SIMBAD_BANDS))
 end
 
 function meshgrid(xx::AbstractVector{<:Real}) #example: meshgrid([-N/2:N/2-1;]*δ);

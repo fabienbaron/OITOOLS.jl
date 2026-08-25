@@ -65,9 +65,21 @@ ra, dec = ra_dec_from_simbad("Vega")   # decimal degrees, matching TargetConfig.
 target = TargetConfig(target="Vega", raep0=ra, decep0=dec)
 ```
 
-!!! note "Changed in 0.11"
-    `ra_dec_from_simbad` used to return two vectors of sexagesimal components, so the
-    snippet above could not actually run. It now returns degrees directly.
+[`simbad_target`](@ref) fills in the rest of `TargetConfig` from a single request, and
+carries the magnitudes `simulate` needs for its noise model:
+
+```julia
+t = simbad_target("Vega")
+target = TargetConfig(target = t.main_id, raep0 = t.ra, decep0 = t.dec,
+                      pmra = t.pmra, pmdec = t.pmdec,
+                      parallax = t.plx, spectyp = t.sptype)
+
+simulate(facility, target, combiner, wavelength, dates, "vega.oifits";
+         mag = t.mags["H"], mag_ao = t.mags["V"])
+```
+
+Bands SIMBAD has no measurement for come back as `NaN`, never `0.0`: zero is Vega-bright, and
+an unmeasured band written as zero would silently become the brightest in the row.
 
 **Combiner** — beam combiner properties (throughput, read noise, calibration errors):
 

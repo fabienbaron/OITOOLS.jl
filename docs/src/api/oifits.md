@@ -58,25 +58,68 @@ dict_to_pmoired_file
 | Function | Description |
 |----------|-------------|
 | `recenter(x; mask, max)` | Recenter an image by circular shift to centroid or peak |
-| `query_target_from_simbad(name)` | Query SIMBAD for target information |
-| `ra_dec_from_simbad(name)` | Resolve a target through SIMBAD; returns RA and Dec in **decimal degrees** |
 | `sexagesimal_to_degrees(s)` | Parse `"-46 28 00.5"` or `"12:34:56"` to decimal degrees (sign applies to the whole value) |
-| `magnitudes_from_simbad(name)` | Query SIMBAD for photometric magnitudes (B through N) |
-| `simbad_target(name)` | Full SIMBAD record: coordinates, proper motion, parallax, spectral type, magnitudes |
-| `SIMBAD_BANDS` | Photometric bands `simbad_target` asks for, in panel order |
-
-`simbad_target` is the one to reach for when planning: proper motion places the target at the
-epoch actually being observed, parallax turns an angular diameter into a physical one, and the
-spectral type is what a surface-brightness relation needs to predict a diameter before anything
-is measured. Coordinates come back in **decimal degrees**, and a value SIMBAD does not hold is
-`NaN` rather than an error — not knowing a parallax is a fact about the target, and has to be
-distinguishable from the query having failed.
 
 ```@docs
 recenter
-magnitudes_from_simbad
-ra_dec_from_simbad
 sexagesimal_to_degrees
+```
+
+## SIMBAD
+
+| Function | Description |
+|----------|-------------|
+| `simbad_target(name)` | Full SIMBAD record in one request: coordinates, proper motion, parallax, radial velocity, spectral type, object type, magnitudes |
+| `ra_dec_from_simbad(name)` | RA and Dec alone, in **decimal degrees** |
+| `magnitudes_from_simbad(name)` | Photometric magnitudes alone, B through N |
+| `simbad_tap(adql)` | Any ADQL query against SIMBAD's TAP service; returns column names and rows |
+| `SIMBAD_BANDS` | The ten bands `simbad_target` reports, in panel order |
+| `SIMBAD_TAP_URL` | The TAP endpoint queries go to |
+
+`simbad_target` is the one to reach for when planning. Proper motion places the target at the
+epoch actually being observed, parallax turns an angular diameter into a physical one, and the
+spectral type is what a surface-brightness relation needs to predict a diameter before anything
+is measured:
+
+```julia
+t = simbad_target("Vega")
+t.main_id           # "* alf Lyr"
+t.ra, t.dec         # 279.2347, 38.7837   — degrees
+t.plx               # 130.23 mas
+t.sptype            # "A0V"
+t.mags["K"]         # 0.129
+t.mags["N"]         # NaN — SIMBAD has no N magnitude for this target
+```
+
+Coordinates come back in **decimal degrees**, and a value SIMBAD does not hold is `NaN` (or
+`""` for a string) rather than an error: not knowing a parallax is a fact about the target, and
+has to be distinguishable from the query having failed. `mags` always carries all ten
+`SIMBAD_BANDS` as keys, so a panel iterating them never has to test for presence as well as for
+`NaN`.
+
+It is also the cheapest call. Astrometry and photometry arrive together from a single ADQL
+query, which is what SIMBAD asks clients to do; `ra_dec_from_simbad` and
+`magnitudes_from_simbad` are wrappers around it, so asking for both costs two requests where
+`simbad_target` costs one. The transport is `Downloads`, a standard library — no Python is
+involved.
+
+Failures are reported apart from one another, because they call for different actions: the
+service being unreachable, the service refusing the query, and the query succeeding with no
+rows. Only the last is a problem with the name you asked for.
+
+`simbad_tap` is the escape hatch for anything else in the
+[SIMBAD schema](https://simbad.cds.unistra.fr/simbad/tap/tapsearch.html). It returns the header
+and the rows as `String`s, exactly as the service sent them:
+
+```julia
+cols, rows = simbad_tap("SELECT TOP 5 main_id, plx_value FROM basic WHERE plx_value > 500")
+```
+
+```@docs
 simbad_target
+ra_dec_from_simbad
+magnitudes_from_simbad
+simbad_tap
 SIMBAD_BANDS
+SIMBAD_TAP_URL
 ```

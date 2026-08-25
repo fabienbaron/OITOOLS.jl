@@ -43,8 +43,8 @@ extension, so they exist only once PythonPlot is loaded alongside OITOOLS. This 
 `using OITOOLS` free of matplotlib and of Qt, which matters on headless machines and beside
 other Qt applications.
 
-Python dependencies (matplotlib-base, astroquery for SIMBAD queries, ultranest for nested
-sampling) are provisioned automatically by
+Python dependencies (matplotlib-base, ultranest for nested sampling) are provisioned
+automatically by
 [CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time you load the package. See
 the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for details,
 including how to reuse an existing Python instead.
@@ -201,6 +201,6 @@ pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.develop(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 ```
 
-Python dependencies (matplotlib-base, astroquery, ultranest) are declared in `CondaPkg.toml`
+Python dependencies (matplotlib-base, ultranest) are declared in `CondaPkg.toml`
 and installed automatically into a project-local environment on first `using OITOOLS` — there
 is nothing to set up by hand. Add `PythonPlot` as well if you want the plotting functions.
