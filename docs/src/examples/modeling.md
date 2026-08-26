@@ -13,7 +13,7 @@ Model fitting in OITOOLS follows three steps:
 2. **Choose which parameters to fit** (`list_free_params`) — a `Vector{String}`
    naming the subset of keys in `model_dict` that the optimizer is allowed to vary.
    Optionally define lower/upper bounds (`lb`, `ub`) for each.
-3. **Fit** — calling `fit_model` (or `fit_model_lsqfit`, `fit_model_ultranest`)
+3. **Fit** — calling `fit_model` (or `fit_model_lsqfit`, `fit_model_nested`)
    compiles the dictionary into an efficient `FlatModel` internally, then
    optimizes the free parameters against the data.
 
@@ -25,7 +25,7 @@ The result contains the best-fit values (`result.x_opt`) and the compiled
 |--------|------|-------------|---------------|
 | `model_dict` | `Dict{String,Any}` | Full model specification: all parameters, formulas, flags | `display_model` |
 | `list_free_params` | `Vector{String}` | Names of parameters to optimize (must be numeric in `model_dict`) | `display_model` |
-| `model` | `FlatModel` | Compiled model from `dict_to_model(model_dict, list_free_params)` or `result.model` | `fit_model`, `fit_model_lsqfit`, `fit_model_ultranest`, `model_to_obs`, `model_to_image`, `model_to_chi2`, `model_to_sed`, `eval_model` |
+| `model` | `FlatModel` | Compiled model from `dict_to_model(model_dict, list_free_params)` or `result.model` | `fit_model`, `fit_model_lsqfit`, `fit_model_nested`, `model_to_obs`, `model_to_image`, `model_to_chi2`, `model_to_sed`, `eval_model` |
 
 To compile a model dictionary into a `FlatModel`:
 
@@ -583,7 +583,7 @@ be a number. `tol` (default `1e-3`) is how much violation counts as none.
 
 `fit_model` hands these to NLopt as real nonlinear constraints, so they hold at the optimum; an
 algorithm that cannot take them — including the default `:LD_LBFGS` — is wrapped in `:AUGLAG`
-rather than replaced. `fit_model_lsqfit` and `fit_model_ultranest` have no such machinery and
+rather than replaced. `fit_model_lsqfit` and `fit_model_nested` have no such machinery and
 use a one-sided quadratic penalty instead, which is **soft**: a steep enough χ² surface can
 overrule it. Use `fit_model` when a constraint must hold.
 
@@ -656,25 +656,50 @@ The analytic Jacobian is computed via the Wirtinger chain rule through the
 full observable pipeline (V² → T3 → residuals), so no finite differences
 are needed.
 
-## Bayesian inference (UltraNest)
+## Bayesian inference (nested sampling)
 
-`fit_model_ultranest` performs nested sampling via
-[UltraNest](https://johannesbuchner.github.io/UltraNest/) (Python, called
-through PythonCall). It returns the Bayesian log-evidence for model comparison:
+`fit_model_nested` returns a posterior **and** the Bayesian log-evidence, which is what lets
+two models be compared rather than merely fitted. Bounds are required for every free
+parameter: they are the prior.
+
+Two samplers implement it, and neither is a dependency of the package — loading one activates
+its extension:
+
+| `using` | backend | notes |
+|---|---|---|
+| `NestedSamplers` | `:nestedsamplers` | [NestedSamplers.jl](https://github.com/chalk-lab/NestedSamplers.jl), pure Julia. No Python, and the one a compiled build can contain |
+| `PythonCall` | `:ultranest` | [UltraNest](https://johannesbuchner.github.io/UltraNest/), through PythonCall. Faster here, because it is driven with a vectorised likelihood |
 
 ```julia
-result = fit_model_ultranest(model_dict, list_free_params, data;
+using OITOOLS, NestedSamplers
+
+result = fit_model_nested(model_dict, list_free_params, data;
     lb = Dict("star,ud" => 0.1),
     ub = Dict("star,ud" => 20.0),    # bounds required for all list_free_params
-    min_num_live_points = 100,
-    cornerplot = true)                # produce corner plot
+    nactive = 400,
+    cornerplot = true)
 
 println("log(Z) = ", result.logz, " ± ", result.logzerr)
 println("Best χ²/ν = ", result.chi2r)
+println("sampler  = ", result.backend)
 ```
 
-The posterior samples are available as `result.posterior` (matrix of
-`nsamples × nparams`).
+The posterior samples are available as `result.posterior`, a `nsamples × nparams` matrix of
+**equally weighted** samples whichever backend produced them.
+
+`nested_backend()` reports which sampler will run and `set_nested_backend!` chooses between
+them when both are loaded. With both available it is worth running each once: `logz` from the
+two should agree within `logzerr`, and if it does not, one of the runs has not converged.
+
+```julia
+using OITOOLS, NestedSamplers, PythonCall     # both backends
+
+rj = fit_model_nested(model_dict, list_free_params, data; lb, ub, backend = :nestedsamplers)
+ru = fit_model_nested(model_dict, list_free_params, data; lb, ub, backend = :ultranest)
+abs(rj.logz - ru.logz) <= 3 * sqrt(rj.logzerr^2 + ru.logzerr^2)   # they should agree
+```
+
+`fit_model_ultranest` remains as an alias pinning `backend = :ultranest`.
 
 ## Inspecting results
 

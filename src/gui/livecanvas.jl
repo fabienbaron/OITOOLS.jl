@@ -570,7 +570,9 @@ function update_panels!(c::LiveCanvas, d, kind::Symbol)
         # Labels only on the edges, or every panel spends its width on repeated axis text.
         a.xlabel = (fld(k - 1, ncol) + 1 == nrow) ? pd.xlabel : ""
         a.ylabel = (mod(k - 1, ncol) == 0)        ? pd.ylabel : ""
-        c.panels.colors[k][]    = g.color
+        # `panel_data` hands back a colour NAME: it is toolkit-free, and turning one into a
+        # Makie colour is this layer's job.
+        c.panels.colors[k][]    = Makie.RGBAf(Makie.to_color(g.color))
         c.panels.points[k][]    = Makie.Point2f.(g.x, g.y)
         c.panels.errpoints[k][] = Makie.Point2f.(g.x, g.y)
         c.panels.errlow[k][]    = Float32.(g.err)

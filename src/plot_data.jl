@@ -1,17 +1,17 @@
-# Interactive plots, as Makie figures.
+# plot_data.jl -- what to draw, without saying how to draw it.
 #
-# These return a `Figure` and the per-point metadata a click should report. Makie supplies
-# everything the design would otherwise hand-roll — axes, ticks, legends, colorbars, log scales,
-# scroll-zoom and drag-pan — so this file is only about turning an `OIdata` into the right
-# marks. Hit-testing is not among them: `Makie.pick` needs a pick buffer that QMLMakie never
-# renders, so `shell_pick` searches the points directly.
+# The companion to oiplot_specs.jl, and here for the same reason: none of this touches a
+# plotting toolkit. It is the layer between an `OIdata` and a mark on a screen -- which arrays
+# feed which observable, how points are grouped and coloured, what a click on one should say,
+# and the typography every front-end has to match.
 #
-# Backend is chosen by the caller, and that is what keeps them testable: the GUI activates
-# GLMakie (through QMLMakie, whose `MakieArea` forwards mouse events into the scene), while
-# the tests activate CairoMakie and render to PNG with no GPU or display at all.
+# Keeping it in the core package is what lets three front-ends agree without loading each
+# other: the matplotlib extension, the Makie extension, and OITOOLSGUI's live canvas. A copy
+# per front-end is how they drift, and drift here means the same data reading differently on
+# screen and in a paper figure.
 #
-# Static publication figures still go through oiplot.jl's matplotlib functions — an exported
-# script must reproduce the exact figure a paper used, and that means matplotlib, not Makie.
+# The rule for what belongs here: if it names a colour it goes here, if it converts one to a
+# toolkit's colour type it does not.
 
 """
     PlotData(figure, axis, points, info)
@@ -26,15 +26,11 @@ struct PlotData
     info   :: Vector{String}
 end
 
-# oiplot.jl's palette, copied exactly (src/oiplot.jl `oiplot_colors`). NOT tab20 — an
-# earlier version of this file assumed tab20 and every baseline came out the wrong colour,
-# so the same data read differently on screen and in a paper figure.
-const OIPLOT_COLORS = [
-    "black", "gold", "chartreuse", "blue", "red", "pink", "lightgray", "darkorange",
-    "darkgreen", "aqua", "fuchsia", "saddlebrown", "dimgray", "darkslateblue", "violet",
-    "indigo", "navy", "dodgerblue", "sienna", "olive", "purple", "darkorchid", "tomato",
-    "darkturquoise", "steelblue", "seagreen", "darkgoldenrod", "darkseagreen",
-]
+# oiplot's palette, not a copy of it. This file used to hold its own list, and when an
+# earlier version assumed tab20 instead, every baseline came out the wrong colour -- the same
+# data reading differently on screen and in a paper figure. There is one list now, and
+# `oiplot_colors` in oiplot_specs.jl is it.
+const OIPLOT_COLORS = oiplot_colors
 
 # oiplot's error-bar colour and default marker, so the encoding matches end to end.
 const OIPLOT_ECOLOR = "gainsboro"
@@ -70,6 +66,20 @@ out of Makie's compute graph -- `Axis.xlabelfont`, the ticklabel fonts, and
 const PLOT_FONT = "DejaVu Sans"
 
 """
+The four faces a Makie `Figure` asks for, all of them [`PLOT_FONT`](@ref).
+
+`μ` and `°` are not in Makie's default face, so it fetches them from a fallback — and under
+QMLMakie a fallback glyph renders as overlapping strokes. Naming a face that has them means no
+fallback is consulted.
+
+Applied through `Figure(fonts = PLOT_FONTS)` at construction. Every per-attribute route
+(`Axis.xlabelfont`, the ticklabel fonts, `Colorbar.ticklabelfont`) throws `Failed to resolve
+data_boundingbox` out of Makie's compute graph instead, before and after the first plot alike.
+"""
+const PLOT_FONTS = (regular = PLOT_FONT, bold = PLOT_FONT,
+                    italic = PLOT_FONT, bold_italic = PLOT_FONT)
+
+"""
 Every character the GUI's Makie labels can contain.
 
 Text that reaches the atlas AFTER the Qt window exists renders corrupted -- glyphs come out
@@ -100,146 +110,6 @@ const PLOT_GLYPHS = Char[
     '°', '²', '³', '±', '×', '·', '—', '–', '…', '≤', '≥', '≈',
     'ᵣ', '₀', '₁', '₂', '\u2212',                    # subscripts and the Unicode MINUS SIGN
 ]
-
-"""
-    prewarm_glyphs!(fonts = PLOT_FONTS) -> Int
-
-Insert every glyph in [`PLOT_GLYPHS`](@ref) into Makie's texture atlas, and return how many
-insertions were made. **Call before the first `Figure` exists**, and call it as a statement:
-
-    prewarm_glyphs!()
-
-NOT inside a `@debug`/`@info` string. Julia's logging macros do not evaluate their
-interpolations when the level is disabled, so `@debug "\$(prewarm_glyphs!())"` silently never
-runs -- which is exactly how the first version of this shipped doing nothing.
-
-Missing glyphs are skipped rather than thrown: a font without `≥` should cost that one
-character, not the window.
-"""
-function prewarm_glyphs!(fonts = PLOT_FONTS)
-    # A warmed atlas is worth keeping. Rasterising is a signed-distance field per glyph --
-    # measured at ~23 ms each, so 121 of them cost 2.4 s of every launch, before the first
-    # plot. Storing the result and loading it back costs 0.02 s.
-    #
-    # The cache is keyed on the glyph set AND the Makie version, because it is Makie's own
-    # binary format: a stale file after an upgrade would be silently wrong, and silently wrong
-    # here means the corrupted glyphs this function exists to prevent. Anything unexpected
-    # falls through to rasterising, which is always correct if slower.
-    cache = _glyph_cache_path()
-    if cache !== nothing && isfile(cache)
-        try
-            Makie.TEXTURE_ATLASES[(ATLAS_RESOLUTION, ATLAS_PIX_PER_GLYPH)] =
-                Makie.load_texture_atlas(cache)
-            return 0
-        catch
-            rm(cache; force = true)
-        end
-    end
-
-    atlas = Makie.get_texture_atlas()
-    n = 0
-    for name in unique(values(fonts))
-        font = try
-            Makie.to_font(name)
-        catch
-            continue
-        end
-        for c in PLOT_GLYPHS
-            try
-                Makie.insert_glyph!(atlas, c, font)
-                n += 1
-            catch
-                # A glyph this face does not have. Makie falls back when it is drawn.
-            end
-        end
-    end
-    if cache !== nothing
-        try
-            mkpath(dirname(cache))
-            Makie.store_texture_atlas(cache, atlas)
-        catch
-            # A cache that cannot be written costs 2.4 s next launch and nothing else.
-        end
-    end
-    return n
-end
-
-"The atlas `get_texture_atlas()` returns by default, and the key it is stored under."
-const ATLAS_RESOLUTION    = 2048
-const ATLAS_PIX_PER_GLYPH = 64
-
-"""
-Where the warmed glyph atlas is cached, or `nothing` if there is nowhere to put it.
-
-Keyed on the glyph set and the Makie version: the file is Makie's own binary format, so one
-written by a different version — or covering a different set of characters — must not be
-loaded. A wrong atlas does not fail loudly; it draws wrong glyphs.
-"""
-function _glyph_cache_path()
-    base = Sys.iswindows() ? get(ENV, "LOCALAPPDATA", get(ENV, "APPDATA", "")) :
-           get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
-    isempty(base) && return nothing
-    key = string(hash((PLOT_GLYPHS, PLOT_FONT, string(pkgversion(Makie)),
-                       ATLAS_RESOLUTION, ATLAS_PIX_PER_GLYPH)); base = 16)
-    return joinpath(base, "oitools", "glyph_atlas_$(key).bin")
-end
-
-"""
-    style_axis!(ax; scale = 1.0)
-
-Apply oiplot's typography to a Makie axis.
-
-`scale` multiplies every size. It defaults to 1.0, which is oiplot's measured 12 pt and what
-the port harness compares against; the live GUI passes something larger, because a figure
-sized for a paper column is not sized for a window across the room.
-"""
-function style_axis!(ax; scale::Real = 1.0)
-    ax.xlabelsize[] = OIPLOT_LABELSIZE * scale
-    ax.ylabelsize[] = OIPLOT_LABELSIZE * scale
-    ax.titlesize[]  = OIPLOT_LABELSIZE * scale
-    ax.xticklabelsize[] = OIPLOT_TICKLABELSIZE * scale
-    ax.yticklabelsize[] = OIPLOT_TICKLABELSIZE * scale
-    # Makie defaults to ~3 ticks where matplotlib gives ~10; without this the axes read very
-    # differently even though the data is identical.
-    ax.xticks[] = Makie.LinearTicks(OIPLOT_XTICKS)
-    ax.yticks[] = Makie.LinearTicks(OIPLOT_XTICKS)
-    # Restore Makie's own 5% headroom, which something else on this axis has taken away.
-    #
-    # `build_canvas` pre-creates a hidden heatmap for the Image perspective, and image-like
-    # plots declare a zero autolimit margin -- an image wants no padding around it. The axis
-    # adopts that for EVERY plot on it, so the scatter views ended up with limits sitting
-    # exactly on the data and the outermost points bisected by the frame. Worse, the limit is
-    # stored as Float32 and can round just inside a Float64 datum, which put two uv points
-    # outside the axis entirely. Set on every redraw, because that is when it matters.
-    ax.xautolimitmargin[] = (0.05f0, 0.05f0)
-    ax.yautolimitmargin[] = (0.05f0, 0.05f0)
-    return ax
-end
-
-"""
-    add_baseline_legend!(figure, axis, names; col = 2)
-
-Legend with one entry per baseline group, in oiplot's order, colours, font size and column
-count. `uvplot` and the observable plots both draw one; a port without it looks materially
-different from the published figure.
-"""
-function add_baseline_legend!(fig, ax, names;
-                             size::Real = OIPLOT_LEGEND_SIZE,
-                             ncol::Integer = OIPLOT_LEGEND_NCOL,
-                             below::Bool = false)
-    cmap   = baseline_color_map(names)
-    groups = sort(unique(names))
-    elems  = [Makie.MarkerElement(color = cmap[g], marker = OIPLOT_MARKER, markersize = 8)
-              for g in groups]
-    slot = below ? fig[2, 1] : fig[1, 2]
-    block = Makie.Legend(slot, elems, groups;
-                         labelsize = size, nbanks = ncol, framevisible = true,
-                         orientation = below ? :horizontal : :vertical)
-    # `block` is returned so a redraw can remove the previous legend; without it every
-    # replot stacks another one into the layout.
-    return (haslegend = true, nlegend = length(groups),
-            legendsize = Float64(size), legendncol = Int(ncol), block = block)
-end
 
 """
     baseline_color_map(names) -> Dict{String,String}
@@ -364,7 +234,8 @@ end
 """
     panel_data(d, kind; color = nothing) -> (; panels, xlabel, ylabel, grouping)
 
-One entry of `panels` per group, each `(; name, x, y, err, color)` with `x` in μm.
+One entry of `panels` per group, each `(; name, x, y, err, color)` with `x` in μm and
+`color` a colour NAME — converting it to a toolkit's colour type is the drawing layer's job.
 
 Against WAVELENGTH always, whatever the observable's usual x axis is. That is the point of the
 view: a baseline's spectrum is what shows a line, or a slope that says the calibration drifted,
@@ -392,8 +263,7 @@ function panel_data(d, kind::Symbol; color = nothing)
         # order the rows happen to sit in the table.
         perm = sortperm(lam[idx])
         k = idx[perm]
-        push!(panels, (; name = g, x = lam[k], y = y[k], err = e[k],
-                         color = Makie.RGBAf(Makie.to_color(cmap[g]))))
+        push!(panels, (; name = g, x = lam[k], y = y[k], err = e[k], color = cmap[g]))
     end
     return (; panels, xlabel = "λ (μm)", ylabel = spec.ylabel,
               grouping = grouping_noun(kind))
@@ -498,171 +368,3 @@ function uv_point_labels(d)
     end
     return names, info
 end
-
-"""
-    draw!(figure, axis, data, kind; color, conjugate, logscale, markersize, extras) -> (plot, info)
-
-**The single drawing implementation.** Everything else here is a wrapper.
-
-`kind` is `:uv` or any key of `OBS_SPECS`. The axis is cleared and redrawn in place; `extras`
-is a vector of legend/colorbar blocks belonging to previous draws, which are removed first.
-
-One implementation, so what the harness tests is what ships. A second copy for the shell
-would be free to lose the equal-aspect ratio or the legend without any test noticing.
-"""
-function draw!(fig, ax, d, kind::Symbol;
-               color::Union{Nothing,Symbol} = nothing, conjugate::Bool = true,
-               logscale::Bool = false, markersize::Union{Nothing,Real} = nothing,
-               extras::Vector{Any} = Any[])
-    for b in extras
-        try; Makie.delete!(b); catch; end
-    end
-    empty!(extras)
-    Makie.empty!(ax)
-
-    if kind === :uv
-        color = color === nothing ? :baseline : color
-        names, info = uv_point_labels(d)
-        u = Float64.(d.uv[1, :]) ./ 1e6
-        v = Float64.(d.uv[2, :]) ./ 1e6
-        x, y, inf = conjugate ? (vcat(u, -u), vcat(v, -v), vcat(info, info)) : (u, v, info)
-
-        c = if color === :baseline
-                cmap = baseline_color_map(names)
-                cols = [cmap[n] for n in names]
-                conjugate ? vcat(cols, cols) : cols
-            elseif color === :wav
-                w = Float64.(d.uv_lam) .* 1e6
-                conjugate ? vcat(w, w) : w
-            elseif color === :mjd
-                m = Float64.(d.uv_mjd)
-                conjugate ? vcat(m, m) : m
-            else
-                "#1f77b4"
-            end
-
-        ax.xlabel[] = "U (Mλ)"
-        ax.ylabel[] = "V (Mλ)"
-        ax.title[]  = "uv coverage — " * basename(d.filename)
-        # Equal aspect is not cosmetic: without it the baselines are sheared and the coverage
-        # is misread. Losing this in the shell's copy is what made the plot non-isotropic.
-        ax.aspect[] = Makie.DataAspect()
-        ax.yscale[] = identity
-        style_axis!(ax)
-
-        p = Makie.scatter!(ax, x, y; color = c, marker = OIPLOT_MARKER,
-                           markersize = something(markersize, 6))
-        if color === :wav || color === :mjd
-            push!(extras, Makie.Colorbar(fig[1, 2], p;
-                                         label = color === :wav ? "λ (μm)" : "MJD"))
-        else
-            push!(extras, add_baseline_legend!(fig, ax, names;
-                                               size = UVPLOT_LEGEND_SIZE,
-                                               ncol = UVPLOT_LEGEND_NCOL, below = true).block)
-        end
-        return p, inf
-    end
-
-    spec = get(OBS_SPECS, kind, nothing)
-    spec === nothing && throw(ArgumentError(
-        "unknown plot $(repr(kind)); use :uv or one of $(sort(collect(keys(OBS_SPECS))))"))
-    color = color === nothing ? spec.default_color : color
-
-    # plot_visphi has TWO layouts. With phityp="differential" oiplot draws a paginated grid,
-    # one panel per baseline, against wavelength — not this plot. Refusing is honest:
-    # silently drawing the absolute layout would look right and be a different figure.
-    if kind === :visphi && occursin("differential", lowercase(String(d.phityp)))
-        throw(ArgumentError(
-            "this dataset has phityp=\"differential\": its phase is measured against the " *
-            "other channels, so it belongs against WAVELENGTH — use the `diffphi` view."))
-    end
-
-    names = group_names(d, spec)
-    x = Float64.(getfield(d, spec.x)) .* spec.xscale
-    y = Float64.(getfield(d, spec.y))
-    e = Float64.(getfield(d, spec.yerr))
-    isempty(x) && throw(ArgumentError("no $(kind) data in $(basename(d.filename))"))
-    info = [obs_info(d, spec, i, names) for i in eachindex(x)]
-    c    = _colors_for(d, color, names, spec)
-
-    ax.xlabel[] = spec.xlabel
-    ax.ylabel[] = spec.ylabel
-    ax.title[]  = string(kind) * " — " * basename(d.filename)
-    ax.aspect[] = nothing                     # only uv coverage is isotropic
-    style_axis!(ax)
-
-    if logscale
-        # Non-positive points are dropped, matching matplotlib under `set_yscale("log")` —
-        # which is what oiplot's `logplot=true` produces, and what the port tests compare
-        # against. The lower whisker of a surviving point can still reach below zero, and
-        # Makie transforms the bar's bounding box, so that one is truncated at the axis floor.
-        keep = [isfinite(v) && v > 0 for v in y]
-        any(keep) || throw(ArgumentError(
-            "cannot use a log scale: no positive $(kind) values in $(basename(d.filename))"))
-        x, y, e, c, info = x[keep], y[keep], e[keep], c[keep], info[keep]
-        floorv = minimum(y) / 10
-        Makie.errorbars!(ax, x, y, y .- max.(y .- e, floorv), e; color = OIPLOT_ECOLOR)
-    else
-        Makie.errorbars!(ax, x, y, e; color = OIPLOT_ECOLOR)
-    end
-    p = Makie.scatter!(ax, x, y; color = c, marker = OIPLOT_MARKER,
-                       markersize = something(markersize, 7))
-    # Log scale is applied AFTER plotting, and only with limits that are valid for it.
-    # V² contains zeros, and Makie validates limits against the scale the moment it is set:
-    # `Invalid y-limits (0.0, 10.0) for scale log10`. matplotlib simply omits non-positive
-    # points, so do the same rather than refuse a plot the user can legitimately ask for.
-    if logscale
-        lo, hi = extrema(y)
-        Makie.ylims!(ax, lo / 2, hi * 2)
-        ax.yscale[] = log10
-        # LinearTicks on a log axis bunches every label into the top decade; see livecanvas.jl.
-        ax.yticks[] = Makie.LogTicks(Makie.LinearTicks(OIPLOT_XTICKS))
-    else
-        ax.yscale[] = identity
-    end
-
-    if color === :wav || color === :mjd
-        push!(extras, Makie.Colorbar(fig[1, 2], p;
-                                     label = color === :wav ? "λ (μm)" : "MJD"))
-    else
-        push!(extras, add_baseline_legend!(fig, ax, names).block)
-    end
-    return p, info
-end
-
-"""
-    uv_figure(data; color = :baseline, conjugate = true) -> PlotData
-
-uv coverage in a fresh figure. Draws **every** uv point — V² baselines and closure-triangle
-legs alike — which is what `uvplot` shows and what the coverage actually is.
-"""
-function uv_figure(d; color::Symbol = :baseline, conjugate::Bool = true, markersize::Real = 6)
-    fig = Makie.Figure()
-    ax  = Makie.Axis(fig[1, 1])
-    p, info = draw!(fig, ax, d, :uv; color = color, conjugate = conjugate,
-                    markersize = markersize)
-    return PlotData(fig, ax, p, info)
-end
-
-"""
-    observable_figure(data, which; color = nothing, logscale = false) -> PlotData
-
-An observable against its natural x axis, in a fresh figure. `which` is any key of
-`OBS_SPECS`. `color = nothing` uses that observable's own oiplot default.
-"""
-function observable_figure(d, which::Symbol = :v2; color::Union{Nothing,Symbol} = nothing,
-                           logscale::Bool = false, markersize::Real = 7)
-    fig = Makie.Figure()
-    ax  = Makie.Axis(fig[1, 1])
-    p, info = draw!(fig, ax, d, which; color = color, logscale = logscale,
-                    markersize = markersize)
-    return PlotData(fig, ax, p, info)
-end
-
-"""
-    plot_into!(figure, axis, data, kind; kwargs...) -> (plot, info)
-
-Redraw an existing axis — what the shell uses. A thin alias for [`draw!`](@ref) so the shell
-and the figure builders cannot drift apart again.
-"""
-plot_into!(fig, ax, d, kind::Symbol; kwargs...) = draw!(fig, ax, d, kind; kwargs...)

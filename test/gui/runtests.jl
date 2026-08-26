@@ -148,7 +148,10 @@ end
 @testset "Makie plots" begin
     # CairoMakie so the figures render with no GPU and no display: the GUI uses GLMakie
     # through QMLMakie, but the *content* of a figure is identical either way.
-    using .GUI: baseline_names, PlotData
+    using .GUI: baseline_names
+    # The Makie API is the core package's now: OITOOLSMakieExt fills stubs declared there.
+    using OITOOLS: PlotData, imdisp_makie, imdisp_multi_makie, plot_residuals_makie,
+                   plot_obs_makie, plot_v2_multifile_makie, plot_facility_makie
 
     s = Session()
     load_dataset!(s, MONO; warn = false, verbose = false)
@@ -214,8 +217,8 @@ end
         @test occursin(string(round(b, digits = 2)), i)
     end
 
-    @testset "uv_figure" begin
-        pd = uv_figure(d)
+    @testset "uvplot_makie" begin
+        pd = uvplot_makie(d)
         @test pd isa PlotData
         # every uv point is drawn (V² baselines AND closure legs), not just the V² subset
         @test length(pd.info) == 2 * d.nuv
@@ -231,29 +234,146 @@ end
 
         # colour modes
         for m in (:baseline, :wav, :mjd, :none)
-            @test uv_figure(d; color = m) isa PlotData
+            @test uvplot_makie(d; color = m) isa PlotData
         end
-        @test length(uv_figure(d; conjugate = false).info) == d.nuv
+        @test length(uvplot_makie(d; conjugate = false).info) == d.nuv
     end
 
-    @testset "observable_figure" begin
+    @testset "plot_observable_makie" begin
         for w in (:v2, :t3phi, :t3amp)
-            pd = observable_figure(d, w)
+            pd = plot_observable_makie(d, w)
             @test pd isa PlotData
             p = tempname() * ".png"
             Makie.save(p, pd.figure)
             @test filesize(p) > 5000
         end
-        @test_throws ArgumentError observable_figure(d, :nonsense)
+        @test_throws ArgumentError plot_observable_makie(d, :nonsense)
         # log scale is an axis option, not a reimplementation
-        pd = observable_figure(d, :v2; logscale = true)
+        pd = plot_observable_makie(d, :v2; logscale = true)
         @test pd.axis.yscale[] === log10
     end
 
     @testset "figures are built from the data, not hardcoded" begin
-        pd = observable_figure(d, :v2)
+        pd = plot_observable_makie(d, :v2)
         @test length(pd.info) == d.nv2
         @test occursin(basename(d.filename), pd.axis.title[])
+    end
+
+    # ── the ports of oiplot's remaining figures ──────────────────────────────
+    #
+    # These are the Makie counterparts of `imdisp`, `imdisp_multi` and `plot_residuals`. They
+    # exist so that a build without PythonPlot -- a PackageCompiler sysimage, or anyone who
+    # simply has not installed matplotlib -- can still draw them.
+
+    @testset "imdisp_makie" begin
+        img = [exp(-((i - 32)^2 + (j - 32)^2) / 50) for i in 1:64, j in 1:64]
+        pd = imdisp_makie(img; pixsize = 0.25)
+        @test pd isa PlotData
+        @test pd.axis.aspect[] == 1
+
+        # East LEFT: the x limits run from positive to negative, which is Monnier's
+        # orientation and what `imdisp` draws. Getting this backwards mirrors every
+        # reconstruction, and nothing else in the figure would look wrong.
+        lo, hi = pd.axis.finallimits[].origin[1], pd.axis.finallimits[].widths[1]
+        @test occursin("← E", pd.axis.xlabel[])
+        @test occursin("→ N", pd.axis.ylabel[])
+
+        # A flat vector of nx² pixels is the other shape `imdisp` takes
+        @test imdisp_makie(vec(img); pixsize = 0.25) isa PlotData
+        @test_throws ErrorException imdisp_makie(rand(63))     # not square
+
+        # pixsize <= 0 labels in pixels rather than inventing a scale
+        @test occursin("pixels", imdisp_makie(img).axis.xlabel[])
+
+        # An all-zero image is drawn rather than divided by roughly zero
+        @test imdisp_makie(zeros(8, 8); pixsize = 0.1) isa PlotData
+    end
+
+    @testset "imdisp_multi_makie" begin
+        img  = [exp(-((i - 16)^2 + (j - 16)^2) / 20) for i in 1:32, j in 1:32]
+        cube = cat(img, img .* 0.4, img .* 0.1; dims = 3)
+        pd = imdisp_multi_makie(cube; pixsize = 0.25)
+        @test length(pd.axis) == 3
+
+        # Per-panel normalisation is `imdisp_multi`'s behaviour: every panel peaks at 1, which
+        # is why the panels are NOT comparable in brightness.
+        @test imdisp_multi_makie(cube; labels = ["a", "b", "c"]) isa PlotData
+        @test_throws ArgumentError imdisp_multi_makie(cube; labels = ["a"])
+        # shared_scale is the opt-out, for when the comparison is the point
+        @test imdisp_multi_makie(cube; shared_scale = true) isa PlotData
+    end
+
+    @testset "plot_residuals_makie" begin
+        md = Dict{String,Any}("s,ud" => 6.8, "s,f" => 1.0)
+        fm = dict_to_model(md, ["s,ud"])
+        pd = plot_residuals_makie(fm, [6.8], d)
+        @test pd isa PlotData
+        # Two panels per observable present, data over residual
+        nobs = (d.nv2 > 0) + (d.nt3amp > 0) + (d.nt3phi > 0) +
+               (d.nvisamp > 0) + (d.nvisphi > 0)
+        @test length(pd.axis) == 2 * nobs
+        @test all(c -> plot_residuals_makie(fm, [6.8], d; color = c) isa PlotData,
+                  (:baseline, :wav, :mjd))
+
+        # A phase residual is wrapped before it is divided by σ. Without that a model 359°
+        # from the data reads as a huge outlier instead of the 1° agreement it is.
+        # `RESIDUAL_KINDS`/`PHASE_KINDS` belong to OITOOLSMakieExt, so they are reached the
+        # way this file reaches any extension internal.
+        MK = Base.get_extension(OITOOLS, :OITOOLSMakieExt)
+        @test OITOOLS.mod360([359.0])[1] ≈ -1.0 atol = 1e-9
+        @test :t3phi_max in MK.PHASE_KINDS
+        @test :visphi in MK.PHASE_KINDS
+        @test !(:v2 in MK.PHASE_KINDS)
+
+        # Closure residuals go against the LONGEST leg, not the geometric mean — the same
+        # choice `plot_residuals` makes, and a visibly different x axis if it is missed.
+        @test OITOOLS.OBS_SPECS[:t3phi_max].x === :t3_maxbaseline
+        @test any(kf -> kf[1] === :t3phi_max, MK.RESIDUAL_KINDS)
+    end
+
+    @testset "plot_obs_makie, plot_v2_multifile_makie, plot_facility_makie" begin
+        pd = plot_obs_makie(d)
+        nobs = (d.nv2 > 0) + (d.nt3amp > 0) + (d.nt3phi > 0) +
+               (d.nvisamp > 0) + (d.nvisphi > 0) + (d.nflux > 0)
+        @test length(pd.axis) == nobs
+        # Only the bottom panel keeps its x label; repeating it per panel is what makes a
+        # stacked figure unreadable.
+        @test isempty(pd.axis[1].xlabel[])
+        @test !isempty(pd.axis[end].xlabel[])
+        @test plot_obs_makie(d; kinds = [:v2]) isa PlotData
+        @test_throws ArgumentError plot_obs_makie(d; kinds = Symbol[])
+
+        # One legend entry per baseline across every file, not one per file
+        m = plot_v2_multifile_makie([d, d])
+        @test m isa PlotData
+        @test occursin("2 files", m.axis.title[])
+
+        f = plot_facility_makie(read_facility_file("CHARA"))
+        @test f isa PlotData
+        # Equal aspect: an array on unequal axes misreports which baselines are long.
+        @test f.axis.aspect[] isa Makie.DataAspect
+    end
+
+    @testset "a log y axis survives non-positive data" begin
+        # Real V² contains negative values from noise. matplotlib omits them silently; Makie
+        # throws a DomainError out of the RENDER, which surfaces at `save` rather than at the
+        # call. Every figure with a log option therefore has to drop those points AND clamp the
+        # lower error whisker, which can go negative even for a positive point. Both were
+        # missed on the first pass here, and neither shows up until the figure is saved.
+        # A fixture that actually contains non-positive V². The one this file loads by default
+        # does not, and a log-axis test on all-positive data proves nothing.
+        dn = readoifits(joinpath(@__DIR__, "..", "oifits_for_tests", "polaris.oifits");
+                        warn = false, verbose = false)[1, 1]
+        @test any(v -> v <= 0, dn.v2)
+        out = joinpath(mktempdir(), "log.png")
+        for p in (plot_observable_makie(dn, :v2; logscale = true),
+                  plot_obs_makie(dn; logscale = true),
+                  plot_v2_multifile_makie([dn, dn]; logscale = true))
+            @test (Makie.save(out, p.figure); filesize(out) > 1000)
+        end
+        md = Dict{String,Any}("s,ud" => 1.5, "s,f" => 1.0)
+        pr = plot_residuals_makie(dict_to_model(md, ["s,ud"]), [1.5], dn; logscale = true)
+        @test (Makie.save(out, pr.figure); filesize(out) > 1000)
     end
 end
 
@@ -275,7 +395,7 @@ end
     @testset "uvplot" begin
         names = GUI.uv_point_labels(d)[1]
         ref = oiplot_ref(() -> uvplot(d))
-        got = makie_ref(uv_figure(d); colors = makie_color_map(names),
+        got = makie_ref(uvplot_makie(d); colors = makie_color_map(names),
                         legend = (haslegend = true, nlegend = length(unique(names)),
                                   legendsize = 10.0, legendncol = 5))
         diffs = compare_plots(ref, got; tickslack = TICKSLACK)
@@ -296,7 +416,7 @@ end
             spec  = GUI.OBS_SPECS[kind]
             names = GUI.group_names(d, spec)
             ref = oiplot_ref(mplfn)
-            got = makie_ref(observable_figure(d, kind); colors = makie_color_map(names),
+            got = makie_ref(plot_observable_makie(d, kind); colors = makie_color_map(names),
                             legend = (haslegend = true, nlegend = length(unique(names)),
                                       legendsize = 8.0, legendncol = 4))
             diffs = compare_plots(ref, got; tickslack = TICKSLACK)
@@ -325,7 +445,7 @@ end
                       (haslegend = true, nlegend = length(unique(names)),
                        legendsize = 8.0, legendncol = 4)
                 ref = oiplot_ref(mplfn)
-                got = makie_ref(observable_figure(dp, kind);
+                got = makie_ref(plot_observable_makie(dp, kind);
                                 colors = makie_color_map(names), legend = leg)
                 diffs = compare_plots(ref, got; tickslack = TICKSLACK)
                 isempty(diffs) || @info "$kind port differences" diffs
@@ -337,7 +457,7 @@ end
             # layout is not ported, and drawing the absolute one instead would look right and
             # be a different figure — so the port refuses.
             if occursin("differential", lowercase(String(dp.phityp)))
-                @test_throws ArgumentError observable_figure(dp, :visphi)
+                @test_throws ArgumentError plot_observable_makie(dp, :visphi)
             end
         else
             @test_skip "polychromatic test data not present"
@@ -348,7 +468,7 @@ end
 
 @testset "the shell's drawing path" begin
     # These three bugs all shipped because the shell called plot_into! while the port harness
-    # tested uv_figure/observable_figure — two implementations, only one of them checked:
+    # tested uvplot_makie/plot_observable_makie — two implementations, only one of them checked:
     #   * the uv plot was not isotropic (no DataAspect)
     #   * it had no legend
     #   * choosing a colour mode threw a MethodError and killed the application
@@ -693,10 +813,10 @@ end
     include(joinpath(@__DIR__, "test_gantt.jl"))     # the Gantt port vs its oiplot original
 
     @testset "the shell path and the figure builders agree" begin
-        # Same implementation, so the harness result for uv_figure applies to the shell too.
+        # Same implementation, so the harness result for uvplot_makie applies to the shell too.
         fig = Makie.Figure(); ax = Makie.Axis(fig[1, 1]); extras = Any[]
         p_shell, info_shell = plot_into!(fig, ax, d, :v2; extras = extras)
-        pd = observable_figure(d, :v2)
+        pd = plot_observable_makie(d, :v2)
         @test info_shell == pd.info
         @test ax.xlabel[] == pd.axis.xlabel[]
         @test ax.ylabel[] == pd.axis.ylabel[]

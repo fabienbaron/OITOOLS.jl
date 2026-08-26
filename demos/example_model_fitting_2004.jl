@@ -1,6 +1,9 @@
 # Model fitting example: multiple components
 # Trying to model-fit the 2004 Beauty Contest data set
 using OITOOLS
+# Activates the pure-Julia nested sampler that `fit_model_nested` runs. `using
+# PythonCall` instead would select the UltraNest backend.
+using NestedSamplers
 
 data = readoifits("./data/2004-data1.oifits")[1,1];
 
@@ -32,7 +35,7 @@ ub = Dict("star,f" => 1.0, "ring,fwhmin" => 10.0, "ring,fwhmout" => 20.0)
 display_model(model_dict, list_free_params; lb=lb, ub=ub)
 
 # UltraNest nested sampling for robust posterior exploration
-result = fit_model_ultranest(model_dict, list_free_params, data;
+result = fit_model_nested(model_dict, list_free_params, data;
     lb=lb, ub=ub,
     min_num_live_points=400, cluster_num_live_points=200)
 

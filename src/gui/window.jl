@@ -3,20 +3,6 @@
 # Split from the rest of src/gui/ because everything else describes what to draw, while this
 # builds the thing that draws it and hands control to Qt's event loop.
 
-"""
-Font set every figure in the window is built with.
-
-`μ` and `°` are not in Makie's default face, so it fetches them from a fallback -- and under
-QMLMakie a fallback glyph renders as overlapping strokes. Naming a face that has them means no
-fallback is consulted. Set at Figure construction because every per-attribute route
-(`Axis.xlabelfont`, the ticklabel fonts, `Colorbar.ticklabelfont`) throws `Failed to resolve
-data_boundingbox` out of Makie's compute graph, before and after the first plot alike.
-
-See `PLOT_FONT` in src/gui/plots.jl for the measurements behind the choice.
-"""
-const PLOT_FONTS = (regular = PLOT_FONT, bold = PLOT_FONT,
-                    italic = PLOT_FONT, bold_italic = PLOT_FONT)
-
 function __init__()
     # Callbacks must be registered before any QML file that calls them is loaded.
     QML.@qmlfunction(shell_open, shell_set_view, shell_select_dataset,
@@ -37,7 +23,7 @@ function __init__()
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component,
-                     shell_chi2_map_info, shell_free_names,
+                     shell_chi2_map_info, shell_free_names, shell_nested_backend,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on

@@ -15,6 +15,10 @@ ENV["MPLBACKEND"] = "Agg"          # must be set before the plotting stack initi
 
 using OITOOLS, Test, Statistics
 using PythonPlot          # activates OITOOLSPythonPlotExt: plotting lives there now
+# PythonCall directly, not through OITOOLS: it is a weak dependency of the package, reached
+# only by the plotting and UltraNest extensions, so `OITOOLS.PythonCall` does not exist.
+# PythonPlot depends on it, so the `using` above has already loaded it.
+using PythonCall
 
 # These tests run at any thread count on the current Python bridge (verified at 16). The
 # guard below only trips if the package is ever built against a thread-unsafe bridge, so a
@@ -100,21 +104,20 @@ else
     # green. The cases below are exactly the ones that fall through, so a re-pin to numpy < 2
     # fails here instead of silently in a downstream that plots polygons.
     @testset "numpy array protocol" begin
-        np = OITOOLS.PythonCall.pyimport("numpy")
-        @test parse(Int, OITOOLS.PythonCall.pyconvert(String, np.__version__.split(".")[0])) >= 2
+        np = pyimport("numpy")
+        @test parse(Int, pyconvert(String, np.__version__.split(".")[0])) >= 2
 
-        Py = OITOOLS.PythonCall.Py
-        A  = rand(3, 3)
+        A = rand(3, 3)
         for (what, x) in ("dense"         => A,
                           "adjoint view"  => A',
                           "nested vector" => [rand(3, 2), rand(3, 2)],
                           "Vector{Any}"   => Any[1.0, 2.0])
             @testset "$what" begin
-                @test np.asarray(Py(x)) isa OITOOLS.PythonCall.Py
+                @test np.asarray(Py(x)) isa Py
             end
         end
         # the protocol method itself, called the way a copy-aware numpy does
-        @test Py(A).__array__() isa OITOOLS.PythonCall.Py
+        @test Py(A).__array__() isa Py
     end
 
     # ── values coming back from Python must be Julia types ───────────────────
@@ -164,8 +167,8 @@ else
 
         # a PyArray batch — what UltraNest actually passes — must work, and must not be
         # read from a worker thread, so the values still have to match the serial path
-        Xpy = OITOOLS.PythonCall.PyArray(
-                  OITOOLS.PythonCall.pyimport("numpy").asarray(OITOOLS.PythonCall.Py(X)))
+        Xpy = PyArray(
+                  pyimport("numpy").asarray(Py(X)))
         @test Xpy isa AbstractMatrix
         @test OITOOLS._batch_loglike(f, Xpy) == f.(eachrow(X))
 
@@ -195,7 +198,7 @@ else
     @testset "UltraNest corner plot" begin
         # Asserted separately from the fit so a missing transitive dependency reports itself
         # as such, instead of as a failure somewhere inside fit_model_ultranest.
-        @test OITOOLS.PythonCall.pyimport("ultranest.plot") isa OITOOLS.PythonCall.Py
+        @test pyimport("ultranest.plot") isa Py
 
         md = Dict{String,Any}("s,ud" => 3.0, "s,f" => 1.0)
         _closeall()
@@ -204,8 +207,8 @@ else
                                 min_num_live_points = 120, verb = false, cornerplot = true)
         @test r.x_opt isa Vector{Float64}
         # cornerplot draws into a new figure; an empty figure list means it silently no-oped
-        @test OITOOLS.PythonCall.pyconvert(Int,
-                  OITOOLS.PythonCall.pylen(_PLT.get_fignums())) > 0
+        @test pyconvert(Int,
+                  pylen(_PLT.get_fignums())) > 0
         p = _savefig("ultranest_corner")
         _closeall()
         @test filesize(p) > 3000

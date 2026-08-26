@@ -31,6 +31,9 @@
 
 using OITOOLS
 using Printf, Statistics
+# The pure-Julia nested sampler. Add `using PythonCall` as well to have the
+# comparison below run UltraNest too and check the two against each other.
+using NestedSamplers
 
 const DATADIR = joinpath(@__DIR__, "data")
 const GAMMA   = 1.00481          # PIONIER wavelength scaling, Kervella+2017 Eq. 1
@@ -251,7 +254,7 @@ const STARS = [("AlphaCenA", 8.4), ("AlphaCenB", 5.9)]
 
 # Every fitting algorithm OITOOLS exposes. `x_opt` and `chi2` are common to all;
 # `sigma` is whatever independent uncertainty each one can produce (NLopt: none).
-function run_all_fitters(md, free, dat, lb, ub; run_ultranest=true)
+function run_all_fitters(md, free, dat, lb, ub; run_nested=true)
     out = Pair{String,Any}[]
 
     r = fit_model(md, free, dat; lb, ub, weights=V2ONLY)
@@ -266,11 +269,18 @@ function run_all_fitters(md, free, dat, lb, ub; run_ultranest=true)
     r = fit_model_lsqfit(md, free, dat; lb, ub, weights=V2ONLY)
     push!(out, "fit_model_lsqfit" => (x=r.x_opt, σ=r.stderror, chi2=r.chi2, chi2r=r.chi2r))
 
-    if run_ultranest
-        r = fit_model_ultranest(md, free, dat; lb, ub, weights=V2ONLY,
-                                min_num_live_points=400, verb=false, cornerplot=false)
-        push!(out, "fit_model_ultranest" => (x=r.x_opt, σ=vec(std(r.posterior, dims=1)),
-                                             chi2=r.chi2, chi2r=r.chi2r))
+    # Both nested samplers, whichever are loaded. Neither is a dependency of OITOOLS, so this
+    # asks rather than assumes -- and running both is the point: two independent samplers on
+    # one χ² surface either agree, or one of them has not converged.
+    if run_nested
+        for backend in (:nestedsamplers, :ultranest)
+            backend in OITOOLS.NESTED_BACKENDS_LOADED || continue
+            r = fit_model_nested(md, free, dat; backend, lb, ub, weights=V2ONLY,
+                                 verb=false, cornerplot=false)
+            push!(out, "fit_model_nested :$backend" =>
+                       (x=r.x_opt, σ=vec(std(r.posterior, dims=1)),
+                        chi2=r.chi2, chi2r=r.chi2r))
+        end
     end
     return out
 end
@@ -337,7 +347,7 @@ end
 # ===========================================================================
 #
 # The paper quotes σ_stat = ±0.006 mas on θ and ±0.0050 on α for α Cen A.
-# `fit_model_lsqfit` gets its σ from the Jacobian and `fit_model_ultranest` from the
+# `fit_model_lsqfit` gets its σ from the Jacobian and `fit_model_nested` from the
 # posterior; `bootstrap_fit` resamples the data instead, so it is the one estimate that
 # does not assume the χ² surface is quadratic near the minimum.
 
@@ -360,12 +370,12 @@ end
 # ===========================================================================
 
 println("\n" * "="^78)
-println("  UltraNest posterior — α Cen A, power law")
+println("  Nested sampling posterior — α Cen A, power law  ($(nested_backend()))")
 println("="^78)
 
-result_un = fit_model_ultranest(md_b, free_b, data;
+result_un = fit_model_nested(md_b, free_b, data;
     lb=lb_b, ub=ub_b, weights=V2ONLY,
-    min_num_live_points=400, verb=false, cornerplot=true)
+    verb=false, cornerplot=true)
 
 println(result_un)
 @printf("  θ_LD = %.4f (×γ = %.4f),  α = %.4f,  log(Z) = %.2f ± %.2f\n",

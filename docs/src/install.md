@@ -26,8 +26,8 @@ project-local environment the first time you `using OITOOLS`:
 
 | Package | Used by |
 |---|---|
-| matplotlib-base | `fit_model_ultranest`'s corner plot, and the plotting extension below |
-| ultranest | `fit_model_ultranest` |
+| matplotlib-base | the corner plot of a nested-sampling fit, and the plotting extension below |
+| ultranest | `fit_model_nested`'s `:ultranest` backend — optional; `NestedSamplers.jl` needs no Python |
 | scipy | imported at module level by `ultranest.plot` |
 
 `matplotlib-base`, not `matplotlib`: on conda-forge the latter is a metapackage adding

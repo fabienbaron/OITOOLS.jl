@@ -8,18 +8,31 @@ CI = get(ENV, "CI", nothing) == "true"
 # backend probe is also what used to map a conflicting Qt into the process.
 ENV["MPLBACKEND"] = get(ENV, "MPLBACKEND", "Agg")
 using Documenter, OITOOLS, PythonPlot
+# The Makie plotting API and the corner plot live in their own extensions, for the same reason
+# the matplotlib one does: `@docs` blocks naming their functions find nothing unless the module
+# that defines them exists.
+using CairoMakie, PairPlots
 
 const PLOTEXT = Base.get_extension(OITOOLS, :OITOOLSPythonPlotExt)
 PLOTEXT === nothing && error("OITOOLSPythonPlotExt did not load; plotting docs would be lost")
+const MAKIEEXT = Base.get_extension(OITOOLS, :OITOOLSMakieExt)
+MAKIEEXT === nothing && error("OITOOLSMakieExt did not load; the Makie plotting docs would be lost")
+const PAIREXT = Base.get_extension(OITOOLS, :OITOOLSPairPlotsExt)
+PAIREXT === nothing && error("OITOOLSPairPlotsExt did not load; corner_figure would be undocumented")
 
 makedocs(;
-    modules=[OITOOLS, PLOTEXT],
+    modules=[OITOOLS, PLOTEXT, MAKIEEXT, PAIREXT],
     sitename = "OITOOLS",
     checkdocs = :exports,
     doctest = false,
     format = Documenter.HTML(;
         prettyurls = CI,
         collapselevel = 2,
+        # api/modeling.md is a single page carrying the whole model-fitting API, docstrings
+        # included, and passes Documenter's 100 KiB advisory. Raised rather than split: the
+        # value of that page is that everything about fitting a model is on it. The hard
+        # threshold, the one that fails the build, stays at its 200 KiB default.
+        size_threshold_warn = 150 * 1024,
     ),
     authors = "Fabien Baron and contributors",
     pages = [

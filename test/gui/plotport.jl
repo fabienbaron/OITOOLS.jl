@@ -21,13 +21,14 @@
 #   5. Ship only when the unexplained list is empty.
 
 # PythonPlot activates OITOOLSPythonPlotExt, which is where uvplot/plot_v2/... now live.
-# OITOOLS still re-exports PythonCall's pyimport/pyconvert/pybuiltins (PythonCall remains a
-# hard dependency for UltraNest and SIMBAD), but `pyplot` came from oiplot.jl's
-# `using PythonPlot` and left with it -- so that one is taken from PythonPlot directly.
+# PythonCall is a weak dependency of OITOOLS, reached only by the plotting and UltraNest
+# extensions, so its bindings are taken from PythonCall itself rather than through OITOOLS.
+# PythonPlot depends on it, so one `using` brings both.
 using PythonPlot
+using PythonCall
 
-const _MPLCOLORS = OITOOLS.pyimport("matplotlib.colors")
-_hex(c) = lowercase(OITOOLS.pyconvert(String, _MPLCOLORS.to_hex(c)))
+const _MPLCOLORS = pyimport("matplotlib.colors")
+_hex(c) = lowercase(pyconvert(String, _MPLCOLORS.to_hex(c)))
 
 # oiplot writes axis labels as LaTeX (`M$\lambda$`), Makie takes Unicode. Compare the WORDS:
 # stripping the markup still catches "Baseline" vs "B/λ", which is the mistake worth catching,
@@ -62,8 +63,7 @@ Reading one alone returns something plausible and meaningless.
 """
 function oiplot_ref(f)
     pyplot    = PythonPlot.pyplot
-    pyconvert = OITOOLS.pyconvert
-    pybi      = OITOOLS.pybuiltins
+    pybi      = pybuiltins
     pyplot.close("all")
     f()
     ax = pyplot.gca()
@@ -98,7 +98,7 @@ function oiplot_ref(f)
 
     _try(g, default) = try; g(); catch; default; end
     leg = ax.get_legend()
-    haslegend = !OITOOLS.pyis(leg, pybi.None)
+    haslegend = !pyis(leg, pybi.None)
 
     ref = (points        = _canon(pts),
            colors        = colors,
@@ -255,7 +255,6 @@ many bars there are and in what order.
 """
 function mpl_gantt_bars(f)
     pyplot    = PythonPlot.pyplot
-    pyconvert = OITOOLS.pyconvert
     pyplot.close("all")
     f()
     ax = pyplot.gca()
@@ -274,7 +273,6 @@ end
 "Annotation strings from a matplotlib Gantt, in draw order."
 function mpl_gantt_texts(f)
     pyplot    = PythonPlot.pyplot
-    pyconvert = OITOOLS.pyconvert
     pyplot.close("all")
     f()
     ax = pyplot.gca()

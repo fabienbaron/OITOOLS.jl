@@ -119,7 +119,16 @@ Item {
     property string chi2MapP1: ""
     property string chi2MapP2: ""
 
+    // Which nested sampler is available, and what to call it. Empty when neither extension is
+    // loaded, which is what the entry is gated on.
+    property string nestedBackend: ""
+    property string nestedLabel: ""
+
     Component.onCompleted: {
+        var nb = Julia.shell_nested_backend().split("\t")
+        root.nestedBackend = nb[0]
+        root.nestedLabel   = nb.length > 1 ? nb[1] : ""
+
         var out = []
         var txt = Julia.shell_component_kinds()
         if (txt.length > 0) {
@@ -365,7 +374,8 @@ Item {
     property bool running: false
     property string statusText: "idle"
 
-    // UltraNest errors unless EVERY free parameter has finite bounds, so it is disabled with
+    // Nested sampling makes the bounds the prior, so every free parameter needs finite ones
+    // and both samplers error without them. The entry is therefore disabled with
     // the reason shown rather than after a long run. `atbound` is a different thing and does
     // not gate anything.
     readonly property bool allBoundsFinite: {
@@ -1328,13 +1338,13 @@ Item {
                                     Label {
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
-                                        color: root.optimiser === "lsqfit" || root.optimiser === "ultranest"
+                                        color: root.optimiser === "lsqfit" || root.optimiser === "nested"
                                                ? root.cWarn : "#666"
                                         font.pointSize: root.pt(root.baseFontPt - 2)
                                         // The difference is not a detail: a soft penalty can be
                                         // overruled by a steep enough χ², and then the fit reports a
                                         // number that is neither the constrained nor the free answer.
-                                        text: (root.optimiser === "lsqfit" || root.optimiser === "ultranest")
+                                        text: (root.optimiser === "lsqfit" || root.optimiser === "nested")
                                               ? "This fitter enforces constraints with a SOFT penalty — a " +
                                                 "steep χ² can overrule them. Use an NLopt optimiser for " +
                                                 "constraints that must hold."
@@ -1666,7 +1676,9 @@ Item {
                                         // for the top of the list.
                                         model: ["Levenberg-Marquardt  ·  lsqfit",
                                                 "Nelder-Mead  ·  derivative-free",
-                                                "Nested sampling  ·  UltraNest",
+                                                (root.nestedBackend.length > 0
+                                                 ? "Nested sampling  ·  " + root.nestedLabel
+                                                 : "Nested sampling  ·  unavailable"),
                                                 "Grid search  ·  two parameters, χ² map",
                                                 "──────────",
                                                 "L-BFGS  ·  gradient",
@@ -1677,9 +1689,22 @@ Item {
                                     }
 
                                     Label {
-                                        visible: root.optimiser === "ultranest" && !root.allBoundsFinite
+                                        visible: root.optimiser === "nested" && !root.allBoundsFinite
                                         text: "needs finite bounds on every free parameter"
                                         color: root.cBad
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                    // Same treatment the Image tab gives Pigeons and OIVI: an
+                                    // engine that cannot run is named along with what would
+                                    // make it run, rather than silently missing.
+                                    Label {
+                                        visible: root.nestedBackend.length === 0
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        text: "Nested sampling needs a sampler: start with " +
+                                              "`using NestedSamplers` (pure Julia) or " +
+                                              "`using PythonCall` (UltraNest)"
+                                        color: root.cWarn
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
 
@@ -1704,7 +1729,7 @@ Item {
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
                                     Label {
-                                        visible: root.uncertainty === "posterior" && root.optimiser !== "ultranest"
+                                        visible: root.uncertainty === "posterior" && root.optimiser !== "nested"
                                         text: "a posterior needs nested sampling"
                                         color: root.cWarn
                                         font.pointSize: root.pt(root.baseFontPt - 1)
@@ -2176,8 +2201,12 @@ Item {
     // Index 3 is the separator, which is not an optimiser: selecting it keeps whatever was
     // chosen before rather than silently switching to something else.
     function optimiserKey(i) {
-        var k = ["lsqfit", "LN_NELDERMEAD", "ultranest", "grid", "",
+        var k = ["lsqfit", "LN_NELDERMEAD", "nested", "grid", "",
                  "LD_LBFGS", "LD_MMA", "LD_SLSQP", "LN_COBYLA"][i]
+        // Nested sampling needs one of its two extensions loaded. Selecting it with neither
+        // would start a fit that cannot run, so the choice is refused and the previous
+        // optimiser kept -- the label beneath the box says why.
+        if (k === "nested" && root.nestedBackend.length === 0) return optimiser
         return (k === undefined || k.length === 0) ? optimiser : k
     }
 

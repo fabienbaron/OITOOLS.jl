@@ -1,8 +1,12 @@
 [deps]
+# CairoMakie activates OITOOLSMakieExt, whose docstrings document the Makie plotting API.
+# Cairo rather than GL: the docs build has no GPU and no display.
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
+PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
 
 # The Conda environment every project in this repo shares, at

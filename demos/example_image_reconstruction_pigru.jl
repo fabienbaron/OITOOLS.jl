@@ -2,6 +2,9 @@
 # Pi Gruis, monochromatic reconstruction
 #
 using OITOOLS
+# Activates the pure-Julia nested sampler that `fit_model_nested` runs. `using
+# PythonCall` instead would select the UltraNest backend.
+using NestedSamplers
 oifitsfile = "./data/pigru.oifits"
 pixsize = .5 # size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
@@ -22,7 +25,7 @@ lb = Dict("disc,ldquad" => 5.0, "disc,u1" => -1.0, "disc,u2" => -1.0)
 ub = Dict("disc,ldquad" => 30.0, "disc,u1" => 2.0, "disc,u2" => 1.0)
 
 # Global minimization
-result = fit_model_ultranest(model, free_params, data[1];
+result = fit_model_nested(model, free_params, data[1];
     lb=lb, ub=ub, weights=weights)
 println(result)
 

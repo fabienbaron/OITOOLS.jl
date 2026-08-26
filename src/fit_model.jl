@@ -17,7 +17,7 @@
 #   fit_model(model_dict, list_free_params, data; lb, ub, weights, priors, method, ...)
 #       → FitResult
 
-using NLopt, LsqFit, ForwardDiff, Printf, PythonCall, FFTW
+using NLopt, LsqFit, ForwardDiff, Printf, FFTW
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -565,13 +565,13 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# UltraNest result
+# Nested sampling result
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    UltraNestResult
+    NestedResult
 
-Result of [`fit_model_ultranest`](@ref).
+Result of [`fit_model_nested`](@ref), whichever sampler produced it.
 
 | field | type | meaning |
 |---|---|---|
@@ -579,17 +579,23 @@ Result of [`fit_model_ultranest`](@ref).
 | `list_free_params` | `Vector{String}` | parameter names, same order as `x_opt` |
 | `chi2`, `chi2r`, `ndof` | `Float64`, `Float64`, `Int` | chi² at `x_opt`, reduced chi², degrees of freedom |
 | `logz`, `logzerr` | `Float64` | Bayesian log-evidence and its uncertainty |
-| `posterior` | `Matrix{Float64}` | `(n_samples, n_params)` posterior samples |
-| `result` | `Any` | the raw UltraNest result object, passed through unconverted |
+| `posterior` | `Matrix{Float64}` | `(n_samples, n_params)` equally weighted posterior samples |
+| `result` | `Any` | the sampler's own result object, passed through unconverted |
 | `model` | `FlatModel` | the compiled model that was fitted |
+| `backend` | `Symbol` | which sampler produced this — `:nestedsamplers` or `:ultranest` |
 
-!!! note "`result` is a Python object"
+`backend` is not decoration. Two independent nested samplers agreeing on `logz` is evidence;
+one of them quoted without saying which is not, because the estimator, the bounding strategy
+and the stopping rule all differ between them.
 
-    `result` is a `PythonCall.Py` wrapping UltraNest's result dict, passed through without
-    conversion. Index it with `result["key"]` and convert explicitly with `pyconvert(T, …)`.
-    Every other field is a concrete Julia type — prefer those where they suffice.
+!!! note "`result` is backend-specific"
+
+    Under `:ultranest` it is a `PythonCall.Py` wrapping UltraNest's result dict — index it with
+    `result["key"]` and convert explicitly with `pyconvert(T, …)`. Under `:nestedsamplers` it
+    is the sampler state `NestedSamplers.sample` returned. Every other field is a concrete
+    Julia type and means the same thing either way; prefer those where they suffice.
 """
-struct UltraNestResult
+struct NestedResult
     x_opt       ::Vector{Float64}   # maximum-likelihood parameter values
     list_free_params  ::Vector{String}    # parameter names, same order as x_opt
     chi2        ::Float64           # chi2 at x_opt
@@ -598,13 +604,21 @@ struct UltraNestResult
     logz        ::Float64           # log-evidence
     logzerr     ::Float64           # log-evidence uncertainty
     posterior   ::Matrix{Float64}   # (n_samples, n_params) posterior samples
-    result      ::Any               # raw UltraNest result dict (a PythonCall `Py`)
+    result      ::Any               # the sampler's own result object
     model       ::FlatModel
+    backend     ::Symbol            # :nestedsamplers or :ultranest
 end
 
-function Base.show(io::IO, r::UltraNestResult)
-    @printf(io, "UltraNestResult: χ²r = %.4f  (chi2=%.2f, ndof=%d)\n",
-            r.chi2r, r.chi2, r.ndof)
+"""
+    UltraNestResult
+
+Alias for [`NestedResult`](@ref), so code written against the UltraNest-only API keeps working.
+"""
+const UltraNestResult = NestedResult
+
+function Base.show(io::IO, r::NestedResult)
+    @printf(io, "NestedResult (%s): χ²r = %.4f  (chi2=%.2f, ndof=%d)\n",
+            r.backend, r.chi2r, r.chi2, r.ndof)
     @printf(io, "  log(Z) = %.2f ± %.2f\n", r.logz, r.logzerr)
     for (i, p) in enumerate(r.list_free_params)
         samples = r.posterior[:, i]
@@ -616,343 +630,170 @@ function Base.show(io::IO, r::UltraNestResult)
 end
 
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# fit_model_ultranest — Bayesian nested sampling via UltraNest
+# Nested sampling backends
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# Two samplers implement the same fit, and neither is a dependency of the package:
+#
+#   :nestedsamplers   NestedSamplers.jl -- pure Julia, so it survives into a compiled build
+#   :ultranest        UltraNest         -- Python, reached through PythonCall
+#
+# `using` either one activates its extension, which registers the backend and adds a method to
+# `_fit_nested`. Keeping both is deliberate: an evidence estimate checked against a second,
+# independent implementation is the only cheap way to find out that one of them is wrong.
 
 """
-    fit_model_ultranest(model_dict, list_free_params, data; kwargs...) -> UltraNestResult
+The nested sampler [`fit_model_nested`](@ref) uses when no `backend` keyword is given.
 
-Fit a parametric model to interferometric data using UltraNest nested sampling.
-
-Requires the Python `ultranest` package (declared in CondaPkg.toml).
-
-# Arguments
-- `model_dict::Dict{String}` — flat parameter dictionary
-- `list_free_params::Vector{String}` — names of the free parameters
-- `data::OIdata` — interferometric data
-
-# Keywords
-- `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds (REQUIRED for all list_free_params)
-- `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
-- `vonmises` — use von Mises statistic for T3phi
-- `nB_workspace` — Hankel workspace size
-- `min_num_live_points` — minimum number of live points (default 400)
-- `cluster_num_live_points` — live points for clustering (default 100)
-- `num_bootstraps` — number of bootstraps for evidence (default 30)
-- `use_stepsampler` — use RegionSliceSampler (default false)
-- `nsteps` — steps per slice for stepsampler (default 400)
-- `frac_remain` — termination fraction (default 0.001)
-- `constraints` — relations between parameters that bounds cannot express, as
-  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples. They enter the log-likelihood as
-  `-penalty/2`, so the posterior is the constrained one and `logz` is the evidence under that
-  constraint
-- `log_interval` — logging interval (default 100)
-- `verb` — print progress (default true)
-- `cornerplot` — show corner plot (default true)
+`:none` until an extension registers one, after which the first loaded wins. Change it with
+[`set_nested_backend!`](@ref) rather than assigning to this directly, which checks that the
+backend is actually available.
 """
-function fit_model_ultranest(model_dict   ::Dict{String},
-                             list_free_params   ::Vector{String},
-                             data         ::OIdata;
-    lb                       = Dict{String,Float64}(),
-    ub                       = Dict{String,Float64}(),
-    weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-    constraints              = [],
-    vonmises                 = false,
-    nB_workspace             = nothing,
-    min_num_live_points      = 400,
-    cluster_num_live_points  = 100,
-    num_bootstraps           = 30,
-    use_stepsampler          = false,
-    nsteps                   = 400,
-    frac_remain              = 0.001,
-    log_interval             = 100,
-    verb                     = true,
-    cornerplot               = true,
-)
-    # ── 1. Validate bounds ──────────────────────────────────────────────────
-    for p in list_free_params
-        haskey(lb, p) || error("Lower bound required for '$p' (UltraNest needs finite bounds)")
-        haskey(ub, p) || error("Upper bound required for '$p' (UltraNest needs finite bounds)")
-    end
-    lbounds = Float64[lb[p] for p in list_free_params]
-    ubounds = Float64[ub[p] for p in list_free_params]
+const NESTED_BACKEND = Ref(:none)
 
-    # ── 2. Compile the model (once), with the constraint expressions ────────
-    nB = something(nB_workspace, size(data.uv, 2))
-    cons      = parse_constraints(constraints)
-    augmented = copy(model_dict)
-    constraint_keys = augment_constraints!(augmented, cons)
-    fm = parse_model(augmented, list_free_params; nB_workspace=nB)
-    constraint_idx  = [findfirst(==(k), fm.all_names) for k in constraint_keys]
+"Backends whose extension has loaded. Written by the extensions' `__init__`."
+const NESTED_BACKENDS_LOADED = Set{Symbol}()
 
-    # ── 3. Prior transform: uniform [0,1]^n → [lb, ub] ─────────────────────
-    Δx = ubounds .- lbounds
-    function prior_transform(u::AbstractVector{<:Real})
-        u .* Δx .+ lbounds
-    end
-
-    # UltraNest calls this with a numpy array, which arrives as a zero-copy `PyArray` and so
-    # already satisfies `AbstractMatrix` — no conversion, no copy.
-    #
-    # The RETURN value does need help: a bare Julia array reaches Python as a
-    # `juliacall.VectorValue`, and UltraNest calls numpy methods (`.transpose`) on it.
-    # `.to_numpy()` hands back a real ndarray.
-    prior_transform_vectorized = let trafo = prior_transform
-        (U::AbstractMatrix{<:Real}) ->
-            Py(reduce(vcat, (u -> trafo(u)').(eachrow(U)))).to_numpy()
-    end
-
-    # ── 4. Log-likelihood: -0.5 * (chi2 + constraint penalty) ──────────────
-    # A soft constraint states which parameter combinations are admissible, so it belongs in
-    # the density being sampled; the posterior and the evidence are then both the constrained
-    # ones.
-    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises,
-                        cons=cons, constraint_idx=constraint_idx
-        param::AbstractVector{<:Real} ->
-            -0.5 * (chi2_flat(fm, param, data; weights, vonmises) +
-                    constraint_penalty(param, cons, fm, constraint_idx))
-    end
-
-    loglikelihood_vectorized = let loglikelihood = loglikelihood
-        (X::AbstractMatrix{<:Real}) -> Py(_batch_loglike(loglikelihood, X)).to_numpy()
-    end
-
-    # ── 5. Run UltraNest ───────────────────────────────────────────────────
-    ultranest = pyimport("ultranest")
-
-    # UltraNest concatenates this with a Python list (`names + [...]`), so it must be a real
-    # list: a Julia Vector arrives as a juliacall.VectorValue, which does not support `+`.
-    param_names = pylist(list_free_params)
-
-    # `verb` has to reach UltraNest itself, not just our own printing. Raising
-    # `log_interval` alone leaves `show_status` and `viz_callback` at their defaults, so
-    # the sampler keeps drawing its live status bar and "Mono-modal Volume" blocks —
-    # thousands of lines from a fit the caller asked to be quiet, which is unusable in a
-    # loop over models and drowns any surrounding output in a script. Its `ultranest`
-    # Python logger is a third, independent channel ("Sampling N live points...", the
-    # logZ error budget), silenced by raising its level for the duration of the run.
-    if !verb
-        log_interval = 1_000_000
-    end
-    show_status  = verb
-    viz_callback = verb ? "auto" : false
-
-    _logging  = pyimport("logging")
-    _un_log   = _logging.getLogger("ultranest")
-    _un_level = _un_log.level                      # restore after: the logger is global
-
-    smplr = ultranest.ReactiveNestedSampler(
-        param_names, loglikelihood_vectorized;
-        transform       = prior_transform_vectorized,
-        num_bootstraps  = num_bootstraps,
-        vectorized      = true,
-    )
-
-    if use_stepsampler
-        stepsampler_mod = pyimport("ultranest.stepsampler")
-        smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
-            nsteps         = nsteps,
-            adaptive_nsteps = "move-distance",
-        )
-    end
-
-    verb || _un_log.setLevel(_logging.WARNING)
-    result = try
-        smplr.run(;
-            min_num_live_points     = min_num_live_points,
-            cluster_num_live_points = cluster_num_live_points,
-            log_interval            = log_interval,
-            frac_remain             = frac_remain,
-            show_status             = show_status,
-            viz_callback            = viz_callback,
-        )
-    finally
-        verb || _un_log.setLevel(_un_level)
-    end
-
-    # ── 6. Extract results ─────────────────────────────────────────────────
-    minx = pyconvert(Vector{Float64}, result["maximum_likelihood"]["point"])
-    # The data chi2, without the constraint penalty that shaped the sampling — the convention
-    # the other fitters report.
-    minf = chi2_flat(fm, minx, data; weights, vonmises)
-
-    if verb
-        @printf("Best-fit χ² = %.4f\n", minf)
-        smplr.print_results()
-    end
-
-    # ── 7. Corner plot ─────────────────────────────────────────────────────
-    if cornerplot
-        if isempty(methods(plot_ultranest_corner))
-            @warn "cornerplot=true, but drawing needs matplotlib: `using PythonPlot` " *
-                  "enables it. The fit itself is unaffected; the result carries `posterior`, " *
-                  "so the corner plot can be drawn later." maxlog = 1
-        else
-            plot_ultranest_corner(result)
-        end
-    end
-
-    # ── 8. Build posterior matrix ──────────────────────────────────────────
-    samples_py = result["samples"]
-    posterior  = pyconvert(Matrix{Float64}, samples_py)
-
-    logz    = pyconvert(Float64, result["logz"])
-    logzerr = pyconvert(Float64, result["logzerr"])
-    ndof    = _ndof(data, weights)
-
-    return UltraNestResult(
-        minx, list_free_params, minf, minf / ndof, ndof,
-        logz, logzerr, posterior, result, fm,
-    )
+function _register_nested_backend!(b::Symbol)
+    push!(NESTED_BACKENDS_LOADED, b)
+    NESTED_BACKEND[] === :none && (NESTED_BACKEND[] = b)
+    return b
 end
 
 """
-    fit_model_ultranest(model::FlatModel, data; kwargs...) -> UltraNestResult
+    nested_backend() -> Symbol
 
-Bayesian nested sampling on a pre-compiled `FlatModel`.
-Starting values are not needed (UltraNest samples the full prior volume).
-Bounds `lb` and `ub` are required and can be Dicts or Vectors.
+Which nested sampler [`fit_model_nested`](@ref) will use: `:nestedsamplers`, `:ultranest`, or
+`:none` when neither extension is loaded.
 """
-function fit_model_ultranest(model        ::FlatModel,
-                             data         ::OIdata;
-    lb                       = Dict{String,Float64}(),
-    ub                       = Dict{String,Float64}(),
-    weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-    constraints              = [],
-    vonmises                 = false,
-    min_num_live_points      = 400,
-    cluster_num_live_points  = 100,
-    num_bootstraps           = 30,
-    use_stepsampler          = false,
-    nsteps                   = 400,
-    frac_remain              = 0.001,
-    log_interval             = 100,
-    verb                     = true,
-    cornerplot               = true,
-)
-    list_free_params = model.list_free_params
-    fm = model
+nested_backend() = NESTED_BACKEND[]
 
-    # A constraint is evaluated as an extra parameter of the compiled model, so it needs the
-    # model dict to augment and recompile. Accepting it here and dropping it would sample a
-    # posterior that ignores what the caller asked for.
-    !isempty(constraints) && error("Constraints are only supported with the Dict form of fit_model_ultranest; pass model_dict instead of FlatModel")
+"""
+    set_nested_backend!(b::Symbol) -> Symbol
 
-    # ── Validate bounds ─────────────────────────────────────────────────────
-    lbounds = _bounds_vec(lb, list_free_params, NaN)
-    ubounds = _bounds_vec(ub, list_free_params, NaN)
-    for (i, p) in enumerate(list_free_params)
-        isnan(lbounds[i]) && error("Lower bound required for '$p' (UltraNest needs finite bounds)")
-        isnan(ubounds[i]) && error("Upper bound required for '$p' (UltraNest needs finite bounds)")
+Choose the nested sampler: `:nestedsamplers` or `:ultranest`.
+
+The backend's package must already be loaded, and this says so immediately rather than letting
+a long run end in a `MethodError`.
+"""
+function set_nested_backend!(b::Symbol)
+    if !(b in NESTED_BACKENDS_LOADED)
+        loaded = isempty(NESTED_BACKENDS_LOADED) ? "none" :
+                 join(sort(collect(NESTED_BACKENDS_LOADED)), ", ")
+        error("Nested sampling backend :$b is not loaded (loaded: $loaded). " *
+              "`using NestedSamplers` enables :nestedsamplers, `using PythonCall` :ultranest.")
     end
-
-    # ── Prior transform: uniform [0,1]^n → [lb, ub] ────────────────────────
-    Δx = ubounds .- lbounds
-    function prior_transform(u::AbstractVector{<:Real})
-        u .* Δx .+ lbounds
-    end
-
-    # UltraNest calls this with a numpy array, which arrives as a zero-copy `PyArray` and so
-    # already satisfies `AbstractMatrix` — no conversion, no copy.
-    #
-    # The RETURN value does need help: a bare Julia array reaches Python as a
-    # `juliacall.VectorValue`, and UltraNest calls numpy methods (`.transpose`) on it.
-    # `.to_numpy()` hands back a real ndarray.
-    prior_transform_vectorized = let trafo = prior_transform
-        (U::AbstractMatrix{<:Real}) ->
-            Py(reduce(vcat, (u -> trafo(u)').(eachrow(U)))).to_numpy()
-    end
-
-    # ── Log-likelihood: -0.5 * chi2 ─────────────────────────────────────────
-    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises
-        param::AbstractVector{<:Real} -> -0.5 * chi2_flat(fm, param, data;
-                                                           weights, vonmises)
-    end
-
-    loglikelihood_vectorized = let loglikelihood = loglikelihood
-        (X::AbstractMatrix{<:Real}) -> Py(_batch_loglike(loglikelihood, X)).to_numpy()
-    end
-
-    # ── Run UltraNest ────────────────────────────────────────────────────────
-    ultranest = pyimport("ultranest")
-
-    # `verb` has to reach UltraNest itself, not just our own printing. Raising
-    # `log_interval` alone leaves `show_status` and `viz_callback` at their defaults, so
-    # the sampler keeps drawing its live status bar and "Mono-modal Volume" blocks —
-    # thousands of lines from a fit the caller asked to be quiet, which is unusable in a
-    # loop over models and drowns any surrounding output in a script. Its `ultranest`
-    # Python logger is a third, independent channel ("Sampling N live points...", the
-    # logZ error budget), silenced by raising its level for the duration of the run.
-    if !verb
-        log_interval = 1_000_000
-    end
-    show_status  = verb
-    viz_callback = verb ? "auto" : false
-
-    _logging  = pyimport("logging")
-    _un_log   = _logging.getLogger("ultranest")
-    _un_level = _un_log.level                      # restore after: the logger is global
-
-    smplr = ultranest.ReactiveNestedSampler(
-        list_free_params, loglikelihood_vectorized;
-        transform       = prior_transform_vectorized,
-        num_bootstraps  = num_bootstraps,
-        vectorized      = true,
-    )
-
-    if use_stepsampler
-        stepsampler_mod = pyimport("ultranest.stepsampler")
-        smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
-            nsteps         = nsteps,
-            adaptive_nsteps = "move-distance",
-        )
-    end
-
-    verb || _un_log.setLevel(_logging.WARNING)
-    result = try
-        smplr.run(;
-            min_num_live_points     = min_num_live_points,
-            cluster_num_live_points = cluster_num_live_points,
-            log_interval            = log_interval,
-            frac_remain             = frac_remain,
-            show_status             = show_status,
-            viz_callback            = viz_callback,
-        )
-    finally
-        verb || _un_log.setLevel(_un_level)
-    end
-
-    # ── Extract results ──────────────────────────────────────────────────────
-    minx = pyconvert(Vector{Float64}, result["maximum_likelihood"]["point"])
-    minf = chi2_flat(fm, minx, data; weights, vonmises)
-
-    if verb
-        @printf("Best-fit χ² = %.4f\n", minf)
-        smplr.print_results()
-    end
-
-    if cornerplot
-        if isempty(methods(plot_ultranest_corner))
-            @warn "cornerplot=true, but drawing needs matplotlib: `using PythonPlot` " *
-                  "enables it. The fit itself is unaffected; the result carries `posterior`, " *
-                  "so the corner plot can be drawn later." maxlog = 1
-        else
-            plot_ultranest_corner(result)
-        end
-    end
-
-    samples_py = result["samples"]
-    posterior  = pyconvert(Matrix{Float64}, samples_py)
-    logz    = pyconvert(Float64, result["logz"])
-    logzerr = pyconvert(Float64, result["logzerr"])
-    ndof    = _ndof(data, weights)
-
-    return UltraNestResult(
-        minx, list_free_params, minf, minf / ndof, ndof,
-        logz, logzerr, posterior, result, fm,
-    )
+    return NESTED_BACKEND[] = b
 end
+
+"Backend implementations. `OITOOLSNestedSamplersExt` and `OITOOLSUltraNestExt` add the methods."
+function _fit_nested end
+
+"""
+    fit_model_nested(model_dict, list_free_params, data; kwargs...) -> NestedResult
+    fit_model_nested(model::FlatModel, data; kwargs...)             -> NestedResult
+
+Fit a parametric model by Bayesian nested sampling, returning the posterior and the evidence
+as well as a best-fit point.
+
+Unlike the gradient fitters this needs no starting guess — it samples the whole prior volume —
+but it does need **finite bounds on every free parameter**, since those bounds are the prior.
+
+```julia
+using OITOOLS, NestedSamplers
+r = fit_model_nested(model_dict, ["star,ud"], data;
+                     lb = Dict("star,ud" => 0.5), ub = Dict("star,ud" => 10.0))
+r.logz, r.logzerr        # the evidence, for comparing models
+r.posterior              # equally weighted samples, (n_samples, n_params)
+```
+
+`backend` selects the sampler and defaults to [`nested_backend()`](@ref nested_backend); see
+[`set_nested_backend!`](@ref) to change it for a session.
+
+# Keywords, both backends
+
+| keyword | default | meaning |
+|---|---|---|
+| `lb`, `ub` | — | `Dict{String,Float64}` bounds, **required** for every free parameter: they are the prior |
+| `weights` | `[1,1,1,0,0,0,0]` | observable weights `[V2, T3amp, T3phi, visamp, visphi, flux, diffphase]` |
+| `vonmises` | `false` | use the von Mises statistic for T3phi |
+| `constraints` | `[]` | [`ModelConstraint`](@ref)s, or `(lhs, op, rhs[, tol])` tuples. They enter the log-likelihood as `-penalty/2`, so the posterior and `logz` are both the constrained ones |
+| `nB_workspace` | from the data | Hankel workspace size |
+| `verb` | `true` | print progress |
+| `cornerplot` | `true` | draw the corner plot when a plotting backend is loaded |
+
+# Keywords, `:nestedsamplers`
+
+| keyword | default | meaning |
+|---|---|---|
+| `nactive` | `400` | live points held in the prior volume; the sampler warns below `2 × nfree` |
+| `bounds` | `Bounds.MultiEllipsoid` | bounding strategy; with `Proposals.Rejection` this is MultiNest |
+| `proposal` | `:auto` | `Rejection` under 10 parameters, `RWalk` to 20, `Slice` beyond |
+| `batch` | `8` | candidates drawn per round and evaluated **across threads**, when `:auto` would have picked `Rejection`. `1` restores the stock serial proposal |
+| `dlogz` | `0.2` | stop when the remaining fractional log-evidence falls below this |
+| `maxiter`, `maxcall` | `Inf` | hard stops |
+| `rng` | `Random.default_rng()` | pass a seeded one for a reproducible run |
+
+# Keywords, `:ultranest`
+
+| keyword | default | meaning |
+|---|---|---|
+| `min_num_live_points` | `400` | minimum live points |
+| `cluster_num_live_points` | `100` | live points per cluster |
+| `num_bootstraps` | `30` | bootstraps for the evidence error |
+| `use_stepsampler` | `false` | use `RegionSliceSampler` |
+| `nsteps` | `400` | steps per slice, with `use_stepsampler` |
+| `frac_remain` | `0.001` | termination fraction |
+| `log_interval` | `100` | logging interval |
+
+Evidence from two different samplers is worth more than evidence from one: `logz` should agree
+within `logzerr`, and `NestedResult.backend` records which produced any given number.
+
+!!! note "`:nestedsamplers` uses your threads, `:ultranest` mostly does not"
+
+    NestedSamplers.jl evaluates one candidate at a time, so OITOOLS batches the rejection
+    proposal and evaluates each batch across threads. On the α Cen A power-law fit at 16
+    threads, over 7 seeds, that moves the median run from 7.5 s to 2.5 s against UltraNest's
+    2.0 s. On one thread it does neither, and `:ultranest` is then the faster backend by
+    roughly three times.
+
+    Expect the wall time to vary. Static nested sampling with a MultiEllipsoid bound ranged
+    from 3.6 s to 26 s across those seeds serially, and 2.1 s to 5.4 s batched, where
+    UltraNest stayed within 1.94–2.01 s. UltraNest also reaches the same evidence in about a
+    quarter of the likelihood evaluations, which is an algorithmic advantage that threading
+    does not address.
+
+    `batch` trades wasted evaluations against parallelism and wants to be near the mean number
+    of trials per accepted point, **not** the thread count: on that fit a batch of 8 wastes 11%
+    of its evaluations and one of 16 wastes 105%, and the larger batch is slower.
+
+    Batched and serial runs are statistically equivalent but not reproducible against each
+    other: the batch consumes random draws past the accepted point, so the stream diverges.
+    Pass `batch = 1` for a run that can be reproduced against the stock proposal.
+"""
+function fit_model_nested(args...; backend::Symbol = nested_backend(), kwargs...)
+    if backend === :none
+        error("""No nested sampler is loaded. Add one:
+                     using NestedSamplers   # pure Julia, no Python
+                     using PythonCall       # UltraNest, needs the Python package""")
+    end
+    backend in NESTED_BACKENDS_LOADED ||
+        error("Nested sampling backend :$backend is not loaded; loaded: " *
+              (isempty(NESTED_BACKENDS_LOADED) ? "none" :
+               join(sort(collect(NESTED_BACKENDS_LOADED)), ", ")))
+    return _fit_nested(Val(backend), args...; kwargs...)
+end
+
+"""
+    fit_model_ultranest(args...; kwargs...) -> NestedResult
+
+[`fit_model_nested`](@ref) pinned to the UltraNest backend. Needs `using PythonCall` and the
+Python `ultranest` package (declared in `CondaPkg.toml`).
+"""
+fit_model_ultranest(args...; kwargs...) =
+    fit_model_nested(args...; backend = :ultranest, kwargs...)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -491,9 +491,11 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
         elseif opt == "lsqfit"
             fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons,
                              maxIter = Int(maxeval), verb = true)
-        elseif opt == "ultranest"
-            fit_model_ultranest(md, free, data; lb, ub, weights, constraints = cons,
-                                verb = true, cornerplot = false)
+        elseif opt == "nested"
+            # Whichever sampler is loaded. `nested_backend()` picks it; the panel says which,
+            # so a logz in the fit table can be attributed to the sampler that produced it.
+            fit_model_nested(md, free, data; lb, ub, weights, constraints = cons,
+                             verb = true, cornerplot = false)
         else
             fit_model(md, free, data; lb, ub, weights, priors, constraints = cons,
                       method = optsym, maxeval = Int(maxeval), verb = true)
@@ -983,6 +985,24 @@ function shell_simbad(name::AbstractString)
                  t.main_id, t.ra, t.dec, t.sptype, t.plx))
     return join(("ok", string(round(t.ra; digits = 6)), string(round(t.dec; digits = 6)),
                  m("V"), m("J"), m("H"), m("K"), t.main_id, t.sptype), "\t")
+end
+
+"""
+    shell_nested_backend() -> String
+
+`backend\tlabel`: the nested sampler in force and how to name it in the panel, or `"\t"` when
+neither extension is loaded.
+
+The Modeling tab needs both halves. The key decides whether the entry is offered at all, and
+the label has to name the sampler rather than saying "nested sampling", because two samplers
+that disagree on an evidence are only distinguishable if the interface admits which one ran.
+"""
+function shell_nested_backend()
+    b = nested_backend()
+    b === :none && return "\t"
+    label = b === :nestedsamplers ? "NestedSamplers.jl" :
+            b === :ultranest      ? "UltraNest"         : String(b)
+    return string(b, '\t', label)
 end
 
 """

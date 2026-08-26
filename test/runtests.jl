@@ -7,6 +7,12 @@ using OITOOLS, Test, LinearAlgebra
 ENV["MPLBACKEND"] = "Agg"
 using PythonPlot
 
+# Activates OITOOLSNestedSamplersExt, the pure-Julia nested sampler. PythonPlot above pulls
+# PythonCall, which activates OITOOLSUltraNestExt, so both backends of `fit_model_nested` are
+# live and test_nested.jl can compare them against each other.
+using NestedSamplers
+using Random: Xoshiro
+
 # _bidiag_svd calls LAPACK and reductions can reassociate with thread count, while the
 # BSMEM gate is bit-for-bit. Pin threads so the comparison is reproducible.
 BLAS.set_num_threads(1)
@@ -22,6 +28,7 @@ BLAS.set_num_threads(1)
     include("test_simulate.jl")          # simulate(): geometry, noise model, observability
     include("test_planning.jl")          # astrometry, twilight, observability conventions
     include("test_simbad.jl")            # SIMBAD over TAP: parsing, offline fixture
+    include("test_nested.jl")            # nested sampling: both backends, compared
     include("test_python_boundary.jl")   # Julia<->Python crossings (plots, UltraNest)
     include("test_plotting.jl")          # every figure: renders, plotted values, options
     include("test_squeeze.jl")           # SQUEEZE MCMC sampler

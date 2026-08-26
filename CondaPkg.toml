@@ -1,10 +1,16 @@
 # Python dependencies.
 #
-#   matplotlib-base                       -> fit_model.jl sets rcParams around UltraNest's
-#                                            corner plot; ultranest.plot needs it too
+#   matplotlib-base                       -> the corner plot of a nested-sampling fit, and
+#                                            src/oiplot.jl; ultranest.plot needs it too
 #   ultranest, ultranest.plot,
-#   ultranest.stepsampler                 -> fit_model.jl, fit_model_ultranest
+#   ultranest.stepsampler                 -> src/fit_model_ultranest.jl
 #   scipy                                 -> imported at module level by ultranest.plot
+#
+# NOTHING HERE IS ON THE DEFAULT PATH. PythonCall is a weak dependency, reached only by
+# OITOOLSPythonPlotExt and OITOOLSUltraNestExt, so `using OITOOLS` builds no environment and
+# needs no Python at all. This file takes effect the moment something loads PythonCall --
+# `using PythonPlot` for matplotlib figures, or the `:ultranest` backend of
+# `fit_model_nested`. The `:nestedsamplers` backend needs none of it.
 #
 # EVERYTHING IS A CONDA DEPENDENCY ON PURPOSE — there is no [pip.deps] section.
 #

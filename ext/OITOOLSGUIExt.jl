@@ -26,6 +26,22 @@ module OITOOLSGUIExt
 
 using OITOOLS
 using OITOOLS: OIdata, OBS_PLOT_SPECS, oiplot_colors, canonical_color, as_datavec
+# The toolkit-free half of the drawing layer, which moved into the core package so that the
+# matplotlib front-end, the Makie one and this live canvas cannot drift apart.
+using OITOOLS: PlotData, ObsSpec, OBS_SPECS, LOG_Y_KINDS,
+               OIPLOT_COLORS, OIPLOT_ECOLOR, OIPLOT_MARKER,
+               OIPLOT_LABELSIZE, OIPLOT_TICKLABELSIZE,
+               OIPLOT_LEGEND_SIZE, OIPLOT_LEGEND_NCOL,
+               UVPLOT_LEGEND_SIZE, UVPLOT_LEGEND_NCOL, OIPLOT_XTICKS,
+               PLOT_FONT, PLOT_FONTS, PLOT_GLYPHS,
+               baseline_color_map, baseline_names, triplet_names, station_names,
+               group_names, grouping_noun, panel_data, point_info, obs_info,
+               uv_point_labels, _colors_for
+# The Makie drawing layer, which belongs to OITOOLSMakieExt now. `using GLMakie` activates it,
+# so it is always present by the time this extension exists — but one extension cannot import
+# from another, so these arrive through the functions the parent package declares.
+using OITOOLS: prewarm_glyphs!, style_axis!, add_baseline_legend!,
+               draw!, plot_into!
 # Not exported by the parent, and both are needed by src/gui/imaging.jl: the precision
 # cast that keeps a starting image loadable by the Fourier plan, and the criterion the
 # panel reports before and after a run.
@@ -42,7 +58,7 @@ using QML, QMLMakie, GLMakie
 # `Base.get_extension`. `gui` itself is exported by OITOOLS, since it is declared there.
 export Session, DatasetEntry, ModelEntry, ImageEntry, Selection, LogEntry
 export log!, export_script, load_dataset!, filter_dataset!, dataset
-export uv_figure, observable_figure, point_info, uv_point_labels, plot_into!
+export point_info, uv_point_labels, plot_into!
 export OBS_SPECS, group_names, baseline_names, triplet_names, station_names
 export panel_data, grouping_noun
 export baseline_color_map, style_axis!, add_baseline_legend!
@@ -83,7 +99,6 @@ include(joinpath(GUIDIR, "imaging.jl"))     # Image perspective: geometry, start
 include(joinpath(GUIDIR, "filepicker.jl"))  # the in-window file picker's directory listing
 include(joinpath(GUIDIR, "observing.jl"))   # Observe perspective: configs, targets, nights
 include(joinpath(GUIDIR, "gantt.jl"))       # the Gantt chart, in Makie
-include(joinpath(GUIDIR, "plots.jl"))
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
 include(joinpath(GUIDIR, "chi2map.jl"))       # the grid-search chi2 surface, in Makie
 include(joinpath(GUIDIR, "shell.jl"))
@@ -161,10 +176,20 @@ using PrecompileTools
             # appears.
             fig = Makie.Figure()
             ax  = Makie.Axis(fig[1, 1])
-            style_axis!(ax)
+            # `style_axis!` belongs to OITOOLSMakieExt and is compiled by its workload. It is
+            # not called here because sibling extensions have no guaranteed load order: at
+            # precompile time this one can exist before that one does, and the call would then
+            # find a function with no methods. At run time both are loaded long before `gui()`.
             c = build_canvas(fig, ax)
-            update_canvas!(c, d, :uv; color = :baseline)
-            update_canvas!(c, d, :v2; color = :wav)
+            # `update_canvas!` calls `style_axis!`, which belongs to OITOOLSMakieExt. Sibling
+            # extensions are not activated while this one is being precompiled, so the guard
+            # is what decides whether these get compiled here or in the user's first session.
+            # At RUN time the ordering is not in doubt: OITOOLSMakieExt triggers on Makie,
+            # which GLMakie pulls in before QML and QMLMakie are anywhere near loaded.
+            if !isempty(methods(style_axis!))
+                update_canvas!(c, d, :uv; color = :baseline)
+                update_canvas!(c, d, :v2; color = :wav)
+            end
             show_image!(c, zeros(Float32, 8, 8), 0.3)
             hide_image!(c)
 

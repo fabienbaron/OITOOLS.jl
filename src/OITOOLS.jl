@@ -19,6 +19,7 @@ version() = println("OITOOLS v$(pkgversion(OITOOLS))")
 include("graphics.jl")           # GL driver environment; must be callable before GLMakie
 include("readoifits.jl")
 include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
+include("plot_data.jl")      # what to draw: groups, colours, labels, click text -- no toolkit
 include("vis_functions.jl")
 include("model_chainrules.jl")
 
@@ -29,7 +30,7 @@ include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
 include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
 include("constraints.jl")        # ModelConstraint: NLopt constraints, and penalties elsewhere
 include("model_file.jl")         # TOML model files: model + free + bounds + constraints + priors
-include("fit_model.jl")          # fit_model (NLopt), fit_model_ultranest, display_model
+include("fit_model.jl")          # fit_model (NLopt), fit_model_nested, display_model
 include("chi2_map.jl")           # grid search over two free parameters, and its chi2 surface
 include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
 
@@ -90,6 +91,50 @@ function set_oiplot_defaults end
 function plot_ultranest_corner end
 
 """
+    plot_corner_makie(posterior, names)
+
+Corner plot of a posterior sample matrix, `(n_samples, n_params)`, with one label per column.
+
+Backend-agnostic on purpose: [`plot_ultranest_corner`](@ref) takes UltraNest's own result
+object and so can only ever serve that sampler, while this takes the samples any of them
+produce. Implemented by `OITOOLSPairPlotsExt` — `using PairPlots` — since drawing a good one
+is a package's worth of work and PairPlots.jl is already Makie-native.
+"""
+function plot_corner_makie end
+
+# ── The Makie drawing layer (OITOOLSMakieExt) ────────────────────────────────
+#
+# Declared here for the same reason as the matplotlib stubs above, and additionally because
+# OITOOLSGUIExt calls them: one extension cannot reach into another, so both attach to
+# functions the parent package owns. `using Makie` — which every Makie backend brings — is
+# what gives them methods.
+function prewarm_glyphs! end
+function style_axis! end
+function add_baseline_legend! end
+# `draw!` and `plot_into!` redraw an axis that already exists, which matplotlib has no
+# counterpart for and only the GUI needs. Declared, not exported.
+function draw! end
+function plot_into! end
+function uvplot_makie end
+function plot_observable_makie end
+# One per observable, so that `plot_v2` leads to `plot_v2_makie` without a detour. Wrappers
+# over `plot_observable_makie`, defined in the extension.
+function plot_v2_makie end
+function plot_t3phi_makie end
+function plot_t3amp_makie end
+function plot_visamp_makie end
+function plot_visphi_makie end
+function plot_flux_makie end
+function plot_diffphi_makie end
+function imdisp_makie end
+function image_into! end   # as plot_into!, but for an image
+function imdisp_multi_makie end
+function plot_residuals_makie end
+function plot_obs_makie end
+function plot_v2_multifile_makie end
+function plot_facility_makie end
+
+"""
     gui()
     gui(session)
 
@@ -129,6 +174,19 @@ export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
+# ── The Makie plotting API (OITOOLSMakieExt) ─────────────────────────────────
+#
+# `<matplotlib name>_makie` throughout, so that a function anyone already knows leads straight
+# to its Makie counterpart. Separate names rather than extra methods on the matplotlib
+# functions, because the two backends return different objects — a matplotlib figure and a
+# Makie one — and one name over both would have to lie about which. Every one of these returns
+# a `PlotData`, whose `figure` field is a Makie `Figure` ready for `Makie.save`.
+export uvplot_makie, plot_observable_makie, plot_obs_makie,
+       plot_v2_makie, plot_t3phi_makie, plot_t3amp_makie,
+       plot_visamp_makie, plot_visphi_makie, plot_flux_makie, plot_diffphi_makie,
+       imdisp_makie, imdisp_multi_makie, plot_residuals_makie,
+       plot_v2_multifile_makie, plot_facility_makie, plot_corner_makie, PlotData
+
 export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
        plot_ultranest_corner, gui,
        plot_visamp, plot_visphi, plot_diffphi, plot_flux, plot_obs, plot_multi,
@@ -139,11 +197,12 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
 
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
 export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
-export fit_model, fit_model_lsqfit, fit_model_ultranest
+export fit_model, fit_model_lsqfit, fit_model_nested, fit_model_ultranest
+export nested_backend, set_nested_backend!
 export ModelConstraint, parse_constraints, check_constraints, DEFAULT_CONSTRAINT_TOL
 export read_model_file, write_model_file, model_warnings
 export Chi2Map, chi2_map, delta_chi2_levels
-export FitResult, LsqFitResult, UltraNestResult
+export FitResult, LsqFitResult, NestedResult, UltraNestResult
 export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_chi2_fg,
        model_to_image, model_to_sed, model_to_flux
 export cvis_to_chi2_f, cvis_to_chi2_fg, cvis_to_chi2_noalloc, model_and_image_to_chi2_fg

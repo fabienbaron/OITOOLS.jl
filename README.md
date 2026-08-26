@@ -43,9 +43,9 @@ extension, so they exist only once PythonPlot is loaded alongside OITOOLS. This 
 `using OITOOLS` free of matplotlib and of Qt, which matters on headless machines and beside
 other Qt applications.
 
-Python dependencies (matplotlib-base, ultranest for nested sampling) are provisioned
-automatically by
-[CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time you load the package. See
+`using OITOOLS` needs no Python. The optional Python dependencies (matplotlib-base for the
+`PythonPlot` figures, ultranest for the `:ultranest` sampler) are provisioned automatically by
+[CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time something loads PythonCall. See
 the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for details,
 including how to reuse an existing Python instead.
 
@@ -111,10 +111,12 @@ Parametric model fitting with a flat-dictionary interface compatible with
 - **Chromatic and time-variable models** using expression strings with
   `$WL`, `$MJD`, and inter-parameter `$`-references
 - **Azimuthal modulations** with harmonic coefficients for disk asymmetries
-- **Three fitting backends:**
+- **Four fitting backends:**
   - NLopt (gradient-based and gradient-free optimizers)
   - LsqFit (Levenberg-Marquardt with covariance and 1-sigma errors)
-  - UltraNest (Bayesian nested sampling with log-evidence)
+  - Nested sampling with log-evidence, through either NestedSamplers.jl (pure Julia)
+    or UltraNest (Python) — `fit_model_nested`
+  - Grid search over two parameters, returning the χ² surface — `chi2_map`
 - **Bootstrap error estimation** by baseline, time, or wavelength
 - **PMOIRED conversion:** `pmoired_to_julia()` converts Python dict
   literals to Julia
@@ -201,6 +203,7 @@ pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.develop(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 ```
 
-Python dependencies (matplotlib-base, ultranest) are declared in `CondaPkg.toml`
-and installed automatically into a project-local environment on first `using OITOOLS` — there
-is nothing to set up by hand. Add `PythonPlot` as well if you want the plotting functions.
+The optional Python dependencies (matplotlib-base, ultranest) are declared in `CondaPkg.toml`
+and installed automatically the first time something loads PythonCall — there is nothing to set
+up by hand, and `using OITOOLS` on its own loads no Python at all. Add `PythonPlot` for the
+plotting functions, and `NestedSamplers` for nested sampling without Python.

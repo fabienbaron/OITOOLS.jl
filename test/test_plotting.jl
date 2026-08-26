@@ -23,13 +23,14 @@
 ENV["MPLBACKEND"] = "Agg"
 
 using OITOOLS, Test
-using PythonPlot          # activates OITOOLSPythonPlotExt, which defines everything below
+using PythonPlot     # activates OITOOLSPythonPlotExt, which defines everything below
+using PythonCall     # weak dep of OITOOLS; PythonPlot has already loaded it
 
 const PLT = PythonPlot
 # imshow2 and _cbar_ticks are matplotlib helpers, so they live in the extension module
 # rather than in OITOOLS itself. OBS_PLOT_SPECS is toolkit-independent and stayed in core.
 const EXT = Base.get_extension(OITOOLS, :OITOOLSPythonPlotExt)
-const PC  = OITOOLS.PythonCall
+const PC  = PythonCall
 
 # Rendered PNGs land in test/figures/plotting so the whole gallery can be browsed after a
 # run — the assertions below check numbers, not appearance, so looking at the figures is

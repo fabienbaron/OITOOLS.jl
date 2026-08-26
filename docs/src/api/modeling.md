@@ -10,7 +10,9 @@
 | `display_model(model_dict, list_free_params)` | Pretty-print model parameters |
 | `fit_model(model, x0, data)` | Fit a `FlatModel` via NLopt |
 | `fit_model_lsqfit(model, x0, data)` | Fit a `FlatModel` via Levenberg-Marquardt |
-| `fit_model_ultranest(model, data; lb, ub)` | Fit a `FlatModel` via nested sampling (UltraNest) |
+| `fit_model_nested(model, data; lb, ub)` | Fit by nested sampling — posterior **and** log-evidence; needs finite bounds |
+| `fit_model_ultranest(model, data; lb, ub)` | `fit_model_nested` pinned to the UltraNest backend |
+| `nested_backend()`, `set_nested_backend!(b)` | Which nested sampler is in force: `:nestedsamplers` or `:ultranest` |
 | `chi2_map(model_dict, free, data, p1, p2)` | Grid-search two free parameters and return the χ² surface; needs no gradient and no starting guess |
 | `model_to_obs(model, x, data)` | Compute observables (V², T3amp, T3phi) from a model |
 | `model_to_residuals(model, x, data)` | Compute normalised residuals (model - data) / error |
@@ -39,7 +41,7 @@ needs [`ModelConstraint`](@ref).
 `fit_model` hands constraints to NLopt as real nonlinear constraints, so they hold at the
 optimum rather than being encouraged there; an algorithm that cannot take them (including the
 default `:LD_LBFGS`) is wrapped in `:AUGLAG` rather than replaced. `fit_model_lsqfit` and
-`fit_model_ultranest` have no such machinery and use a one-sided quadratic penalty on the
+`fit_model_nested` have no such machinery and use a one-sided quadratic penalty on the
 normalised violation, matching PMOIRED's `prior` list — soft, and so able to lose to a steep
 χ². The distinction is worth knowing before choosing a fitter for a constrained model.
 
@@ -117,7 +119,10 @@ read_model_file
 write_model_file
 fit_model
 fit_model_lsqfit
+fit_model_nested
 fit_model_ultranest
+nested_backend
+set_nested_backend!
 chi2_map
 delta_chi2_levels
 model_warnings
@@ -139,6 +144,7 @@ apply_block_weights
 perturb_data
 resample_data
 BootstrapResult
+NestedResult
 UltraNestResult
 FitResult
 Chi2Map
@@ -149,7 +155,8 @@ DataBlocks
 |------|-------------|
 | `FitResult` | Result from `fit_model` (fields: `x_opt`, `chi2r`, `model`, ...) |
 | `LsqFitResult` | Result from `fit_model_lsqfit` (adds `stderror`, `covar`, `converged`) |
-| `UltraNestResult` | Result from `fit_model_ultranest` (adds `logz`, `logzerr`, `posterior`, `result`) |
+| `NestedResult` | Result from `fit_model_nested` (adds `logz`, `logzerr`, `posterior`, `result`, `backend`) |
+| `UltraNestResult` | Alias for `NestedResult` |
 | `BootstrapResult` | Result from `bootstrap_fit` (adds `samples`, `median`, `sigma_minus`, `sigma_plus`, `covar`) |
 | `Chi2Map` | χ² surface over two free parameters from `chi2_map`; `FitResult(map)` gives its best grid point |
 | `DataBlocks` | Partition of an `OIdata` into resampling blocks |
