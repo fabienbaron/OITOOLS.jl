@@ -23,7 +23,7 @@ using Printf
 
 import OITOOLS: prewarm_glyphs!, style_axis!, add_baseline_legend!,
                 draw!, plot_into!, uvplot_makie, plot_observable_makie,
-                imdisp_makie, image_into!, imdisp_multi_makie, plot_residuals_makie,
+                imdisp_makie, image_into!, image_minorticks!, imdisp_multi_makie, plot_residuals_makie,
                 plot_obs_makie, plot_v2_multifile_makie, plot_facility_makie,
                 plot_v2_makie, plot_t3phi_makie, plot_t3amp_makie,
                 plot_visamp_makie, plot_visphi_makie, plot_flux_makie, plot_diffphi_makie
@@ -36,6 +36,7 @@ using OITOOLS: OIdata, PlotData, ObsSpec, OBS_SPECS, LOG_Y_KINDS,
                OIPLOT_LABELSIZE, OIPLOT_TICKLABELSIZE,
                OIPLOT_LEGEND_SIZE, OIPLOT_LEGEND_NCOL,
                UVPLOT_LEGEND_SIZE, UVPLOT_LEGEND_NCOL, OIPLOT_XTICKS,
+               OIPLOT_MINOR_INTERVALS, imdisp_tickinterval,
                PLOT_FONT, PLOT_FONTS, PLOT_GLYPHS,
                baseline_color_map, baseline_names, triplet_names, station_names,
                group_names, grouping_noun, panel_data, point_info, obs_info,

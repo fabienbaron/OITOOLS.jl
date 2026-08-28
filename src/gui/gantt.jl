@@ -8,6 +8,16 @@
 # adding hit-testing would buy interaction nobody asked for at the cost of a second input path
 # through MakieArea.
 
+"""
+Point size for the numbers printed around each bar, before the screen scale is applied.
+
+Smaller than the legend's, and deliberately so: four numbers meet at every bar end -- the time
+above, the azimuth and the altitude below, and the opposite bar's three coming the other way --
+so they are set in the gaps between bars rather than in open space. At the legend's size they
+crowd the bar they are annotating.
+"""
+const GANTT_ANNOTATION_PT = 7.0
+
 "Colours by name, so the geometry can stay renderer-independent."
 const GANTT_COLORS = Dict(
     "lightgray"    => Makie.RGBAf(0.827, 0.827, 0.827, 0.75),
@@ -64,7 +74,9 @@ function build_gantt(fig, ax)
     Makie.poly!(ax, barrects;  color = barcols,  strokewidth = 0)
     Makie.lines!(ax, midline; color = :red, linewidth = 1.5)
 
-    fs = Float32(9 * live_plot_scale())
+    sc = live_plot_scale()
+    fs = Float32(9 * sc)                            # the legend
+    afs = Float32(GANTT_ANNOTATION_PT * sc)         # the numbers around each bar
     # Times are rotated to vertical, as in the original: at one-minute resolution the starts
     # and ends of adjacent blocks would otherwise overprint each other.
     # Nudged outward in SCREEN pixels, not in data: the anchor stays the true bar end, which is
@@ -72,17 +84,17 @@ function build_gantt(fig, ax)
     # the placement `ha="right"`/`ha="left"` gives in the original. A data-space offset would
     # move with the zoom and stop meaning the same thing.
     Makie.text!(ax, tspos; text = tstxt, rotation = Float32(π/2),
-                align = (:center, :center), offset = (-0.75fs, 0), fontsize = fs)
+                align = (:center, :center), offset = (-0.75afs, 0), fontsize = afs)
     Makie.text!(ax, tepos; text = tetxt, rotation = Float32(π/2),
-                align = (:center, :center), offset = (0.75fs, 0), fontsize = fs)
+                align = (:center, :center), offset = (0.75afs, 0), fontsize = afs)
     Makie.text!(ax, azspos;  text = azstxt,  align = (:right,  :bottom),
-                offset = (-0.4fs, 0), fontsize = fs)
+                offset = (-0.4afs, 0), fontsize = afs)
     Makie.text!(ax, azepos;  text = azetxt,  align = (:left,   :bottom),
-                offset = (0.4fs, 0),  fontsize = fs)
+                offset = (0.4afs, 0),  fontsize = afs)
     Makie.text!(ax, altspos; text = altstxt, align = (:right,  :top),
-                offset = (-0.4fs, 0), fontsize = fs)
+                offset = (-0.4afs, 0), fontsize = afs)
     Makie.text!(ax, altepos; text = altetxt, align = (:left,   :top),
-                offset = (0.4fs, 0),  fontsize = fs)
+                offset = (0.4afs, 0),  fontsize = afs)
 
     # A hand-drawn legend, for the reason build_canvas has one: a Makie Legend fixes its entry
     # count at construction, and this chart's varies with which constraints apply.
@@ -132,7 +144,12 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false)
     g.bandcols[]  = [_gantt_color(b.color) for b in geo.bands]
     g.barrects[]  = [_rect(b) for b in geo.bars]
     g.barcols[]   = [barcol(b) for b in geo.bars]
-    g.midline[]   = [Makie.Point2f(geo.midnight, 0), Makie.Point2f(geo.midnight, geo.ymax)]
+    # The clock at the facility as the night was worked out, not local midnight. Empty when
+    # `gantt_geometry` reports it outside the plotted hours: no line is the honest drawing of
+    # "now is not on this chart", where a line at the edge would read as "now is right here".
+    g.midline[]   = isfinite(geo.now) ?
+                    [Makie.Point2f(geo.now, 0), Makie.Point2f(geo.now, geo.ymax)] :
+                    Makie.Point2f[]
 
     for (pick, pos, txt) in ((l -> l.kind === :time && l.side === :start, g.tspos, g.tstxt),
                              (l -> l.kind === :time && l.side === :end,   g.tepos, g.tetxt),

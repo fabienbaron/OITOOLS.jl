@@ -122,6 +122,34 @@ ApplicationWindow {
     property string status: initialStatus
     property string pickText: ""
 
+
+    // Saves the Exploring plot. Each perspective carries its own, because the picker's title,
+    // suffix and target all belong to the plot that asked for it.
+    FilePicker {
+        id: savePngDialog
+        property real pxw: 1200
+        property real pxh: 900
+        uiScale: win.uiScale; fontScale: win.fontScale; baseFontPt: win.baseFontPt
+        title: "Save plot as PNG"
+        saveMode: true
+        defaultSuffix: "png"
+        filters: [{ label: "PNG images (*.png)", patterns: "*.png" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            Julia.shell_save_figure("explore", path, savePngDialog.pxw, savePngDialog.pxh, false)
+            win.refreshConsole()
+        }
+    }
+
+    // Twice the size it has on screen, so the file is usable in a talk rather than being a
+    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
+    // a software GL stack refuses the very large ones.
+    function savePng(which, area) {
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.openAt("")
+    }
+
     // Every action funnels through here so the console cannot go stale: the pane is the
     // record of what happened, and a record that updates only sometimes is worse than none.
     function refreshConsole() { if (logToggle.checked) logArea.text = Julia.shell_console() }
@@ -710,6 +738,16 @@ ApplicationWindow {
                         // observable — and a single-wavelength file gives one point per panel.
                         enabled: win.groupingNoun.length > 0
                         onToggled: win.setView()
+                    }
+                    // Explore's plot is a layout child rather than a child of a mount, so
+                    // its Save PNG sits in the toolbar with the other view controls instead of
+                    // being overlaid the way the other perspectives' are.
+                    Button {
+                        text: "Save PNG"
+                        enabled: modelTab.hasDataset
+                        ToolTip.visible: hovered
+                        ToolTip.text: "write this plot to a PNG file"
+                        onClicked: win.savePng("explore", makieArea)
                     }
                     Item { Layout.fillWidth: true }
                     Label {

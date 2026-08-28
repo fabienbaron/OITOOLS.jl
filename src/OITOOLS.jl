@@ -128,6 +128,7 @@ function plot_flux_makie end
 function plot_diffphi_makie end
 function imdisp_makie end
 function image_into! end   # as plot_into!, but for an image
+function image_minorticks! end  # imdisp's mas-spaced subticks, on a Makie image axis
 function imdisp_multi_makie end
 function plot_residuals_makie end
 function plot_obs_makie end

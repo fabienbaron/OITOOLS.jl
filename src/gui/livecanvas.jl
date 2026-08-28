@@ -175,8 +175,19 @@ Nothing is created here. The heatmap already exists; this sets its data and swap
 are visible.
 """
 function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::AbstractString = "")
+    # Re-styled at the screen's scale, as `update_canvas!` does for the scatter view. The axis
+    # was styled once when it was built, and at that point QML has not yet reported the screen,
+    # so `live_plot_scale()` was still 1.0 -- oiplot's 12 pt, sized for a paper column. On a
+    # 2560x1600 panel that leaves an image with ticks and tick labels a third of the size of
+    # the ones on the plot beside it.
+    sc = live_plot_scale()
+    style_axis!(c.axis; scale = sc)
     nx = size(img, 1)
     half = nx * pixsize / 2
+    # `imdisp`'s subticks, not `style_axis!`'s: an image gets a tick every fixed number of
+    # milliarcseconds, which is a spacing you can read a position off, where a fixed count
+    # between majors moves with whatever the major locator chose.
+    image_minorticks!(c.axis, 2half, 2half; scale = sc)
     # Descending x: East left. Makie takes the coordinate vectors as cell centres.
     c.imagex[] = Float32.(range(half, -half; length = nx))
     c.imagey[] = Float32.(range(-half, half; length = nx))
@@ -559,7 +570,7 @@ function update_panels!(c::LiveCanvas, d, kind::Symbol)
         g = pd.panels[k]
         c.panels.grid[fld(k - 1, ncol) + 1, mod(k - 1, ncol) + 1] = a
         _set_axis_visible!(a, true)
-        style_axis!(a; scale = sc * 0.75)      # smaller type: many panels, little room each
+        style_axis!(a; scale = sc * 0.75, minorticks = true)  # smaller type: many panels, little room each
         # Three ticks, not the ten `style_axis!` sets to match matplotlib's density on a full
         # figure. At panel size those ten overprint each other into a grey smear and the axis
         # stops being readable at all -- which is worse than a coarse scale.
@@ -835,7 +846,7 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
     ax.title[]  = pd.title
     ax.aspect[] = pd.isotropic ? Makie.DataAspect() : nothing
     sc = live_plot_scale()
-    style_axis!(ax; scale = sc)
+    style_axis!(ax; scale = sc, minorticks = true)
     c.legfontsize[] = Float32(UVPLOT_LEGEND_SIZE * sc)
 
     # `identity` first, always. Changing the scale transforms whatever points are loaded AT

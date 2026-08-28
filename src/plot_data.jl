@@ -48,6 +48,23 @@ const OIPLOT_LEGEND_NCOL   = 4      # oiplot_legend_ncol
 const UVPLOT_LEGEND_SIZE   = 10.0
 const UVPLOT_LEGEND_NCOL   = 5
 const OIPLOT_XTICKS        = 10     # matplotlib's default density; Makie's is far sparser
+const OIPLOT_MINOR_INTERVALS = 2    # one unlabelled subtick between each pair of majors
+
+"""
+    imdisp_tickinterval(fov_mas; tickinterval = 0.5) -> Float64
+
+Minor-tick spacing for an image, in mas.
+
+`imdisp` places image subticks with a `MultipleLocator` at a FIXED mas interval rather than a
+count between majors, and widens it for a large field: 0.5 mas by default, 5 above 100 mas
+across, 50 above 1000. The rule lives here so the matplotlib and Makie image paths cannot
+drift on it -- a subtick every 0.5 mas on a 200 mas field is a solid black axis.
+"""
+function imdisp_tickinterval(fov_mas::Real; tickinterval::Real = 0.5)
+    fov_mas > 1000 && return 50.0
+    fov_mas > 100  && return 5.0
+    return Float64(tickinterval)
+end
 
 """
 Font for plot text.

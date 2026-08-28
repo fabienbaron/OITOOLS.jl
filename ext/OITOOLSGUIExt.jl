@@ -33,6 +33,7 @@ using OITOOLS: PlotData, ObsSpec, OBS_SPECS, LOG_Y_KINDS,
                OIPLOT_LABELSIZE, OIPLOT_TICKLABELSIZE,
                OIPLOT_LEGEND_SIZE, OIPLOT_LEGEND_NCOL,
                UVPLOT_LEGEND_SIZE, UVPLOT_LEGEND_NCOL, OIPLOT_XTICKS,
+               OIPLOT_MINOR_INTERVALS, imdisp_tickinterval,
                PLOT_FONT, PLOT_FONTS, PLOT_GLYPHS,
                baseline_color_map, baseline_names, triplet_names, station_names,
                group_names, grouping_noun, panel_data, point_info, obs_info,
@@ -41,7 +42,7 @@ using OITOOLS: PlotData, ObsSpec, OBS_SPECS, LOG_Y_KINDS,
 # so it is always present by the time this extension exists — but one extension cannot import
 # from another, so these arrive through the functions the parent package declares.
 using OITOOLS: prewarm_glyphs!, style_axis!, add_baseline_legend!,
-               draw!, plot_into!
+               draw!, plot_into!, image_minorticks!
 # Not exported by the parent, and both are needed by src/gui/imaging.jl: the precision
 # cast that keeps a starting image loadable by the Fourier plan, and the criterion the
 # panel reports before and after a run.
@@ -102,6 +103,7 @@ include(joinpath(GUIDIR, "gantt.jl"))       # the Gantt chart, in Makie
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
 include(joinpath(GUIDIR, "chi2map.jl"))       # the grid-search chi2 surface, in Makie
 include(joinpath(GUIDIR, "shell.jl"))
+include(joinpath(GUIDIR, "snapshot.jl"))      # "Save PNG": rebuilds a panel offscreen
 include(joinpath(GUIDIR, "window.jl"))        # gui(): builds the window and runs Qt
 
 # ── precompilation ───────────────────────────────────────────────────────────

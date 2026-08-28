@@ -200,10 +200,25 @@ function imaging_context(u         :: AbstractVector{<:Real},
     # narrow only on store: u·xyint·MAS chains three multiplies off u ~ 1e8 λ, and doing
     # that chain in Float32 would cost ~7 significant digits on the node positions
     # themselves. Same idiom as setup_nfft (oichi2.jl).
+    # Row 1 is u and row 2 is v, matching `data.uv` and the plans `setup_nfft` builds. NFFT node
+    # row 1 indexes the FIRST array dimension, so this is what fixes the image plane: with the
+    # rows the other way round the reconstruction came back transposed against every other
+    # engine and against `imdisp`, which reads dimension 1 as α. It also decides how `x_start`
+    # and a prior image are READ, so those were being consumed transposed too.
+    #
+    # Measured on 2004-simulated: these nodes now match `setup_nfft`'s to 5e-9 where they
+    # differed by 0.12, and scoring the result through the shared criterion in all eight
+    # orientations inverts as it should -- the transpose used to beat the image as returned
+    # (719 against 817) and now loses to it (856 against 772).
+    #
+    # This does NOT bring BSMEM's own χ² into line with `image_to_chi2` (500 against 772 on
+    # that run), and it was never going to: BSMEM scores the bispectrum through its elliptic
+    # noise approximation rather than the shared criterion's residuals, so the two numbers
+    # measure different things on the same image. Orientation was one bug, not both.
     k64 = Matrix{Float64}(undef, 2, nuv + 1)
     k64[:, 1]       .= 0.0          # zero-baseline flux point (slot 1)
-    k64[1, 2:end]   .= Float64.(v) .* scale   # v ↔ N–S baseline
-    k64[2, 2:end]   .= Float64.(u) .* scale   # u ↔ E–W baseline
+    k64[1, 2:end]   .= Float64.(u) .* scale   # u ↔ E–W baseline
+    k64[2, 2:end]   .= Float64.(v) .* scale   # v ↔ N–S baseline
     k = T === Float64 ? k64 : T.(k64)
 
     npow = nuv + 1

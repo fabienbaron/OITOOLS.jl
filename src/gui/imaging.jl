@@ -150,7 +150,7 @@ imaging_weights(; v2::Bool = true, t3amp::Bool = true, t3phi::Bool = true) =
     Float64[v2 ? 1.0 : 0.0, t3amp ? 1.0 : 0.0, t3phi ? 1.0 : 0.0]
 
 """
-    chi2_breakdown(image, ft, data, weights) -> Vector{NamedTuple}
+    chi2_breakdown(image, ft, data, weights; chi2_of = nothing) -> Vector{NamedTuple}
 
 Reduced χ² per observable: `(; name, chi2, n, chi2r, used)`.
 
@@ -160,10 +160,18 @@ only as something it prints when `verb = true` — it returns the weighted sum a
 panel that recomputed it by hand would be free to drift away from what is actually being
 minimised.
 
+Always from the FINAL image, never from whatever an engine printed on its way past: BSMEM's own
+number is 505 where the image scores 884 on the same run, because it minimises a different
+statistic. The image is what the panel displays, so the image is what the panel scores.
+
+`chi2_of` replaces the criterion for a model the image alone does not describe. SPARCO's is the
+image PLUS a parametric component, so `image_to_chi2` of its image is meaningless — measured at
+χ²ᵣ ≈ 2.7e7 against the engine's own 1.2 — and `chi2_sparco_flat_f` is what scores it.
+
 `used` records whether the observable was in the fit at all. An observable the user unticked
 still has a χ² worth seeing: it says how well the reconstruction predicts data it never saw.
 """
-function chi2_breakdown(image, ft, data, weights = [1.0, 1.0, 1.0])
+function chi2_breakdown(image, ft, data, weights = [1.0, 1.0, 1.0]; chi2_of = nothing)
     ds = data isa AbstractArray ? vec(data) : [data]
     counts = (v2 = sum(d -> d.nv2, ds; init = 0),
               t3amp = sum(d -> d.nt3amp, ds; init = 0),
@@ -176,8 +184,15 @@ function chi2_breakdown(image, ft, data, weights = [1.0, 1.0, 1.0])
         n == 0 && continue
         onehot = [j == i ? 1.0 : 0.0 for j in 1:3]
         c2 = try
-            Float64(image_to_chi2(image, ft, data; weights = onehot, verb = false))
-        catch
+            chi2_of === nothing ?
+                Float64(image_to_chi2(image, ft, data; weights = onehot, verb = false)) :
+                Float64(chi2_of(onehot))
+        catch err
+            # Named, not swallowed. A bare `catch` here turned a precision or shape mismatch
+            # into a NaN in the panel with nothing anywhere saying why -- and NaN in a χ²
+            # column reads as a failed reconstruction rather than as a failed measurement of
+            # one.
+            @warn "could not compute the $(labels[i]) χ²" exception = (err, catch_backtrace())
             NaN
         end
         push!(out, (; name = labels[i], chi2 = c2, n = n, chi2r = c2 / n,
@@ -333,19 +348,33 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
     # reason they share a panel at all.
     x = to_ft_precision(Float64.(xraw), ft)
 
-    bd  = chi2_breakdown(x, ft, data, Float64.(weights))
+    # `reconstruct_sparco` hands back the fitted `model` and `params` alongside the image, and
+    # with those the SPARCO criterion scores the same thing the engine scored -- so the panel's
+    # split adds up to the engine's own χ² instead of being dropped.
+    sparco = extra isa NamedTuple && haskey(extra, :model) ? extra : nothing
+    bd = if sparco === nothing
+        chi2_breakdown(x, ft, data, Float64.(weights))
+    else
+        # `ft[1, 1]` unchanged: `NFFTCell <: AbstractVector{<:NFFTPlan}`, so the cell already IS
+        # the plan vector the criterion wants -- the same value `reconstruct_sparco` passes it.
+        ds = data isa AbstractArray ? first(data) : data
+        chi2_breakdown(x, ft, data, Float64.(weights);
+                       chi2_of = w -> chi2_sparco_flat_f(x, sparco.params, sparco.model,
+                                                         ft[1, 1], ds;
+                                                         w_name = "W", weights = w, verb = false))
+    end
     # Only the observables that were actually in the criterion: dividing by points the fit
     # never saw would flatter it. The point counts do not depend on the image, so this is right
     # even for the engines whose χ² is not computed from the image.
     ndof = sum(b -> b.used ? b.n : 0, bd; init = 0)
 
-    # SPARCO's model is the image PLUS a parametric component, so the image alone does not
-    # predict the data and `image_to_chi2` of it is meaningless -- measured at χ²r ≈ 2.7e7
-    # against the engine's own 1.2. Those engines report their own χ², and their per-observable
-    # breakdown is dropped rather than shown as an image-only split that would not sum to it.
     chi2 = own_chi2 === nothing ? Float64(image_to_chi2(x, ft, data; weights, verb = false)) :
                                   Float64(own_chi2)
-    own_chi2 === nothing || (bd = NamedTuple[])
+    # What is left are the engines that score something the image alone does not predict and
+    # give no way to split it -- SQUEEZE with a SPARCO component, whose parametric part lives
+    # inside the sampler. They report their own χ² and no breakdown, rather than an image-only
+    # split that would not sum to it.
+    (own_chi2 === nothing || sparco !== nothing) || (bd = NamedTuple[])
 
     img = Float64.(x)
     return ImagingResult(img, chi2, Float64(chi2_start), ndof, sum(img),
@@ -472,7 +501,7 @@ function run_engine(engine::Symbol, x0, data, ft;
                                star_di    = _optreal(o, "ud", 4.0),
                                weights, regularizers, maxiter = Int(maxiter),
                                rounds = _optint(o, "rounds", 3), verb)
-        return (r.image, (; r.params, r.param_names, r.free_params), r.chi2)
+        return (r.image, (; r.params, r.param_names, r.free_params, r.model), r.chi2)
 
     elseif engine === :squeeze || engine === :squeeze_sparco
         d = _require_mono(data, engine)
@@ -497,8 +526,12 @@ function run_engine(engine::Symbol, x0, data, ft;
             tmin       = _optreal(o, "tmin", 1.0),
             f_anywhere = _optreal(o, "f_anywhere", 0.05),
             f_copycat  = _optreal(o, "f_copycat", 0.1),
-            cent_mult  = _optreal(o, "cent_mult", 1.0),
-            auto_centering = _optbool(o, "auto_centering", true),
+            # No centering under SPARCO, by default and for the same reason the panel greys
+            # the controls: the parametric component sits at the centre by construction, so the
+            # translation degeneracy the centering term breaks is already broken, and pulling
+            # the image to the centre on top of that fights the star for the same position.
+            cent_mult  = _optreal(o, "cent_mult", engine === :squeeze_sparco ? 0.0 : 1.0),
+            auto_centering = _optbool(o, "auto_centering", engine !== :squeeze_sparco),
             prior_image = isempty(prior) ? nothing : prior_image(prior, size(x0, 1)),
             model,
             # The in-package monitor draws with matplotlib, and matplotlib called off the main

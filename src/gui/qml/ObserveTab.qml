@@ -1308,6 +1308,24 @@ Item {
                                     }
                                 }
 
+                                // ── Save PNG ──────────────────────────────────────────────
+                                //
+                                // Overlaid on the plot rather than placed in a toolbar, so every plot area in
+                                // the application carries the same control in the same corner. Dimmed until
+                                // hovered: it sits over the figure, and a button competing with the data for
+                                // attention is worse than one that has to be looked for.
+                                Button {
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: root.dp(6)
+                                    text: "Save PNG"
+                                    enabled: root.hasPlan
+                                    opacity: hovered ? 1.0 : 0.5
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "write this plot to a PNG file"
+                                    onClicked: root.savePng("gantt", ganttArea)
+                                }
+
                                 // Over the canvas until a night has been computed: an empty
                                 // axis reads as a failed plan rather than as one not yet run.
                                 Rectangle {
@@ -1339,6 +1357,25 @@ Item {
                             anchors.fill: parent
                             scene: delayPlot
                         }
+
+                        // ── Save PNG ──────────────────────────────────────────────
+                        //
+                        // Overlaid on the plot rather than placed in a toolbar, so every plot area in
+                        // the application carries the same control in the same corner. Dimmed until
+                        // hovered: it sits over the figure, and a button competing with the data for
+                        // attention is worse than one that has to be looked for.
+                        Button {
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: root.dp(6)
+                            text: "Save PNG"
+                            enabled: root.hasPlan
+                            opacity: hovered ? 1.0 : 0.5
+                            ToolTip.visible: hovered
+                            ToolTip.text: "write this plot to a PNG file"
+                            onClicked: root.savePng("delay", delayArea)
+                        }
+
 
                         Rectangle {
                             anchors.fill: parent
@@ -1893,6 +1930,36 @@ Item {
     property string popString: ""
 
     // Raised when Julia has written to the shared console and the window should re-read it.
+
+    // One picker for both plot areas on this tab; `which` says which one asked for it.
+    FilePicker {
+        id: savePngDialog
+        property string which: ""
+        property real pxw: 1200
+        property real pxh: 900
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save plot as PNG"
+        saveMode: true
+        defaultSuffix: "png"
+        filters: [{ label: "PNG images (*.png)", patterns: "*.png" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            Julia.shell_save_figure(savePngDialog.which, path,
+                                    savePngDialog.pxw, savePngDialog.pxh, root.detailed)
+            root.consoleChanged()
+        }
+    }
+
+    // Twice the size it has on screen, so the file is usable in a talk rather than being a
+    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
+    // a software GL stack refuses the very large ones.
+    function savePng(which, area) {
+        savePngDialog.which = which
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.openAt("")
+    }
+
     signal consoleChanged()
 
 }

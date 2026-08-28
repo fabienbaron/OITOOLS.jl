@@ -96,15 +96,20 @@ function _glyph_cache_path()
 end
 
 """
-    style_axis!(ax; scale = 1.0)
+    style_axis!(ax; scale = 1.0, minorticks = false)
 
 Apply oiplot's typography to a Makie axis.
 
 `scale` multiplies every size. It defaults to 1.0, which is oiplot's measured 12 pt and what
 the port harness compares against; the live GUI passes something larger, because a figure
 sized for a paper column is not sized for a window across the room.
+
+`minorticks` is off for the same reason `scale` is 1.0: matplotlib draws none, so a ported
+figure that drew them would no longer be the same figure -- `test/gui/plotport.jl` compares
+`nxminorticks` between the two and says so. The GUI turns them on, because reading a position
+off a screen is not reading it off a printed page.
 """
-function style_axis!(ax; scale::Real = 1.0)
+function style_axis!(ax; scale::Real = 1.0, minorticks::Bool = false)
     ax.xlabelsize[] = OIPLOT_LABELSIZE * scale
     ax.ylabelsize[] = OIPLOT_LABELSIZE * scale
     ax.titlesize[]  = OIPLOT_LABELSIZE * scale
@@ -114,6 +119,13 @@ function style_axis!(ax; scale::Real = 1.0)
     # differently even though the data is identical.
     ax.xticks[] = Makie.LinearTicks(OIPLOT_XTICKS)
     ax.yticks[] = Makie.LinearTicks(OIPLOT_XTICKS)
+    # Subticks. One between each pair of majors, unlabelled: on an image in milliarcseconds the
+    # majors can land several mas apart, and reading a position off them alone means
+    # interpolating by eye across the widest gap on the axis.
+    ax.xminorticksvisible[] = minorticks
+    ax.yminorticksvisible[] = minorticks
+    ax.xminorticks[] = Makie.IntervalsBetween(OIPLOT_MINOR_INTERVALS)
+    ax.yminorticks[] = Makie.IntervalsBetween(OIPLOT_MINOR_INTERVALS)
     # Restore Makie's own 5% headroom, which something else on this axis has taken away.
     #
     # `build_canvas` pre-creates a hidden heatmap for the Image perspective, and image-like
@@ -385,11 +397,12 @@ is drawn unnormalised, with a warning, rather than divided by roughly zero.
 function imdisp_makie(image::AbstractArray; pixsize::Real = -1.0,
                       colormap = :gist_heat, title::AbstractString = "",
                       colorbar::Bool = false, beamsize::Real = -1.0,
-                      beamlocation = (0.8, 0.8), scale::Real = 1.0)
+                      beamlocation = (0.8, 0.8), scale::Real = 1.0,
+                      tickinterval::Real = 0.5)
     fig = Makie.Figure(fonts = PLOT_FONTS)
     ax  = Makie.Axis(fig[1, 1]; aspect = 1)
     hm  = image_into!(fig, ax, image; pixsize, colormap, title, colorbar,
-                      beamsize, beamlocation, scale)
+                      beamsize, beamlocation, scale, tickinterval)
     return PlotData(fig, ax, hm, String[])
 end
 
@@ -406,6 +419,7 @@ function image_into!(fig, ax, image::AbstractArray; pixsize::Real = -1.0,
                      colormap = :gist_heat, title::AbstractString = "",
                      colorbar::Bool = false, beamsize::Real = -1.0,
                      beamlocation = (0.8, 0.8), scale::Real = 1.0,
+                     tickinterval::Real = 0.5,
                      normalise::Union{Nothing,Real} = nothing)
     img = if ndims(image) == 1
         n = isqrt(length(image))
@@ -436,6 +450,9 @@ function image_into!(fig, ax, image::AbstractArray; pixsize::Real = -1.0,
     hm = Makie.heatmap!(ax, xs, ys, Float32.(img ./ norm);
                         colormap = colormap, interpolate = false)
     style_axis!(ax; scale)
+    # In pixel mode the axes are indices, not mas, so `imdisp`'s mas-spaced locator has nothing
+    # to lock onto -- it sets one either way, but a 0.5-pixel subtick is not a thing.
+    pixmode || image_minorticks!(ax, 2halfx, 2halfy; scale, tickinterval)
     ax.title  = title
     ax.xlabel = pixmode ? "x ← E (pixels)" : "x ← E (mas)"
     ax.ylabel = pixmode ? "y → N (pixels)" : "y → N (mas)"
@@ -451,6 +468,33 @@ function image_into!(fig, ax, image::AbstractArray; pixsize::Real = -1.0,
     end
     colorbar && Makie.Colorbar(fig[1, 2], hm; label = "flux / pixel")
     return hm
+end
+
+"""
+    image_minorticks!(ax, fovx, fovy; scale = 1.0, tickinterval = 0.5)
+
+`imdisp`'s subticks and tick weights on a Makie image axis.
+
+Explicit tick VALUES, not `IntervalsBetween`: matplotlib's `MultipleLocator` puts a subtick at
+every multiple of a fixed mas interval, which is not the same thing as dividing whatever gap
+the major ticks happen to leave -- the two agree only when the majors are already a multiple
+of the interval apart. `imdisp` also thickens the majors against the minors (length 10/width 2
+against 5/1), and on an image that contrast is what makes the minors read as subticks rather
+than as a denser set of ticks.
+"""
+function image_minorticks!(ax, fovx::Real, fovy::Real; scale::Real = 1.0,
+                           tickinterval::Real = 0.5)
+    step = imdisp_tickinterval(max(fovx, fovy); tickinterval)
+    hx, hy = fovx / 2, fovy / 2
+    ax.xminorticks[] = collect(-step * floor(hx / step):step:step * floor(hx / step))
+    ax.yminorticks[] = collect(-step * floor(hy / step):step:step * floor(hy / step))
+    ax.xminorticksvisible[] = true
+    ax.yminorticksvisible[] = true
+    ax.xticksize[] = 10 * scale;      ax.yticksize[] = 10 * scale
+    ax.xtickwidth[] = 2 * scale;      ax.ytickwidth[] = 2 * scale
+    ax.xminorticksize[] = 5 * scale;  ax.yminorticksize[] = 5 * scale
+    ax.xminortickwidth[] = 1 * scale; ax.yminortickwidth[] = 1 * scale
+    return ax
 end
 
 """

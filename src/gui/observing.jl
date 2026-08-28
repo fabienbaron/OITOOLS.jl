@@ -112,6 +112,12 @@ struct NightPlan
     date          :: DateTime
     lst           :: Vector{Float32}
     lst_midnight  :: Float64
+    # Local sidereal time at the facility at the moment this plan was computed -- the wall
+    # clock in the control room, in the units the chart's x axis is drawn in. Recorded here
+    # rather than read at draw time so the marker stays where the night was worked out: the
+    # chart is redrawn on every zoom and pan, and a line that crept rightwards each time would
+    # be telling you something the rest of the figure does not know.
+    lst_now       :: Float64
     ha            :: Vector{Float32}
     alt           :: Vector{Float32}
     az            :: Vector{Float32}
@@ -201,8 +207,13 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
         (all_idx, false, NamedTuple[])
     end
 
+    # `now(UTC)`, not `date`: this is the clock, not the night being planned. `ra` only
+    # affects the hour angle the call also returns, which is discarded here.
+    lst_now, _ = OITOOLS.hour_angle_calc(Dates.now(Dates.UTC), f.lon, Float64(ra) / 15)
+
     return NightPlan(String(name), Float64(ra), Float64(dec), date,
-                     obs.lst, obs.lst_midnight, obs.ha, obs.alt, obs.az,
+                     obs.lst, obs.lst_midnight, Float64(first(lst_now)),
+                     obs.ha, obs.alt, obs.az,
                      Int.(obs.good_alt), good_delay,
                      Int.(obs.good_twilight), Int.(obs.good_moon),
                      obs.moon_sep, obs.moon_fli, applied,
@@ -374,7 +385,7 @@ function pop_label(p::NightPlan)
 end
 
 """
-    gantt_geometry(plan; detailed = false) -> (; bars, labels, bands, rows, midnight, xlim, ymax)
+    gantt_geometry(plan; detailed = false) -> (; bars, labels, bands, rows, midnight, now, xlim, ymax)
 
 The whole chart as data: background bands, one bar per contiguous run, and the annotations.
 
@@ -391,6 +402,15 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     lst = unwrap_lst(p.lst)
     mid = Float64(p.lst_midnight)
     !isempty(lst) && mid < lst[1] && (mid += 24.0)
+
+    # The clock, unwrapped into the same turn of LST the night is drawn in. `NaN` when it does
+    # not land inside the night at all -- which is most of the time, since the chart spans the
+    # dark hours and not a whole sidereal day. Clamping it to an edge instead would put a line
+    # on the chart that says "now" while meaning "not now, and off to one side".
+    nowlst = Float64(p.lst_now)
+    !isempty(lst) && nowlst < lst[1] && (nowlst += 24.0)
+    inside = !isempty(lst) && lst[1] <= nowlst <= lst[end]
+    nowlst = inside ? nowlst : NaN
 
     bars = GanttBar[]
     labels = GanttLabel[]
@@ -481,8 +501,8 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     # the chart would be worse than quoting none.
     subtitle = p.delay_applied ? pop_label(p) : ""
 
-    return (; bars, labels, bands, midnight = mid, xlim, target = p.name, rows, ymax, detailed,
-              subtitle, delay_applied = p.delay_applied)
+    return (; bars, labels, bands, midnight = mid, now = nowlst, xlim, target = p.name,
+              rows, ymax, detailed, subtitle, delay_applied = p.delay_applied)
 end
 
 "LST hours as `H:M`, matching the annotation format of the matplotlib original."

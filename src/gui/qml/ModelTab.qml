@@ -94,6 +94,11 @@ Item {
     // the parser's own rather than a copy that can fall behind it.
     property var componentKinds: []
 
+    // Rows in `expr` mode. The Resolution view draws a DAG of $-references, and with no derived
+    // parameter there are no references and no DAG -- so the count is what decides whether that
+    // panel is worth the height it takes.
+    property int nDerived: 0
+
     // Free-parameter names, for the grid's two axis pickers. Refreshed with the model, because
     // freeing or fixing a parameter changes what a grid can be run over.
     property var freeNames: []
@@ -135,7 +140,7 @@ Item {
             var lines = txt.split("\n")
             for (var i = 0; i < lines.length; ++i) {
                 var f = lines[i].split("\t")
-                if (f.length === 2) out.push({ key: f[0], label: f[1] })
+                if (f.length === 3) out.push({ key: f[0], label: f[1], base: f[2] })
             }
         }
         root.componentKinds = out
@@ -190,6 +195,36 @@ Item {
         hasRender = renderText.indexOf("!") !== 0
         modelArea.update()
         consoleChanged()
+    }
+
+
+    // One picker for every plot area on this tab; `which` says which one asked for it.
+    FilePicker {
+        id: savePngDialog
+        property string which: ""
+        property real pxw: 1200
+        property real pxh: 900
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save plot as PNG"
+        saveMode: true
+        defaultSuffix: "png"
+        filters: [{ label: "PNG images (*.png)", patterns: "*.png" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            Julia.shell_save_figure(savePngDialog.which, path,
+                                    savePngDialog.pxw, savePngDialog.pxh, false)
+            root.consoleChanged()
+        }
+    }
+
+    // Twice the size it has on screen, so the file is usable in a talk rather than being a
+    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
+    // a software GL stack refuses the very large ones.
+    function savePng(which, area) {
+        savePngDialog.which = which
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.openAt("")
     }
 
     signal consoleChanged()
@@ -408,6 +443,34 @@ Item {
 
     function fmt(v, d) { return (v === undefined || v === null || isNaN(v)) ? "—" : v.toFixed(d) }
 
+    // The `$`-references an expression makes, in the order they appear and without repeats.
+    // A reference is `$name,suffix` for a component parameter or `$name` for a global, and a
+    // component name cannot contain a comma, so nothing more is needed to know where one ends.
+    function refsOf(expr) {
+        if (!expr || expr.length === 0) return []
+        var m = expr.match(/\$[A-Za-z_][A-Za-z0-9_]*(?:,[A-Za-z_][A-Za-z0-9_ ]*)?/g)
+        if (m === null) return []
+        var out = []
+        for (var i = 0; i < m.length; ++i) {
+            var r = m[i].replace(/\s+$/, "")
+            if (out.indexOf(r) < 0) out.push(r)
+        }
+        return out
+    }
+
+    // The component a reference or a key belongs to, or "" for a global, for $WL/$MJD, and for
+    // a name no component has. The caller checks before selecting: an expression is free to
+    // name something that is not there, and the unrecognised list is what reports that.
+    function componentOf(ref) {
+        var t = ref.charAt(0) === "$" ? ref.substring(1) : ref
+        var i = t.indexOf(",")
+        if (i < 0) return ""
+        var name = t.substring(0, i)
+        for (var k = 0; k < componentModel.count; ++k)
+            if (componentModel.get(k).name === name) return name
+        return ""
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     ColumnLayout {
         anchors.fill: parent
@@ -542,59 +605,109 @@ Item {
                 // Component cards. Kind is inferred from the geometry key exactly as
                 // `_identify_kind` does; the card names the deciding key so a surprising
                 // kind is traceable to the key that caused it.
-                Flow {
+                //
+                // "+ component" sits outside the Flow, and first. Inside it, the button
+                // trailed the cards and moved every time one was added or removed, so the
+                // place you click to add a second component is not where you clicked to add
+                // the first.
+                RowLayout {
                     Layout.fillWidth: true
                     spacing: root.dp(6)
 
-                    Repeater {
-                        model: componentModel
-                        delegate: Rectangle {
-                            width: cardCol.implicitWidth + root.dp(16)
-                            height: cardCol.implicitHeight + root.dp(10)
-                            radius: root.dp(4)
-                            color: model.name === root.selectedComponent ? "#e8f0fe" : root.cPanel
-                            border.color: model.nunrecognised > 0 ? root.cBad : root.cLine
-
-                            // Declared BEFORE the content: later siblings sit on top and are
-                            // offered the click first, so the − button is reachable instead of
-                            // being swallowed by the card's own select-on-click.
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.selectedComponent = model.name
-                            }
-                            RowLayout {
-                                id: cardCol
-                                anchors.centerIn: parent
-                                spacing: root.dp(6)
-
-                                ColumnLayout {
-                                    spacing: 0
-                                    Label { text: model.name; font.bold: true }
-                                    Label {
-                                        text: model.kind + " ← " + model.geometryKey
-                                        color: "#666"
-                                        font.pointSize: root.pt(root.baseFontPt - 2)
-                                    }
-                                }
-                                ToolButton {
-                                    text: "−"
-                                    implicitWidth: root.dp(22)
-                                    implicitHeight: root.dp(22)
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: "remove " + model.name + " and its parameters"
-                                    onClicked: root.removeComponent(model.name)
-                                }
-                            }
-                        }
-                    }
-
                     Button {
                         text: "+ component"
+                        Layout.alignment: Qt.AlignTop
                         onClicked: {
                             addComponentDialog.suggestName()
                             addComponentDialog.open()
                         }
                     }
+
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: root.dp(6)
+
+                        Repeater {
+                            model: componentModel
+                            delegate: Rectangle {
+                                width: cardCol.implicitWidth + root.dp(16)
+                                height: cardCol.implicitHeight + root.dp(10)
+                                radius: root.dp(4)
+                                color: model.name === root.selectedComponent ? "#e8f0fe" : root.cPanel
+                                border.color: model.nunrecognised > 0 ? root.cBad : root.cLine
+
+                                // Declared BEFORE the content: later siblings sit on top and are
+                                // offered the click first, so the − button is reachable instead of
+                                // being swallowed by the card's own select-on-click.
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: root.selectedComponent = model.name
+                                }
+                                RowLayout {
+                                    id: cardCol
+                                    anchors.centerIn: parent
+                                    spacing: root.dp(6)
+
+                                    ColumnLayout {
+                                        spacing: 0
+                                        Label {
+                                            text: model.name
+                                            font.bold: true
+                                            visible: !nameEdit.visible
+                                        }
+                                        // The name is the prefix of every key the component owns
+                                        // and of every `$name,suffix` an expression refers to, so
+                                        // it is worth being able to change without rebuilding the
+                                        // component around it.
+                                        TextField {
+                                            id: nameEdit
+                                            visible: false
+                                            selectByMouse: true
+                                            font.bold: true
+                                            implicitWidth: root.dp(110)
+                                            // visible is cleared BEFORE the rename: the rename
+                                            // refreshes the model, which destroys this delegate,
+                                            // and assigning to it afterwards would be a write to
+                                            // an object that no longer exists.
+                                            onAccepted: {
+                                                var was = model.name, want = text
+                                                visible = false
+                                                root.renameComponent(was, want)
+                                            }
+                                            onActiveFocusChanged: if (!activeFocus) visible = false
+                                            Keys.onEscapePressed: visible = false
+                                        }
+                                        Label {
+                                            text: model.kind + " ← " + model.geometryKey
+                                            color: "#666"
+                                            font.pointSize: root.pt(root.baseFontPt - 2)
+                                        }
+                                    }
+                                    ToolButton {
+                                        text: "✎"
+                                        implicitWidth: root.dp(22)
+                                        implicitHeight: root.dp(22)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "rename " + model.name
+                                        onClicked: {
+                                            nameEdit.text = model.name
+                                            nameEdit.visible = true
+                                            nameEdit.forceActiveFocus()
+                                            nameEdit.selectAll()
+                                        }
+                                    }
+                                    ToolButton {
+                                        text: "−"
+                                        implicitWidth: root.dp(22)
+                                        implicitHeight: root.dp(22)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "remove " + model.name + " and its parameters"
+                                        onClicked: root.removeComponent(model.name)
+                                    }
+                                }
+                            }
+                        }
+                        }
                 }
 
                 // ── the parameter table ──────────────────────────────────────
@@ -903,6 +1016,33 @@ Item {
                                 ColumnLayout {
                                     spacing: root.dp(8)
 
+                                    // Warnings first. They are the reason to open this panel at
+                                    // all, and under three views of a model that parsed cleanly
+                                    // they are read last or not at all.
+                                    //
+                                    // `display_model` performs exactly these checks -- value<lb,
+                                    // value>ub, lb>=ub, flux fractions not summing to 1 -- so what
+                                    // is rendered here are its results, not a second implementation
+                                    // of them that could disagree with the fit.
+                                    Label {
+                                        visible: root.validationWarnings.length > 0
+                                        text: "Validation"
+                                        font.bold: true
+                                    }
+                                    Repeater {
+                                        model: root.validationWarnings
+                                        delegate: Label {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            color: root.cWarn
+                                            font.pointSize: root.pt(root.baseFontPt - 1)
+                                            text: "• " + modelData
+                                        }
+                                    }
+                                    // wire: display_model already performs exactly these checks —
+                                    // value<lb, value>ub, lb>=ub, flux fractions not summing to 1.
+                                    // Render its results rather than reimplementing them.
+
                                     Label { text: "Structure"; font.bold: true }
                                     Repeater {
                                         model: componentModel
@@ -936,63 +1076,149 @@ Item {
                                         }
                                     }
 
-                                    Label { text: "Resolution"; font.bold: true }
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        implicitHeight: root.dp(140)
-                                        color: "white"
-                                        border.color: root.cLine
-                                        radius: root.dp(3)
-                                        Label {
-                                            anchors.centerIn: parent
-                                            color: "#999"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            // The resolver's own order: globals → fixed → derived,
-                                            // topologically sorted. Drawn as a DAG of $-references so
-                                            // dependencies are visible rather than inferred.
-                                            text: "dependency DAG of $-references\n(globals → fixed → derived)"
-                                        }
-                                        // wire: the resolver's topological order → a small DAG
-                                    }
-
-                                    Label { text: "Numeric"; font.bold: true }
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        implicitHeight: root.dp(120)
-                                        color: "white"
-                                        border.color: root.cLine
-                                        radius: root.dp(3)
-                                        Label {
-                                            anchors.centerIn: parent
-                                            color: "#999"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            // Chromatic parameters are vectors, so they render as a
-                                            // curve versus λ rather than as a number.
-                                            text: root.broadcasting
-                                                  ? "all_names at current values — per-λ curves"
-                                                  : "all_names at current values"
-                                        }
-                                        // wire: the evaluated all_names vector, free entries highlighted
-                                    }
-
+                                    // ── Resolution: what depends on what ──────────────
+                                    //
+                                    // Hidden until something derives from something else: with
+                                    // no `$`-reference there is nothing to resolve, and an empty
+                                    // box is height taken from the panels that do have something
+                                    // to say.
+                                    //
+                                    // One row per derived parameter, in the resolver's own order
+                                    // -- globals, then fixed, then derived, topologically sorted
+                                    // -- with each `$`-reference as a chip. The chips are the
+                                    // point: a reference is a parameter somewhere else in this
+                                    // model, and clicking one selects the component it belongs to
+                                    // instead of leaving you to find it in the table.
                                     Label {
-                                        visible: root.validationWarnings.length > 0
-                                        text: "Validation"
-                                        font.bold: true
+                                        text: "Resolution"; font.bold: true
+                                        visible: root.nDerived > 0
+                                    }
+                                    Label {
+                                        visible: root.nDerived > 0 && root.broadcasting
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        color: root.cWarn
+                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                        text: "One expression uses $WL or $MJD, so the resolver " +
+                                              "broadcasts every parameter: each is a vector over " +
+                                              "the uv points, not a number."
                                     }
                                     Repeater {
-                                        model: root.validationWarnings
-                                        delegate: Label {
+                                        model: paramModel
+                                        delegate: Rectangle {
+                                            id: resRow
+                                            property string keyText: model.key
+                                            property string exprText: model.expr
+                                            visible: model.mode === "expr"
                                             Layout.fillWidth: true
-                                            wrapMode: Text.WordWrap
-                                            color: root.cWarn
-                                            font.pointSize: root.pt(root.baseFontPt - 1)
-                                            text: "• " + modelData
+                                            implicitHeight: visible ? rCol.implicitHeight + root.dp(10) : 0
+                                            color: "white"
+                                            border.color: root.cLine
+                                            radius: root.dp(3)
+                                            ColumnLayout {
+                                                id: rCol
+                                                x: root.dp(6); y: root.dp(5)
+                                                width: parent.width - root.dp(12)
+                                                spacing: root.dp(2)
+                                                Label {
+                                                    text: resRow.keyText + " = " + resRow.exprText
+                                                    color: root.cExpr
+                                                    font.family: "monospace"
+                                                    font.pointSize: root.pt(root.baseFontPt - 1)
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+                                                Flow {
+                                                    Layout.fillWidth: true
+                                                    spacing: root.dp(4)
+                                                    Repeater {
+                                                        model: root.refsOf(resRow.exprText)
+                                                        delegate: Rectangle {
+                                                            width: refLabel.implicitWidth + root.dp(10)
+                                                            height: refLabel.implicitHeight + root.dp(4)
+                                                            radius: root.dp(3)
+                                                            color: root.cPanel
+                                                            border.color: root.cLine
+                                                            Label {
+                                                                id: refLabel
+                                                                anchors.centerIn: parent
+                                                                text: modelData
+                                                                font.family: "monospace"
+                                                                font.pointSize: root.pt(root.baseFontPt - 2)
+                                                                color: root.componentOf(modelData).length > 0
+                                                                       ? root.cExpr : "#666"
+                                                            }
+                                                            MouseArea {
+                                                                anchors.fill: parent
+                                                                cursorShape: Qt.PointingHandCursor
+                                                                onClicked: {
+                                                                    var c = root.componentOf(modelData)
+                                                                    if (c.length > 0) root.selectedComponent = c
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
-                                    // wire: display_model already performs exactly these checks —
-                                    // value<lb, value>ub, lb>=ub, flux fractions not summing to 1.
-                                    // Render its results rather than reimplementing them.
+
+                                    // ── Numeric: every parameter at its current value ─────
+                                    //
+                                    // `all_names` as the resolver leaves it, which is the vector
+                                    // the vis functions are actually handed -- free entries in
+                                    // green, derived in violet, so the three modes are the same
+                                    // colours here as in the table. Clicking one selects its
+                                    // component. Empty for an empty model, and hidden then.
+                                    Label {
+                                        text: "Numeric"; font.bold: true
+                                        visible: componentModel.count > 0
+                                    }
+                                    Label {
+                                        visible: componentModel.count > 0 && root.broadcasting
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        color: "#666"
+                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                        text: "Broadcasting: each value below is the first entry " +
+                                              "of a per-λ vector."
+                                    }
+                                    Flow {
+                                        visible: componentModel.count > 0
+                                        Layout.fillWidth: true
+                                        spacing: root.dp(4)
+                                        Repeater {
+                                            model: paramModel
+                                            delegate: Rectangle {
+                                                id: numChip
+                                                property string keyText: model.key
+                                                width: numLabel.implicitWidth + root.dp(10)
+                                                height: numLabel.implicitHeight + root.dp(4)
+                                                radius: root.dp(3)
+                                                color: "white"
+                                                border.color: root.cLine
+                                                Label {
+                                                    id: numLabel
+                                                    anchors.centerIn: parent
+                                                    text: numChip.keyText + " = " + root.fmt(model.value, 4)
+                                                    font.family: "monospace"
+                                                    font.pointSize: root.pt(root.baseFontPt - 2)
+                                                    color: model.mode === "free" ? root.cFree
+                                                         : model.mode === "expr" ? root.cExpr
+                                                         : root.cFixed
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        var c = root.componentOf(numChip.keyText)
+                                                        if (c.length > 0) root.selectedComponent = c
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
                                 }
 
                                 Label {
@@ -1256,7 +1482,6 @@ Item {
                                 ColumnLayout {
                                     spacing: root.dp(8)
 
-                                    Label { text: "Constraints"; font.bold: true }
                                     Label {
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
@@ -1489,6 +1714,25 @@ Item {
                                 anchors.fill: parent
                                 scene: modelPlot
                             }
+
+                                // ── Save PNG ──────────────────────────────────
+                                //
+                                // Overlaid on the plot rather than placed in a toolbar, so every
+                                // plot area in the application carries the same control in the
+                                // same corner. Dimmed until hovered: it sits over the figure, and
+                                // a button competing with the data for attention is worse than one
+                                // that has to be looked for.
+                                Button {
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: root.dp(6)
+                                    text: "Save PNG"
+                                    enabled: root.hasRender
+                                    opacity: hovered ? 1.0 : 0.5
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "write this plot to a PNG file"
+                                    onClicked: root.savePng("model", modelArea)
+                                }
                             Rectangle {
                                 anchors.fill: parent
                                 visible: !root.hasRender
@@ -1666,26 +1910,44 @@ Item {
                                         // Wide enough for the longest entry: a dropdown that elides its
                                         // own descriptions hides the part distinguishing the choices.
                                         Layout.preferredWidth: root.dp(330)
-                                        // NLopt's names carry an LD_/LN_ prefix encoding exactly one
-                                        // thing — `use_grad = startswith(method, "LD_")`. That is said
-                                        // in words here instead, so the list reads as algorithms rather
-                                        // than as symbols. The SYMBOL is unchanged: `optimiserKey` still
-                                        // returns :LD_LBFGS, because that is what reaches Opt(method, n).
-                                        // The three that get used are first; the rest keep
-                                        // their place below a separator rather than competing
-                                        // for the top of the list.
-                                        model: ["Levenberg-Marquardt  ·  lsqfit",
-                                                "Nelder-Mead  ·  derivative-free",
-                                                (root.nestedBackend.length > 0
-                                                 ? "Nested sampling  ·  " + root.nestedLabel
-                                                 : "Nested sampling  ·  unavailable"),
-                                                "Grid search  ·  two parameters, χ² map",
-                                                "──────────",
-                                                "L-BFGS  ·  gradient",
-                                                "MMA  ·  gradient, takes constraints",
-                                                "SLSQP  ·  gradient, takes constraints",
-                                                "COBYLA  ·  derivative-free, takes constraints"]
+                                        // `root.optimisers` carries the names, the keys and the
+                                        // reason each unavailable entry cannot run. The three
+                                        // that get used are first; the rest keep their place
+                                        // below a separator rather than competing for the top
+                                        // of the list.
+                                        model: root.optimisers
+                                        textRole: "name"
+                                        valueRole: "key"
                                         onActivated: root.optimiser = root.optimiserKey(index)
+
+                                        // The Image tab's treatment of Pigeons and OIVI, applied
+                                        // to a sampler that is not loaded: dimmed, still readable,
+                                        // and named alongside what would make it run. An entry
+                                        // that looks like every other one and then refuses to be
+                                        // chosen reads as a broken list.
+                                        delegate: ItemDelegate {
+                                            id: optDelegate
+                                            required property int index
+                                            required property var model
+                                            width: optBox.width
+                                            enabled: root.optimiserUsable(optDelegate.model)
+                                            highlighted: optBox.highlightedIndex === optDelegate.index
+                                            contentItem: RowLayout {
+                                                spacing: root.dp(8)
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    text: optDelegate.model.name
+                                                    elide: Text.ElideRight
+                                                    opacity: optDelegate.enabled ? 1.0 : 0.5
+                                                }
+                                                Label {
+                                                    text: optDelegate.model.reason
+                                                    visible: text.length > 0
+                                                    color: "#c62828"
+                                                    font.pointSize: root.pt(root.baseFontPt - 2)
+                                                }
+                                            }
+                                        }
                                     }
 
                                     Label {
@@ -1702,7 +1964,7 @@ Item {
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
                                         text: "Nested sampling needs a sampler: start with " +
-                                              "`using NestedSamplers` (pure Julia) or " +
+                                              "`using Nautilus` (pure Julia) or " +
                                               "`using PythonCall` (UltraNest)"
                                         color: root.cWarn
                                         font.pointSize: root.pt(root.baseFontPt - 1)
@@ -1718,7 +1980,10 @@ Item {
                                     ComboBox {
                                         id: uncBox
                                         Layout.preferredWidth: root.dp(160)
-                                        model: ["none", "Jacobian", "bootstrap", "posterior"]
+                                        // "skip", not "none": this picks whether uncertainties are
+                                        // estimated at all, and "none" reads like a result the fit
+                                        // came back with rather than a step being left out.
+                                        model: ["skip", "Jacobian", "bootstrap", "posterior"]
                                         onActivated: root.uncertainty =
                                             ["none", "jacobian", "bootstrap", "posterior"][index]
                                     }
@@ -1965,6 +2230,25 @@ Item {
                                 scene: chi2MapPlot
                             }
 
+                                // ── Save PNG ──────────────────────────────────
+                                //
+                                // Overlaid on the plot rather than placed in a toolbar, so every
+                                // plot area in the application carries the same control in the
+                                // same corner. Dimmed until hovered: it sits over the figure, and
+                                // a button competing with the data for attention is worse than one
+                                // that has to be looked for.
+                                Button {
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: root.dp(6)
+                                    text: "Save PNG"
+                                    enabled: root.chi2MapP1.length > 0
+                                    opacity: hovered ? 1.0 : 0.5
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "write this plot to a PNG file"
+                                    onClicked: root.savePng("chi2map", chi2MapArea)
+                                }
+
                             // Covers the chart until there is one. The Makie figure exists from
                             // startup -- it has to, the GL context belongs to Qt afterwards --
                             // so without this an empty axis reads as a finished, featureless map.
@@ -2092,6 +2376,11 @@ Item {
         // Three facts the model does not otherwise show: keys the parser ignored, whether the
         // resolver broadcasts every parameter over wavelength, and the globals.
         var insp = Julia.shell_model_inspection().split("\n")
+        var nd = 0
+        for (var d = 0; d < paramModel.count; ++d)
+            if (paramModel.get(d).mode === "expr") nd++
+        root.nDerived = nd
+
         root.unrecognisedKeys = (insp.length > 0 && insp[0].length > 0) ? insp[0].split(" ") : []
         root.broadcasting     = (insp.length > 1 && insp[1] === "true")
         root.globalKeys       = (insp.length > 2 && insp[2].length > 0) ? insp[2].split(" ") : []
@@ -2166,6 +2455,18 @@ Item {
         return true
     }
 
+    // Renaming is Julia's job for the same reason adding is: the name is a prefix shared by
+    // the component's keys, its bounds, its place in the free list and any expression that
+    // refers to it, and moving some of those without the others is not a rename.
+    function renameComponent(oldName, newName) {
+        var err = Julia.shell_rename_component(oldName, newName)
+        if (err.length > 0) { root.fitText = err; return }
+        if (root.selectedComponent === oldName) root.selectedComponent = newName
+        root.modelDirty = true
+        refreshModel()
+        root.consoleChanged()
+    }
+
     // ── mode changes, where the cleverness lives (§3.2) ──────────────────────
     //
     // Each conversion has a consequence the user should see rather than discover:
@@ -2191,23 +2492,50 @@ Item {
         root.applyMode(row, newMode)
     }
 
+    // Through the shell, not a local assignment: `list_free_params` lives in Julia, and a row
+    // that reads "free" while the fit vector says otherwise is the one thing the mode column
+    // exists to prevent. `shell_set_param` also holds the exclusion -- free drops an expression,
+    // derived drops the row from the fit vector -- so the rule stays in one place.
     function applyMode(row, newMode) {
-        paramModel.setProperty(row, "mode", newMode)
+        if (row < 0 || row >= paramModel.count) return
+        var err = Julia.shell_set_param(paramModel.get(row).key, "mode", newMode)
+        if (err.length > 0 && err.charAt(0) === "!") { root.fitText = err; refreshModel(); return }
         root.modelDirty = true
-        // wire: rebuild list_free_params from the rows in order, refresh fitindex on every
-        // row, pull default bounds for a newly free one, and re-run model_rows
+        refreshModel()
+        root.consoleChanged()
     }
 
-    // Index 3 is the separator, which is not an optimiser: selecting it keeps whatever was
-    // chosen before rather than silently switching to something else.
+    // The optimiser list, with the reason each unavailable entry cannot run. `reason` drives
+    // both the greying and the red note beside the row, exactly as the Image tab's engine list
+    // does -- the two panels ask the same question and should not answer it differently.
+    //
+    // NLopt's names carry an LD_/LN_ prefix encoding exactly one thing --
+    // `use_grad = startswith(method, "LD_")`. That is said in words in `name`; `key` is still
+    // the symbol, because that is what reaches `Opt(method, n)`.
+    readonly property var optimisers: [
+        { key: "lsqfit",        name: "Levenberg-Marquardt  ·  lsqfit",                reason: "" },
+        { key: "LN_NELDERMEAD", name: "Nelder-Mead  ·  derivative-free",               reason: "" },
+        { key: "nested",
+          name:   "Nested sampling  ·  " + (root.nestedBackend.length > 0
+                                            ? root.nestedLabel : "no sampler loaded"),
+          reason: root.nestedBackend.length > 0 ? "" : "needs Nautilus or UltraNest" },
+        { key: "grid",          name: "Grid search  ·  two parameters, χ² map",        reason: "" },
+        { key: "",              name: "──────────",                                    reason: "" },
+        { key: "LD_LBFGS",      name: "L-BFGS  ·  gradient",                           reason: "" },
+        { key: "LD_MMA",        name: "MMA  ·  gradient, takes constraints",           reason: "" },
+        { key: "LD_SLSQP",      name: "SLSQP  ·  gradient, takes constraints",         reason: "" },
+        { key: "LN_COBYLA",     name: "COBYLA  ·  derivative-free, takes constraints", reason: "" }
+    ]
+
+    // The separator has no key and is not an optimiser; an entry with a reason cannot run.
+    function optimiserUsable(m) { return m.key.length > 0 && m.reason.length === 0 }
+
+    // Selecting something unusable keeps whatever was chosen before rather than silently
+    // switching to it -- the red note beside the row says why it was refused.
     function optimiserKey(i) {
-        var k = ["lsqfit", "LN_NELDERMEAD", "nested", "grid", "",
-                 "LD_LBFGS", "LD_MMA", "LD_SLSQP", "LN_COBYLA"][i]
-        // Nested sampling needs one of its two extensions loaded. Selecting it with neither
-        // would start a fit that cannot run, so the choice is refused and the previous
-        // optimiser kept -- the label beneath the box says why.
-        if (k === "nested" && root.nestedBackend.length === 0) return optimiser
-        return (k === undefined || k.length === 0) ? optimiser : k
+        if (i < 0 || i >= root.optimisers.length) return optimiser
+        var m = root.optimisers[i]
+        return optimiserUsable(m) ? m.key : optimiser
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -2281,16 +2609,30 @@ Item {
         standardButtons: Dialog.Ok | Dialog.Cancel
         width: root.dp(320)
 
-        // "c1", "c2", ... — unique against what is already there, so OK is never rejected for
-        // a reason the dialog could have avoided.
+        // Named after the kind -- `star`, `ring`, `gauss` -- and numbered only when that name
+        // is already taken, so the first uniform disk is `star` rather than `star1`. Unique
+        // against what is already there, so OK is never rejected for a reason the dialog could
+        // have avoided.
+        //
+        // Set once the user has typed over the suggestion, so changing the kind afterwards
+        // does not discard a name they chose.
+        property bool nameEdited: false
+
+        function taken(n) {
+            for (var k = 0; k < componentModel.count; ++k)
+                if (componentModel.get(k).name === n) return true
+            return false
+        }
+
         function suggestName() {
-            var i = 1, taken = true
-            while (taken) {
-                taken = false
-                for (var k = 0; k < componentModel.count; ++k)
-                    if (componentModel.get(k).name === "c" + i) { taken = true; i++; break }
-            }
-            nameField.text = "c" + i
+            var base = "c"
+            for (var j = 0; j < root.componentKinds.length; ++j)
+                if (root.componentKinds[j].key === kindField.currentValue)
+                    base = root.componentKinds[j].base
+            var name = base, i = 1
+            while (taken(name)) { i++; name = base + i }
+            nameField.text = name
+            nameEdited = false
         }
 
         ColumnLayout {
@@ -2303,6 +2645,7 @@ Item {
                     id: nameField
                     Layout.fillWidth: true
                     selectByMouse: true
+                    onTextEdited: addComponentDialog.nameEdited = true
                     onAccepted: addComponentDialog.accept()
                 }
             }
@@ -2315,6 +2658,9 @@ Item {
                     textRole: "label"
                     valueRole: "key"
                     model: root.componentKinds
+                    // `onActivated`, not `onCurrentIndexChanged`: it fires only when the user
+                    // picks, so populating the box does not overwrite a typed name.
+                    onActivated: if (!addComponentDialog.nameEdited) addComponentDialog.suggestName()
                 }
             }
             Label {
@@ -2322,8 +2668,9 @@ Item {
                 wrapMode: Text.WordWrap
                 color: "#666"
                 font.pointSize: root.pt(root.baseFontPt - 2)
-                text: "Values start somewhere sane rather than at anything measured; set them " +
-                      "in the table, then free what should be fitted."
+                text: "Values start somewhere sane rather than at anything measured, the " +
+                      "geometry parameter starts free, and the flux is shared with whatever " +
+                      "is already there."
             }
         }
 

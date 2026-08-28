@@ -23,6 +23,7 @@ function __init__()
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component,
+                     shell_rename_component, shell_save_figure,
                      shell_chi2_map_info, shell_free_names, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,

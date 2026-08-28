@@ -1171,10 +1171,18 @@ end
 """
     shell_component_kinds() -> String
 
-The component kinds "+ component" offers, as `kind\tlabel` lines.
+The component kinds "+ component" offers, as `kind\tlabel\tname` lines.
 
 Taken from the parser's own table rather than a list written here, so a kind OITOOLS gains --
 or loses -- cannot leave the two disagreeing about what can be built.
+
+Sized geometries come first, and the two that carry no size come last: a point source fits no
+diameter and a fully resolved component contributes no structure, so neither is what "add a
+component" usually means -- a uniform disk is. Order decides the dropdown's default.
+
+The third field seeds the name. A component name is the prefix of every key it owns and of
+every `\$name,suffix` an expression refers to, so it is read far more often than it is typed;
+`star` and `ring` say what the model is where `c1` and `c2` say only how many there are.
 """
 function shell_component_kinds()
     labels = Dict(:point => "point source", :ud => "uniform disk", :gaussian => "Gaussian",
@@ -1182,10 +1190,19 @@ function shell_component_kinds()
                   :ldpow => "power-law limb darkening", :ring => "uniform ring",
                   :gaussian_ring => "Gaussian ring", :crescent => "crescent",
                   :resolved => "fully resolved")
-    order = [:point, :ud, :gaussian, :ldlin, :ldquad, :ldpow,
-             :ring, :gaussian_ring, :crescent, :resolved]
-    return join((string(k, '\t', get(labels, k, string(k)))
-                 for k in order if haskey(_ANALYTIC_PARAM_SUFFIXES, k)), "\n")
+    labels[:hankel] = "radial profile (I(r) you write)"
+    names = Dict(:point => "pt", :ud => "star", :gaussian => "gauss", :ldlin => "star",
+                 :ldquad => "star", :ldpow => "star", :ring => "ring",
+                 :gaussian_ring => "ring", :crescent => "crescent", :resolved => "bg",
+                 :hankel => "disk")
+    order = [:ud, :gaussian, :ldlin, :ldquad, :ldpow,
+             :ring, :gaussian_ring, :crescent, :hankel, :point, :resolved]
+    # `:hankel` is admitted by name. It has no entry in `_ANALYTIC_PARAM_SUFFIXES` and cannot
+    # have one: `compile_profile` discovers a profile's parameters from the expression, so
+    # there is no fixed list to write down.
+    return join((string(k, '\t', get(labels, k, string(k)), '\t', get(names, k, string(k)))
+                 for k in order
+                 if haskey(_ANALYTIC_PARAM_SUFFIXES, k) || k === :hankel), "\n")
 end
 
 # Starting values for a freshly added component. Not physics -- somewhere sane for a fit to
@@ -1197,6 +1214,34 @@ const _COMPONENT_SEEDS = Dict{String,Float64}(
     "u" => 0.3, "w" => 0.1, "alpha" => 0.15, "resolved" => 1.0)
 
 _component_seed(suffix) = get(_COMPONENT_SEEDS, suffix, 2.0)
+
+"""
+    _share_flux!(m, newkey) -> Float64
+
+The flux fraction a component being added should start at, having rescaled the others so the
+fractions still sum to 1.
+
+`display_model` warns when numeric flux fractions do not sum to 1, and every component starting
+at 1.0 is the commonest way to earn that warning: two components then each carry a whole
+source, which inflates chi2 rather than splitting the light between them. Adding a second
+component means "share the source", not "double it".
+
+Existing fractions keep their ratio to each other -- a deliberate 4:1 stays 4:1 -- and the new
+one takes an equal share. Nothing is touched when any existing fraction is an expression:
+renormalising around a value the resolver has yet to compute would be a guess, and the warning
+is the better thing to see.
+"""
+function _share_flux!(m::ModelEntry, newkey::AbstractString)
+    others = [k for k in keys(m.dict) if endswith(k, ",f") && k != newkey]
+    isempty(others) && return 1.0
+    all(m.dict[k] isa Real for k in others) || return 1.0
+    share = 1.0 / (length(others) + 1)
+    tot = sum(Float64(m.dict[k]) for k in others)
+    for k in others
+        m.dict[k] = tot > 0 ? (1.0 - share) * Float64(m.dict[k]) / tot : share
+    end
+    return share
+end
 
 """
     shell_add_component(name, kind) -> String
@@ -1215,10 +1260,33 @@ function shell_add_component(name, kind)
     occursin(',', nm) && return "! a component name cannot contain a comma"
     nm == GLOBAL_COMPONENT && return "! that name is reserved for globals"
     k = Symbol(String(kind))
-    haskey(_ANALYTIC_PARAM_SUFFIXES, k) || return "! unknown component kind: " * String(kind)
+    (haskey(_ANALYTIC_PARAM_SUFFIXES, k) || k === :hankel) ||
+        return "! unknown component kind: " * String(kind)
     pre = nm * ","
     any(startswith(key, pre) for key in keys(m.dict)) &&
         return "! there is already a component called " * nm
+
+    if k === :hankel
+        # A profile has no fixed parameter list, so nothing here writes one: what goes in is the
+        # expression and the r grid, and `compile_profile` discovers the rest from the string as
+        # it is edited.
+        #
+        # The seed is a flat profile, which is a uniform disk of diameter `udout`. It parses,
+        # evaluates and fits, where an empty string or a half-written formula does none of the
+        # three -- and a component that cannot be evaluated cannot be previewed either, so
+        # there would be nothing on screen to edit against.
+        m.dict[pre * "profile"] = "1.0"
+        m.dict[pre * "udout"]   = _component_seed("diamout")
+        m.dict[pre * "nr"]      = 100.0
+        m.dict[pre * "f"]       = _share_flux!(m, pre * "f")
+        # `udout` and not `profile`: a free parameter must be numeric, and the profile is a
+        # string. `udout` is the one the grid is built from and the one worth fitting.
+        push!(m.free, pre * "udout")
+        console!(sh, "  added $(nm): radial profile on r ∈ [0, " *
+                     string(_component_seed("diamout") / 2) * "] mas, 100 points; " *
+                     "$(pre)udout is free")
+        return ""
+    end
 
     gk = get(_KIND_GEOMETRY, k, "")
     suffixes = copy(_ANALYTIC_PARAM_SUFFIXES[k])
@@ -1228,8 +1296,15 @@ function shell_add_component(name, kind)
     end
     # Every component carries a flux fraction: it is what `:point` is identified BY, and what
     # makes a second component mean anything relative to the first.
-    m.dict[pre * "f"] = 1.0
-    console!(sh, "  added $(nm): $(k), keys " * join((pre * s for s in suffixes), ", "))
+    m.dict[pre * "f"] = _share_flux!(m, pre * "f")
+    # The geometry parameter starts free, because it is the one the component was added to
+    # measure. A component whose every parameter is fixed contributes nothing to the fit
+    # vector, so adding one and pressing Run would fit exactly what was already there.
+    # Bounds need no seeding here: `model_rows` falls back to `default_bounds` for any key
+    # without one.
+    isempty(gk) || push!(m.free, pre * gk)
+    console!(sh, "  added $(nm): $(k), keys " * join((pre * s for s in suffixes), ", ") *
+                 (isempty(gk) ? "" : "; $(pre * gk) is free"))
     return ""
 end
 
@@ -1253,6 +1328,50 @@ function shell_remove_component(name)
     end
     filter!(p -> !startswith(p, pre), m.free)
     console!(sh, "  removed $(nm): $(length(ks)) keys")
+    return ""
+end
+
+"""
+    shell_rename_component(old, new) -> String
+
+Rename a component, carrying its parameters, its bounds and its place in the free list with it.
+
+Unlike removal, expressions ARE rewritten. `\$old,ud` and `\$new,ud` name the same parameter of
+the same component, so leaving the old spelling behind would break a model the user never
+edited -- where after a removal a dangling reference is the honest report that something the
+model depended on is gone. The reference form is `\$name,suffix` and a name cannot contain a
+comma, so replacing `\$old,` matches the whole name and never a longer one that merely starts
+with it.
+"""
+function shell_rename_component(old, new)
+    sh = _shell(); m = _model(sh)
+    o = String(old); nm = strip(String(new))
+    isempty(nm) && return "! a component needs a name"
+    occursin(',', nm) && return "! a component name cannot contain a comma"
+    nm == GLOBAL_COMPONENT && return "! that name is reserved for globals"
+    nm == o && return ""
+    opre = o * ","; npre = nm * ","
+    ks = [k for k in keys(m.dict) if startswith(k, opre)]
+    isempty(ks) && return "! no component called " * o
+    any(startswith(k, npre) for k in keys(m.dict)) &&
+        return "! there is already a component called " * nm
+
+    for k in ks
+        nk = npre * k[nextind(k, lastindex(opre)):end]
+        m.dict[nk] = m.dict[k];                      delete!(m.dict, k)
+        haskey(m.lb, k) && (m.lb[nk] = m.lb[k];      delete!(m.lb, k))
+        haskey(m.ub, k) && (m.ub[nk] = m.ub[k];      delete!(m.ub, k))
+        replace!(m.free, k => nk)
+    end
+    nref = 0
+    for k in collect(keys(m.dict))
+        v = m.dict[k]
+        v isa AbstractString && occursin("\$" * opre, v) || continue
+        m.dict[k] = replace(v, "\$" * opre => "\$" * npre)
+        nref += 1
+    end
+    console!(sh, "  renamed $(o) → $(nm): $(length(ks)) keys" *
+                 (nref > 0 ? ", $(nref) expression(s) rewritten" : ""))
     return ""
 end
 

@@ -106,6 +106,12 @@ Item {
 
     readonly property bool stochastic: isSqueeze || engine === "vi"
 
+    // Centering is a SPARCO engine's job to NOT do. The parametric component sits at the
+    // centre by construction and the image is reconstructed around it, so the translation
+    // degeneracy the centering term exists to break is already broken -- and pulling the image
+    // to the centre on top of that fights the star for the same position.
+    readonly property bool centeringApplies: !(engine === "sparco" || engine === "squeeze_sparco")
+
     function engineReasonFor(key) {
         if (key === "tempering" && !pigeonsAvailable) return "needs Pigeons"
         if (key === "vi"        && !oiviAvailable)    return "needs OIVI"
@@ -417,7 +423,8 @@ Item {
         } else if (isSqueeze) {
             put("nelements", nelements); put("niter", niter); put("nchains", nchains)
             put("tmin", tmin); put("f_anywhere", fAnywhere); put("f_copycat", fCopycat)
-            put("cent_mult", centMult); put("auto_centering", autoCentering ? 1 : 0)
+            put("cent_mult", centeringApplies ? centMult : 0)
+            put("auto_centering", centeringApplies && autoCentering ? 1 : 0)
             put("seed", startSeed)
             if (squeezePriorPath.length > 0) put("prior", squeezePriorPath)
             if (engine === "squeeze_sparco") {
@@ -442,6 +449,7 @@ Item {
             for (var s = 0; s < squeezeRegModel.count; ++s) {
                 var q = squeezeRegModel.get(s)
                 if (!q.use) continue
+                if (q.name === "centering" && !centeringApplies) continue
                 sq.push(q.name + "," + q.lambda)
             }
             return sq.join(";")
@@ -454,6 +462,7 @@ Item {
             var r = regModel.get(i)
             if (!r.name || r.name.length === 0) continue
             if (r.on === false) continue        // unticked: left out of this run, not deleted
+            if (r.name === "centering" && !centeringApplies) continue
             var row = r.name + "," + r.mu
             // `l1l2` is the one name that REQUIRES its second argument; sending it without
             // one would error inside reconstruct rather than here.
@@ -506,6 +515,36 @@ Item {
     }
 
     // Raised when Julia has written to the shared console and the window should re-read it.
+
+    // One picker for every plot area on this tab; `which` says which one asked for it.
+    FilePicker {
+        id: savePngDialog
+        property string which: ""
+        property real pxw: 1200
+        property real pxh: 900
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save plot as PNG"
+        saveMode: true
+        defaultSuffix: "png"
+        filters: [{ label: "PNG images (*.png)", patterns: "*.png" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            Julia.shell_save_figure(savePngDialog.which, path,
+                                    savePngDialog.pxw, savePngDialog.pxh, false)
+            root.consoleChanged()
+        }
+    }
+
+    // Twice the size it has on screen, so the file is usable in a talk rather than being a
+    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
+    // a software GL stack refuses the very large ones.
+    function savePng(which, area) {
+        savePngDialog.which = which
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.openAt("")
+    }
+
     signal consoleChanged()
 
     property bool _continueRun: false
@@ -1436,18 +1475,38 @@ Item {
                                             onCommitted: (v) => root.fCopycat = v
                                         }
 
-                                        Label { text: "cent_mult" }
+                                        Label {
+                                            text: "cent_mult"
+                                            color: root.centeringApplies ? "#000" : "#999"
+                                        }
                                         NumField {
                                             Layout.preferredWidth: dp(90); minimum: 0
                                             value: root.centMult
+                                            enabled: root.centeringApplies
                                             onCommitted: (v) => root.centMult = v
                                         }
                                         CheckBox {
                                             Layout.columnSpan: 2
                                             text: "auto-centering"
-                                            checked: root.autoCentering
-                                            enabled: root.squeezePriorPath === ""
+                                            checked: root.autoCentering && root.centeringApplies
+                                            enabled: root.centeringApplies &&
+                                                     root.squeezePriorPath === ""
                                             onToggled: root.autoCentering = checked
+                                        }
+                                        // Greyed rather than hidden, and with the reason: a
+                                        // control that vanishes reads as a missing feature,
+                                        // where one that is dimmed and explained says the
+                                        // engine has already dealt with it.
+                                        Label {
+                                            Layout.columnSpan: 2
+                                            Layout.fillWidth: true
+                                            visible: !root.centeringApplies
+                                            wrapMode: Text.WordWrap
+                                            color: "#c62828"
+                                            font.pointSize: pt(baseFontPt - 2)
+                                            text: "the SPARCO component fixes the centre, so " +
+                                                  "centering is off — a centering term would " +
+                                                  "pull the image against the star"
                                         }
                                     }
 
@@ -1815,6 +1874,25 @@ Item {
                     id: imageArea
                     anchors.fill: parent
                     scene: imagePlot
+                }
+
+                // ── Save PNG ──────────────────────────────────
+                //
+                // Overlaid on the plot rather than placed in a toolbar, so every
+                // plot area in the application carries the same control in the
+                // same corner. Dimmed until hovered: it sits over the figure, and
+                // a button competing with the data for attention is worse than one
+                // that has to be looked for.
+                Button {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: dp(6)
+                    text: "Save PNG"
+                    enabled: root.hasResult || root.showingStart
+                    opacity: hovered ? 1.0 : 0.5
+                    ToolTip.visible: hovered
+                    ToolTip.text: "write this plot to a PNG file"
+                    onClicked: root.savePng("image", imageArea)
                 }
 
                 // Over the canvas until there is something on it: an empty axis reads as a
