@@ -13,6 +13,10 @@
 | `fit_model_nested(model, data; lb, ub)` | Fit by nested sampling — posterior **and** log-evidence; needs finite bounds |
 | `fit_model_ultranest(model, data; lb, ub)` | `fit_model_nested` pinned to the UltraNest backend |
 | `nested_backend()`, `set_nested_backend!(b)` | Which nested sampler is in force: `:nestedsamplers` or `:ultranest` |
+
+Which package each fitter needs is tabulated under
+[What each optimiser needs](@ref) — `fit_model`, `fit_model_lsqfit`, `chi2_map` and
+`bootstrap_fit` need nothing beyond OITOOLS; `fit_model_nested` needs a sampler.
 | `chi2_map(model_dict, free, data, p1, p2)` | Grid-search two free parameters and return the χ² surface; needs no gradient and no starting guess |
 | `model_to_obs(model, x, data)` | Compute observables (V², T3amp, T3phi) from a model |
 | `model_to_residuals(model, x, data)` | Compute normalised residuals (model - data) / error |

@@ -95,6 +95,17 @@ Item {
     // ── simulation output ─────────────────────────────────────────────────────
     property string outputFile: ""
     property string lastSimulatedFile: ""
+    // The band the chosen spectral setup actually observes in, and the mean wavelength that
+    // decided it. Read from Julia rather than guessed from the setup's name: MIRCX_LOWJ's
+    // channels sit at 1.44 µm, which is H, so the name would give the wrong band.
+    property string simBand:     ""
+    property real   simBandLam:  0.0
+
+    // `simMag` follows the band unless the user has typed a value. Once they have, it is theirs
+    // and switching instruments must not silently overwrite it -- a magnitude is something an
+    // observer often knows better than SIMBAD does.
+    property bool   simMagUserSet: false
+
     property real   simMag:      2.0
     property real   simMagAO:    2.0
     property bool   simNoise:    true
@@ -259,6 +270,28 @@ Item {
         root.cacheCount = nc
     }
 
+    // Set `simMag` from the current target's magnitude in the instrument's band.
+    //
+    // Does nothing when the user has typed a magnitude, when there is no target, or when the
+    // band is one SIMBAD gave us no magnitude for -- SPICA works in G_rp, and the target rows
+    // carry V, J, H and K only. Leaving the previous value in place is the honest answer there;
+    // inventing one from a neighbouring band would be a silent error in the noise model.
+    function magForBand() {
+        var f = Julia.shell_sim_band(root.spectralSetup).split("\t")
+        root.simBand    = f[0]
+        root.simBandLam = f.length > 1 && f[1].length > 0 ? parseFloat(f[1]) : 0.0
+        if (root.simMagUserSet || root.simBand.length === 0) return
+        if (root.currentTargetIndex < 0 || root.currentTargetIndex >= targetModel.count) return
+
+        var t = targetModel.get(root.currentTargetIndex)
+        var m = root.simBand === "V" ? t.magV : root.simBand === "J" ? t.magJ :
+                root.simBand === "H" ? t.magH : root.simBand === "K" ? t.magK : NaN
+        if (!isNaN(m) && m !== 0.0) root.simMag = m
+    }
+
+    onSpectralSetupChanged: magForBand()
+    onCurrentTargetIndexChanged: magForBand()
+
     function addTarget() {
         targetModel.append({ name: "", ra: 0.0, dec: 0.0,
                              magV: 0.0, magJ: 0.0, magH: 0.0, magK: 0.0, cached: false })
@@ -299,6 +332,9 @@ Item {
             if (f[3 + b] !== "" && f[3 + b] !== undefined) patch[bands[b]] = parseFloat(f[3 + b])
         targetModel.set(i, patch)
         refreshTargets()
+        // The magnitudes just changed without the selection changing, so the band-following
+        // value has to be recomputed here as well as on selection.
+        if (i === root.currentTargetIndex) magForBand()
         return true
     }
 
@@ -358,7 +394,7 @@ Item {
         root.statusText = "SIMBAD flags cleared"
     }
 
-    Component.onCompleted: { selectFacility(root.facility); refreshTargets() }
+    Component.onCompleted: { selectFacility(root.facility); refreshTargets(); magForBand() }
 
     // ── Gantt time axis arithmetic ────────────────────────────────────────────
     //
@@ -1466,16 +1502,37 @@ Item {
                     Layout.fillWidth: true
                     spacing: dp(8)
 
-                    Label { text: "mag"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                    Label {
+                        text: root.simBand.length > 0 ? "mag (" + root.simBand + ")" : "mag"
+                        color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                        ToolTip.visible: hovered && root.simBandLam > 0
+                        ToolTip.text: root.simBand + " band, from the setup's mean wavelength " +
+                                      root.simBandLam.toFixed(3) + " µm" +
+                                      (root.simMagUserSet ? "\nOverridden; clear the field to follow the band again."
+                                                          : "\nFollows the instrument band and the selected target.")
+                        HoverHandler { id: magHover }
+                        property bool hovered: magHover.hovered
+                    }
                     TextField {
                         id: simMagField
                         Layout.preferredWidth: dp(70)
                         text: root.simMag.toFixed(2)
+                        // An override is remembered so that changing instrument does not undo it.
+                        // Emptying the field hands control back to the band.
+                        color: root.simMagUserSet ? "#000000" : "#31708f"
                         validator: DoubleValidator {
                             bottom: -5.0; top: 20.0; decimals: 2
                             notation: DoubleValidator.StandardNotation
                         }
-                        onEditingFinished: root.simMag = parseFloat(text)
+                        onEditingFinished: {
+                            if (text.length === 0) {
+                                root.simMagUserSet = false
+                                root.magForBand()
+                            } else {
+                                root.simMag = parseFloat(text)
+                                root.simMagUserSet = true
+                            }
+                        }
                     }
                     Label { text: "mag_ao"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                     TextField {

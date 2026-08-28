@@ -161,6 +161,31 @@
         @test issorted(indexin(["V", "J", "H", "K"], SIMBAD_BANDS))   # panel order
     end
 
+    @testset "the observing band comes from the setup's wavelengths, not its name" begin
+        band(x) = split(GUI.shell_sim_band(x), "\t")
+
+        h = band("MIRCX_LOWH")
+        @test h[1] == "H"
+        @test parse(Float64, h[2]) ≈ 1.58 atol = 0.05      # µm
+
+        k = band("MYSTIC_LOWK")
+        @test k[1] == "K"
+        @test parse(Float64, k[2]) ≈ 2.19 atol = 0.05
+
+        # The name is not the band. MIRCX_LOWJ's channels sit at 1.44 µm, which is nearer H
+        # than J -- so a panel that read the letter out of the setup name would feed the noise
+        # model a J magnitude for an H-band observation.
+        j = band("MIRCX_LOWJ")
+        @test parse(Float64, j[2]) < 1.5
+        @test j[1] != "J"
+
+        # An unknown setup is an ordinary answer, not an error: the panel shows no band and
+        # leaves whatever magnitude is already there alone.
+        @test GUI.shell_sim_band("no such setup") == "\t"
+        @test GUI.shell_sim_band("") == "\t"
+        @test GUI.shell_sim_band("   ") == "\t"
+    end
+
     @testset "the moon is reported even when it does not exclude anything" begin
         p = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE)
         @test 0 <= p.moon_fli <= 1

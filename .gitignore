@@ -8,6 +8,12 @@ TODO
 
 Manifest.toml
 
+# The GUI sysimage built by bin/compile.jl. Roughly a gigabyte, and tied to one machine's
+# Julia version and this project's Manifest, so it is built rather than committed.
+bin/*.so
+bin/*.dylib
+bin/*.dll
+
 # Machine-local Preferences. The one you are most likely to want here is PrecompileTools':
 #
 #     [PrecompileTools]

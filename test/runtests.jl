@@ -7,10 +7,10 @@ using OITOOLS, Test, LinearAlgebra
 ENV["MPLBACKEND"] = "Agg"
 using PythonPlot
 
-# Activates OITOOLSNestedSamplersExt, the pure-Julia nested sampler. PythonPlot above pulls
+# Activates OITOOLSNautilusExt, the pure-Julia nested sampler. PythonPlot above pulls
 # PythonCall, which activates OITOOLSUltraNestExt, so both backends of `fit_model_nested` are
 # live and test_nested.jl can compare them against each other.
-using NestedSamplers
+using Nautilus
 using Random: Xoshiro
 
 # _bidiag_svd calls LAPACK and reductions can reassociate with thread count, while the

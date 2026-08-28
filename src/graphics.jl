@@ -30,8 +30,6 @@
 "Environment variable that disables everything in this file."
 const NO_GPU_SETUP = "OITOOLSGUI_NO_GPU_SETUP"
 
-"Opt out of pinning Qt to xcb on a Wayland session; see [`configure_qt_platform!`](@ref)."
-const NO_QT_PLATFORM = "OITOOLSGUI_NO_QT_PLATFORM"
 
 "An environment variable is 'set' only if it says something other than off."
 _isset(name) = !(lowercase(strip(get(ENV, name, ""))) in ("", "0", "false", "no"))
@@ -71,56 +69,52 @@ cost more than everything else in this file put together — and can block on a 
 has_wsl_nvidia() = isfile("/usr/lib/wsl/lib/libnvidia-ml.so.1")
 
 """
-    configure_qt_platform!(; verbose = true) -> (; applied, reason, vars)
+    configure_qt_platform!(; match_x11 = false, verbose = true) -> (; applied, reason, vars)
 
-On a Wayland session, run Qt through XWayland rather than the Wayland backend.
+Keep Qt on the same windowing system as GLMakie.
 
-Qt's Wayland plugin does not release the windows it opens. A `QtQuick.Dialogs.FileDialog`
-closes as far as QML is concerned -- `visibleChanged -> false` arrives before `accepted`, and
-`visible` stays false afterwards -- while its window remains on screen. Measured with
-`test/gui/filepicker_min.jl`, one mode per run on a real Wayland session:
+The rule is simply that the session decides: on Wayland both halves use Wayland, on X11 both
+use X11, and this function does nothing in either case — Qt already follows the session on its
+own. It acts only when GLMakie could **not**, and pins `QT_QPA_PLATFORM=xcb` so that Qt comes
+back to X11 to match.
 
-| what was tried | result |
-|---|---|
-| `open()` and nothing else, the documented lifecycle | window stays |
-| `options: FileDialog.DontUseNativeDialog` | window stays |
-| built per click, then `destroy()` on the object | window stays |
-| the same run under `QT_QPA_PLATFORM=xcb` | **closes properly** |
+That happens in two situations, and `bin/oitoolsgui.jl` reports both by passing
+`match_x11 = !prefer_native_wayland!().applied`:
 
-The first three rule out the lifecycle, the native hand-off and QML object ownership in turn,
-which leaves the backend itself -- and the fourth names it.
+  * `\$FORCE_X11` is set, asking for XWayland deliberately;
+  * GLFW is already initialised, which is what a PackageCompiler sysimage does — GLFW.jl
+    initialises from its own `__init__`, before any user code, and `glfwInit` cannot be undone.
 
-Pinning xcb also removes a mismatch rather than creating one. GLFW hard-codes X11 unless told
-otherwise, which is why `prefer_native_wayland!` exists: to push it onto Wayland so it matches
-Qt. With Qt on XWayland both stacks are X11 already, and that function becomes a no-op by its
-own check. (No `@ref` on that name: it is declared here but documented on its method in the
-`GLFW_jll` extension, which Documenter does not load.)
+Why it matters that they agree: one half on Wayland and one on X11 means two EGL display
+connections and two surface lifetimes in one process. An explicit `QT_QPA_PLATFORM` is always
+left alone.
 
-The cost is XWayland's: fractional HiDPI scaling is done by the compositor rather than the
-application, and native Wayland features are unavailable. On a 1:1 display neither shows.
+!!! note "This used to pin xcb unconditionally"
 
-Nothing is forced. Any of
-
-    QT_QPA_PLATFORM=wayland          # or any explicit choice
-    OITOOLSGUI_NO_QT_PLATFORM=1      # leave the platform alone entirely
-
-wins, which is what you want when the question is whether a bug is the backend's fault.
+    Qt's Wayland plugin does not release the windows it opens, and a
+    `QtQuick.Dialogs.FileDialog` stayed on screen after closing — measured in
+    `test/gui/filepicker_min.jl`, where `open()`, `DontUseNativeDialog` and `destroy()` all
+    failed and only `QT_QPA_PLATFORM=xcb` worked. The GUI draws its own picker now
+    (`src/gui/qml/FilePicker.qml`) and no QML imports `QtQuick.Dialogs`, so the failure is
+    unreachable and the pin is gone. Measured on WSL, the two backends are equivalent on the
+    GPU — `GL_RENDERER` is the same D3D12/NVIDIA adapter either way — and XWayland's only real
+    cost is that the compositor does fractional scaling instead of the application.
 """
-function configure_qt_platform!(; verbose::Bool = true)
+function configure_qt_platform!(; match_x11::Bool = false, verbose::Bool = true)
     vars = Dict{String,String}()
     no(reason) = (applied = false, reason = reason, vars = vars)
 
-    _isset(NO_QT_PLATFORM) && return no("disabled by $NO_QT_PLATFORM")
     haskey(ENV, "QT_QPA_PLATFORM") &&
         return no("QT_QPA_PLATFORM already set to $(ENV["QT_QPA_PLATFORM"])")
     haskey(ENV, "WAYLAND_DISPLAY") ||
         return no("not a Wayland session; Qt picks its own platform")
 
+    match_x11 || return no("Wayland session; Qt and GLMakie both on Wayland")
+
     vars["QT_QPA_PLATFORM"] = "xcb"
     merge!(ENV, vars)
-    verbose && @info "Wayland session: running Qt through XWayland, whose windows close " *
-                     "properly — set OITOOLSGUI_NO_QT_PLATFORM=1 to stay on the Wayland backend"
-    return (applied = true, reason = "Wayland session; Qt pinned to xcb", vars = vars)
+    verbose && @info "GLMakie is on X11, so Qt is pinned to xcb to match it"
+    return (applied = true, reason = "Qt pinned to xcb to match GLMakie on X11", vars = vars)
 end
 
 """

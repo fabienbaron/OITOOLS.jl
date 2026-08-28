@@ -50,10 +50,9 @@ function OITOOLS.prefer_native_wayland!(; verbose::Bool = true)
     Sys.islinux()             || return no("not Linux")
     haskey(ENV, "WAYLAND_DISPLAY") || return no("not a Wayland session; GLFW's X11 default is right")
     _isset(FORCE_X11)         && return no("$FORCE_X11 is set; leaving GLMakie on XWayland")
-    # Qt on XWayland and GLMakie on native Wayland is the very split this function exists to
-    # avoid, just the other way round. `configure_qt_platform!` pins Qt to xcb on a Wayland
-    # session because Qt's Wayland backend does not release the windows it opens, and once it
-    # has, GLFW's own X11 default already matches.
+    # An explicit request for XWayland. `configure_qt_platform!` no longer pins xcb by itself,
+    # so this only fires when the caller set the variable — and then GLFW's X11 default is
+    # already what is wanted.
     lowercase(get(ENV, "QT_QPA_PLATFORM", "")) == "xcb" &&
         return no("Qt is on xcb; GLFW's X11 default already matches it")
 
@@ -79,15 +78,48 @@ function OITOOLS.prefer_native_wayland!(; verbose::Bool = true)
         end
     end
 
-    PLATFORM = Cint(0x00050003)   # GLFW_PLATFORM
-    WAYLAND  = Cint(0x00060003)   # GLFW_PLATFORM_WAYLAND
-    ccall((:glfwInitHint, GLFW_jll.libglfw), Cvoid, (Cint, Cint), PLATFORM, WAYLAND)
-    if ccall((:glfwInit, GLFW_jll.libglfw), Cint, ()) == 1
-        verbose && @info "GLFW pre-initialised on native Wayland; GLMakie will not use XWayland"
-        return (applied = true, reason = "GLFW forced to native Wayland")
+    # GLFW.jl's own override, rather than a race against it.
+    #
+    # `GLFW.Init` hard-codes `PLATFORM_X11` on Linux (glfw3.jl:499) -- which is why GLMakie
+    # lands on XWayland under a Wayland compositor -- but two lines later it honours
+    # `JULIA_GLFW_PLATFORM`, and `HandlePlatformSelection` maps "wayland" to PLATFORM_WAYLAND.
+    # Setting that is the supported route and needs no ccall.
+    #
+    # This function used to call `glfwInitHint` + `glfwInit` here instead, getting in first so
+    # that GLFW.jl's later `Init` became a no-op. That works only if nothing has initialised
+    # GLFW yet, and in a PackageCompiler sysimage carrying GLMakie something has: GLFW.jl's
+    # `__init__` runs at image load, before any user code. The variable has no such ordering
+    # problem — exported from a shell it is set before Julia starts at all.
+    already = ccall((:glfwGetPlatform, GLFW_jll.libglfw), Cint, ())
+    if already != Cint(0)
+        name = already == Cint(0x00060004) ? "X11" :
+               already == Cint(0x00060003) ? "Wayland" :
+               already == Cint(0x00060002) ? "Cocoa" :
+               already == Cint(0x00060001) ? "Win32" :
+               already == Cint(0x00060005) ? "null" : "0x$(string(already, base = 16))"
+        already == Cint(0x00060003) &&
+            return (applied = false, reason = "GLFW is already on Wayland; nothing to do")
+        verbose && @warn """
+            GLFW is already initialised on $name, so it is too late to move it to Wayland.
+
+            GLMakie will run on $name while Qt may not, which is the mismatch this function
+            exists to avoid. The usual cause is a sysimage built with GLMakie in it: its
+            `__init__` runs before any user code, and `glfwInit` cannot be undone.
+
+            Export the variable before starting Julia instead:
+
+                JULIA_GLFW_PLATFORM=wayland julia --sysimage ... bin/oitoolsgui.jl
+
+            The launcher handles this on its own: it passes `match_x11 = true` to
+            `configure_qt_platform!` when this returns not-applied, so Qt follows GLMakie to
+            xcb rather than the two ending up split.
+            """
+        return no("GLFW already initialised on $name; too late to choose a platform")
     end
-    verbose && @warn "forced-Wayland glfwInit failed; GLFW.jl will fall back to X11"
-    return no("forced-Wayland glfwInit failed")
+
+    ENV["JULIA_GLFW_PLATFORM"] = "wayland"
+    verbose && @info "GLFW will initialise on native Wayland; GLMakie will not use XWayland"
+    return (applied = true, reason = "JULIA_GLFW_PLATFORM=wayland set before GLFW.jl loads")
 end
 
 end # module

@@ -16,6 +16,7 @@
 #
 #   configure_graphics!    core package,          src/graphics.jl      (needs nothing)
 #   prefer_native_wayland! GLFW_jll extension,    ext/OITOOLSGLFWExt.jl (needs libglfw only)
+#   configure_qt_platform! core package,          src/graphics.jl      (follows the one above)
 #
 # The GUI's own types (Session, load_dataset!) do live in OITOOLSGUIExt, so they are reached
 # after the fact through `Base.get_extension`.
@@ -47,10 +48,14 @@ end
 using OITOOLS
 
 configure_graphics!()          # before the first GL context — see src/graphics.jl
-configure_qt_platform!()       # before Qt starts — pins xcb on Wayland, see src/graphics.jl
-
 using GLFW_jll                 # activates OITOOLSGLFWExt; dlopens libglfw, needs no display
-prefer_native_wayland!()       # before `using GLMakie` — GLFW.jl would otherwise pick XWayland
+
+# GLMakie's platform is decided FIRST, then Qt is made to match it. The two must agree — one on
+# Wayland and one on X11 means two EGL display connections in one process — and only GLMakie's
+# choice can fail: GLFW.jl hard-codes X11, and in a sysimage its `__init__` has already run, so
+# `JULIA_GLFW_PLATFORM` comes too late. Qt has no such constraint, so Qt is the one that yields.
+wl = prefer_native_wayland!()  # before `using GLMakie`; sets JULIA_GLFW_PLATFORM on Wayland
+configure_qt_platform!(; match_x11 = !wl.applied)   # before Qt starts, see src/graphics.jl
 
 using GLMakie, QMLMakie, QML   # these three activate OITOOLSGUIExt, which defines gui()
 

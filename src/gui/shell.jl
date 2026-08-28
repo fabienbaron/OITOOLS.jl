@@ -956,6 +956,36 @@ function shell_sim_source(kind::AbstractString, path::AbstractString)
 end
 
 """
+    shell_sim_band(setup) -> String
+
+`band\tλ_µm` for a spectral setup — the photometric band its channels fall in, and their mean
+wavelength. `"\t"` when the setup is unknown.
+
+Which band an observation is made in is a property of the instrument, not of the target, so the
+panel should not make the user look it up: MIRC-X is H, MYSTIC is K, and a magnitude typed for
+the wrong one feeds a noise model that is wrong by whole magnitudes.
+
+The band comes from the MEAN of the setup's channels through `band_for_wavelength`, not from
+the setup's name. Names are not a reliable guide -- `MIRCX_LOWJ` and `MIRCX_LOWH` differ by one
+letter and two bands -- while the wavelengths in the file are the thing itself.
+"""
+function shell_sim_band(setup::AbstractString)
+    isempty(strip(setup)) && return "\t"
+    # Only the FILE READ is guarded: an unknown setup is an ordinary answer, and the panel
+    # shows it as "no band". Everything after it is arithmetic on a WaveConfig, and wrapping
+    # that in a catch too is how a plain typo -- `w.lambda` for `w.λ` -- came back as "unknown
+    # setup" for every input instead of failing where it was written.
+    w = try
+        read_wave_file(String(strip(setup)))
+    catch
+        return "\t"
+    end
+    λ = sum(w.λ) / length(w.λ)
+    (isfinite(λ) && λ > 0) || return "\t"
+    return string(band_for_wavelength(λ).name, '\t', round(λ * 1e6; digits = 3))
+end
+
+"""
     shell_simbad(name) -> String
 
 Resolve one target: `"ok\tra\tdec\tV\tJ\tH\tK\tmain_id\tsptype"`, or `"bad\t<why>"`.
@@ -1000,8 +1030,8 @@ that disagree on an evidence are only distinguishable if the interface admits wh
 function shell_nested_backend()
     b = nested_backend()
     b === :none && return "\t"
-    label = b === :nestedsamplers ? "NestedSamplers.jl" :
-            b === :ultranest      ? "UltraNest"         : String(b)
+    label = b === :nautilus  ? "Nautilus.jl" :
+            b === :ultranest ? "UltraNest"   : String(b)
     return string(b, '\t', label)
 end
 

@@ -53,7 +53,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 GLFW_jll = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
-NestedSamplers = "41ceaf6f-1696-4a54-9b49-2e7a9ec3782e"
+Nautilus = "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 Pigeons = "0eb8d820-af6a-4919-95ae-11206f830c31"
 PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
@@ -70,10 +70,16 @@ QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
 #
 # Pkg REWRITES AND SORTS THIS BLOCK on any `Pkg.add`/`Pkg.resolve`, discarding comments inside
 # it. Anything explanatory therefore lives above the header, where it survives.
+# Nautilus.jl is not registered, so the weak dependency above needs a source. A URL rather
+# than a sibling path: a path only resolves on a machine that happens to have the checkout
+# next door, which rsyncing this repo elsewhere does not guarantee.
+[sources]
+Nautilus = {url = "https://github.com/fabienbaron/Nautilus.jl.git"}
+
 [extensions]
 OITOOLSGLFWExt = "GLFW_jll"
 OITOOLSGUIExt = ["GLMakie", "Makie", "QML", "QMLMakie"]
-OITOOLSNestedSamplersExt = "NestedSamplers"
+OITOOLSNautilusExt = "Nautilus"
 OITOOLSPairPlotsExt = ["PairPlots", "Makie"]
 OITOOLSMakieExt = "Makie"
 OITOOLSPigeonsExt = "Pigeons"
@@ -89,17 +95,10 @@ GLFW_jll = "3.4"
 GLMakie = "0.13"
 LogDensityProblemsAD = "1.13.1"
 Makie = "0.24"
-# NestedSamplers 0.9.0 pins `LogExpFunctions = "0.3"`, and resolving it here therefore drags
-# the whole workspace down with it: LogExpFunctions 1.0.1 -> 0.3.29, StatsFuns 2.2.1 -> 1.5.2,
-# OrderedCollections 2.0.1 -> 1.8.2, Gamma 1.2.0 -> 1.1.0. Every package in the graph accepts
-# those versions and the bit-for-bit BSMEM gate still passes, so the cost is bounded -- but it
-# is a real one, and it is why `Pkg.resolve()` alone cannot add this dependency.
-#
-# The bound is theirs, not ours, and it is being lifted: chalk-lab/NestedSamplers.jl PR #118
-# raises it to LogExpFunctions 1.0.1. It is open, not merged, and absent from `main` as of
-# 2026-08-25. This compat range already admits whatever release carries it, so the downgrade
-# reverses on a fresh resolve once one exists -- nothing here needs changing then.
-NestedSamplers = "0.8, 0.9"
+# Nautilus.jl is the Julia port of the `nautilus` importance nested sampler. Unregistered as
+# yet, so it must be reached with `Pkg.develop(path = ...)`; the bound is here so that a later
+# registered release resolves without further edits.
+Nautilus = "0.1"
 PairPlots = "2, 3"
 OIFITS = "1"
 Pigeons = "0.4"
@@ -110,7 +109,7 @@ QMLMakie = "0.3"
 julia = "1.12"
 
 [extras]
-NestedSamplers = "41ceaf6f-1696-4a54-9b49-2e7a9ec3782e"
+Nautilus = "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73"
 PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
@@ -141,4 +140,4 @@ env = "@oitools"
 # PythonCall is named as well as PythonPlot even though PythonPlot depends on it: the tests
 # `using PythonCall` directly for `pyimport`/`pyconvert`, and `using` a package requires it to
 # be a direct dependency of the active project, not merely a loaded one.
-test = ["Test", "Serialization", "PythonPlot", "PythonCall", "NestedSamplers"]
+test = ["Test", "Serialization", "PythonPlot", "PythonCall", "Nautilus"]

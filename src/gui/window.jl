@@ -23,7 +23,7 @@ function __init__()
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component,
-                     shell_chi2_map_info, shell_free_names, shell_nested_backend,
+                     shell_chi2_map_info, shell_free_names, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
@@ -99,11 +99,16 @@ function OITOOLS.gui(session::Session = Session();
     READY_HOOK[] = on_ready
     gfx = configure_graphics!()
 
-    # QML works the scale out from Screen.logicalPixelDensity; this is only the override.
-    # 0.0 means "decide for yourself", which is the default -- see src/scaling.jl.
-    # Backstop for a session started by hand rather than through bin/oitoolsgui.jl. Both are
-    # no-ops once the variables are set, and set variables are left alone.
-    qt = configure_qt_platform!(verbose = false)
+    # Backstop for a session started by hand rather than through bin/oitoolsgui.jl, where
+    # `prefer_native_wayland!` may never have been called. GLMakie is loaded by now, so GLFW's
+    # platform is settled and cannot be changed -- but Qt's can, and the two must not differ.
+    # Asking GLFW what it actually got is the whole check: on a Wayland session that answers
+    # X11, Qt has to follow it to xcb or the process ends up with two windowing systems.
+    #
+    # A no-op through the launcher, which has already matched them, and whenever
+    # QT_QPA_PLATFORM is set.
+    on_x11 = GLMakie.GLFW.GetPlatform() == GLMakie.GLFW.PLATFORM_X11
+    qt = configure_qt_platform!(; match_x11 = on_x11, verbose = false)
 
     uiscale = ui_scale_override()
     @info "UI scale: $(uiscale.reason)"

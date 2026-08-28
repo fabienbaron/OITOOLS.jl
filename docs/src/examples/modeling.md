@@ -667,11 +667,11 @@ its extension:
 
 | `using` | backend | notes |
 |---|---|---|
-| `NestedSamplers` | `:nestedsamplers` | [NestedSamplers.jl](https://github.com/chalk-lab/NestedSamplers.jl), pure Julia. No Python, and the one a compiled build can contain |
+| `Nautilus` | `:nautilus` | [Nautilus.jl](https://github.com/johannesbuchner/nautilus), importance nested sampling in pure Julia. No Python, and the one a compiled build can contain |
 | `PythonCall` | `:ultranest` | [UltraNest](https://johannesbuchner.github.io/UltraNest/), through PythonCall. Faster here, because it is driven with a vectorised likelihood |
 
 ```julia
-using OITOOLS, NestedSamplers
+using OITOOLS, Nautilus
 
 result = fit_model_nested(model_dict, list_free_params, data;
     lb = Dict("star,ud" => 0.1),
@@ -692,9 +692,9 @@ them when both are loaded. With both available it is worth running each once: `l
 two should agree within `logzerr`, and if it does not, one of the runs has not converged.
 
 ```julia
-using OITOOLS, NestedSamplers, PythonCall     # both backends
+using OITOOLS, Nautilus, PythonCall           # both backends
 
-rj = fit_model_nested(model_dict, list_free_params, data; lb, ub, backend = :nestedsamplers)
+rj = fit_model_nested(model_dict, list_free_params, data; lb, ub, backend = :nautilus)
 ru = fit_model_nested(model_dict, list_free_params, data; lb, ub, backend = :ultranest)
 abs(rj.logz - ru.logz) <= 3 * sqrt(rj.logzerr^2 + ru.logzerr^2)   # they should agree
 ```
