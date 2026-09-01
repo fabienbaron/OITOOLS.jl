@@ -498,7 +498,12 @@ function run_engine(engine::Symbol, x0, data, ft;
                                star_flux  = _optreal(o, "f_star", 0.5),
                                bg_flux    = _optreal(o, "f_bg", 0.0),
                                d_env      = _optreal(o, "env_indx", 0.0),
-                               star_di    = _optreal(o, "ud", 4.0),
+                               # `star_di`, not `ud`: this is the star's SPECTRAL INDEX in
+                               # (lambda/lambda0)^(-star,di), legal over -20..20 and defaulting
+                               # to 4. The annealing SPARCO's `ud` is a uniform-disc diameter in
+                               # mas -- a different quantity, which is why they are different
+                               # option keys rather than one field feeding both.
+                               star_di    = _optreal(o, "star_di", 4.0),
                                weights, regularizers, maxiter = Int(maxiter),
                                rounds = _optint(o, "rounds", 3), verb)
         return (r.image, (; r.params, r.param_names, r.free_params, r.model), r.chi2)

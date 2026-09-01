@@ -2594,6 +2594,59 @@ function shell_show_start_image(nx::Integer, pixsize::Real, mode::AbstractString
 end
 
 """
+    shell_sparco_converged() -> String
+
+The SPARCO parameters the last run converged to, as `key<TAB>value` lines keyed by the panel's
+own names, or `""` when the last run was not a SPARCO one.
+
+The two SPARCO engines report differently and neither reports in the panel's vocabulary, so the
+translation lives here rather than in QML:
+
+  * the hybrid returns `param_names`, a Dict over its own free-parameter spellings
+    (`star,f0`, `bg,f0`, `d_env`, `star,di`);
+  * the annealing sampler returns `params`, one vector PER CHAIN, against the fixed tuple
+    `SPARCO_PARAM_NAMES` -- so the values worth reporting are the best chain's, not chain 1's.
+
+`star,di` is deliberately NOT called `ud`: it is the star's spectral index in
+`(lambda/lambda0)^(-star,di)`, whereas the annealing engine's `ud` is a uniform-disc diameter
+in mas. Two quantities, two keys.
+"""
+function shell_sparco_converged()
+    sh = _shell()
+    r = sh.imaging
+    r === nothing && return ""
+    e = r.extra
+    e === nothing && return ""
+    out = String[]
+
+    # The hybrid: a Dict of its own free-parameter names.
+    if e isa NamedTuple && haskey(e, :param_names) && e.param_names isa AbstractDict
+        m = Dict("star,f0" => "f_star", "bg,f0" => "f_bg",
+                 "d_env" => "env_indx", "star,di" => "star_di")
+        for (k, v) in e.param_names
+            gk = get(m, String(k), nothing)
+            gk === nothing && continue
+            push!(out, string(gk, '\t', Float64(v)))
+        end
+
+    # The annealing sampler: per-chain vectors against a fixed name tuple.
+    elseif e isa NamedTuple && haskey(e, :params) && haskey(e, :param_names) &&
+           e.params isa AbstractVector && !isempty(e.params)
+        best = haskey(e, :best_chain) ? Int(e.best_chain) : 1
+        v = e.params[clamp(best, 1, length(e.params))]
+        v isa AbstractVector || return ""
+        names = String.(collect(e.param_names))
+        for (i, nm) in enumerate(names)
+            i <= length(v) || break
+            # lambda0 is never sampled; echoing it back as "converged" would suggest it was.
+            nm == "lambda0" && continue
+            push!(out, string(nm, '\t', Float64(v[i])))
+        end
+    end
+    return join(sort(out), "\n")
+end
+
+"""
     shell_save_image(path) -> String
 
 Write the reconstructed image to FITS, with the pixel size in the header.

@@ -202,11 +202,65 @@ Item {
 
     // SPARCO parametric part, feeding either FlatModel (hybrid) or SqueezeSparco (annealing)
     property real sparcoFStar: 0.5
+    // TWO parameters, not one. The hybrid's `star,di` is the star's SPECTRAL INDEX in
+    // (λ/λ₀)^(-star,di) -- legal over -20..20, package default 4 -- while the annealing
+    // sampler's `ud` is a uniform-disc DIAMETER in mas where 0 means a point source. One field
+    // feeding both mislabelled the hybrid's and clamped away half its range.
+    property real sparcoStarDi: 4.0
     property real sparcoUd: 0.0
     property real sparcoEnvIndx: 0.0
     property real sparcoLambda0: 1.65e-6      // metres
     property real sparcoFBg: 0.0
     property real sparcoBgIndx: 0.0
+
+    // What the last run converged to. NaN means "no run yet", which the panel shows as a dash
+    // rather than as a number that was never computed.
+    property real sparcoConvFStar: NaN
+    property real sparcoConvStarDi: NaN
+    property real sparcoConvUd: NaN
+    property real sparcoConvEnvIndx: NaN
+    property real sparcoConvFBg: NaN
+    property real sparcoConvBgIndx: NaN
+    readonly property bool sparcoHasConverged:
+        !isNaN(sparcoConvFStar) || !isNaN(sparcoConvStarDi) || !isNaN(sparcoConvUd) ||
+        !isNaN(sparcoConvEnvIndx) || !isNaN(sparcoConvFBg) || !isNaN(sparcoConvBgIndx)
+
+    // A converged value, or an em dash before there is one. Four decimals: these are fluxes
+    // and spectral indices of order unity, where a fifth digit is noise and a third is not
+    // enough to see a parameter move between passes.
+    function fmtConv(v) { return (v === undefined || v === null || isNaN(v)) ? "—" : v.toFixed(4) }
+
+    // Read back after a run, and copied into the Initial column by "Run from previous" so a
+    // second pass continues from where the first one stopped rather than restarting the
+    // parametric part from the seed.
+    function refreshSparcoConverged() {
+        sparcoConvFStar = NaN; sparcoConvStarDi = NaN; sparcoConvUd = NaN
+        sparcoConvEnvIndx = NaN; sparcoConvFBg = NaN; sparcoConvBgIndx = NaN
+        var t = Julia.shell_sparco_converged()
+        if (t.length === 0) return
+        var lines = t.split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length !== 2) continue
+            var v = parseFloat(f[1])
+            if (isNaN(v)) continue
+            if      (f[0] === "f_star")   sparcoConvFStar   = v
+            else if (f[0] === "star_di")  sparcoConvStarDi  = v
+            else if (f[0] === "ud")       sparcoConvUd      = v
+            else if (f[0] === "env_indx") sparcoConvEnvIndx = v
+            else if (f[0] === "f_bg")     sparcoConvFBg     = v
+            else if (f[0] === "bg_indx")  sparcoConvBgIndx  = v
+        }
+    }
+
+    function adoptSparcoConverged() {
+        if (!isNaN(sparcoConvFStar))   sparcoFStar   = sparcoConvFStar
+        if (!isNaN(sparcoConvStarDi))  sparcoStarDi  = sparcoConvStarDi
+        if (!isNaN(sparcoConvUd))      sparcoUd      = sparcoConvUd
+        if (!isNaN(sparcoConvEnvIndx)) sparcoEnvIndx = sparcoConvEnvIndx
+        if (!isNaN(sparcoConvFBg))     sparcoFBg     = sparcoConvFBg
+        if (!isNaN(sparcoConvBgIndx))  sparcoBgIndx  = sparcoConvBgIndx
+    }
     property bool sparcoFreeFStar: true
     property bool sparcoFreeUd: false
     property bool sparcoFreeEnvIndx: false
@@ -418,7 +472,7 @@ Item {
         } else if (engine === "sparco") {
             put("lambda0", sparcoLambda0); put("f_star", sparcoFStar)
             put("f_bg", sparcoFBg); put("env_indx", sparcoEnvIndx)
-            put("ud", sparcoUd); put("rounds", sparcoRounds)
+            put("star_di", sparcoStarDi); put("rounds", sparcoRounds)
 
         } else if (isSqueeze) {
             put("nelements", nelements); put("niter", niter); put("nchains", nchains)
@@ -552,6 +606,11 @@ Item {
     function startRun(fromPrevious) {
         if (!canRun) return
         _continueRun = fromPrevious === true
+        // Continuing means continuing the WHOLE state, not half of it. `x_start` already
+        // carries the image forward; without this the parametric part restarts from the seed,
+        // so a second pass would begin with an image fitted against one star and a star back
+        // at its initial guess.
+        if (_continueRun && sparcoHasConverged) adoptSparcoConverged()
         running = true
         statusText = _continueRun ? "continuing…" : "reconstructing…"
         runTimer.restart()
@@ -601,6 +660,7 @@ Item {
                 root.statusText = f[1]
                 root.hasResult = f[1].indexOf("chi2r") >= 0
                 root.refreshBreakdown()
+                root.refreshSparcoConverged()
                 // Makie draws on demand; without this the new image is not painted until
                 // something else invalidates the area.
                 imageArea.update()
@@ -845,7 +905,7 @@ Item {
                     Button {
                         text: "−"
                         implicitWidth: dp(28)
-                        implicitHeight: dp(24)
+                        implicitHeight: Math.max(dp(24), implicitContentHeight + topPadding + bottomPadding)
                         ToolTip.visible: hovered
                         ToolTip.text: "remove this regulariser"
                         onClicked: regModel.remove(specRow.index)
@@ -866,46 +926,97 @@ Item {
     }
 
     // ── the SPARCO parametric part, shared by the hybrid and by SqueezeSparco ──
+    //
+    // Two value columns: what the run STARTS from and what it converged to. The parametric
+    // part is the half of a SPARCO reconstruction that has numbers worth reading, and reading
+    // them meant scrolling the console; side by side, how far each moved is the whole story.
     Component {
         id: sparcoPanel
 
-        GridLayout {
-            columns: 3
-            columnSpacing: dp(8)
-            rowSpacing: dp(4)
+        ColumnLayout {
+            spacing: root.dp(4)
 
-            Label { text: "f_star"; }
-            NumField { Layout.preferredWidth: dp(90); minimum: 0; maximum: 1
-                       value: root.sparcoFStar; onCommitted: (v) => root.sparcoFStar = v }
-            CheckBox { text: "free"; checked: root.sparcoFreeFStar; onToggled: root.sparcoFreeFStar = checked }
+            GridLayout {
+                columns: 4
+                columnSpacing: dp(8)
+                rowSpacing: dp(4)
 
-            Label { text: "ud (mas)" }
-            NumField { Layout.preferredWidth: dp(90); minimum: 0
-                       value: root.sparcoUd; onCommitted: (v) => root.sparcoUd = v }
-            CheckBox { text: "free"; checked: root.sparcoFreeUd; onToggled: root.sparcoFreeUd = checked }
+                Label { text: "" }
+                Label { text: "initial"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                Label { text: "converged"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                Label { text: "" }
 
-            Label { text: "env_indx" }
-            NumField { Layout.preferredWidth: dp(90)
-                       value: root.sparcoEnvIndx; onCommitted: (v) => root.sparcoEnvIndx = v }
-            CheckBox { text: "free"; checked: root.sparcoFreeEnvIndx; onToggled: root.sparcoFreeEnvIndx = checked }
+                Label { text: "f_star" }
+                NumField { Layout.preferredWidth: dp(84); minimum: 0; maximum: 1
+                           value: root.sparcoFStar; onCommitted: (v) => root.sparcoFStar = v }
+                Label { Layout.preferredWidth: dp(84); color: "#444"
+                        text: root.fmtConv(root.sparcoConvFStar) }
+                CheckBox { text: "free"; checked: root.sparcoFreeFStar; onToggled: root.sparcoFreeFStar = checked }
 
-            Label { text: "λ₀ (m)" }
-            NumField { Layout.preferredWidth: dp(90); minimum: 1.0e-9
-                       value: root.sparcoLambda0; onCommitted: (v) => root.sparcoLambda0 = v }
-            Label { text: "always fixed"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+                // The hybrid's spectral index. Negative values are legal and the package
+                // default is 4, so this box is not bounded below at 0 the way a diameter is.
+                Label { text: "star di"; visible: root.engine === "sparco" }
+                NumField { Layout.preferredWidth: dp(84); visible: root.engine === "sparco"
+                           minimum: -20; maximum: 20
+                           value: root.sparcoStarDi; onCommitted: (v) => root.sparcoStarDi = v }
+                Label { Layout.preferredWidth: dp(84); color: "#444"
+                        visible: root.engine === "sparco"
+                        text: root.fmtConv(root.sparcoConvStarDi) }
+                Label { visible: root.engine === "sparco"; text: "spectral index"
+                        color: "#888"; font.pointSize: pt(baseFontPt - 2) }
 
-            Label { text: "f_bg" }
-            NumField { Layout.preferredWidth: dp(90); minimum: 0; maximum: 1
-                       value: root.sparcoFBg; onCommitted: (v) => root.sparcoFBg = v }
-            CheckBox { text: "free"; checked: root.sparcoFreeFBg; onToggled: root.sparcoFreeFBg = checked }
+                // The sampler's uniform-disc diameter. A different quantity, so a different row.
+                Label { text: "ud (mas)"; visible: root.engine !== "sparco" }
+                NumField { Layout.preferredWidth: dp(84); visible: root.engine !== "sparco"
+                           minimum: 0
+                           value: root.sparcoUd; onCommitted: (v) => root.sparcoUd = v }
+                Label { Layout.preferredWidth: dp(84); color: "#444"
+                        visible: root.engine !== "sparco"
+                        text: root.fmtConv(root.sparcoConvUd) }
+                CheckBox { text: "free"; visible: root.engine !== "sparco"
+                           checked: root.sparcoFreeUd; onToggled: root.sparcoFreeUd = checked }
 
-            Label { text: "bg_indx" }
-            NumField { Layout.preferredWidth: dp(90)
-                       value: root.sparcoBgIndx; onCommitted: (v) => root.sparcoBgIndx = v }
-            CheckBox { text: "free"; checked: root.sparcoFreeBgIndx; onToggled: root.sparcoFreeBgIndx = checked }
+                Label { text: "env_indx" }
+                NumField { Layout.preferredWidth: dp(84)
+                           value: root.sparcoEnvIndx; onCommitted: (v) => root.sparcoEnvIndx = v }
+                Label { Layout.preferredWidth: dp(84); color: "#444"
+                        text: root.fmtConv(root.sparcoConvEnvIndx) }
+                CheckBox { text: "free"; checked: root.sparcoFreeEnvIndx; onToggled: root.sparcoFreeEnvIndx = checked }
 
-            // wire: these six become FlatModel params for reconstruct_hybrid, or
-            // SqueezeSparco(; f_star, ud, env_indx, lambda0, f_bg, bg_indx, free) for annealing
+                Label { text: "λ₀ (m)" }
+                NumField { Layout.preferredWidth: dp(84); minimum: 1.0e-9
+                           value: root.sparcoLambda0; onCommitted: (v) => root.sparcoLambda0 = v }
+                Label { Layout.preferredWidth: dp(84); text: "—"; color: "#bbb" }
+                Label { text: "always fixed"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+
+                Label { text: "f_bg" }
+                NumField { Layout.preferredWidth: dp(84); minimum: 0; maximum: 1
+                           value: root.sparcoFBg; onCommitted: (v) => root.sparcoFBg = v }
+                Label { Layout.preferredWidth: dp(84); color: "#444"
+                        text: root.fmtConv(root.sparcoConvFBg) }
+                CheckBox { text: "free"; checked: root.sparcoFreeFBg; onToggled: root.sparcoFreeFBg = checked }
+
+                Label { text: "bg_indx" }
+                NumField { Layout.preferredWidth: dp(84)
+                           value: root.sparcoBgIndx; onCommitted: (v) => root.sparcoBgIndx = v }
+                Label { Layout.preferredWidth: dp(84); color: "#444"
+                        text: root.fmtConv(root.sparcoConvBgIndx) }
+                CheckBox { text: "free"; checked: root.sparcoFreeBgIndx; onToggled: root.sparcoFreeBgIndx = checked }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.sparcoHasConverged
+                Button {
+                    text: "Converged → initial"
+                    implicitHeight: Math.max(dp(22), implicitContentHeight + topPadding + bottomPadding)
+                    ToolTip.visible: hovered
+                    ToolTip.text: "copy the converged column into the initial one; " +
+                                  "\"Run from previous\" does this for you"
+                    onClicked: root.adoptSparcoConverged()
+                }
+                Item { Layout.fillWidth: true }
+            }
         }
     }
 
@@ -993,21 +1104,22 @@ Item {
                                 model: ["nfft", "dft"]
                                 onActivated: root.ftMode = currentText
                             }
+                            // Only when the plan could NOT be built. Its size, pixel scale and
+                            // channel count are the Setup fields directly above; reciting them
+                            // back said nothing, and a failure says everything.
                             Label {
-                                // What a Run would actually transform with. The plan is what
-                                // decides the representable field of view and resolution, and
-                                // it is rebuilt silently whenever the geometry changes — so it
-                                // is worth stating rather than leaving to be inferred.
+                                visible: root.planText.indexOf("!") === 0
                                 text: root.planText
-                                color: root.planText.indexOf("!") === 0 ? "#c62828" : "#888"
+                                color: "#c62828"
                                 font.pointSize: pt(baseFontPt - 2)
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
-                                ToolTip.visible: planHover.hovered && root.planText.length > 0
+                                Layout.preferredWidth: 1
+                                ToolTip.visible: planHover.hovered && visible
                                 ToolTip.text: root.planText
                                 HoverHandler { id: planHover }
-                                //       (mode / size / channels / uv counts)
                             }
+                            Item { Layout.fillWidth: true; visible: root.planText.indexOf("!") !== 0 }
 
                             Label { text: "starting image" }
                             ComboBox {
@@ -1091,13 +1203,20 @@ Item {
                                         root.consoleChanged()
                                     }
                                 }
+                                // fillWidth with a preferredWidth of 1, so appearing costs the
+                                // row no implicit width. Without it the label's own width was
+                                // added to the row when it became visible, the panel's minimum
+                                // width grew, and every field in Setup shifted.
                                 Label {
                                     visible: root.showingStart
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    elide: Text.ElideRight
                                     text: "showing the starting image — Run replaces it"
                                     color: "#888"
                                     font.pointSize: pt(baseFontPt - 2)
                                 }
-                                Item { Layout.fillWidth: true }
+                                Item { Layout.fillWidth: true; visible: !root.showingStart }
                             }
                         }
                     }
@@ -1697,6 +1816,28 @@ Item {
                                 text: "Run"
                                 enabled: root.canRun
                                 onClicked: root.startRun(false)
+                                // Green means ready or finished, red means busy. A
+                                // reconstruction takes minutes and the window is worth leaving;
+                                // which of the two it is should be readable across the room.
+                                //
+                                // `running` is tested BEFORE `enabled`: `canRun` goes false for
+                                // the duration of a run, so an enabled-first test painted the
+                                // fill grey and left only the border red -- a red frame round a
+                                // grey button, which reads as neither state.
+                                background: Rectangle {
+                                    radius: dp(3)
+                                    border.color: root.running ? "#8e1b1b"
+                                                : runButton.enabled ? "#1b5e20" : "#b0b0b0"
+                                    color: root.running ? (runButton.down ? "#b71c1c" : "#e53935")
+                                         : runButton.enabled ? (runButton.down ? "#1b5e20" : "#43a047")
+                                         : "#f0f0f0"
+                                }
+                                contentItem: Label {
+                                    text: runButton.text
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    color: (root.running || runButton.enabled) ? "white" : "#a0a0a0"
+                                }
                             }
                             ReasonTip { reason: root.blockedReason }
                         }

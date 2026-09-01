@@ -790,7 +790,7 @@ Item {
                                             }
                                             ComboBox {
                                                 implicitWidth: dp(58)
-                                                implicitHeight: dp(26)
+                                                implicitHeight: Math.max(dp(26), implicitContentHeight + topPadding + bottomPadding)
                                                 model: ["1", "2", "3", "4", "5"]
                                                 // Output, not input, while AutoPOPs is on: the
                                                 // next Compute would overwrite anything set here.
@@ -1500,7 +1500,7 @@ Item {
                                         Button {
                                             text: popRow.pops === root.popString ? "in use" : "Use"
                                             enabled: popRow.pops !== root.popString
-                                            implicitHeight: dp(20)
+                                            implicitHeight: Math.max(dp(20), implicitContentHeight + topPadding + bottomPadding)
                                             ToolTip.visible: hovered
                                             ToolTip.text: "use these POPs, and stop AutoPOPs from replacing them"
                                             onClicked: root.adoptPops(popRow.pops)

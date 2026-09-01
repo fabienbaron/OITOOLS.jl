@@ -953,7 +953,7 @@ Item {
                                     ToolButton {
                                         text: "✎"
                                         implicitWidth: root.dp(22)
-                                        implicitHeight: root.dp(22)
+                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                         ToolTip.visible: hovered
                                         ToolTip.text: "rename " + model.name
                                         onClicked: {
@@ -966,7 +966,7 @@ Item {
                                     ToolButton {
                                         text: "−"
                                         implicitWidth: root.dp(22)
-                                        implicitHeight: root.dp(22)
+                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                         ToolTip.visible: hovered
                                         ToolTip.text: "remove " + model.name + " and its parameters"
                                         onClicked: root.removeComponent(model.name)
@@ -1048,7 +1048,12 @@ Item {
                             delegate: Rectangle {
                                 id: rowItem
                                 width: paramList.width
-                                implicitHeight: root.dp(26)
+                                // Follows its fields. They size to their own text now, and a row
+                                // fixed at 26dp clipped the digits the moment the font scale and
+                                // the ui scale disagreed -- which they do whenever the screen's
+                                // DPI is not the one the numbers were picked on.
+                                implicitHeight: Math.max(root.dp(26),
+                                                         rowFields.implicitHeight + root.dp(4))
                                 color: index === paramList.currentIndex ? "#eaf2ff"
                                      : (index % 2 ? "#fbfbfb" : "white")
 
@@ -1070,6 +1075,7 @@ Item {
                                 }
 
                                 RowLayout {
+                                    id: rowFields
                                     anchors.fill: parent
                                     anchors.leftMargin: root.dp(6)
                                     anchors.rightMargin: root.dp(6)
@@ -1098,7 +1104,7 @@ Item {
                                         id: modeBox
                                         Layout.preferredWidth: root.dp(78)
                                         Layout.maximumWidth: root.dp(78)
-                                        implicitHeight: root.dp(22)
+                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 2)
                                         // "derived" is what this panel, the inspector and the
                                         // documentation call the state; "expr" is what the shell
@@ -1117,7 +1123,7 @@ Item {
                                     TextField {
                                         Layout.preferredWidth: root.dp(96)
                                         Layout.maximumWidth: root.dp(96)
-                                        implicitHeight: root.dp(22)
+                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         readOnly: rowItem.rMode === "expr"
                                         color: rowItem.rMode === "expr" ? root.cExpr
@@ -1130,7 +1136,7 @@ Item {
                                     TextField {
                                         Layout.preferredWidth: root.dp(76)
                                         Layout.maximumWidth: root.dp(76)
-                                        implicitHeight: root.dp(22)
+                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
@@ -1141,7 +1147,7 @@ Item {
                                     TextField {
                                         Layout.preferredWidth: root.dp(76)
                                         Layout.maximumWidth: root.dp(76)
-                                        implicitHeight: root.dp(22)
+                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
@@ -1223,7 +1229,7 @@ Item {
 
                                 Button {
                                     text: "Default bounds"
-                                    implicitHeight: root.dp(24)
+                                    implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                     enabled: root.nFree > 0
                                     // With a dataset loaded the angular-size ceiling comes from
                                     // the coverage itself — 2 λ/B_min, the largest scale the
@@ -1244,7 +1250,7 @@ Item {
                                 }
                                 Button {
                                     text: "Link"
-                                    implicitHeight: root.dp(24)
+                                    implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                     // Selecting two parameters and linking creates a global and
                                     // rewrites both rows to reference it ("$PA"). Tying two
                                     // position angles together becomes one gesture instead of
@@ -1675,7 +1681,7 @@ Item {
                                                     }
                                                     Button {
                                                         text: "Widen"
-                                                        implicitHeight: root.dp(22)
+                                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                         ToolTip.visible: hovered
                                                         ToolTip.text: "grow the grid until the profile has room to fall away"
                                                         onClicked: {
@@ -1845,7 +1851,7 @@ Item {
                                                                 font.pointSize: root.pt(root.baseFontPt - 2) }
                                                         TextField {
                                                             Layout.preferredWidth: root.dp(70)
-                                                            implicitHeight: root.dp(22)
+                                                            implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                             text: model.amp.toFixed(3)
                                                             font.pointSize: root.pt(root.baseFontPt - 1)
                                                             onEditingFinished:
@@ -1855,7 +1861,7 @@ Item {
                                                                 font.pointSize: root.pt(root.baseFontPt - 2) }
                                                         TextField {
                                                             Layout.preferredWidth: root.dp(70)
-                                                            implicitHeight: root.dp(22)
+                                                            implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                             text: model.projang.toFixed(2)
                                                             font.pointSize: root.pt(root.baseFontPt - 1)
                                                             onEditingFinished:
@@ -1865,7 +1871,7 @@ Item {
                                                         Button {
                                                             text: "−"
                                                             implicitWidth: root.dp(26)
-                                                            implicitHeight: root.dp(22)
+                                                            implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                             onClicked: root.removeAzMode(model.n)
                                                         }
                                                     }
@@ -1875,7 +1881,7 @@ Item {
                                                     Layout.fillWidth: true
                                                     Button {
                                                         text: "+ mode"
-                                                        implicitHeight: root.dp(24)
+                                                        implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                                         onClicked: root.addAzMode()
                                                     }
                                                     Item { Layout.fillWidth: true }
@@ -1931,19 +1937,19 @@ Item {
                                             spacing: root.dp(4)
                                             TextField {
                                                 Layout.fillWidth: true
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 text: model.lhs
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
                                             ComboBox {
                                                 Layout.preferredWidth: root.dp(62)
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 model: ["<", "<=", ">", ">=", "="]
                                                 font.pointSize: root.pt(root.baseFontPt - 2)
                                             }
                                             TextField {
                                                 Layout.fillWidth: true
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 text: model.rhs
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
@@ -1953,7 +1959,7 @@ Item {
                                             }
                                             TextField {
                                                 Layout.preferredWidth: root.dp(64)
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 text: String(model.tol)
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
@@ -1967,7 +1973,7 @@ Item {
                                             Button {
                                                 text: "−"
                                                 implicitWidth: root.dp(26)
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 onClicked: constraintModel.remove(index)
                                             }
                                         }
@@ -1977,7 +1983,7 @@ Item {
                                         Layout.fillWidth: true
                                         Button {
                                             text: "+ constraint"
-                                            implicitHeight: root.dp(24)
+                                            implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                             onClicked: constraintModel.append({
                                                 lhs: "", op: ">", rhs: "", tol: 0.001, satisfied: true })
                                         }
@@ -1989,7 +1995,7 @@ Item {
                                         // not having one.
                                         Button {
                                             text: "Fluxes sum to 1"
-                                            implicitHeight: root.dp(24)
+                                            implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                             ToolTip.visible: hovered
                                             ToolTip.text: "Deriving one flux from the others is " +
                                                           "exact and needs no constraint; this is " +
@@ -2011,7 +2017,7 @@ Item {
                                         // own lines go to Julia rather than anything stored.
                                         Button {
                                             text: "Check"
-                                            implicitHeight: root.dp(24)
+                                            implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                             enabled: constraintModel.count > 0
                                             onClicked: {
                                                 var r = Julia.shell_check_constraints(
@@ -2060,34 +2066,34 @@ Item {
                                             spacing: root.dp(4)
                                             TextField {
                                                 Layout.fillWidth: true
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 text: model.expr
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
                                             TextField {
                                                 Layout.preferredWidth: root.dp(70)
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 text: model.target.toFixed(4)
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
                                             Label { text: "±"; color: "#666" }
                                             TextField {
                                                 Layout.preferredWidth: root.dp(64)
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 text: model.sigma.toFixed(4)
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
                                             Button {
                                                 text: "−"
                                                 implicitWidth: root.dp(26)
-                                                implicitHeight: root.dp(22)
+                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                                 onClicked: priorModel.remove(index)
                                             }
                                         }
                                     }
                                     Button {
                                         text: "+ prior"
-                                        implicitHeight: root.dp(24)
+                                        implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                         onClicked: priorModel.append({ expr: "", target: 0.0, sigma: 1.0 })
                                     }
                                 }
@@ -2459,9 +2465,28 @@ Item {
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
                                     Button {
+                                        id: fitButton
                                         text: root.running ? "…" : "Fit"
                                         enabled: !root.running && root.canRun
                                         onClicked: root.startFit()
+                                        // Green ready, red busy -- the Imaging tab's Run button
+                                        // scheme, and `running` tested first for the same reason:
+                                        // `enabled` is false for the duration of a fit, so an
+                                        // enabled-first test leaves a red border round a grey fill.
+                                        background: Rectangle {
+                                            radius: root.dp(3)
+                                            border.color: root.running ? "#8e1b1b"
+                                                        : fitButton.enabled ? "#1b5e20" : "#b0b0b0"
+                                            color: root.running ? (fitButton.down ? "#b71c1c" : "#e53935")
+                                                 : fitButton.enabled ? (fitButton.down ? "#1b5e20" : "#43a047")
+                                                 : "#f0f0f0"
+                                        }
+                                        contentItem: Label {
+                                            text: fitButton.text
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                            color: (root.running || fitButton.enabled) ? "white" : "#a0a0a0"
+                                        }
                                     }
                                 }
 
@@ -2474,7 +2499,7 @@ Item {
                                     Label { text: "nboot"; color: "#666" }
                                     SpinBox {
                                         from: 10; to: 10000; stepSize: 10; value: root.nboot
-                                        implicitHeight: root.dp(26)
+                                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
                                         onValueModified: root.nboot = value
                                     }
                                     Label { text: "mode"; color: "#666" }
@@ -2501,7 +2526,7 @@ Item {
                                     Label { text: "seed"; color: "#666" }
                                     SpinBox {
                                         from: 0; to: 999999; value: root.bootSeed
-                                        implicitHeight: root.dp(26)
+                                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
                                         onValueModified: root.bootSeed = value
                                         // Set by default. Replicate i uses Xoshiro(seed+i), so results are
                                         // scheduling-independent — and without it the exported script does not
