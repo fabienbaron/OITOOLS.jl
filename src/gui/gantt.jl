@@ -306,3 +306,66 @@ function update_delay_plot!(d, p::NightPlan)
     Makie.ylims!(d.axis, lo, hi)
     return d
 end
+
+# ── the radial-profile preview ───────────────────────────────────────────────
+#
+# Two panels of one figure: I(r) as it is written, and its Hankel transform beside it. Editing
+# a profile and seeing only the brightness distribution tells you half of what you need -- the
+# visibility signature is what the data constrains, and two profiles that look similar in I(r)
+# can be obvious apart in V(B).
+#
+# Built before the window, like every other plot here: after it, allocating GL buffers with no
+# context bound is the failure this whole pre-create design exists to avoid.
+
+"Baselines the preview transform is evaluated on, in Mλ."
+const PROFILE_B_MAX = 400.0
+const PROFILE_NB    = 300
+
+"""
+    build_profile_plot(fig, iax, vax) -> profile panel
+
+`I(r)` on the left axis and `V(B)` on the right, each a single line whose data is an Observable.
+"""
+function build_profile_plot(fig, iax, vax)
+    rvals = Makie.Observable(Float32[0, 1])
+    ivals = Makie.Observable(Float32[0, 0])
+    bvals = Makie.Observable(Float32[0, 1])
+    vvals = Makie.Observable(Float32[1, 1])
+
+    Makie.lines!(iax, rvals, ivals; color = :black, linewidth = 2)
+    Makie.lines!(vax, bvals, vvals; color = :black, linewidth = 2)
+    # V = 0 is where a resolved component crosses over, and reading a null off the curve is
+    # most of what this panel is for.
+    Makie.hlines!(vax, [0.0]; color = (:red, 0.5), linewidth = 1)
+
+    iax.xlabel = "r (mas)";      iax.ylabel = "I(r)"
+    vax.xlabel = "B (Mλ)";       vax.ylabel = "V(B)"
+
+    # Four ticks, not `style_axis!`'s ten. Ten is matplotlib's density and right for a figure
+    # that fills a window; this pair lives in a ~200 px preview column beside the editor, where
+    # ten labels overlap into an unreadable smear. Same reason the type is smaller: the panel
+    # is here to show the SHAPE of the profile and where its nulls fall, and a number that
+    # cannot be read is worse than one that is not drawn.
+    for a in (iax, vax)
+        a.xticks[] = Makie.LinearTicks(4)
+        a.yticks[] = Makie.LinearTicks(4)
+        a.xticklabelsize[] = 9;  a.yticklabelsize[] = 9
+        a.xlabelsize[]     = 10; a.ylabelsize[]     = 10
+        a.xminorticksvisible[] = false
+        a.yminorticksvisible[] = false
+    end
+    return (; figure = fig, iaxis = iax, vaxis = vax, rvals, ivals, bvals, vvals)
+end
+
+"""
+    update_profile_plot!(p, r, I, B, V)
+
+Assignment only, as everywhere else on a live canvas: `r` and `B` in mas and Mλ.
+"""
+function update_profile_plot!(p, r, I, B, V)
+    p.rvals[] = Float32.(r); p.ivals[] = Float32.(I)
+    p.bvals[] = Float32.(B); p.vvals[] = Float32.(V)
+    Makie.autolimits!(p.iaxis)
+    Makie.autolimits!(p.vaxis)
+    return p
+end

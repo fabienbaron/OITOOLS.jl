@@ -38,6 +38,7 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Installation" => "install.md",
+        "Graphical Interface" => "gui.md",
         "Guides" => [
             "Demo Scripts"           => "examples/intro.md",
             "Reading OIFITS"         => "examples/reading.md",

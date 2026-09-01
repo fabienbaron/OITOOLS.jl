@@ -81,13 +81,12 @@ CL 45 963 6
 SHOT observing
 
 TAB 2                                  # Modeling: a model with something in it
-# "+ component" opens a modal dialog (name / kind / OK); OK is at 807,643. Twice, so the
-# parameter table has more than one component in it.
-# The button MOVES: each component adds a chip to its left, so the second add is not at the
-# same x as the first. Clicking 51 twice adds one component and then selects its chip.
-for x in 51 142; do
-    CL "$x" 110 2                      # + component, at its shifted position
-    CL 807 643 2                       # OK
+# "+ component" opens a modal dialog (name / kind / OK). Twice, so the parameter table has
+# more than one component in it. The button is pinned to the left of the chips and does not
+# move as they accumulate, so both adds click the same place.
+for i in 1 2; do
+    CL 51 110 2                        # + component
+    CL 807 651 2                       # OK
 done
 SHOT modeling
 

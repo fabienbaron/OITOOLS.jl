@@ -51,18 +51,33 @@ _split_key(k::AbstractString) = (i = findfirst(',', k);
                                                  (String(k[1:i-1]), String(k[i+1:end])))
 
 """
-    model_rows(model_dict, list_free_params; lb = nothing, ub = nothing) -> Vector{ParamRow}
+    model_rows(model_dict, list_free_params; lb, ub, wl, mjd) -> Vector{ParamRow}
 
 Describe every parameter in the model: its state, value, bounds and fit-vector index.
 
 Bounds come from `default_bounds` unless supplied. Rows are ordered globals first, then
 components in the parser's own order, and within a component the geometry key leads — the key
 that determines what the component *is* should not be buried among its modifiers.
+
+`wl` and `mjd` are the wavelength and epoch a chromatic expression is DISPLAYED at. Such an
+expression has no single value — the resolver broadcasts it to one entry per uv point — so
+without them the row cannot be resolved at all and reports nothing. Pass the dataset's first
+wavelength and the panel shows the model as it stands there.
 """
 function model_rows(model_dict::AbstractDict, list_free_params::AbstractVector;
-                    lb = nothing, ub = nothing)
+                    lb = nothing, ub = nothing, wl = nothing, mjd = nothing)
     md   = Dict{String,Any}(String(k) => v for (k, v) in model_dict)
     free = String.(list_free_params)
+    # A chromatic expression has no single value, so the row shows it at one wavelength. The
+    # substitution is a COPY: `_resolve_numeric` resolves `\$WL` by looking `"WL"` up in the
+    # dict it is handed, so putting the number there is all it takes -- and putting it in the
+    # real dict would make WL a global parameter of the model.
+    disp = md
+    if wl !== nothing || mjd !== nothing
+        disp = copy(md)
+        wl  === nothing || (disp["WL"]  = Float64(wl))
+        mjd === nothing || (disp["MJD"] = Float64(mjd))
+    end
     dlb, dub = try
         default_bounds(md, free)
     catch
@@ -105,7 +120,7 @@ function model_rows(model_dict::AbstractDict, list_free_params::AbstractVector;
             push!(rows, ParamRow(comp, par, key, PARAM_FREE, val, "", l, u, idx, near))
         elseif v isa AbstractString
             resolved = try
-                Float64(OITOOLS._resolve_numeric(key, md))
+                Float64(OITOOLS._resolve_numeric(key, disp))
             catch
                 NaN
             end

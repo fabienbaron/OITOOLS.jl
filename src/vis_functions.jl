@@ -161,7 +161,11 @@ w = param[4]/2.0626480624709636e8;
 uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
 vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
 ρ = sqrt.( uu.^2 + vv.^2)
-return besselj0.(2*π*θ*ρ).*exp.(-π^2/log(2)*w^2*(uv[1,:].^2+uv[2,:].^2))
+# The `/ln2` form takes a HALF-width: exp(-(pi*HWHM*rho)^2/ln2) = exp(-pi^2 FWHM^2 rho^2/(4 ln2)),
+# which is the standard Gaussian transform and matches mfit's
+# `exp(-((pi*a*rho)**2)/(4*log(2)))` with a = FWHM. Feeding it the FWHM whole made every
+# Gaussian here twice as wide as its stated FWHM.
+return besselj0.(2*π*θ*ρ).*exp.(-π^2/log(2)*(w/2)^2*(uv[1,:].^2+uv[2,:].^2))
 end
 
 
@@ -176,7 +180,11 @@ i = param[2]/180*π;
 ϕ = param[3]/180*π;
 uu = uv[1,:].*cos(ϕ) + uv[2,:].*sin(ϕ)
 vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
-return exp.(-π^2/log(2)*θ^2*(uu.^2+vv.^2))
+# The `/ln2` form takes a HALF-width: exp(-(pi*HWHM*rho)^2/ln2) = exp(-pi^2 FWHM^2 rho^2/(4 ln2)),
+# which is the standard Gaussian transform and matches mfit's
+# `exp(-((pi*a*rho)**2)/(4*log(2)))` with a = FWHM. Feeding it the FWHM whole made every
+# Gaussian here twice as wide as its stated FWHM.
+return exp.(-π^2/log(2)*(θ/2)^2*(uu.^2+vv.^2))
 end
 
 
@@ -213,7 +221,11 @@ vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
 ρ = sqrt.( uu.^2 + vv.^2)
 az_modulation = - im*(param[5]*uu + param[6]*vv).*(besselj1.(2*π*θ*ρ)./ρ) - (2*param[7]*uu.*vv+param[8]*(uu.*uu-vv.*vv)).*(besselj.(2,2*π*θ*ρ)./ρ.^2)
 az_modulation[findall(.!(isfinite.(az_modulation)))].=0.0; # prevents failure at ρ=0
-return (besselj0.(2*π*θ*ρ) + az_modulation).*exp.(-π^2/log(2)*w^2*(uv[1,:].^2+uv[2,:].^2))
+# The `/ln2` form takes a HALF-width: exp(-(pi*HWHM*rho)^2/ln2) = exp(-pi^2 FWHM^2 rho^2/(4 ln2)),
+# which is the standard Gaussian transform and matches mfit's
+# `exp(-((pi*a*rho)**2)/(4*log(2)))` with a = FWHM. Feeding it the FWHM whole made every
+# Gaussian here twice as wide as its stated FWHM.
+return (besselj0.(2*π*θ*ρ) + az_modulation).*exp.(-π^2/log(2)*(w/2)^2*(uv[1,:].^2+uv[2,:].^2))
 end
 
 function visibility_GaussianLorentzian_ring_az(param,uv::Array{T,2}) where T # i: inclination (deg), ϕ: semi-major axis orientation (deg)
@@ -238,7 +250,13 @@ vv = (-uv[1,:].*sin(ϕ) + uv[2,:].*cos(ϕ))*cos(i)
 #az_modulation = - im*(param[5]*cos(α) + param[6]*sin(α))*besselj1.(2*π*θ*ρ) + (param[7]*cos(2α)+param[8]*sin(2α))*besselj.(2,2*π*θ*ρ)
 az_modulation = - im*(param[5]*uu + param[6]*vv).*(besselj1.(2*π*θ*ρ)./ρ) - (2*param[7]*uu.*vv+param[8]*(uu.*uu-vv.*vv)).*(besselj.(2,2*π*θ*ρ)./ρ.^2)
 az_modulation[findall(.!(isfinite.(az_modulation)))].=0.0; # prevents failure at ρ=0
-return (besselj0.(2*π*θ*ρ) + az_modulation).*(param[9]*exp.(-π^2/log(2)*w^2*ρρ.^2)+(1-param[9])*exp.(-2*π/sqrt(3)*w*ρρ))
+# The `/ln2` form takes a HALF-width: exp(-(pi*HWHM*rho)^2/ln2) = exp(-pi^2 FWHM^2 rho^2/(4 ln2)),
+# which is the standard Gaussian transform and matches mfit's
+# `exp(-((pi*a*rho)**2)/(4*log(2)))` with a = FWHM. Feeding it the FWHM whole made every
+# Gaussian here twice as wide as its stated FWHM.
+# The Lorentzian takes the half-width for the same reason: exp(-2*pi*(w/2)*rho/sqrt(3))
+# = exp(-pi*FWHM*rho/sqrt(3)), which is the kernel PMOIRED uses.
+return (besselj0.(2*π*θ*ρ) + az_modulation).*(param[9]*exp.(-π^2/log(2)*(w/2)^2*ρρ.^2)+(1-param[9])*exp.(-2*π/sqrt(3)*(w/2)*ρρ))
 end
 
 function init_bounds(visfunc)

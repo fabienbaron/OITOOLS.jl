@@ -155,7 +155,44 @@ model_dict = pmoired_to_dict("{'star,ud': 3.2, 'ring,f': '1 - \\\$star,f'}")
 """
 function pmoired_to_dict(s::AbstractString)::Dict{String,Any}
     julia_str = pmoired_to_julia(s)
-    return eval(Meta.parse(julia_str))
+    return _adopt_pmoired_keys(eval(Meta.parse(julia_str)))
+end
+
+"""
+    _adopt_pmoired_keys(d) -> Dict
+
+Rename the PMOIRED keys OITOOLS spells differently, and warn about the one that cannot be
+carried across faithfully.
+
+This is a transpiler of syntax, so keys otherwise arrive verbatim -- which is right for almost
+all of them, since the two packages share their vocabulary. The exception is the spatial
+kernel. PMOIRED writes it `"comp,spatial kernel"`, with a space, and applies it PER COMPONENT;
+OITOOLS spells it `spatial_kernel` and applies one kernel to the whole model. A single
+component converts exactly. More than one cannot: adopting one component's kernel would smooth
+the others too, and adopting none would drop a part of the model. The keys are left in place in
+that case, so the inspector reports them as unrecognised rather than the import quietly
+changing what the model means.
+"""
+function _adopt_pmoired_keys(d::AbstractDict)
+    out = Dict{String,Any}(String(k) => v for (k, v) in d)
+    kern = [k for k in keys(out) if endswith(k, ",spatial kernel")]
+    if length(kern) == 1
+        out["spatial_kernel"] = out[kern[1]]
+        delete!(out, kern[1])
+        @info "PMOIRED import: '$(kern[1])' adopted as the model-wide `spatial_kernel`. " *
+              "OITOOLS applies one kernel to the whole model, which is the same thing here " *
+              "because there is one component carrying one."
+    elseif length(kern) > 1
+        @warn "PMOIRED import: $(length(kern)) per-component spatial kernels, which OITOOLS " *
+              "cannot represent -- it applies a single kernel to the whole model. The keys " *
+              "are left as they are and will be reported as unrecognised; smooth the " *
+              "components with a `profile` each, or keep one kernel." components = kern
+    end
+    # The Lorentzian fraction only means anything beside a kernel, so it travels with it.
+    for k in [k for k in keys(out) if endswith(k, ",spatial kernel frac lorentzian")]
+        @warn "PMOIRED import: '$k' has no OITOOLS equivalent -- its kernel is Gaussian only."
+    end
+    return out
 end
 
 
@@ -204,10 +241,6 @@ equivalent — the `ldlin`/`ldquad`/`ldpow`/`resolved` geometries are OITOOLS ad
 model is still written; the warning exists because the failure is otherwise silent on the
 PMOIRED side.
 
-!!! warning "Azimuthal-mode convention"
-    OITOOLS uses `+π/2` in the azimuthal-mode phase where PMOIRED uses `−π/2`, so
-    `az projang<N>` values do not transfer literally. See the note in `parse_model.jl`.
-
 See also [`pmoired_to_dict`](@ref), [`dict_to_pmoired_file`](@ref).
 """
 function dict_to_pmoired(model_dict::AbstractDict; check::Bool = true)
@@ -220,10 +253,6 @@ function dict_to_pmoired(model_dict::AbstractDict; check::Bool = true)
         end
         isempty(bad) || @warn "These keys have no PMOIRED equivalent and will not be " *
                               "interpreted the same way after import" keys=sort(bad)
-        if any(occursin("az projang", k) for k in keys(model_dict))
-            @warn "Model uses azimuthal modes: OITOOLS and PMOIRED differ by pi/2 in the " *
-                  "az projang convention, so those angles need adjusting by hand."
-        end
     end
     ks = sort(collect(keys(model_dict)))
     body = join(("    '$(k)': $(_pmoired_value(model_dict[k]))" for k in ks), ",\n")

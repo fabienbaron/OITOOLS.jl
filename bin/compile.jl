@@ -19,7 +19,7 @@
 #
 # NO PYTHON IN THE IMAGE. The package list below names neither PythonPlot nor PythonCall, and
 # `bin/trace.jl` loads neither, so the image carries no conda environment. Nested sampling
-# comes from NestedSamplers.jl and plotting from Makie; `plot_ultranest_corner` and the
+# comes from Nautilus.jl and plotting from Makie; `plot_ultranest_corner` and the
 # matplotlib figures are simply absent from a session started on this image, and calling one
 # raises a MethodError naming the function. Load PythonPlot in that session to get them back —
 # the sysimage does not prevent it, it just does not carry it.
@@ -52,7 +52,7 @@ const TRACE   = joinpath(HERE, "trace.jl")
 # of the project, and `bin/` reaches Makie through GLMakie. `include_transitive_dependencies`
 # defaults to true, so it lands in the image regardless.
 const PACKAGES = [:OITOOLS, :GLMakie, :QMLMakie, :QML, :GLFW_jll,
-                  :NestedSamplers, :PairPlots]
+                  :Nautilus, :PairPlots]
 
 isfile(TRACE) || error("missing $TRACE")
 

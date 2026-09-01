@@ -278,6 +278,146 @@ function ChainRulesCore.rrule(::typeof(vis_ldquad), θ::VisParam, u::VisParam, w
 end
 
 # ---------------------------------------------------------------------------
+# 3b. Square-root and Claret four-parameter limb darkening
+# ---------------------------------------------------------------------------
+#
+# Both are sums of half-integer powers of mu, so both are the same shape of thing as
+# `vis_ldquad` above and share its derivation. For a profile written as
+#
+#     I(mu) = sum_j a_j mu^{b_j}
+#
+# the normalised visibility is
+#
+#     V = [ sum_j a_j w_j F_j(zeta) ] / [ sum_j a_j w_j ],
+#     w_j = 1/(b_j+2),   F_j = Gamma(nu_j+1) 2^{nu_j} J_{nu_j}(zeta)/zeta^{nu_j},  nu_j = b_j/2+1
+#
+# with F_j -> 1 as zeta -> 0. Substituting quadratic limb darkening reproduces `vis_ldquad`'s
+# coefficients and its N exactly, and both laws below were checked against a direct numerical
+# integration of their own I(mu) to 1.2e-10.
+#
+# The Bessel ORDERS here are fixed numbers, unlike `vis_ldpow` where nu = alpha/2+1 moves with a
+# fitted parameter. That is why neither of these needs the ForwardDiff specialisation ldpow
+# carries: `besselj` only sees a Dual in its argument, never in its order. Both are also linear
+# in their coefficients, so those derivatives are just the basis functions.
+
+# w_j * Gamma(nu_j+1) * 2^{nu_j} for b = 1/2 and b = 3/2 (b = 0, 1, 2 give 1, sqrt(pi/2), 2).
+const _LDF12 = gamma(2.25) * 2^1.25 / 2.5      # 1.07790027…
+const _LDF32 = gamma(2.75) * 2^1.75 / 3.5      # 1.54567277…
+
+# x^{-nu} J_nu(x) -> 1/(2^nu Gamma(nu+1)) as x -> 0
+_b0(ν) = 1 / (2^ν * gamma(ν + 1))
+
+"""
+    vis_ldsqrt(θ, c, d, ρ)
+
+Square-root limb darkening, `I(μ) = 1 - c(1-μ) - d(1-√μ)`, for a disc of diameter `θ` in mas.
+
+`c` is the linear coefficient and `d` the square-root one, in the order Claret tabulates them.
+"""
+function vis_ldsqrt(θ::VisParam, c::VisParam, d::VisParam, ρ::AbstractVector)
+    N   = @. 0.5 - c/6 - d/10
+    ζ   = @. π * θ * ρ / MAS2RAD
+    B1  = @. ifelse(ζ < 1e-8, _b0(1.0),    besselj1(ζ)/ζ)
+    B32 = @. ifelse(ζ < 1e-8, _b0(1.5),    besselj(1.5, ζ)/ζ^1.5)
+    B54 = @. ifelse(ζ < 1e-8, _b0(1.25),   besselj(1.25, ζ)/ζ^1.25)
+    V_num = @. (1-c-d)*B1 + c*_SQRTPIO2*B32 + d*_LDF12*B54
+    return @. ifelse(ζ < 1e-8, one(ζ), V_num/N)
+end
+
+function ChainRulesCore.rrule(::typeof(vis_ldsqrt), θ::VisParam, c::VisParam, d::VisParam,
+                              ρ::AbstractVector)
+    N    = @. 0.5 - c/6 - d/10
+    ζ    = @. π * θ * ρ / MAS2RAD
+    safe = ζ .> 1e-8
+
+    B1  = @. ifelse(safe, besselj1(ζ)/ζ,           _b0(1.0))
+    B32 = @. ifelse(safe, besselj(1.5, ζ)/ζ^1.5,   _b0(1.5))
+    B54 = @. ifelse(safe, besselj(1.25, ζ)/ζ^1.25, _b0(1.25))
+    # d/dζ [ζ^{-ν} J_ν] = -ζ^{-ν} J_{ν+1}
+    dB1  = @. ifelse(safe, -besselj(2.0,  ζ)/ζ,       zero(ζ))
+    dB32 = @. ifelse(safe, -besselj(2.5,  ζ)/ζ^1.5,   zero(ζ))
+    dB54 = @. ifelse(safe, -besselj(2.25, ζ)/ζ^1.25,  zero(ζ))
+
+    V_num = @. (1-c-d)*B1 + c*_SQRTPIO2*B32 + d*_LDF12*B54
+    V     = @. ifelse(safe, V_num/N, one(ζ))
+
+    function vis_ldsqrt_pullback(ȳ)
+        ȳs = @. ifelse(safe, ȳ, zero(ȳ))
+        dV_dζ = @. ((1-c-d)*dB1 + c*_SQRTPIO2*dB32 + d*_LDF12*dB54) / N
+        ∂θ = _dparam(θ, ȳs .* dV_dζ .* π .* ρ ./ MAS2RAD)
+        dVnum_dc = @. -B1 + _SQRTPIO2*B32
+        dVnum_dd = @. -B1 + _LDF12*B54
+        ∂c = _dparam(c, ȳs .* ((dVnum_dc .* N .+ V_num ./ 6)  ./ N^2))
+        ∂d = _dparam(d, ȳs .* ((dVnum_dd .* N .+ V_num ./ 10) ./ N^2))
+        return NoTangent(), ∂θ, ∂c, ∂d, NoTangent()
+    end
+    return V, vis_ldsqrt_pullback
+end
+
+"""
+    vis_ldclaret4(θ, c1, c2, c3, c4, ρ)
+
+Claret's four-parameter limb darkening, `I(μ) = 1 - Σₖ cₖ (1 - μ^{k/2})`, for a disc of
+diameter `θ` in mas.
+
+The law most precise work uses, and the one Claret's tables are usually quoted in.
+"""
+function vis_ldclaret4(θ::VisParam, c1::VisParam, c2::VisParam, c3::VisParam, c4::VisParam,
+                       ρ::AbstractVector)
+    N    = @. 0.5 - c1/10 - c2/6 - 3*c3/14 - c4/4
+    ζ    = @. π * θ * ρ / MAS2RAD
+    B1   = @. ifelse(ζ < 1e-8, _b0(1.0),  besselj1(ζ)/ζ)
+    B54  = @. ifelse(ζ < 1e-8, _b0(1.25), besselj(1.25, ζ)/ζ^1.25)
+    B32  = @. ifelse(ζ < 1e-8, _b0(1.5),  besselj(1.5,  ζ)/ζ^1.5)
+    B74  = @. ifelse(ζ < 1e-8, _b0(1.75), besselj(1.75, ζ)/ζ^1.75)
+    B2   = @. ifelse(ζ < 1e-8, _b0(2.0),  besselj(2.0,  ζ)/ζ^2)
+    V_num = @. (1-c1-c2-c3-c4)*B1 + c1*_LDF12*B54 + c2*_SQRTPIO2*B32 +
+               c3*_LDF32*B74 + c4*2*B2
+    return @. ifelse(ζ < 1e-8, one(ζ), V_num/N)
+end
+
+function ChainRulesCore.rrule(::typeof(vis_ldclaret4), θ::VisParam, c1::VisParam, c2::VisParam,
+                              c3::VisParam, c4::VisParam, ρ::AbstractVector)
+    N    = @. 0.5 - c1/10 - c2/6 - 3*c3/14 - c4/4
+    ζ    = @. π * θ * ρ / MAS2RAD
+    safe = ζ .> 1e-8
+
+    B1  = @. ifelse(safe, besselj1(ζ)/ζ,           _b0(1.0))
+    B54 = @. ifelse(safe, besselj(1.25, ζ)/ζ^1.25, _b0(1.25))
+    B32 = @. ifelse(safe, besselj(1.5,  ζ)/ζ^1.5,  _b0(1.5))
+    B74 = @. ifelse(safe, besselj(1.75, ζ)/ζ^1.75, _b0(1.75))
+    B2  = @. ifelse(safe, besselj(2.0,  ζ)/ζ^2,    _b0(2.0))
+
+    dB1  = @. ifelse(safe, -besselj(2.0,  ζ)/ζ,       zero(ζ))
+    dB54 = @. ifelse(safe, -besselj(2.25, ζ)/ζ^1.25,  zero(ζ))
+    dB32 = @. ifelse(safe, -besselj(2.5,  ζ)/ζ^1.5,   zero(ζ))
+    dB74 = @. ifelse(safe, -besselj(2.75, ζ)/ζ^1.75,  zero(ζ))
+    dB2  = @. ifelse(safe, -besselj(3.0,  ζ)/ζ^2,     zero(ζ))
+
+    V_num = @. (1-c1-c2-c3-c4)*B1 + c1*_LDF12*B54 + c2*_SQRTPIO2*B32 +
+               c3*_LDF32*B74 + c4*2*B2
+    V     = @. ifelse(safe, V_num/N, one(ζ))
+
+    function vis_ldclaret4_pullback(ȳ)
+        ȳs = @. ifelse(safe, ȳ, zero(ȳ))
+        dV_dζ = @. ((1-c1-c2-c3-c4)*dB1 + c1*_LDF12*dB54 + c2*_SQRTPIO2*dB32 +
+                    c3*_LDF32*dB74 + c4*2*dB2) / N
+        ∂θ = _dparam(θ, ȳs .* dV_dζ .* π .* ρ ./ MAS2RAD)
+        # linear in every coefficient; dN/dc_k is the constant beside it in N
+        d1 = @. -B1 + _LDF12*B54
+        d2 = @. -B1 + _SQRTPIO2*B32
+        d3 = @. -B1 + _LDF32*B74
+        d4 = @. -B1 + 2*B2
+        ∂c1 = _dparam(c1, ȳs .* ((d1 .* N .+ V_num ./ 10)      ./ N^2))
+        ∂c2 = _dparam(c2, ȳs .* ((d2 .* N .+ V_num ./ 6)       ./ N^2))
+        ∂c3 = _dparam(c3, ȳs .* ((d3 .* N .+ V_num .* 3 ./ 14) ./ N^2))
+        ∂c4 = _dparam(c4, ȳs .* ((d4 .* N .+ V_num ./ 4)       ./ N^2))
+        return NoTangent(), ∂θ, ∂c1, ∂c2, ∂c3, ∂c4, NoTangent()
+    end
+    return V, vis_ldclaret4_pullback
+end
+
+# ---------------------------------------------------------------------------
 # 4.  Power-law limb-darkening   (vis_functions.jl: visibility_ldpow)
 # ---------------------------------------------------------------------------
 #

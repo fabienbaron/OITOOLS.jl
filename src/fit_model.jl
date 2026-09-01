@@ -804,7 +804,9 @@ struct LsqFitResult
     stderror    ::Vector{Float64}       # 1σ uncertainties (sqrt of diag(covar))
     converged   ::Bool                  # did LsqFit converge?
     model       ::FlatModel
-    lsqfit_result ::LsqFit.LsqFitResult  # raw LsqFit result (for confidence_interval etc.)
+    lsqfit_result ::LsqFit.LsqFitResult  # raw LsqFit result (for confidence_interval etc.);
+                                         # its `trace` is stored, so `length(...)` is the
+                                         # iteration count LsqFit does not report directly
 end
 
 function Base.show(io::IO, r::LsqFitResult)
@@ -897,8 +899,12 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     ub_vec = Float64[get(ub, p,  Inf) for p in list_free_params]
 
     # ── 4. Run LsqFit ───────────────────────────────────────────────────────
+    # `store_trace`: LsqFit reports no iteration count of its own, and without the trace there
+    # is no way to say how many steps a fit took -- only whether it converged. The trace is one
+    # small struct per iteration, capped by `maxIter`, and `length(result.lsqfit_result.trace)`
+    # is the count.
     fit = curve_fit(model_fn, jacobian_fn, xdata, ydata, x0;
-                    lower=lb_vec, upper=ub_vec,
+                    lower=lb_vec, upper=ub_vec, store_trace=true,
                     maxIter=maxIter, inplace=false)
 
     # ── 5. Extract results ───────────────────────────────────────────────────
@@ -968,7 +974,7 @@ function fit_model_lsqfit(model        ::FlatModel,
     ub_vec = _bounds_vec(ub, list_free_params,  Inf)
 
     fit = curve_fit(model_fn, jacobian_fn, xdata, ydata, Float64.(x0);
-                    lower=lb_vec, upper=ub_vec,
+                    lower=lb_vec, upper=ub_vec, store_trace=true,
                     maxIter=maxIter, inplace=false)
 
     minx = fit.param
@@ -1007,7 +1013,12 @@ Returns a NamedTuple with fields `v2`, `t3amp`, `t3phi` (degrees),
 observable types not present in `data`.
 """
 function model_to_obs(model::FlatModel, x::AbstractVector, data::OIdata)
-    cvis = eval_model(model, x, data.uv)
+    # Per-uv wavelength and MJD, so chromatic expressions (`$WL`, `$MJD`) resolve. Without
+    # them the resolver is handed NaN and every observable comes back NaN -- silently, since a
+    # NaN model is not an error. `chi2_flat` passes the same pair for the same reason.
+    cvis = eval_model(model, x, data.uv;
+                      wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing,
+                      mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing)
 
     # V²
     v2_model = data.nv2 > 0 ? abs2.(cvis[data.indx_v2]) : Float64[]
@@ -1073,7 +1084,9 @@ parameters at each wavelength.
 # Arguments
 - `model::FlatModel` — compiled model from `dict_to_model`
 - `x::AbstractVector` — current free-parameter values
-- `wl_grid` — wavelength array in microns
+- `wl_grid` — wavelength array in METRES, the unit `\$WL` carries in the resolver and
+  `uv_lam` carries in the data. A grid in microns evaluates every `\$WL` expression at a
+  wavelength a million times too large and returns fluxes that are wrong without erroring.
 
 # Returns
 - `total::Vector{Float64}` — total flux at each wavelength (= V(0,0))

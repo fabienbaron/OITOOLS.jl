@@ -59,6 +59,18 @@ configure_qt_platform!(; match_x11 = !wl.applied)   # before Qt starts, see src/
 
 using GLMakie, QMLMakie, QML   # these three activate OITOOLSGUIExt, which defines gui()
 
+# Activates OITOOLSNautilusExt, which is what makes "Nested sampling" selectable in the Model
+# panel rather than greyed out. Loaded unconditionally because it is pure Julia and costs
+# 0.08 s against OITOOLS's own 0.83 s -- the weak-dependency argument that keeps Qt and Makie
+# out of `using OITOOLS` does not apply at that price, and a sampler that is installed but
+# invisible is worse than the load time.
+#
+# UltraNest is the other backend and stays opt-in: it needs PythonCall and the Conda
+# environment, so it is loaded by hand when a second, independent evidence estimate is wanted:
+#
+#     julia --project=bin -e 'using PythonCall; include("bin/oitoolsgui.jl")'
+using Nautilus
+
 # An extension's exports do not reach the caller on their own, so name the module and pull them
 # in. This is the same route test/gui/runtests.jl uses.
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)

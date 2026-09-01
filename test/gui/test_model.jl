@@ -115,6 +115,26 @@
         @test model_inspection(chromatic).broadcasting == true
     end
 
+    @testset "chromatic rows resolve at a wavelength, or not at all" begin
+        # A chromatic expression has no single value: the resolver broadcasts it to one entry
+        # per uv point. Without a wavelength the row cannot be resolved and must say so with a
+        # NaN -- the failure to avoid is reporting a number that is not the parameter.
+        chromatic = Dict{String,Any}("s,ud" => 2.0, "s,f" => "0.7 * (\$WL/1.6e-6)^-4")
+        r0 = only(filter(r -> r.key == "s,f", model_rows(chromatic, String[])))
+        @test r0.mode === PARAM_EXPR
+        @test isnan(r0.value)
+
+        r1 = only(filter(r -> r.key == "s,f", model_rows(chromatic, String[]; wl = 1.5e-6)))
+        @test r1.value ≈ 0.7 * (1.5 / 1.6)^-4
+        r2 = only(filter(r -> r.key == "s,f", model_rows(chromatic, String[]; wl = 1.6e-6)))
+        @test r2.value ≈ 0.7
+
+        # The substitution must not leak into the model: WL is a display value, and a model
+        # that gained a global called WL would be a different model.
+        @test !haskey(chromatic, "WL")
+        @test length(model_rows(chromatic, String[]; wl = 1.6e-6)) == length(chromatic)
+    end
+
     @testset "malformed input is described, not thrown at the caller" begin
         # A string named in list_free_params is malformed; the row must say so rather than
         # pretend a value. The GUI's job is to prevent this state, and to be legible when a

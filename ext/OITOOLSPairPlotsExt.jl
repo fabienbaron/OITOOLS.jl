@@ -26,7 +26,7 @@ using OITOOLS: PlotData, PLOT_FONTS
 Corner plot of an `(n_samples, n_params)` sample matrix, one label per column.
 
 ```julia
-using OITOOLS, NestedSamplers, PairPlots, CairoMakie
+using OITOOLS, Nautilus, PairPlots, CairoMakie
 r = fit_model_nested(model_dict, free, data; lb, ub)
 Makie.save("corner.png", plot_corner_makie(r.posterior, r.list_free_params).figure)
 ```

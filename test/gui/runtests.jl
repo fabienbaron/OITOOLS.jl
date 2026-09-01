@@ -696,7 +696,8 @@ end
         G = GUI
         sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
                           :uv, :baseline, false, false, "", String[], nothing, "", nothing, nothing, nothing,
-                          nothing, nothing, nothing, nothing, Any[], nothing, "", "", nothing)
+                          nothing, nothing, nothing, nothing, Any[], nothing, nothing, nothing,
+                          nothing, "", "", nothing)
 
         G.console!(sh, "load_dataset!(session, \"a.oifits\")"; kind = :cmd)
         G.console!(sh, "1520 points")
@@ -808,6 +809,7 @@ end
     end
 
     include(joinpath(@__DIR__, "test_model.jl"))   # Model perspective data layer
+    include(joinpath(@__DIR__, "test_diagnostics.jl")) # residuals and SED panels
     include(joinpath(@__DIR__, "test_imaging.jl")) # Image perspective data layer
     include(joinpath(@__DIR__, "test_observing.jl")) # Observe perspective data layer
     include(joinpath(@__DIR__, "test_gantt.jl"))     # the Gantt port vs its oiplot original

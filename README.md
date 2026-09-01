@@ -114,7 +114,7 @@ Parametric model fitting with a flat-dictionary interface compatible with
 - **Four fitting backends:**
   - NLopt (gradient-based and gradient-free optimizers)
   - LsqFit (Levenberg-Marquardt with covariance and 1-sigma errors)
-  - Nested sampling with log-evidence, through either NestedSamplers.jl (pure Julia)
+  - Nested sampling with log-evidence, through either Nautilus.jl (pure Julia)
     or UltraNest (Python) — `fit_model_nested`
   - Grid search over two parameters, returning the χ² surface — `chi2_map`
 - **Bootstrap error estimation** by baseline, time, or wavelength
@@ -176,6 +176,10 @@ julia --project=bin bin/oitoolsgui.jl [file.oifits]
 | **Modeling** — parameters free/fixed/derived, and what the parser understood | **Imaging** — reconstruction with per-observable reduced χ² |
 | ![modeling](docs/src/assets/gui/modeling.png) | ![imaging](docs/src/assets/gui/imaging.png) |
 
+The [Graphical Interface guide](https://fabienbaron.github.io/OITOOLS.jl/dev/gui/) covers
+building a model in the window: the three parameter states, how to make fluxes behave as flux
+ratios, the `$R`/`$MU`/`$WL`/`$MJD` keywords and where each is valid, and radial profiles.
+
 The console at the bottom echoes the equivalent OITOOLS call for every action, so the window
 doubles as a way to learn the scripting API. "Export script" turns the session into a runnable
 `.jl`; it currently covers loading and filtering, and the remaining perspectives are being
@@ -192,6 +196,7 @@ including:
 - [Image reconstruction](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/imaging/)
 - [Simulation and planning](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/simulating/)
 - [Demo scripts](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/intro/)
+- [Graphical interface](https://fabienbaron.github.io/OITOOLS.jl/dev/gui/)
 - API reference: [OIFITS](https://fabienbaron.github.io/OITOOLS.jl/dev/api/oifits/), [Plotting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/plotting/), [Model Fitting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/modeling/), [Imaging](https://fabienbaron.github.io/OITOOLS.jl/dev/api/imaging/), [Observation Planning](https://fabienbaron.github.io/OITOOLS.jl/dev/api/planning/)
 
 ## Development install
@@ -206,4 +211,4 @@ Pkg.develop(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 The optional Python dependencies (matplotlib-base, ultranest) are declared in `CondaPkg.toml`
 and installed automatically the first time something loads PythonCall — there is nothing to set
 up by hand, and `using OITOOLS` on its own loads no Python at all. Add `PythonPlot` for the
-plotting functions, and `NestedSamplers` for nested sampling without Python.
+plotting functions, and `Nautilus` for nested sampling without Python.

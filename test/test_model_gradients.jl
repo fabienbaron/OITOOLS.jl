@@ -50,6 +50,17 @@ const FDM = central_fdm(5, 1)
                           ["s,ldquad","s,u","s,w"], [8.2, 0.25, -0.04]),
         ("ldpow",         Dict{String,Any}("s,ldpow"=>8.0, "s,alpha"=>0.15, "s,f"=>1.0),
                           ["s,ldpow","s,alpha"], [8.2, 0.13]),
+        # Square root and Claret four-parameter: both are sums of half-integer powers of mu,
+        # so their rrules are hand-written like ldquad's. Coefficients away from zero and of
+        # BOTH signs, because each enters the normalisation N as well as the numerator and a
+        # sign error there cancels at c = 0.
+        ("ldsqrt",        Dict{String,Any}("s,ldsqrt"=>8.0, "s,u"=>0.30, "s,w"=>0.20,
+                                           "s,f"=>1.0),
+                          ["s,ldsqrt","s,u","s,w"], [8.2, 0.35, -0.18]),
+        ("ldclaret4",     Dict{String,Any}("s,ldclaret4"=>8.0, "s,c1"=>0.40, "s,c2"=>-0.20,
+                                           "s,c3"=>0.50, "s,c4"=>-0.15, "s,f"=>1.0),
+                          ["s,ldclaret4","s,c1","s,c2","s,c3","s,c4"],
+                          [8.2, 0.45, -0.25, 0.44, -0.11]),
         ("ring",          Dict{String,Any}("s,diamin"=>4.0, "s,diamout"=>8.0, "s,f"=>1.0),
                           ["s,diamin","s,diamout"], [4.3, 8.4]),
         ("gaussian_ring", Dict{String,Any}("s,fwhmin"=>3.0, "s,fwhmout"=>7.0, "s,f"=>1.0),

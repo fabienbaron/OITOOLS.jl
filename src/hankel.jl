@@ -273,19 +273,76 @@ Example:
     I  = fn(r, mu, 2.0)   # equivalent to @. exp(-(r / 2.0)^2 / 2)
 """
 function compile_profile(expr_str::AbstractString,
-                          param_names::Vector{String})
-    # Replace $R -> _R_, $MU -> _MU_, $param -> param_ident
-    s = replace(expr_str, "\$R"  => "_R_")
-    s = replace(s,        "\$MU" => "_MU_")
-    for name in param_names
-        ident = replace(name, "," => "__")   # mangle to valid Julia identifier
-        s = replace(s, "\$$name" => ident)
-    end
+                          param_names::Vector{String};
+                          rmin::Union{Nothing,Real} = nothing,
+                          rmax::Union{Nothing,Real} = nothing)
+    # One pass over whole `$name` tokens, not a sequence of substring replacements.
+    #
+    # `$R` is a PREFIX of `$Rin`, so replacing it first rewrote `$Rin` as `_R_in` — and the
+    # model still parsed, still reported `Rin` among its discovered parameters, and only failed
+    # at evaluation with an `UndefVarError` naming an identifier the user never wrote. Any
+    # parameter beginning with R or MU hit this; the double-sigmoid ring of Ibrahim et al.
+    # (2023), whose radii are named Rin and Rout, cannot be written any other way.
+    #
+    # The token pattern is `extract_refs`'s, so what is substituted here and what the rest of
+    # the package counts as a reference cannot disagree.
+    s = replace(expr_str, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => function (m)
+        name = m[2:end]                      # strip the $
+        name == "R"  && return "_R_"
+        name == "MU" && return "_MU_"
+        # `$D` is the diameter at each grid radius, so it is elementwise 2r and needs no
+        # argument of its own. The bounds are numbers by the time this is called.
+        name == "D"    && return "(2*_R_)"
+        name == "RMIN" && return rmin === nothing ?
+            error("\$RMIN needs the profile grid; compile_profile was called without it") :
+            "($(Float64(rmin)))"
+        name == "RMAX" && return rmax === nothing ?
+            error("\$RMAX needs the profile grid; compile_profile was called without it") :
+            "($(Float64(rmax)))"
+        name == "DMIN" && return rmin === nothing ?
+            error("\$DMIN needs the profile grid; compile_profile was called without it") :
+            "($(2*Float64(rmin)))"
+        name == "DMAX" && return rmax === nothing ?
+            error("\$DMAX needs the profile grid; compile_profile was called without it") :
+            "($(2*Float64(rmax)))"
+        return replace(name, "," => "__")    # mangle to a valid Julia identifier
+    end)
 
     # Build argument list: (_R_, _MU_, param1, param2, ...)
     arg_symbols = [Symbol(replace(n, "," => "__")) for n in param_names]
     args = Expr(:tuple, :_R_, :_MU_, arg_symbols...)
 
+    fn_expr = Meta.parse("$args -> @. $s")
+    return @RuntimeGeneratedFunction(fn_expr)
+end
+
+
+"""
+    compile_visfunc(expr_str, param_names) -> Function
+
+Compile a user-written **visibility** expression into an AD-transparent broadcast function of
+`(_B_, params...)`, where `_B_` is the baseline in Mλ.
+
+The mirror of [`compile_profile`](@ref), and deliberately the same machinery: whole-token
+substitution over the `extract_refs` pattern, so a parameter whose name begins with B does not
+get rewritten the way `\$Rin` once was by a naive `\$R` replacement.
+
+`\$B` is the only implicit variable. There is no `\$R` or `\$MU` here: those are radii on an image
+grid, and this expression never builds an image -- it IS the visibility.
+
+The result is not normalised or checked. `V(0) = 1` is what makes a component's flux fraction
+mean what it says, and an expression that does not satisfy it describes a component whose flux
+is not `f`; `dict_to_model` warns rather than rescaling, because rescaling would silently
+change the model that was written.
+"""
+function compile_visfunc(expr_str::AbstractString, param_names::Vector{String})
+    s = replace(expr_str, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => function (m)
+        name = m[2:end]
+        name == "B" && return "_B_"
+        return replace(name, "," => "__")
+    end)
+    arg_symbols = [Symbol(replace(n, "," => "__")) for n in param_names]
+    args = Expr(:tuple, :_B_, arg_symbols...)
     fn_expr = Meta.parse("$args -> @. $s")
     return @RuntimeGeneratedFunction(fn_expr)
 end

@@ -1387,7 +1387,12 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         ft = setup_nfft(data, nx, pixsize)
         cvis_model = image_to_vis(to_ft_precision(x, ft), ft)
     elseif flat_model !== nothing
-        cvis_model = eval_model(flat_model, flat_params, data.uv)
+        # Per-uv wavelength and MJD, so a chromatic model simulates its own spectrum rather
+        # than a file of NaN: the resolver returns NaN for every `$WL` expression when it is
+        # handed no wavelength, and nothing downstream treats that as an error.
+        cvis_model = eval_model(flat_model, flat_params, data.uv;
+                                wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing,
+                                mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing)
     else
         error("Bad image or model definition in call to simulate()")
     end

@@ -240,7 +240,9 @@ vectors of length `nobs`; UV coordinates are stored in a `2×nuv` matrix.
 - `uv` — `2×nuv` matrix of (u, v) spatial frequencies as baseline/λ. This is
   **dimensionless — cycles per radian**, not cycles/m. Plots divide by 1e6 and label Mλ;
   multiply by λ to recover the projected baseline in metres.
-- `uv_lam`, `uv_dlam`, `uv_mjd`, `uv_baseline`
+- `uv_lam`, `uv_dlam`, `uv_mjd`, `uv_baseline`. `uv_mjd` is the array `\$MJD` resolves from
+  and is stored in `T`, so at the default `Float32` it holds an MJD only to ~5.6 min; the
+  per-table `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` are `Float64` whatever `T` is.
 - `indx_v2`, `indx_vis` — index of each V²/vis point into the UV array
 - `indx_t3_1`, `indx_t3_2`, `indx_t3_3` — UV indices for the three legs of each triangle
 
@@ -1243,8 +1245,17 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
     uv = hcat(vis_uv, v2_uv, t3_uv)
     uv_lam  = vcat(use_vis ? vis_lam  : T[], use_v2 ? v2_lam  : T[], use_t3 ? repeat(t3_lam,  3) : T[])
     uv_dlam = vcat(use_vis ? vis_dlam : T[], use_v2 ? v2_dlam : T[], use_t3 ? repeat(t3_dlam, 3) : T[])
-    # uv_mjd deliberately stays in T: it is the array handed to eval_model as the
-    # implicit $MJD variable, i.e. the only MJD reaching the hot loop.
+    # uv_mjd stays in T, unlike the per-table `*_mjd` above, which are Float64 whatever T is.
+    #
+    # The cost is time resolution: Float32 spacing at a present-day MJD is 2^-8 d = 5.6 min,
+    # so epochs closer than that merge -- measured on AZ Cyg, 119 distinct v2_mjd values
+    # collapse to 5 in uv_mjd, and the same $MJD model's chi2 moves by 0.28%. Read with
+    # T = Float64 when the time behaviour is the point.
+    #
+    # It buys no type stability in return: eval_model's accumulator is
+    # promote_type(eltype(x), float(eltype(uv))) and never involves mjd, so a Float64 MJD
+    # against a Float32 x and Float32 uv still returns ComplexF32. What it does buy is one
+    # Vector{Float32} instead of Vector{Float64}.
     uv_mjd_f64 = vcat(use_vis ? vis_mjd : Float64[], use_v2 ? v2_mjd : Float64[],
                       use_t3 ? repeat(t3_mjd, 3) : Float64[])
     uv_mjd  = T.(uv_mjd_f64)

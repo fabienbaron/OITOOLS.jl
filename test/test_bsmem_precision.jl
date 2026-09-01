@@ -148,6 +148,17 @@ end
     # mixed inputs promote rather than silently truncating
     @test eltype(eval_model(m, Float64[3.0], d32.uv)) === ComplexF64
 
+    # `wl` and `mjd` are NOT in the accumulator's type, which is promote_type(eltype(x),
+    # float(eltype(uv))) and nothing else. `uv_mjd` is stored in T and is documented as coarse
+    # (~5.6 min at Float32) for that reason: keeping it in T is a memory choice, not a
+    # precision one, and a Float64 MJD handed to a Float32 call must not promote the result.
+    @test eltype(eval_model(m, Float32[3.0], d32.uv;
+                            wl = d32.uv_lam, mjd = d32.uv_mjd)) === ComplexF32
+    @test eltype(eval_model(m, Float32[3.0], d32.uv;
+                            wl = d32.uv_lam, mjd = Float64.(d32.uv_mjd))) === ComplexF32
+    @test eltype(eval_model(m, Float32[3.0], d32.uv;
+                            wl = Float64.(d32.uv_lam), mjd = d32.uv_mjd)) === ComplexF32
+
     @test OITOOLS.chi2_flat(m, Float32[3.0], d32) isa Float32
     @test OITOOLS.chi2_flat(m, Float64[3.0], d64) isa Float64
     fc32, fg32 = OITOOLS.chi2_flat_fg(m, Float32[3.0], d32)

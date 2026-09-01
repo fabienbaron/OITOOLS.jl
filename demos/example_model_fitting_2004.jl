@@ -3,7 +3,7 @@
 using OITOOLS
 # Activates the pure-Julia nested sampler that `fit_model_nested` runs. `using
 # PythonCall` instead would select the UltraNest backend.
-using NestedSamplers
+using Nautilus
 
 data = readoifits("./data/2004-data1.oifits")[1,1];
 

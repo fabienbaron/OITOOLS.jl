@@ -10,7 +10,7 @@
 # NO PYTHON. PythonPlot and PythonCall are dependencies of `bin/` — the port harness needs the
 # first, the UltraNest backend the second — but neither is loaded here and neither is passed to
 # `create_sysimage`. A compiled build that dragged in a conda environment would defeat the
-# point: nested sampling comes from NestedSamplers.jl and plotting from Makie.
+# point: nested sampling comes from Nautilus.jl and plotting from Makie.
 #
 # Needs a display for the GL context. `bin/compile.jl` supplies one.
 
@@ -23,7 +23,7 @@ using GLFW_jll
 configure_qt_platform!(; match_x11 = !prefer_native_wayland!().applied)
 
 using GLMakie, QMLMakie, QML
-using NestedSamplers, PairPlots
+using Nautilus, PairPlots
 using Random: Xoshiro
 
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)

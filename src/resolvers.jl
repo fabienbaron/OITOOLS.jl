@@ -18,10 +18,18 @@ using RuntimeGeneratedFunctions
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Reserved implicit variables available in expressions (not parameter names).
-# $R, $MU  — radial grid variables (profile expressions)
-# $WL      — wavelength in metres (per UV point, from data.uv_lam)
-# $MJD     — Modified Julian Date  (per UV point, from data.uv_mjd)
-const IMPLICIT_VARS = Set(["R", "MU", "WL", "MJD"])
+# $R, $MU              — radial grid variables (profile expressions)
+# $D                   — diameter at each grid radius, i.e. 2$R (profile expressions)
+# $RMIN, $RMAX         — the grid's own bounds, in mas (profile expressions)
+# $DMIN, $DMAX         — the same as diameters (profile expressions)
+# $WL                  — wavelength in metres (per UV point, from data.uv_lam)
+# $MJD                 — Modified Julian Date  (per UV point, from data.uv_mjd, which is
+#                        stored in T: ~5.6 min resolution at the default Float32)
+#
+# The five grid variables are PMOIRED's, spelled the same way, so a profile written for one
+# package reads in the other. They are substituted where the profile is compiled, by which
+# point the grid is known.
+const IMPLICIT_VARS = Set(["R", "MU", "D", "RMIN", "RMAX", "DMIN", "DMAX", "WL", "MJD"])
 
 """
     extract_refs(expr_str) -> Vector{String}

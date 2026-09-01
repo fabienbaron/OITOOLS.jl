@@ -95,4 +95,46 @@ end
     end
 end
 
+# The entry points that take an `OIdata` rather than an explicit `wl=`. These are where a
+# chromatic model is actually used -- `model_to_residuals` and every `plot_*_residuals` go
+# through `model_to_obs`, and `simulate_from_oifits` writes a file from `eval_model` -- and
+# each has to take the wavelengths from the data itself. Handing the resolver no wavelength
+# returns NaN for every `$WL` expression, which is not an error and shows up only as a plot of
+# nothing; `model_to_obs` did exactly that, while `chi2_flat` passed `wl` and was correct.
+#
+# The assertion is agreement between the two paths, not a value written here: chi2 IS the sum
+# of the squared normalised residuals over the weighted observables, so if `model_to_obs` and
+# `chi2_flat` see the same model the two numbers are the same number.
+@testset "chromatic models resolve against the data's own wavelengths" begin
+    datadir = joinpath(@__DIR__, "..", "demos", "data")
+    chromatic = Dict{String,Any}(
+        "star,ud"   => 2.0, "star,f"   => "0.7 * ($WL/1.6e-6)^-4",
+        "disk,fwhm" => 6.0, "disk,f"   => "0.3 * ($WL/1.6e-6)^-1.5")
+
+    for f in ("2004-data1.oifits", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+        d  = readoifits(joinpath(datadir, f); warn = false)[1, 1]
+        m  = dict_to_model(chromatic, String[])
+        o  = model_to_obs(m, Float64[], d)
+        r  = model_to_residuals(m, Float64[], d)
+
+        @test d.nv2 == 0 || all(isfinite, o.v2)
+        @test d.nv2 == 0 || all(isfinite, r.v2)
+        @test d.nvisamp == 0 || all(isfinite, r.visamp)
+
+        # The default weights are [1,1,1,0,0,0,0], so V2, T3amp and T3phi are the three that
+        # enter chi2; visamp and visphi are computed but not weighted.
+        res2 = sum(sum(abs2, getproperty(r, k)) for k in (:v2, :t3amp, :t3phi))
+        @test res2 ≈ model_to_chi2(m, Float64[], d) rtol = 1e-8
+    end
+
+    # A grey model was never affected, and must not have moved.
+    grey = Dict{String,Any}("star,ud" => 2.0, "star,f" => 0.7,
+                            "disk,fwhm" => 6.0, "disk,f" => 0.3)
+    d = readoifits(joinpath(datadir, "2004-data1.oifits"); warn = false)[1, 1]
+    m = dict_to_model(grey, String[])
+    r = model_to_residuals(m, Float64[], d)
+    @test sum(sum(abs2, getproperty(r, k)) for k in (:v2, :t3amp, :t3phi)) ≈
+          model_to_chi2(m, Float64[], d) rtol = 1e-8
+end
+
 end # testset

@@ -87,7 +87,7 @@
 #     σ(log Z) ≈ 1/sqrt(N_eff), and that is what `logzerr` carries -- a different quantity from
 #     UltraNest's bootstrap error, so do not read a disagreement between them as a bug.
 #   * There is no maximum-likelihood point in the result either, so the best point is tracked
-#     during the run, per thread, exactly as `_nested_pieces` does for NestedSamplers.
+#     during the run, per thread, exactly as `_nested_pieces` does for UltraNest.
 
 """
     _nautilus_pieces(fm, data, weights, vonmises, cons, constraint_idx, lbounds, ubounds)

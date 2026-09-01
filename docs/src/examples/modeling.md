@@ -77,8 +77,8 @@ model_dict = Dict{String,Any}("g,fwhm" => 0.5, "g,f" => 1.0)
 
 ### Limb-darkened disks
 
-Three limb-darkening laws are available. The geometry key gives the
-diameter in mas:
+Five limb-darkening laws are available. The geometry key gives the
+diameter in mas, and names the law:
 
 ```julia
 # Linear: I(μ) = 1 - u(1-μ)
@@ -87,9 +87,24 @@ model_dict = Dict{String,Any}("star,ldlin" => 1.0, "star,u" => 0.3, "star,f" => 
 # Quadratic: I(μ) = 1 - u(1-μ) - w(1-μ)²
 model_dict = Dict{String,Any}("star,ldquad" => 1.0, "star,u" => 0.2, "star,w" => 0.1, "star,f" => 1.0)
 
-# Power-law: I(μ) = μ^α
+# Square root: I(μ) = 1 - u(1-μ) - w(1-√μ)
+model_dict = Dict{String,Any}("star,ldsqrt" => 1.0, "star,u" => 0.3, "star,w" => 0.2, "star,f" => 1.0)
+
+# Power-law: I(μ) = μ^α   (Hestroffer)
 model_dict = Dict{String,Any}("star,ldpow" => 1.0, "star,alpha" => 0.5, "star,f" => 1.0)
+
+# Four-parameter: I(μ) = 1 - Σₖ cₖ(1 - μ^{k/2})   (Claret)
+model_dict = Dict{String,Any}("star,ldclaret4" => 1.0, "star,c1" => 0.4, "star,c2" => -0.2,
+                              "star,c3" => 0.5, "star,c4" => -0.15, "star,f" => 1.0)
 ```
+
+!!! warning "A coefficient belongs to a law"
+    These coefficients are not interchangeable between laws. `u` is the linear coefficient in
+    both the quadratic and the square-root law, but the two laws are different profiles and a
+    value fitted under one is not a value under the other. The same applies when comparing
+    against published tables: Claret tabulates linear, quadratic, square-root, logarithmic and
+    four-parameter coefficients separately, and a power-law α is a different quantity again —
+    typically well below the linear `u` for the same star. Fit the law you mean to quote.
 
 ### Uniform ring
 
@@ -151,9 +166,11 @@ model_dict = Dict{String,Any}("bg,resolved" => true, "bg,f" => 0.1)
 |--------|------|-------------|
 | `ud` | Uniform disk | Diameter in mas |
 | `fwhm` | Gaussian | FWHM in mas |
-| `ldlin` + `u` | Linear limb-darkened disk | |
-| `ldquad` + `u`, `w` | Quadratic limb-darkened disk | |
-| `ldpow` + `alpha` | Power-law limb-darkened disk | |
+| `ldlin` + `u` | Linear limb-darkened disk | `I(μ) = 1 - u(1-μ)` |
+| `ldquad` + `u`, `w` | Quadratic limb-darkened disk | `1 - u(1-μ) - w(1-μ)²` |
+| `ldsqrt` + `u`, `w` | Square-root limb-darkened disk | `1 - u(1-μ) - w(1-√μ)` |
+| `ldpow` + `alpha` | Power-law limb-darkened disk | `μ^α` (Hestroffer) |
+| `ldclaret4` + `c1`…`c4` | Four-parameter limb-darkened disk | `1 - Σₖ cₖ(1 - μ^{k/2})` (Claret) |
 | `diamin` + `diamout` | Uniform ring | Inner/outer diameters in mas |
 | `diam` + `thick` | Uniform ring (sugar) | Outer diameter + fractional thickness |
 | `fwhmin` + `fwhmout` | Gaussian ring | Inner/outer FWHM in mas |
@@ -161,6 +178,18 @@ model_dict = Dict{String,Any}("bg,resolved" => true, "bg,f" => 0.1)
 | `profile` + `diamout` | Hankel profile | Arbitrary radial profile (see below) |
 | *(only `f`)* | Point source | Unresolved |
 | `resolved` | Resolved background | Fully resolved (V=0) |
+
+!!! note "What FWHM means here"
+    `fwhm`, `fwhmin`/`fwhmout` and `spatial_kernel` are true full widths at half maximum, so a
+    Gaussian of `fwhm = 3.0` measures 3.0 mas across at half its peak. The visibility is
+
+    ```
+    V(B) = exp(-π² · FWHM² · B² / (4 ln 2))
+    ```
+
+    which is the standard Gaussian transform and agrees with
+    [mfit](https://github.com/jsy1001/mfit)'s `exp(-((pi*a*rho)**2)/(4*log(2)))` for `a = FWHM`,
+    and with a numerical Hankel transform of `exp(-4 ln2 · r²/FWHM²)` to 4e-8.
 
 ## Common parameters
 
@@ -227,6 +256,24 @@ These implicit variables are available in expressions:
     `IMPLICIT_VARS` and from the compiled resolver signature, so an expression referring to
     it fails with an undefined-name error rather than a helpful message.
 
+!!! warning "`\$MJD` resolves to ~5.6 minutes at the default precision"
+    `\$MJD` is read from `data.uv_mjd`, which is stored in the `OIdata` element type `T`.
+    `T` defaults to `Float32`, whose spacing at a present-day MJD is 2⁻⁸ d = **5.6 minutes**
+    (so a worst-case rounding error of ±2.8 min). Epochs closer together than that merge into
+    one: on a real dataset carrying 119 distinct `v2_mjd` values, `uv_mjd` held **5**.
+
+    That is harmless when the epochs are nights or years apart, and fatal for within-night
+    variability, which is what a `\$MJD` model is usually written for. Read with
+    `T = Float64` when the time behaviour matters:
+
+    ```julia
+    data = readoifits("target.oifits"; T = Float64)[1, 1]
+    ```
+
+    Measured on the same `\$MJD` model, the two differ by 0.28% in χ² and by up to 3.2e-4 in
+    |V|. `\$WL` is unaffected: a wavelength in metres is around 1e-6, where `Float32` has
+    ample relative precision.
+
 Referencing `\$WL` or `\$MJD` in *any* derived expression makes the resolver broadcast **all**
 derived expressions, so every parameter becomes a per-uv-point vector — chromatic diameters
 and position angles work exactly like chromatic fluxes.
@@ -258,7 +305,7 @@ model_dict = Dict{String,Any}(
 list_free_params = ["star,d0", "star,slope"]   # both are fitted as usual
 ```
 
-This works for every analytic component — `ud`, `ldlin`, `ldquad`, `ldpow`,
+This works for every analytic component — `ud`, `ldlin`, `ldquad`, `ldsqrt`, `ldclaret4`, `ldpow`,
 `fwhm`, the rings and the crescent — and for every one of their parameters, not
 only the size: a limb-darkening coefficient varying with time
 (`"star,u" => "0.3 + 0.01*(\$MJD - 60000)"`) is equally valid. Gradients follow

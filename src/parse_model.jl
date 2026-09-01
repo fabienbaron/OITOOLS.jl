@@ -54,10 +54,12 @@ const _MAS2RAD_PM = 2.0626480624709636e8    # 1 radian in milli-arcseconds
 # Geometry key → component kind
 # ─────────────────────────────────────────────────────────────────────────────
 
-const _GEOMETRY_KEYS = ["profile", "diamin", "fwhmin", "crin",
-                       "ud", "fwhm", "ldlin", "ldquad", "ldpow", "resolved"]
+const _GEOMETRY_KEYS = ["visfunc", "profile", "diamin", "fwhmin", "crin",
+                       "ud", "fwhm", "ldlin", "ldquad", "ldsqrt", "ldclaret4",
+                       "ldpow", "resolved"]
 
 const _KIND_GEOMETRY = Dict{Symbol,String}(
+    :visfunc       => "visfunc",      # V(B) written out, in $B (Mlambda)
     :hankel        => "profile",
     :ring          => "diamin",       # uniform ring (analytic)
     :gaussian_ring => "fwhmin",       # bi-Gaussian ring (analytic)
@@ -66,6 +68,8 @@ const _KIND_GEOMETRY = Dict{Symbol,String}(
     :gaussian      => "fwhm",
     :ldlin         => "ldlin",
     :ldquad        => "ldquad",
+    :ldsqrt        => "ldsqrt",       # square-root law
+    :ldclaret4     => "ldclaret4",    # Claret four-parameter law
     :ldpow         => "ldpow",
     :resolved      => "resolved",     # fully resolved (V=0 at B>0), e.g. halo
     :point         => "",             # no geometry key — unresolved point
@@ -81,6 +85,10 @@ const _ANALYTIC_PARAM_SUFFIXES = Dict{Symbol,Vector{String}}(
     :gaussian      => ["fwhm"],
     :ldlin         => ["ldlin", "u"],       # diameter, u
     :ldquad        => ["ldquad", "u", "w"], # diameter, u, w
+    # Square root: I = 1 - c(1-mu) - d(1-sqrt(mu)). Named u/w for the same reason ldquad does --
+    # u is the linear coefficient in every law that has one.
+    :ldsqrt        => ["ldsqrt", "u", "w"],
+    :ldclaret4     => ["ldclaret4", "c1", "c2", "c3", "c4"],
     :ldpow         => ["ldpow", "alpha"],   # diameter, alpha
     :resolved      => [],                   # fully resolved: no geometry params
     :point         => [],
@@ -105,7 +113,8 @@ real bound. Pass `data` to `default_bounds` to size this from the actual uv cove
 """
 const DEFAULT_MAX_SIZE_MAS = 100.0
 
-const _SIZE_KEYS = ("ud", "fwhm", "ldlin", "ldquad", "ldpow", "diamin", "diamout", "diam",
+const _SIZE_KEYS = ("ud", "fwhm", "ldlin", "ldquad", "ldsqrt", "ldclaret4", "ldpow",
+                    "diamin", "diamout", "diam",
                     "fwhmin", "fwhmout", "crin", "crout", "udout", "r_max", "spatial_kernel")
 const _OFFSET_KEYS = ("x", "y", "croff")
 
@@ -117,12 +126,20 @@ const _DEFAULT_PARAM_BOUNDS = Dict{String,Tuple{Float64,Float64}}(
     (k => (-DEFAULT_MAX_SIZE_MAS, DEFAULT_MAX_SIZE_MAS) for k in _OFFSET_KEYS)...,
     # limb darkening
     "u"       => (-1.0, 1.0), "w"       => (-1.0, 1.0), "alpha"   => (0.0, 3.0),
+    # Claret's four coefficients are individually unbounded in sign and routinely exceed 1 --
+    # they trade against each other, and only the profile they sum to has to stay positive.
+    "c1" => (-3.0, 3.0), "c2" => (-3.0, 3.0), "c3" => (-3.0, 3.0), "c4" => (-3.0, 3.0),
     # orientation
     "pa"      => (-180.0, 180.0), "projang" => (-180.0, 180.0),
     "crprojang" => (-180.0, 180.0),
     "incl"    => (0.0, 90.0),
     # flux and shape fractions
     "f"       => (0.0, 1.0),  "thick"   => (0.0, 1.0),
+    # The crescent's offset is a FRACTION of the largest offset that keeps the subtracted disk
+    # inside the outer one: `off = croff*(crout - crin)/2`, so 0 is a concentric ring and 1 is
+    # internally tangent. Outside [0, 1] the hole leaves the disk and the model stops being a
+    # crescent, which is a bound rather than a preference.
+    "croff"   => (0.0, 1.0),
 )
 
 """
@@ -220,12 +237,17 @@ function _vis_ud(params::AbstractVector, ρ::AbstractVector)
 end
 
 function _vis_gaussian(params::AbstractVector, ρ::AbstractVector)
-    # Gaussian: V = exp(-π²σ²ρ²/ln2 * (1/MAS2RAD)²)
-    # FWHM → σ = FWHM / (2√(2ln2))
+    # V = exp(-π² FWHM² ρ² / (4 ln2)), the standard Gaussian transform: mfit computes
+    # `exp(-((pi*a*rho)**2)/(4*log(2)))` with a = FWHM, and a numerical Hankel transform of
+    # exp(-4 ln2 r²/FWHM²) agrees with it to 4e-8.
+    #
+    # The `/ln2` form takes a HALF-width, not σ. Passing σ = FWHM/(2√(2ln2)) made the component
+    # narrower than its stated FWHM by √(2ln2) = 1.177 -- measured in the image domain, a
+    # Gaussian asked for FWHM 3 mas came out 2.52 mas -- so a fitted FWHM read ~18% high.
     fwhm = params[1]
-    σ    = fwhm / (2 * sqrt(2 * log(2)))
-    t    = @. π * σ * ρ / _MAS2RAD_PM
-    return @. exp(-t^2 / log(2))   # = exp(-π²σ²ρ²/MAS2RAD²/ln2)
+    hwhm = fwhm / 2
+    t    = @. π * hwhm * ρ / _MAS2RAD_PM
+    return @. exp(-t^2 / log(2))   # = exp(-π² FWHM² ρ²/MAS2RAD²/(4 ln2))
 end
 
 function _vis_ldlin(params::AbstractVector, ρ::AbstractVector)
@@ -234,6 +256,14 @@ end
 
 function _vis_ldquad(params::AbstractVector, ρ::AbstractVector)
     vis_ldquad(params[1], params[2], params[3], ρ)
+end
+
+function _vis_ldsqrt(params::AbstractVector, ρ::AbstractVector)
+    vis_ldsqrt(params[1], params[2], params[3], ρ)
+end
+
+function _vis_ldclaret4(params::AbstractVector, ρ::AbstractVector)
+    vis_ldclaret4(params[1], params[2], params[3], params[4], params[5], ρ)
 end
 
 function _vis_ldpow(params::AbstractVector, ρ::AbstractVector)
@@ -299,8 +329,10 @@ end
 function _vis_gaussian_ring(params::AbstractVector, ρ::AbstractVector)
     fwhmin  = params[1]
     fwhmout = params[2]
-    σ_in  = fwhmin  / (2 * sqrt(2 * log(2)))
-    σ_out = fwhmout / (2 * sqrt(2 * log(2)))
+    # Half-widths, for the reason given in `_vis_gaussian`. The flux weighting below is a ratio
+    # of these squared, so the correction cancels there and only the widths move.
+    σ_in  = fwhmin  / 2
+    σ_out = fwhmout / 2
     t_in  = @. π * σ_in  * ρ / _MAS2RAD_PM
     t_out = @. π * σ_out * ρ / _MAS2RAD_PM
     V_in  = @. exp(-t_in^2  / log(2))
@@ -342,6 +374,8 @@ end
 const _ANALYTIC_VIS = Dict{Symbol, Function}(
     :ring          => _vis_ring,
     :gaussian_ring => _vis_gaussian_ring,
+    :ldsqrt        => _vis_ldsqrt,
+    :ldclaret4     => _vis_ldclaret4,
     # :crescent handled specially in eval_model (needs u,v not just ρ)
     :ud            => _vis_ud,
     :gaussian      => _vis_gaussian,
@@ -400,6 +434,24 @@ struct HankelSpec{T<:AbstractFloat} <: AbstractComponentSpec
     y_idx            ::Int
 end
 
+"""
+A component whose VISIBILITY is written out, rather than its brightness.
+
+The counterpart of `HankelSpec`: that one compiles I(r) and transforms it, this one is handed
+V(B) and evaluates it. `\$B` is the baseline in Mλ, which is the unit the observable plots use
+and the one a formula from a paper is normally written in.
+"""
+struct VisFuncSpec <: AbstractComponentSpec
+    comp_name    ::String
+    f_idx        ::Int
+    vis_fn       ::Function       # (B_Mlambda, params...) -> V
+    param_idx    ::Vector{Int}
+    incl_idx     ::Int
+    pa_idx       ::Int
+    x_idx        ::Int
+    y_idx        ::Int
+end
+
 """Top-level compiled model."""
 struct FlatModel
     resolver   ::Any                           # RGF.Resolver
@@ -422,14 +474,19 @@ function _component_names(model_dict::Dict{String})
         isnothing(idx) && continue
         push!(names, k[1:idx-1])
     end
-    return unique(names)
+    # Sorted, because `keys(::Dict)` has no defined order and changes it when keys are
+    # inserted: adding `incl` and `pa` to one component reshuffled the whole list, so the
+    # panel's component order moved when nothing about the model had.
+    return sort!(unique(names))
 end
 
 """Identify the component kind from which geometry key is present."""
 function _identify_kind(comp_name::String, model_dict::Dict{String})::Symbol
     for gk in _GEOMETRY_KEYS
         haskey(model_dict, "$comp_name,$gk") && return get(
-            Dict("profile"=>:hankel, "diamin"=>:ring, "fwhmin"=>:gaussian_ring,
+            Dict("visfunc"=>:visfunc,
+                 "profile"=>:hankel, "diamin"=>:ring, "fwhmin"=>:gaussian_ring,
+                 "ldsqrt"=>:ldsqrt, "ldclaret4"=>:ldclaret4,
                  "crin"=>:crescent, "ud"=>:ud, "fwhm"=>:gaussian,
                  "ldlin"=>:ldlin, "ldquad"=>:ldquad, "ldpow"=>:ldpow,
                  "resolved"=>:resolved), gk, :unknown)
@@ -528,6 +585,10 @@ function _resolver_dict(model_dict::Dict{String}, comp_names::Vector{String})
     exclude = Set{String}()
     for cn in comp_names
         push!(exclude, "$cn,profile")
+        # A visibility expression is compiled by `compile_visfunc` against the baseline, not
+        # resolved against `(x, WL, MJD)`. Left in, the resolver would try to evaluate it as a
+        # derived parameter and fail on the first function the expression names.
+        push!(exclude, "$cn,visfunc")
         push!(exclude, "$cn,r_max")
         push!(exclude, "$cn,nr")
         push!(exclude, "$cn,resolved")
@@ -711,7 +772,40 @@ function dict_to_model(model_dict::Dict{String},
         x_idx = get(n2i, "$cn,x", 0)
         y_idx = get(n2i, "$cn,y", 0)
 
-        if kind == :hankel
+        if kind == :visfunc
+            vis_expr = pd["$cn,visfunc"]
+            vis_expr isa String ||
+                error("$cn,visfunc must be a String expression")
+
+            # Same discovery rule as a profile: anything that is not an implicit variable is a
+            # parameter, resolved component-qualified first and then global.
+            # `\$B` is implicit HERE and nowhere else. It is not in `IMPLICIT_VARS` because the
+            # resolver's signature is `(x, WL, MJD)` and has no baseline to give a derived
+            # parameter; a visibility expression is the one place a baseline exists, and it is
+            # supplied by `eval_model` rather than resolved.
+            raw_refs = extract_refs(vis_expr)
+            vf_refs  = filter(r -> r ∉ IMPLICIT_VARS && r != "B", raw_refs)
+            vf_names = map(vf_refs) do r
+                if occursin(",", r)
+                    r
+                else
+                    q = "$cn,$r"
+                    haskey(pd, q) ? q : r
+                end
+            end
+            vis_fn = compile_visfunc(vis_expr, vf_refs)
+            vf_idx = Int[]
+            for nm in vf_names
+                haskey(n2i, nm) ||
+                    error("Visibility parameter '$nm' (from '$cn,visfunc') not found in " *
+                          "resolver. Add it to the model dict.")
+                push!(vf_idx, n2i[nm])
+            end
+
+            push!(components, VisFuncSpec(cn, f_idx, vis_fn, vf_idx,
+                                          incl_idx, pa_idx, x_idx, y_idx))
+
+        elseif kind == :hankel
 
             # Profile expression and parameter names
             profile_expr = pd["$cn,profile"]
@@ -733,7 +827,15 @@ function dict_to_model(model_dict::Dict{String},
             end
 
             # Compile the profile closure (AD-transparent)
-            profile_fn = compile_profile(profile_expr, prof_refs)
+            # The grid first: `$RMIN`, `$RMAX`, `$DMIN` and `$DMAX` are substituted as numbers
+            # where the profile is compiled, so it has to be known by then.
+            r_min = _hankel_r_min(cn, pd)
+            r_max = _hankel_r_max(cn, pd)
+            Nr    = _hankel_Nr(cn, pd)
+            r     = collect(T, range(r_min, r_max; length=Nr))
+            mu    = @. sqrt(max(zero(T), one(T) - (r / T(r_max))^2))
+
+            profile_fn = compile_profile(profile_expr, prof_refs; rmin = r_min, rmax = r_max)
 
             # Indices of profile params in resolver output
             prof_idx = map(prof_param_names) do k
@@ -744,11 +846,6 @@ function dict_to_model(model_dict::Dict{String},
             end
 
             # Build r grid (starts at diamin/2 for rings with profile)
-            r_min = _hankel_r_min(cn, pd)
-            r_max = _hankel_r_max(cn, pd)
-            Nr    = _hankel_Nr(cn, pd)
-            r     = collect(T, range(r_min, r_max; length=Nr))
-            mu    = @. sqrt(max(zero(T), one(T) - (r / T(r_max))^2))
 
             ws = HankelWorkspace(Nr, nB_workspace, length(prof_idx); T=T)
 
@@ -891,7 +988,14 @@ function eval_model(model::FlatModel,
         end
 
         # ── Compute visibility for this component ──────────────────────
-        if comp isa AnalyticSpec && comp.kind == :crescent
+        if comp isa VisFuncSpec
+            # `$B` is in Mλ: ρ is cycles/rad, which IS baseline/λ, and the observable plots
+            # divide it by 1e6 and label the axis Mλ. A formula copied from a paper is written
+            # in those units, so the expression is evaluated in them.
+            params = pv[comp.param_idx]
+            Vi = comp.vis_fn(ρ_comp ./ 1e6, params...)
+
+        elseif comp isa AnalyticSpec && comp.kind == :crescent
             # Crescent needs (u,v) for internal offset phase shifts
             params = pv[comp.param_idx]
             Vi = _vis_crescent(params, u_comp, v_comp)
@@ -909,9 +1013,13 @@ function eval_model(model::FlatModel,
             if isempty(comp.az_modes)
                 Vi = hankel_vis(I, comp.r_grid, B_comp; n)
             else
-                # Azimuthal variations: V = H₀/N + Σ amp·(-j)^n·Hₙ/N·cos(n·(ψ+φ+π/2))
-                # The +π/2 (vs -π/2 in PMOIRED's image-domain formula) accounts
-                # for the sign flip in the Fourier image↔visibility relationship.
+                # Azimuthal variations: V = H₀/N + Σ amp·(-j)^n·Hₙ/N·cos(n·(ψ+φ-π/2))
+                #
+                # PMOIRED's convention, term for term: `_Vazvar` in its oimodels.py computes
+                # `amp * (-1j)**n * Hankel(n) * cos(n*(_PA + phi*pi/180 - pi/2))` with
+                # `_PA = arctan2(_v, _u)`, and its image-domain brightness is the matching
+                # `1 + amp*cos(n*(PA + phi*pi/180 - pi/2))`. A `projang` therefore means the
+                # same angle in both packages and a model can move between them unchanged.
                 N_h = hankel_norm(I, comp.r_grid)
                 Vi  = complex.(hankel_transform(I, comp.r_grid, B_comp; n=0) ./ N_h)
                 ψ   = @. atan(v_comp, u_comp)    # UV position angle
@@ -920,7 +1028,7 @@ function eval_model(model::FlatModel,
                     phi_rad = pv[az.phi_idx] * π / 180
                     Hn = hankel_transform(I, comp.r_grid, B_comp; n=az.order) ./ N_h
                     @. Vi += amp_val * (-1im)^az.order * Hn *
-                             cos(az.order * (ψ + phi_rad + π/2))
+                             cos(az.order * (ψ + phi_rad - π/2))
                 end
             end
         end
@@ -939,7 +1047,7 @@ function eval_model(model::FlatModel,
     # ── Spatial kernel (Gaussian smoothing in visibility space) ─────────
     if model.kernel_idx != 0
         kern_fwhm = pv[model.kernel_idx]
-        σ_kern = kern_fwhm / (2 * sqrt(2 * log(2)))
+        σ_kern = kern_fwhm / 2          # half-width; see `_vis_gaussian`
         t_kern = @. π * σ_kern * ρ / _MAS2RAD_PM
         @. V *= exp(-t_kern^2 / log(2))
     end

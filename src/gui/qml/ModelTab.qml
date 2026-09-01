@@ -13,10 +13,10 @@
 // already name the keys it ignored, so the inspector shows them instead of leaving the user to
 // wonder why a ring fits like a blob.
 //
-// This file is the view only. Every point where Julia will be called is marked `// wire:`.
-// The data layer behind it already exists and is tested — `src/gui/model.jl` supplies
-// `model_rows`, `model_inspection` and `free_parameter_vector`, whose fields are exactly the
-// roles of `paramModel` below.
+// QML holds no model of its own. Every list below is filled by `refreshModel` from the shell
+// and every edit goes back through it, so the table cannot drift from what a fit or an
+// optimiser will see. The data layer is `src/gui/model.jl` — `model_rows`, `model_inspection`
+// and `free_parameter_vector`, whose fields are exactly the roles of `paramModel` below.
 
 import QtQuick
 import QtQuick.Controls
@@ -39,6 +39,39 @@ Item {
     function pt(points) { return points * fontScale }
 
     // ── palette ──────────────────────────────────────────────────────────────
+    // A paragraph of explanation costs vertical space on every visit and is read once. The
+    // glyph keeps it one hover away without spending the room, which is what lets the panel
+    // show the model rather than a manual about the model.
+    // Drawn rather than typed: U+24D8 (CIRCLED LATIN SMALL LETTER I) is missing from the UI
+    // font here and renders as a tofu box. A circle with an `i` in it always renders.
+    component InfoTip: Rectangle {
+        property string tip: ""
+        implicitWidth: root.dp(14)
+        implicitHeight: root.dp(14)
+        radius: width / 2
+        color: infoHover.hovered ? "#5b7fb0" : "#a8a8a8"
+        Label {
+            anchors.centerIn: parent
+            text: "i"
+            color: "white"
+            font.bold: true
+            font.pointSize: root.pt(root.baseFontPt - 3)
+        }
+        HoverHandler { id: infoHover; cursorShape: Qt.WhatsThisCursor }
+        ToolTip {
+            visible: infoHover.hovered && tip.length > 0
+            delay: 150
+            // A fixed width, because a ToolTip sized by its text runs the full width of the
+            // screen for a paragraph and becomes unreadable.
+            contentItem: Text {
+                text: tip
+                wrapMode: Text.WordWrap
+                width: root.dp(360)
+                font.pointSize: root.pt(root.baseFontPt - 1)
+            }
+        }
+    }
+
     readonly property color cFixed:  "#8a8a8a"
     readonly property color cFree:   "#1a7f37"
     readonly property color cExpr:   "#7048b6"
@@ -72,7 +105,7 @@ Item {
         // roles: comp, param, key, mode, value, expr, lb, ub, fitindex, atbound, kind
         // (`comp` is ParamRow.component renamed: `component` is a QML keyword)
         // Roles are defined by the first append, so every append must carry all eleven.
-        // wire: model_rows(model_dict, list_free_params; lb, ub) → these rows, in order
+        // Filled from `model_rows(model_dict, list_free_params; lb, ub)`, in its order.
     }
 
     // Components, as the parser identified them (§3.3 (i)). `geometryKey` is the key that
@@ -81,23 +114,200 @@ Item {
     ListModel {
         id: componentModel
         // roles: name, kind, geometryKey, nparams, nunrecognised
-        // wire: model_inspection(model_dict).components
+        // Filled from `model_inspection(model_dict).components`.
     }
 
     // Keys the parser ignored. Not an error, and that is the whole problem: they change what
     // the component IS, silently.
-    property var unrecognisedKeys: []          // wire: model_inspection(...).unrecognised
-    property bool broadcasting: false          // wire: model_inspection(...).broadcasting
-    property var globalKeys: []                // wire: model_inspection(...).globals
+    property var unrecognisedKeys: []          // model_inspection(...).unrecognised
+    property bool broadcasting: false          // model_inspection(...).broadcasting
+    property var globalKeys: []                // model_inspection(...).globals
 
     // Kinds the "+ component" dialog offers, as {key, label}. Read from Julia so the list is
     // the parser's own rather than a copy that can fall behind it.
+    // [{ key, label, subs: [{ key, label, base }] }], in menu order.
     property var componentKinds: []
+    property var ldLaws: []
+    property var profileTemplates: []
+
+    // Carried from a chosen template until its parameters are created: the seeds that describe
+    // the shape, and the grid radius it needs. `_component_seed`'s generic 2.0 describes
+    // nothing, and a grid too small truncates the profile without saying so.
+    property string profileSeeds: ""
+    property real   profileSuggestedRmax: 0
+
+    // I(r_max)/max(I), and only when the profile is still falling there. A shape cut off
+    // mid-decline is being modelled as something narrower than what was written.
+    property real   profileEdgeFrac: 0
+
+    // Which optional geometry the selected component carries.
+    property bool hasPosition: false
+    property bool hasOrientation: false
+
+    // Row index of a parameter key, or -1. `commitParam` addresses rows; the profile
+    // panel knows keys.
+    function rowOfKey(key) {
+        for (var i = 0; i < paramModel.count; ++i)
+            if (paramModel.get(i).key === key) return i
+        return -1
+    }
+
+    function refreshGeometry() {
+        root.hasPosition = false; root.hasOrientation = false
+        if (root.selectedComponent.length === 0) return
+        var f = Julia.shell_component_geometry(root.selectedComponent).split("\t")
+        if (f.length === 2) {
+            root.hasPosition    = f[0] === "1"
+            root.hasOrientation = f[1] === "1"
+        }
+    }
+
+    function setGeometry(which, on) {
+        var e = Julia.shell_set_component_geometry(root.selectedComponent, which, on)
+        root.consoleChanged()
+        if (e.length > 0 && e.charAt(0) === "!") { root.fitText = e; return }
+        root.modelDirty = true
+        refreshModel()
+    }
+
+    // The selected component's azimuthal modes, read back from the model. The panel keeps no
+    // list of its own: a mode is two keys in the dict, and anything the panel remembered
+    // separately could disagree with what the parser will build.
+    function refreshAzModes() {
+        azModel.clear()
+        if (root.selectedComponent.length === 0) return
+        var r = Julia.shell_az_modes(root.selectedComponent)
+        if (r.length === 0) return
+        var lines = r.split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length !== 3) continue
+            azModel.append({ n: parseInt(f[0]),
+                             amp: parseFloat(f[1]),
+                             projang: parseFloat(f[2]) })
+        }
+    }
+
+    // Add and remove go through Julia so the amp/projang pair stays a pair.
+    function addAzMode() {
+        var e = Julia.shell_add_az_mode(root.selectedComponent)
+        root.consoleChanged()
+        if (e.length > 0 && e.charAt(0) === "!") { root.fitText = e; return }
+        root.modelDirty = true
+        refreshModel()
+    }
+
+    function removeAzMode(order) {
+        var e = Julia.shell_remove_az_mode(root.selectedComponent, order)
+        root.consoleChanged()
+        if (e.length > 0 && e.charAt(0) === "!") { root.fitText = e; return }
+        root.modelDirty = true
+        refreshModel()
+    }
+
+    // Edited here or edited in the parameter table is the same edit: both commit the same key
+    // through commitParam, so a mode freed for fitting keeps its bounds and its fit index.
+    function commitAzField(order, suffix, text) {
+        var row = root.rowOfKey(root.selectedComponent + ",az " + suffix + order)
+        if (row < 0) { refreshModel(); return }
+        commitParam(row, "value", text)
+    }
+
+    // The selected component's limb-darkening law, or "" when it is not a limb-darkened disc.
+    property string ldLawKey: ""
+    property string ldLawLabel: ""
+
+    function refreshLdLaw() {
+        root.ldLawKey = ""; root.ldLawLabel = ""
+        if (root.selectedComponent.length === 0) return
+        var r = Julia.shell_ld_law(root.selectedComponent)
+        if (r.length === 0) return
+        var f = r.split("\t")
+        root.ldLawKey = f[0]; root.ldLawLabel = f.length > 1 ? f[1] : f[0]
+    }
 
     // Rows in `expr` mode. The Resolution view draws a DAG of $-references, and with no derived
     // parameter there are no references and no DAG -- so the count is what decides whether that
     // panel is worth the height it takes.
     property int nDerived: 0
+
+    // The selected component's profile, when it has one. Empty for every other kind, which is
+    // what the preview and the grid readout key off.
+    property string profileKey: ""
+    property string profileText: ""
+    property string profileError: ""
+
+    // One route for the profile string, whether it arrives from the editor's Apply, from focus
+    // leaving it, or from the expression dialog on the `profile` row: `shell_set_param`'s "expr"
+    // field writes the string and drops the row from the fit vector in one call.
+    function commitProfile(text) {
+        if (root.profileKey.length === 0 || text === root.profileText) return
+        var err = Julia.shell_set_param(root.profileKey, "expr", text)
+        if (err.length > 0 && err.charAt(0) === "!") { root.fitText = err; return }
+        root.modelDirty = true
+        refreshModel()
+        root.consoleChanged()
+    }
+
+    function refreshProfile() {
+        root.profileKey = ""
+        root.profileError = ""
+        root.profileText = ""
+        root.profileParams = []
+        if (root.selectedComponent.length === 0) return
+        for (var i = 0; i < paramModel.count; ++i) {
+            if (paramModel.get(i).key === root.selectedComponent + ",profile") {
+                root.profileKey = paramModel.get(i).key
+                break
+            }
+        }
+        if (root.profileKey.length === 0) return
+
+        for (var j = 0; j < paramModel.count; ++j)
+            if (paramModel.get(j).key === root.profileKey)
+                root.profileText = paramModel.get(j).expr
+
+        var g = Julia.shell_profile_grid(root.selectedComponent)
+        if (g.charAt(0) === "!") { root.profileError = g; return }
+        var f = g.split("\t")
+        if (f.length >= 4) {
+            // The KEY, and whether it was halved: three of the four are diameters, so a grid
+            // twice the expected size is otherwise a puzzle with nothing on screen to solve it.
+            root.profileRMaxKey = f[0] + (f[0] === "r_max" ? "" : "/2")
+            root.profileRMin = parseFloat(f[1])
+            root.profileRMax = parseFloat(f[2])
+            root.profileNr   = parseInt(f[3])
+            root.profileEdgeFrac = f.length > 4 ? parseFloat(f[4]) : 0
+        }
+
+        // What `compile_profile` will treat as a parameter, split into what exists and what
+        // writing the expression has asked for but not yet created.
+        var found = [], want = [], miss = []
+        for (var r = 0; r < paramModel.count; ++r) {
+            var k = paramModel.get(r).key
+            if (k.indexOf(root.selectedComponent + ",") === 0) {
+                var suf = k.substring(root.selectedComponent.length + 1)
+                if (root.profileText.indexOf("$" + suf) >= 0) found.push(suf)
+            }
+        }
+        var mt = Julia.shell_profile_params(root.profileKey, root.profileText)
+        if (mt.length > 0) {
+            var ml = mt.split("\n")
+            for (var q = 0; q < ml.length; ++q) {
+                var mf = ml[q].split("\t")
+                if (mf.length === 2) { want.push(mf[0] + " (missing)"); miss.push("$" + mf[0]) }
+            }
+        }
+        root.profileParams = found.concat(want)
+        root.profileMissing = miss
+
+        // Drawing is Julia's: the curves go straight into the preview's Observables.
+        var err = Julia.shell_profile_curves(root.selectedComponent)
+        root.profileError = (err.length > 0 && err.charAt(0) === "!") ? err : ""
+        root.profileDirty()
+    }
+
+    signal profileDirty()
 
     // Free-parameter names, for the grid's two axis pickers. Refreshed with the model, because
     // freeing or fixing a parameter changes what a grid can be run over.
@@ -134,16 +344,44 @@ Item {
         root.nestedBackend = nb[0]
         root.nestedLabel   = nb.length > 1 ? nb[1] : ""
 
-        var out = []
+        // Consecutive lines sharing a category become one menu entry with a sub-choice;
+        // a category of one is offered as itself, since a menu of one is not a choice.
+        var cats = []
         var txt = Julia.shell_component_kinds()
         if (txt.length > 0) {
             var lines = txt.split("\n")
             for (var i = 0; i < lines.length; ++i) {
                 var f = lines[i].split("\t")
-                if (f.length === 3) out.push({ key: f[0], label: f[1], base: f[2] })
+                if (f.length !== 5) continue
+                var last = cats.length > 0 ? cats[cats.length - 1] : null
+                if (last === null || last.key !== f[0])
+                    cats.push({ key: f[0], label: f[1], subs: [] })
+                cats[cats.length - 1].subs.push({ key: f[2], label: f[3], base: f[4] })
             }
         }
-        root.componentKinds = out
+        root.componentKinds = cats
+
+        var lw = []
+        var lt = Julia.shell_ld_laws()
+        if (lt.length > 0) {
+            var ll = lt.split("\n")
+            for (var m = 0; m < ll.length; ++m) {
+                var lf = ll[m].split("\t")
+                if (lf.length === 3) lw.push({ key: lf[0], label: lf[1], note: lf[2] })
+            }
+        }
+        root.ldLaws = lw
+
+        var tp = []
+        var tt = Julia.shell_profile_templates()
+        if (tt.length > 0) {
+            var tl = tt.split("\n")
+            for (var q = 0; q < tl.length; ++q) {
+                var tf = tl[q].split("\t")
+                if (tf.length === 3) tp.push({ key: tf[0], label: tf[1], note: tf[2] })
+            }
+        }
+        root.profileTemplates = tp
     }
 
     readonly property int nFree: {
@@ -157,14 +395,15 @@ Item {
     ListModel {
         id: constraintModel
         // roles: lhs, op, rhs, tol, satisfied
-        // wire: read_model_file(...).constraints; check_constraints(...) sets `satisfied`
+        // `satisfied` is set by `shell_check_constraints`; `constraintsAsLines` sends them
+        // to the fitter.
     }
 
     // ── Gaussian priors ──────────────────────────────────────────────────────
     ListModel {
         id: priorModel
         // roles: expr, target, sigma
-        // wire: the `priors` vector of (expr, target, sigma) tuples
+        // Sent to the fitter by `priorsAsLines` as the `priors` vector of tuples.
     }
 
     // ── model → image ────────────────────────────────────────────────────────
@@ -179,6 +418,10 @@ Item {
     // would change nothing. Julia decides, by looking for $WL and $MJD in the expressions.
     property bool dependsWl: false
     property bool dependsMjd: false
+    // The wavelength a chromatic value in the table is shown at. Named in the banner: a
+    // number with no wavelength beside it is one arbitrary entry of a vector presented as
+    // though it were the parameter.
+    property real displayWl: NaN
 
     function modelAsLines() {
         var out = []
@@ -329,17 +572,22 @@ Item {
         var lines = rows.split("\n")
         for (var i = 0; i < lines.length; ++i) {
             var f = lines[i].split("\t")
-            if (f.length === 8)
-                fitModel.append({ label: f[0], optimiser: f[1], chi2r: parseFloat(f[2]),
-                                  ndof: parseInt(f[3]), nevals: parseInt(f[4]),
+            if (f.length === 10)
+                fitModel.append({ label: f[0], optimiser: f[1],
+                                  chi2rStart: parseFloat(f[2]), chi2r: parseFloat(f[3]),
+                                  work: f[4],
+                                  ndof: parseInt(f[5]), nfree: parseInt(f[6]),
                                   ret: "", chi2: 0.0,
-                                  aic: parseFloat(f[5]), bic: parseFloat(f[6]),
-                                  params: f[7] })
+                                  aic: parseFloat(f[7]), bic: parseFloat(f[8]),
+                                  params: f[9] })
         }
     }
 
     // Write the fitted values back into the table, so what is shown is what was fitted and the
     // model can then be saved or rendered as one.
+    // Each value goes to Julia, not into the table. Writing the row alone would leave the
+    // model still holding the starting guess while the table showed the fitted number -- and
+    // the chi2 readout, the render and the next fit would all be of the value on screen.
     function adoptFit() {
         var vals = Julia.shell_fit_values()
         if (vals.length === 0) return
@@ -349,16 +597,19 @@ Item {
             if (j < 0) continue
             var key = lines[i].substring(0, j)
             var v   = parseFloat(lines[i].substring(j + 1))
-            for (var r = 0; r < paramModel.count; ++r)
-                if (paramModel.get(r).key === key) paramModel.setProperty(r, "value", v)
+            if (isNaN(v)) continue
+            var err = Julia.shell_set_param(key, "value", v)
+            if (err.length > 0 && err.charAt(0) === "!") root.fitText = err
         }
         modelDirty = true
+        refreshModel()
+        consoleChanged()
     }
 
     // ── live feedback (§3.6) ─────────────────────────────────────────────────
-    property real  currentChi2r: NaN            // wire: chi2_flat after every edit
+    property real  currentChi2r: NaN            // chi2_flat, re-run after every edit
     property int   currentNdof: 0
-    property var   validationWarnings: []       // wire: display_model's own checks, rendered inline
+    property var   validationWarnings: []       // display_model's own checks, rendered inline
 
     // ── observables (§1.8) ───────────────────────────────────────────────────
     //
@@ -437,11 +688,21 @@ Item {
     // ── fit history (§3.9) ───────────────────────────────────────────────────
     ListModel {
         id: fitModel
-        // roles: label, optimiser, chi2, chi2r, ndof, nevals, ret, aic, bic, params
-        // wire: one row per completed fit, so competing models compare side by side
+        // roles: label, optimiser, chi2, chi2rStart, chi2r, work, ndof, nfree, ret,
+        //        aic, bic, params. Roles are defined by the first append, so every
+        //        append must carry all of them.
+        // One row per completed fit, so competing models compare side by side.
     }
 
     function fmt(v, d) { return (v === undefined || v === null || isNaN(v)) ? "—" : v.toFixed(d) }
+
+    // chi2 spans orders of magnitude: a starting model can score millions where the fitted one
+    // scores single figures, and four decimals of 2283398.5050 is eleven characters of column
+    // for two that matter. Fixed where it is readable, exponential where it is not.
+    function fmtChi2(v) {
+        if (v === undefined || v === null || isNaN(v)) return "—"
+        return Math.abs(v) >= 1e5 ? v.toExponential(3) : v.toFixed(4)
+    }
 
     // The `$`-references an expression makes, in the order they appear and without repeats.
     // A reference is `$name,suffix` for a component parameter or `$name` for a global, and a
@@ -519,9 +780,8 @@ Item {
                 text: "Export PMOIRED…"
                 enabled: paramModel.count > 0
                 // Export warns rather than failing when the model uses something PMOIRED
-                // cannot represent — the OITOOLS-only geometries, and azimuthal modes, whose
-                // `az projang` differs by π/2 between the two packages. Writing a model that
-                // means something else on the other side is the failure worth preventing.
+                // cannot represent — the OITOOLS-only geometries. Writing a model that means
+                // something else on the other side is the failure worth preventing.
                 onClicked: exportPmoiredDialog.openAt("")
             }
 
@@ -581,8 +841,15 @@ Item {
                 // If ANY derived expression references $WL or $MJD the resolver broadcasts
                 // ALL of them, so every parameter becomes a per-uv-point vector. That is a
                 // behavioural switch and the user should see it flip.
+                // The table has to show a single number per row, so it shows the value at one
+                // wavelength; naming it here is what stops that number being read as the
+                // parameter itself.
                 text: "Broadcasting is on: one chromatic expression makes every parameter a " +
-                      "per-uv-point vector, not just the chromatic one."
+                      "per-uv-point vector, not just the chromatic one." +
+                      (isNaN(root.displayWl)
+                        ? "  Load a dataset to see them at a wavelength."
+                        : "  Values in the table are shown at λ = " +
+                          (root.displayWl * 1e6).toFixed(3) + " µm.")
             }
         }
 
@@ -813,7 +1080,14 @@ Item {
                                         Layout.maximumWidth: root.dp(150)
                                         text: rowItem.rParam
                                         elide: Text.ElideRight
-                                        color: rowItem.rAtBound ? root.cWarn : "#222"
+                                        // Free in green, derived in violet, fixed in plain --
+                                        // the same three colours the mode selector uses, so the
+                                        // state of a row is readable without reading its mode.
+                                        // At-bound still wins: it is a warning about a free
+                                        // parameter and would be invisible in the free colour.
+                                        color: rowItem.rAtBound ? root.cWarn
+                                             : rowItem.rMode === "free" ? root.cFree
+                                             : rowItem.rMode === "expr" ? root.cExpr : "#222"
                                         font.bold: rowItem.rMode === "free"
                                     }
 
@@ -826,10 +1100,16 @@ Item {
                                         Layout.maximumWidth: root.dp(78)
                                         implicitHeight: root.dp(22)
                                         font.pointSize: root.pt(root.baseFontPt - 2)
-                                        model: ["fixed", "free", "expr"]
+                                        // "derived" is what this panel, the inspector and the
+                                        // documentation call the state; "expr" is what the shell
+                                        // and `model_rows` call it. The label follows the prose
+                                        // and the wire value follows the parser, so the one word
+                                        // the user has to find is the one they have been reading.
+                                        model: ["fixed", "free", "derived"]
                                         currentIndex: rowItem.rMode === "free" ? 1
                                                     : rowItem.rMode === "expr" ? 2 : 0
-                                        onActivated: root.requestModeChange(rowItem.rIndex, currentText)
+                                        onActivated: root.requestModeChange(rowItem.rIndex,
+                                                         currentIndex === 2 ? "expr" : currentText)
                                     }
 
                                     // Expr rows show the expression; its value is a computed
@@ -840,7 +1120,8 @@ Item {
                                         implicitHeight: root.dp(22)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         readOnly: rowItem.rMode === "expr"
-                                        color: rowItem.rMode === "expr" ? root.cExpr : "#222"
+                                        color: rowItem.rMode === "expr" ? root.cExpr
+                                             : rowItem.rMode === "free" ? root.cFree : "#222"
                                         text: isNaN(rowItem.rValue) ? "—" : rowItem.rValue.toFixed(4)
                                         horizontalAlignment: Text.AlignRight
                                         onEditingFinished: root.commitParam(rowItem.rIndex, "value", text)
@@ -943,10 +1224,23 @@ Item {
                                 Button {
                                     text: "Default bounds"
                                     implicitHeight: root.dp(24)
-                                    // Pass the dataset and the angular-size ceiling comes from
+                                    enabled: root.nFree > 0
+                                    // With a dataset loaded the angular-size ceiling comes from
                                     // the coverage itself — 2 λ/B_min, the largest scale the
                                     // shortest baseline senses — rather than from a constant.
-                                    // wire: default_bounds(model_dict, free; data)
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: root.hasDataset
+                                                  ? "bounds for every free parameter, sizes scaled from the uv coverage"
+                                                  : "bounds for every free parameter (load data to scale sizes from the coverage)"
+                                    onClicked: {
+                                        var err = Julia.shell_default_bounds()
+                                        root.consoleChanged()
+                                        if (err.length > 0 && err.charAt(0) === "!") {
+                                            root.fitText = err; return
+                                        }
+                                        root.modelDirty = true
+                                        root.refreshModel()
+                                    }
                                 }
                                 Button {
                                     text: "Link"
@@ -956,7 +1250,9 @@ Item {
                                     // position angles together becomes one gesture instead of
                                     // an expression-editing exercise. Unlinking inlines the
                                     // current value back into each.
-                                    // wire: rewrite model_dict, add the global, re-run model_rows
+                                    // NOT WIRED: needs multi-select in the parameter table, which
+                                    // the table does not have, plus a shell call to create the
+                                    // global and rewrite both rows to reference it.
                                 }
                                 Item { Layout.fillWidth: true }
                                 Label {
@@ -1007,12 +1303,6 @@ Item {
                                 width: root.width * 0.4
                                 spacing: root.dp(8)
 
-                                Label {
-                                    text: "What the parser understood"
-                                    font.bold: true
-                                    font.pointSize: root.pt(root.baseFontPt + 1)
-                                    Layout.topMargin: root.dp(6)
-                                }
                                 ColumnLayout {
                                     spacing: root.dp(8)
 
@@ -1039,44 +1329,11 @@ Item {
                                             text: "• " + modelData
                                         }
                                     }
-                                    // wire: display_model already performs exactly these checks —
-                                    // value<lb, value>ub, lb>=ub, flux fractions not summing to 1.
-                                    // Render its results rather than reimplementing them.
+                                    // The checks above are `display_model`'s own — value<lb,
+                                    // value>ub, lb>=ub, flux fractions not summing to 1 — rendered
+                                    // through `shell_model_warnings` rather than reimplemented.
 
-                                    Label { text: "Structure"; font.bold: true }
-                                    Repeater {
-                                        model: componentModel
-                                        delegate: Rectangle {
-                                            Layout.fillWidth: true
-                                            implicitHeight: sCol.implicitHeight + root.dp(10)
-                                            color: root.cPanel
-                                            border.color: root.cLine
-                                            radius: root.dp(3)
-                                            ColumnLayout {
-                                                id: sCol
-                                                x: root.dp(6); y: root.dp(5)
-                                                width: parent.width - root.dp(12)
-                                                spacing: root.dp(1)
-                                                Label {
-                                                    text: model.name + " — " + model.kind
-                                                    font.bold: true
-                                                }
-                                                Label {
-                                                    text: "decided by: " + model.geometryKey
-                                                    color: "#666"
-                                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                                }
-                                                Label {
-                                                    visible: model.nunrecognised > 0
-                                                    text: model.nunrecognised + " unrecognised key(s), ignored"
-                                                    color: root.cBad
-                                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // ── Resolution: what depends on what ──────────────
+                                    // ── Dependencies: what is computed from what ──────
                                     //
                                     // Hidden until something derives from something else: with
                                     // no `$`-reference there is nothing to resolve, and an empty
@@ -1089,19 +1346,18 @@ Item {
                                     // point: a reference is a parameter somewhere else in this
                                     // model, and clicking one selects the component it belongs to
                                     // instead of leaving you to find it in the table.
+                                    // "Dependencies", not "Resolution". This is the resolver's
+                                    // evaluation order -- globals, then fixed, then derived,
+                                    // topologically sorted -- but on a panel read by people who
+                                    // measure angular resolution for a living, that word names
+                                    // the wrong thing entirely.
                                     Label {
-                                        text: "Resolution"; font.bold: true
+                                        text: "Dependencies"; font.bold: true
                                         visible: root.nDerived > 0
                                     }
-                                    Label {
+                                    InfoTip {
                                         visible: root.nDerived > 0 && root.broadcasting
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
-                                        color: root.cWarn
-                                        font.pointSize: root.pt(root.baseFontPt - 2)
-                                        text: "One expression uses $WL or $MJD, so the resolver " +
-                                              "broadcasts every parameter: each is a vector over " +
-                                              "the uv points, not a number."
+                                        tip: "One expression uses $WL or $MJD, so the resolver broadcasts every parameter: each is a vector over the uv points, not a number."
                                     }
                                     Repeater {
                                         model: paramModel
@@ -1163,80 +1419,20 @@ Item {
                                         }
                                     }
 
-                                    // ── Numeric: every parameter at its current value ─────
-                                    //
-                                    // `all_names` as the resolver leaves it, which is the vector
-                                    // the vis functions are actually handed -- free entries in
-                                    // green, derived in violet, so the three modes are the same
-                                    // colours here as in the table. Clicking one selects its
-                                    // component. Empty for an empty model, and hidden then.
-                                    Label {
-                                        text: "Numeric"; font.bold: true
-                                        visible: componentModel.count > 0
-                                    }
-                                    Label {
-                                        visible: componentModel.count > 0 && root.broadcasting
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
-                                        color: "#666"
-                                        font.pointSize: root.pt(root.baseFontPt - 2)
-                                        text: "Broadcasting: each value below is the first entry " +
-                                              "of a per-λ vector."
-                                    }
-                                    Flow {
-                                        visible: componentModel.count > 0
-                                        Layout.fillWidth: true
-                                        spacing: root.dp(4)
-                                        Repeater {
-                                            model: paramModel
-                                            delegate: Rectangle {
-                                                id: numChip
-                                                property string keyText: model.key
-                                                width: numLabel.implicitWidth + root.dp(10)
-                                                height: numLabel.implicitHeight + root.dp(4)
-                                                radius: root.dp(3)
-                                                color: "white"
-                                                border.color: root.cLine
-                                                Label {
-                                                    id: numLabel
-                                                    anchors.centerIn: parent
-                                                    text: numChip.keyText + " = " + root.fmt(model.value, 4)
-                                                    font.family: "monospace"
-                                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                                    color: model.mode === "free" ? root.cFree
-                                                         : model.mode === "expr" ? root.cExpr
-                                                         : root.cFixed
-                                                }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        var c = root.componentOf(numChip.keyText)
-                                                        if (c.length > 0) root.selectedComponent = c
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
                                 }
 
-                                Label {
-                                    text: "Components"
-                                    font.bold: true
-                                    font.pointSize: root.pt(root.baseFontPt + 1)
-                                    Layout.topMargin: root.dp(6)
-                                }
                                 ColumnLayout {
                                     spacing: root.dp(8)
 
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: root.dp(8)
+                                        // Which component is selected is shown by the highlighted
+                                        // card in the left panel; repeating its name here said
+                                        // nothing the panel had not already said.
                                         Label {
-                                            text: root.selectedComponent === ""
-                                                  ? "Select a component"
-                                                  : "Component: " + root.selectedComponent
+                                            visible: root.selectedComponent === ""
+                                            text: "Select a component"
                                             font.bold: true
                                         }
                                         Label {
@@ -1246,6 +1442,48 @@ Item {
                                             font.pointSize: root.pt(root.baseFontPt - 2)
                                         }
                                         Item { Layout.fillWidth: true }
+                                    }
+
+                                    // ── optional geometry, for any kind ──────────────
+                                    //
+                                    // Presence toggles rather than a name field: the optional
+                                    // keys are a closed set of four, so what a component has
+                                    // should be visible rather than remembered. Added in pairs
+                                    // for the reason the azimuthal modes are -- an inclination
+                                    // with no position angle inclines about whichever axis the
+                                    // sky happens to give, and a position angle with no
+                                    // inclination rotates a circle.
+                                    GroupBox {
+                                        Layout.fillWidth: true
+                                        visible: root.selectedComponent !== ""
+                                        title: "Geometry"
+
+                                        RowLayout {
+                                            spacing: root.dp(16)
+                                            CheckBox {
+                                                text: "position (x, y)"
+                                                checked: root.hasPosition
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: "offset from the phase centre, in mas"
+                                                onToggled: root.setGeometry("position", checked)
+                                            }
+                                            CheckBox {
+                                                text: "inclination & PA"
+                                                checked: root.hasOrientation
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: "project the component on sky: " +
+                                                              "incl in degrees (0 = face-on), " +
+                                                              "PA north through east"
+                                                onToggled: root.setGeometry("orientation", checked)
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Label {
+                                                text: "seeded at 0, which leaves the component " +
+                                                      "exactly as it was"
+                                                color: "#666"
+                                                font.pointSize: root.pt(root.baseFontPt - 2)
+                                            }
+                                        }
                                     }
 
                                     // Only a Hankel component HAS a radial profile. Offering the
@@ -1266,234 +1504,425 @@ Item {
                                               "`profile` key."
                                     }
 
-                                    // Editors left, pictures right. The three previews are the same
-                                    // kind of thing -- what the numbers on the left look like -- so
-                                    // they belong in one column where they can be compared, rather
-                                    // than buried one inside each editor.
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: root.dp(8)
-                                        visible: root.selectedGeometryKey === "profile"
-
+                                    // Each picture beside the editor it illustrates, rather than both in a column
+                                    // of their own. The two columns were independent, so a preview lined up with
+                                    // its section only by accident and drifted the moment the editor grew -- which
+                                    // it does as soon as a profile needs a parameter created.
                                     ColumnLayout {
                                         Layout.fillWidth: true
-                                        Layout.alignment: Qt.AlignTop
                                         spacing: root.dp(8)
-
-                                    // ── freeform radial profile (§3.4) ───────────────
-                                    GroupBox {
-                                        Layout.fillWidth: true
                                         visible: root.selectedGeometryKey === "profile"
-                                        title: "Radial profile"
 
-                                        ColumnLayout {
-                                            spacing: root.dp(6)
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignTop
+                                            spacing: root.dp(8)
+                                        // ── freeform radial profile (§3.4) ───────────────
+                                        GroupBox {
+                                            Layout.fillWidth: true
+                                            // AlignTop, like the preview beside it: without it the
+                                            // RowLayout stretches this box to the row height the
+                                            // taller preview sets, and the frames stop lining up.
+                                            Layout.alignment: Qt.AlignTop
+                                            visible: root.selectedGeometryKey === "profile"
+                                            title: "Radial profile"
 
-                                            TextArea {
-                                                Layout.fillWidth: true
-                                                Layout.preferredHeight: root.dp(56)
-                                                placeholderText: "I(r) in $R and $MU, e.g. (1-$s)*(1-$MU^$a)"
-                                                font.family: "monospace"
-                                                font.pointSize: root.pt(root.baseFontPt - 1)
-                                                // wire: "cn,profile"; compile_profile on every edit
-                                            }
-
-                                            // Which key set r_max is a genuine source of confusion:
-                                            // udout/2 → diamout/2 → diam/2 → r_max, first one present
-                                            // wins. So the grid is stated rather than assumed.
-                                            RowLayout {
-                                                Layout.fillWidth: true
+                                            ColumnLayout {
                                                 spacing: root.dp(6)
-                                                Label {
-                                                    text: "grid: r ∈ [" + root.fmt(root.profileRMin, 3) +
-                                                          ", " + root.fmt(root.profileRMax, 3) + "] mas"
-                                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                                    color: "#666"
-                                                }
-                                                Label {
-                                                    text: "from " + root.profileRMaxKey
-                                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                                    color: root.cExpr
-                                                }
-                                                Item { Layout.fillWidth: true }
-                                                Label {
-                                                    text: root.profileNr + " points"
-                                                    font.pointSize: root.pt(root.baseFontPt - 2)
-                                                    color: "#666"
-                                                }
-                                            }
-                                            // wire: r_min from diamin/2; r_max and the key that set it;
-                                            // nr (default 100)
 
-                                            // compile_profile treats every name that is not $R/$MU as
-                                            // a parameter. Listing what it found makes a typo surface
-                                            // as a spurious new parameter instead of a confusing error.
-                                            Label {
-                                                Layout.fillWidth: true
-                                                wrapMode: Text.WordWrap
-                                                font.pointSize: root.pt(root.baseFontPt - 2)
-                                                color: root.profileParams.length > 0 ? "#333" : "#999"
-                                                text: root.profileParams.length > 0
-                                                      ? "parameters discovered: " + root.profileParams.join(", ")
-                                                      : "no parameters discovered yet"
+                                                // Templates write into the EDITOR, not the model: choosing a shape is a
+                                                // draft, and Apply/Revert is already here to arbitrate it, so nothing is
+                                                // replaced invisibly.
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: root.dp(6)
+                                                    Label { text: "start from"; color: "#666" }
+                                                    ComboBox {
+                                                        id: templateBox
+                                                        Layout.fillWidth: true
+                                                        textRole: "label"
+                                                        valueRole: "key"
+                                                        model: root.profileTemplates
+                                                        currentIndex: -1
+                                                        displayText: currentIndex < 0 ? "choose a profile…" : currentText
+                                                        onActivated: {
+                                                            var t = Julia.shell_profile_template(
+                                                                        root.profileTemplates[currentIndex].key)
+                                                            if (t.charAt(0) === "!") { root.fitText = t; return }
+                                                            var f = t.split("\t")
+                                                            profileEdit.text = f[0]
+                                                            root.profileSuggestedRmax = parseFloat(f[1])
+                                                            root.profileSeeds = f.length > 2 ? f[2] : ""
+                                                        }
+                                                    }
+                                                }
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    visible: templateBox.currentIndex >= 0 && root.profileTemplates.length > 0
+                                                    wrapMode: Text.WordWrap
+                                                    color: "#666"
+                                                    font.pointSize: root.pt(root.baseFontPt - 2)
+                                                    text: (templateBox.currentIndex >= 0 && root.profileTemplates.length > 0)
+                                                          ? root.profileTemplates[templateBox.currentIndex].note : ""
+                                                }
+                                                // The profile IS a parameter of the model -- it shows
+                                                // in the table as the component's `profile` row -- but
+                                                // it is the one worth editing beside its own picture,
+                                                // so it is here too. Committed on focus loss rather
+                                                // than per keystroke: every edit re-evaluates the
+                                                // profile and its transform.
+                                                TextArea {
+                                                    id: profileEdit
+                                                    Layout.fillWidth: true
+                                                    Layout.preferredHeight: root.dp(56)
+                                                    placeholderText: "I(r) in $R and $MU, e.g. (1-$s)*(1-$MU^$a)"
+                                                    font.family: "monospace"
+                                                    font.pointSize: root.pt(root.baseFontPt - 1)
+                                                    text: root.profileText
+                                                    onActiveFocusChanged: if (!activeFocus) root.commitProfile(text)
+                                                }
+
+                                                // An explicit commit as well as focus-out. Focus-out
+                                                // alone is not enough: clicking dead space does not
+                                                // move focus, so an edit could sit on screen looking
+                                                // applied while the model still held the old profile.
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: root.dp(6)
+                                                    Button {
+                                                        text: "Apply"
+                                                        enabled: profileEdit.text !== root.profileText
+                                                        onClicked: root.commitProfile(profileEdit.text)
+                                                    }
+                                                    Button {
+                                                        text: "Revert"
+                                                        enabled: profileEdit.text !== root.profileText
+                                                        onClicked: profileEdit.text = root.profileText
+                                                    }
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        visible: profileEdit.text !== root.profileText
+                                                        text: "edited, not applied"
+                                                        color: root.cWarn
+                                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                                    }
+                                                }
+
+                                                // Writing a name in a profile CREATES the need for a
+                                                // parameter rather than referring to one, so the offer
+                                                // to make them belongs beside the expression.
+                                                Button {
+                                                    Layout.fillWidth: true
+                                                    visible: root.profileMissing.length > 0
+                                                    text: "Create " + root.profileMissing.join(", ")
+                                                    onClicked: {
+                                                        var e = Julia.shell_add_profile_params(
+                                                                    root.profileKey, root.profileText,
+                                                                    root.profileSeeds)
+                                                        root.consoleChanged()
+                                                        if (e.length > 0 && e.charAt(0) === "!") {
+                                                            root.fitText = e; return
+                                                        }
+                                                        root.modelDirty = true
+                                                        root.refreshModel()
+                                                    }
+                                                }
+
+                                                // Which key set r_max is a genuine source of confusion:
+                                                // udout/2 → diamout/2 → diam/2 → r_max, first one present
+                                                // wins. So the grid is stated rather than assumed.
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: root.dp(6)
+                                                    Label {
+                                                        text: "grid: r ∈ [" + root.fmt(root.profileRMin, 3) +
+                                                              ", " + root.fmt(root.profileRMax, 3) + "] mas"
+                                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                                        color: "#666"
+                                                    }
+                                                    Label {
+                                                        text: "from " + root.profileRMaxKey
+                                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                                        color: root.cExpr
+                                                    }
+                                                    Item { Layout.fillWidth: true }
+                                                    Label {
+                                                        text: root.profileNr + " points"
+                                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                                        color: "#666"
+                                                    }
+                                                }
+                                                // The grid the parser built: r_min from diamin/2, r_max
+                                                // and the key that set it, and nr. Read back from
+                                                // `shell_profile_grid` rather than recomputed here, so it
+                                                // is the grid the model will actually be evaluated on.
+
+                                                // The grid is cutting the profile off, rather than the profile having
+                                                // died away by the edge. Actionable rather than informational: the
+                                                // number on its own invites "and?", so the fix sits beside it.
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    visible: root.profileEdgeFrac > 0.01
+                                                    spacing: root.dp(6)
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        wrapMode: Text.WordWrap
+                                                        color: root.cBad
+                                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                                        text: "truncated: I is still " +
+                                                              Math.round(root.profileEdgeFrac * 100) +
+                                                              "% of its peak at r_max, so the grid cuts the profile short"
+                                                    }
+                                                    Button {
+                                                        text: "Widen"
+                                                        implicitHeight: root.dp(22)
+                                                        ToolTip.visible: hovered
+                                                        ToolTip.text: "grow the grid until the profile has room to fall away"
+                                                        onClicked: {
+                                                            // The template's own radius when there is one, else double.
+                                                            var want = root.profileSuggestedRmax > root.profileRMax
+                                                                       ? root.profileSuggestedRmax : root.profileRMax * 2
+                                                            var r = root.rowOfKey(root.selectedComponent + ",udout")
+                                                            if (r >= 0) root.commitParam(r, "value", String(2 * want))
+                                                        }
+                                                    }
+                                                }
+                                                // compile_profile treats every name that is not $R/$MU as
+                                                // a parameter. Listing what it found makes a typo surface
+                                                // as a spurious new parameter instead of a confusing error.
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.WordWrap
+                                                    font.pointSize: root.pt(root.baseFontPt - 2)
+                                                    color: root.profileParams.length > 0 ? "#333" : "#999"
+                                                    text: root.profileParams.length > 0
+                                                          ? "parameters discovered: " + root.profileParams.join(", ")
+                                                          : "no parameters discovered yet"
+                                                }
+                                                // `compile_profile`'s discovered names, resolved
+                                                // component-qualified first and then global — so a typo
+                                                // shows up as a spurious new parameter rather than as a
+                                                // confusing error at fit time.
                                             }
-                                            // wire: compile_profile's discovered names, resolved
-                                            // component-qualified first, then global
                                         }
-                                    }
 
-                                    // ── azimuthal modes (§3.5) ───────────────────────
+                                            // A GroupBox, not a bare Rectangle, so its frame starts where
+                                            // the editor's frame starts. A Rectangle beside a GroupBox
+                                            // begins at the row's top and therefore sits a title-height
+                                            // above the thing it illustrates.
+                                            GroupBox {
+                                                // A fixed width beside a fillWidth editor. Sharing the row by
+                                                // fillWidth collapses the picture to nothing, which is what
+                                                // happened when these moved out of their own column.
+                                                Layout.preferredWidth: root.dp(300)
+                                                Layout.alignment: Qt.AlignTop
+                                                title: "I(r) and V(B)"
+
+                                            // I(r) and V(B) share one figure and one mount: they are
+                                            // read together, and two MakieAreas would mean two GL
+                                            // surfaces for what is a single pair of axes.
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                implicitHeight: root.dp(240)
+                                                color: "white"; border.color: root.cLine
+                                                MakieArea {
+                                                    id: profileArea
+                                                    anchors.fill: parent
+                                                    anchors.margins: root.dp(1)
+                                                    visible: root.profileError.length === 0
+                                                    scene: profilePlot
+                                                }
+                                                Label {
+                                                    anchors.fill: parent
+                                                    anchors.margins: root.dp(6)
+                                                    visible: root.profileError.length > 0
+                                                    wrapMode: Text.WordWrap
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    verticalAlignment: Text.AlignVCenter
+                                                    color: root.cBad
+                                                    font.pointSize: root.pt(root.baseFontPt - 2)
+                                                    text: root.profileError
+                                                }
+                                                // An Observable assignment does not by itself ask Qt
+                                                // for a frame; Julia has already written the curves.
+                                                Connections {
+                                                    target: root
+                                                    function onProfileDirty() { profileArea.update() }
+                                                }
+                                            }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignTop
+                                            spacing: root.dp(8)
+                                        // ── the limb-darkening law ───────────────────────
+                                    //
+                                    // Beside the component rather than in the kind list: every
+                                    // one of these is a disc, and which law it wears is a
+                                    // question about the atmosphere, not the geometry.
                                     GroupBox {
                                         Layout.fillWidth: true
-                                        visible: root.selectedGeometryKey === "profile"
-                                        title: "Azimuthal modes"
+                                        visible: root.ldLawKey.length > 0
+                                        title: "Limb darkening"
 
                                         ColumnLayout {
                                             spacing: root.dp(4)
-
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: root.dp(6)
+                                                Label { text: "law"; color: "#666" }
+                                                ComboBox {
+                                                    Layout.fillWidth: true
+                                                    textRole: "label"
+                                                    valueRole: "key"
+                                                    model: root.ldLaws
+                                                    currentIndex: {
+                                                        for (var i = 0; i < root.ldLaws.length; ++i)
+                                                            if (root.ldLaws[i].key === root.ldLawKey)
+                                                                return i
+                                                        return -1
+                                                    }
+                                                    onActivated: {
+                                                        var e = Julia.shell_set_ld_law(
+                                                                    root.selectedComponent,
+                                                                    root.ldLaws[currentIndex].key)
+                                                        root.consoleChanged()
+                                                        if (e.length > 0 && e.charAt(0) === "!") {
+                                                            root.fitText = e; return
+                                                        }
+                                                        root.modelDirty = true
+                                                        root.refreshModel()
+                                                    }
+                                                }
+                                            }
                                             Label {
                                                 Layout.fillWidth: true
                                                 wrapMode: Text.WordWrap
                                                 color: "#666"
                                                 font.pointSize: root.pt(root.baseFontPt - 2)
-                                                // The parser errors unless both keys exist, so the UI
-                                                // adds and removes them strictly as a pair and never
-                                                // exposes one without the other.
-                                                text: "amp and projang are added and removed together — " +
-                                                      "the parser errors if one is missing."
+                                                text: {
+                                                    for (var i = 0; i < root.ldLaws.length; ++i)
+                                                        if (root.ldLaws[i].key === root.ldLawKey)
+                                                            return root.ldLaws[i].note
+                                                    return ""
+                                                }
                                             }
+                                            // The diameter is the same quantity in every law and
+                                            // is kept; the coefficients are not and are reseeded.
+                                            InfoTip { tip: "Changing the law keeps the diameter and reseeds the coefficients: a value fitted under one law is not a value under another." }
+                                        }
+                                    }
 
-                                            Repeater {
-                                                model: azModel
-                                                delegate: RowLayout {
+                                    // ── azimuthal modes (§3.5) ───────────────────────
+                                        GroupBox {
+                                            id: azBox
+                                            Layout.fillWidth: true
+                                            // AlignTop, like the preview beside it: without it the
+                                            // RowLayout stretches this box to the row height the
+                                            // taller preview sets, and the frames stop lining up.
+                                            Layout.alignment: Qt.AlignTop
+                                            visible: root.selectedGeometryKey === "profile"
+                                            title: "Azimuthal modes"
+
+                                            ColumnLayout {
+                                                spacing: root.dp(4)
+
+                                                InfoTip { tip: "amp and projang are added and removed together — the parser errors if one is missing." }
+
+                                                Repeater {
+                                                    model: azModel
+                                                    delegate: RowLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: root.dp(4)
+                                                        Label {
+                                                            text: "mode " + model.n
+                                                            Layout.preferredWidth: root.dp(56)
+                                                            font.pointSize: root.pt(root.baseFontPt - 1)
+                                                        }
+                                                        Label { text: "amp"; color: "#666"
+                                                                font.pointSize: root.pt(root.baseFontPt - 2) }
+                                                        TextField {
+                                                            Layout.preferredWidth: root.dp(70)
+                                                            implicitHeight: root.dp(22)
+                                                            text: model.amp.toFixed(3)
+                                                            font.pointSize: root.pt(root.baseFontPt - 1)
+                                                            onEditingFinished:
+                                                                root.commitAzField(model.n, "amp", text)
+                                                        }
+                                                        Label { text: "projang"; color: "#666"
+                                                                font.pointSize: root.pt(root.baseFontPt - 2) }
+                                                        TextField {
+                                                            Layout.preferredWidth: root.dp(70)
+                                                            implicitHeight: root.dp(22)
+                                                            text: model.projang.toFixed(2)
+                                                            font.pointSize: root.pt(root.baseFontPt - 1)
+                                                            onEditingFinished:
+                                                                root.commitAzField(model.n, "projang", text)
+                                                        }
+                                                        Item { Layout.fillWidth: true }
+                                                        Button {
+                                                            text: "−"
+                                                            implicitWidth: root.dp(26)
+                                                            implicitHeight: root.dp(22)
+                                                            onClicked: root.removeAzMode(model.n)
+                                                        }
+                                                    }
+                                                }
+
+                                                RowLayout {
                                                     Layout.fillWidth: true
-                                                    spacing: root.dp(4)
-                                                    Label {
-                                                        text: "mode " + model.n
-                                                        Layout.preferredWidth: root.dp(56)
-                                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                                    }
-                                                    Label { text: "amp"; color: "#666"
-                                                            font.pointSize: root.pt(root.baseFontPt - 2) }
-                                                    TextField {
-                                                        Layout.preferredWidth: root.dp(70)
-                                                        implicitHeight: root.dp(22)
-                                                        text: model.amp.toFixed(3)
-                                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                                    }
-                                                    Label { text: "projang"; color: "#666"
-                                                            font.pointSize: root.pt(root.baseFontPt - 2) }
-                                                    TextField {
-                                                        Layout.preferredWidth: root.dp(70)
-                                                        implicitHeight: root.dp(22)
-                                                        text: model.projang.toFixed(2)
-                                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                                    Button {
+                                                        text: "+ mode"
+                                                        implicitHeight: root.dp(24)
+                                                        onClicked: root.addAzMode()
                                                     }
                                                     Item { Layout.fillWidth: true }
-                                                    Button {
-                                                        text: "−"
-                                                        implicitWidth: root.dp(26)
-                                                        implicitHeight: root.dp(22)
-                                                        onClicked: azModel.remove(index)   // wire: remove BOTH keys
+                                                }
+
+                                                InfoTip { tip: "projang follows PMOIRED's convention, so a model moves between the two unchanged." }
+
+                                            }
+                                        }
+
+                                            GroupBox {
+                                                Layout.preferredWidth: root.dp(300)
+                                                Layout.alignment: Qt.AlignTop
+                                                title: "asymmetry"
+                                                Rectangle {
+                                                    anchors.fill: parent
+                                                    implicitHeight: root.dp(110)
+                                                    color: "white"; border.color: root.cLine
+                                                    Label {
+                                                        anchors.centerIn: parent; color: "#999"
+                                                        text: "brightness preview of the asymmetry"
+                                                        font.pointSize: root.pt(root.baseFontPt - 2)
                                                     }
                                                 }
+                                                // NOT WIRED: needs a MakieArea and a figure of its own,
+                                                // built before the window like every other panel, showing
+                                                // `model_to_image` of this component alone. The Model
+                                                // visualization tab already renders the whole model, which
+                                                // is where the asymmetry can be seen today.
                                             }
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                Button {
-                                                    text: "+ mode"
-                                                    implicitHeight: root.dp(24)
-                                                    onClicked: azModel.append({
-                                                        n: azModel.count + 1, amp: 0.0, projang: 0.0 })
-                                                    // wire: add "cn,az amp<N>" AND "cn,az projang<N>"
-                                                }
-                                                Item { Layout.fillWidth: true }
-                                            }
-
-                                            Label {
-                                                Layout.fillWidth: true
-                                                wrapMode: Text.WordWrap
-                                                color: root.cWarn
-                                                font.pointSize: root.pt(root.baseFontPt - 2)
-                                                // Matters the moment someone imports a PMOIRED model.
-                                                text: "Convention: OITOOLS uses +π/2 where PMOIRED uses −π/2."
-                                            }
-
                                         }
                                     }
-
-                                    }   // end of the left column
-
-                                    // The pictures. Editing a profile and watching the brightness
-                                    // distribution, its visibility signature and the asymmetry move
-                                    // together is the whole point of doing this in a GUI.
-                                    ColumnLayout {
-                                        Layout.preferredWidth: root.dp(260)
-                                        Layout.maximumWidth: root.dp(320)
-                                        Layout.alignment: Qt.AlignTop
-                                        spacing: root.dp(6)
-
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: root.dp(120)
-                                            color: "white"; border.color: root.cLine
-                                            Label {
-                                                anchors.centerIn: parent; color: "#999"
-                                                text: "I(r), with μ axis"
-                                                font.pointSize: root.pt(root.baseFontPt - 2)
-                                            }
-                                            // wire: MAKIE MOUNT. $MU = sqrt(1-(r/r_max)²), so both
-                                            // axes are shown — limb-darkening profiles are written
-                                            // in μ and users need both readings.
-                                        }
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: root.dp(120)
-                                            color: "white"; border.color: root.cLine
-                                            Label {
-                                                anchors.centerIn: parent; color: "#999"
-                                                text: "V(B)"
-                                                font.pointSize: root.pt(root.baseFontPt - 2)
-                                            }
-                                            // wire: MAKIE MOUNT — the Hankel transform of what was typed
-                                        }
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: root.dp(110)
-                                            color: "white"; border.color: root.cLine
-                                            Label {
-                                                anchors.centerIn: parent; color: "#999"
-                                                text: "brightness preview of the asymmetry"
-                                                font.pointSize: root.pt(root.baseFontPt - 2)
-                                            }
-                                            // wire: MAKIE MOUNT — model_to_image of this component
-                                        }
-                                    }
-                                    }   // end of the two-column row
                                 }
 
-                                Label {
-                                    text: "Constraints"
-                                    font.bold: true
-                                    font.pointSize: root.pt(root.baseFontPt + 1)
+                                RowLayout {
                                     Layout.topMargin: root.dp(6)
+                                    spacing: root.dp(5)
+                                    Label {
+                                        text: "Constraints"
+                                        font.bold: true
+                                        font.pointSize: root.pt(root.baseFontPt + 1)
+                                    }
+                                    InfoTip { tip: "A bound is a box on one parameter. A relation between two is not, and needs a constraint. Either side may be an expression; the right may be a number." }
+                                    Item { Layout.fillWidth: true }
                                 }
                                 ColumnLayout {
                                     spacing: root.dp(8)
-
-                                    Label {
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
-                                        color: "#666"
-                                        font.pointSize: root.pt(root.baseFontPt - 2)
-                                        // Bounds are a box, one parameter at a time. A relation between
-                                        // parameters is not a box, which is the whole reason this list
-                                        // exists next to the lower/upper columns.
-                                        text: "A bound is a box on one parameter. A relation between two " +
-                                              "is not, and needs a constraint. Either side may be an " +
-                                              "expression; the right may be a number."
-                                    }
 
                                     Repeater {
                                         model: constraintModel
@@ -1552,10 +1981,50 @@ Item {
                                             onClicked: constraintModel.append({
                                                 lhs: "", op: ">", rhs: "", tol: 0.001, satisfied: true })
                                         }
+                                        // The one constraint almost every multi-component model
+                                        // wants, built from the components that are actually
+                                        // there. The expression is one term per component, so by
+                                        // three components it is long enough to mistype -- and a
+                                        // normalisation that quietly leaves one out is worse than
+                                        // not having one.
+                                        Button {
+                                            text: "Fluxes sum to 1"
+                                            implicitHeight: root.dp(24)
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Deriving one flux from the others is " +
+                                                          "exact and needs no constraint; this is " +
+                                                          "for when you want every flux free."
+                                            onClicked: {
+                                                var c = Julia.shell_flux_constraint()
+                                                if (c.charAt(0) === "!") { root.fitText = c; return }
+                                                var f = c.split("\t")
+                                                for (var i = 0; i < constraintModel.count; ++i)
+                                                    if (constraintModel.get(i).lhs === f[0]) return
+                                                constraintModel.append({ lhs: f[0], op: f[1],
+                                                                         rhs: f[2],
+                                                                         tol: parseFloat(f[3]),
+                                                                         satisfied: true })
+                                            }
+                                        }
+                                        // Checks what is ON SCREEN, including a constraint
+                                        // being edited and not yet used in a fit -- the panel's
+                                        // own lines go to Julia rather than anything stored.
                                         Button {
                                             text: "Check"
                                             implicitHeight: root.dp(24)
-                                            // wire: check_constraints(constraints, model_dict) → satisfied
+                                            enabled: constraintModel.count > 0
+                                            onClicked: {
+                                                var r = Julia.shell_check_constraints(
+                                                            root.constraintsAsLines())
+                                                if (r.length > 0 && r.charAt(0) === "!") {
+                                                    root.fitText = r; return
+                                                }
+                                                var f = r.split("\n")
+                                                for (var i = 0; i < f.length &&
+                                                                i < constraintModel.count; ++i)
+                                                    constraintModel.setProperty(i, "satisfied",
+                                                                                f[i] === "1")
+                                            }
                                         }
                                         Item { Layout.fillWidth: true }
                                     }
@@ -1578,14 +2047,11 @@ Item {
                                                 "in AUGLAG rather than replaced."
                                     }
 
-                                    Label { text: "Priors"; font.bold: true }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
-                                        color: "#666"
-                                        font.pointSize: root.pt(root.baseFontPt - 2)
-                                        text: "Gaussian pulls: (expression, target, σ). The expression may " +
-                                              "be a derived quantity, not just a parameter name."
+                                    RowLayout {
+                                        spacing: root.dp(5)
+                                        Label { text: "Priors"; font.bold: true }
+                                        InfoTip { tip: "Gaussian pulls: (expression, target, σ). The expression may be a derived quantity, not just a parameter name.\n\nPriors and constraints are supported by the Dict form of the fitters only; the FlatModel form rejects them rather than dropping them silently." }
+                                        Item { Layout.fillWidth: true }
                                     }
                                     Repeater {
                                         model: priorModel
@@ -1623,16 +2089,6 @@ Item {
                                         text: "+ prior"
                                         implicitHeight: root.dp(24)
                                         onClicked: priorModel.append({ expr: "", target: 0.0, sigma: 1.0 })
-                                    }
-                                    Label {
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
-                                        color: "#666"
-                                        font.pointSize: root.pt(root.baseFontPt - 3)
-                                        // Both are compiled into the model, so both need the dict.
-                                        text: "Priors and constraints are supported by the Dict form of the " +
-                                              "fitters only; the FlatModel form rejects them rather than " +
-                                              "dropping them silently."
                                     }
                                 }
 
@@ -1959,15 +2415,9 @@ Item {
                                     // Same treatment the Image tab gives Pigeons and OIVI: an
                                     // engine that cannot run is named along with what would
                                     // make it run, rather than silently missing.
-                                    Label {
+                                    InfoTip {
                                         visible: root.nestedBackend.length === 0
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
-                                        text: "Nested sampling needs a sampler: start with " +
-                                              "`using Nautilus` (pure Julia) or " +
-                                              "`using PythonCall` (UltraNest)"
-                                        color: root.cWarn
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                        tip: "Nested sampling needs a sampler: start with Julia by adding NestedSamplers, or use UltraNest through PythonCall."
                                     }
 
 
@@ -2095,10 +2545,32 @@ Item {
                                         spacing: root.dp(6)
                                         Label { text: "Fits"; font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        Button { text: "Residuals";  implicitHeight: root.dp(20)
-                                                 enabled: fitModel.count > 0 }  // wire: plot_residuals
-                                        Button { text: "χ² map";     implicitHeight: root.dp(20)
-                                                 enabled: root.nFree >= 2 }     // wire: grid search over two free params
+                                        // The model as it stands, so this works before a fit as
+                                        // well as after one: whether a starting point is anywhere
+                                        // near the data is worth knowing before spending an
+                                        // optimiser on it.
+                                        Button {
+                                            text: "Residuals"; implicitHeight: root.dp(20)
+                                            enabled: paramModel.count > 0
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "(model − data)/σ against baseline, " +
+                                                          "for the values in the table"
+                                            onClicked: root.showResiduals()
+                                        }
+                                        // Shows the map the grid search made; it does not run a
+                                        // second one. Running a grid search IS the grid-search
+                                        // optimiser, and a button that quietly ran another would
+                                        // be a different fit under the same name.
+                                        Button {
+                                            text: "χ² map"; implicitHeight: root.dp(20)
+                                            enabled: root.chi2MapP1.length > 0
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: root.chi2MapP1.length > 0
+                                                ? "show the grid search over " + root.chi2MapP1 +
+                                                  " and " + root.chi2MapP2
+                                                : "run the Grid search optimiser to produce one"
+                                            onClicked: root.diagView = "chi2map"
+                                        }
                                         // Not a second image surface. The Model visualization tab
                                         // already renders `model_to_image` of the current values,
                                         // and "Adopt" writes a fit's values into the table — so
@@ -2111,8 +2583,18 @@ Item {
                                             ToolTip.text: "render the model as it stands, in Model visualization"
                                             onClicked: { modelTabs.currentIndex = 1; root.renderModel() }
                                         }
-                                        Button { text: "SED";        implicitHeight: root.dp(20)
-                                                 enabled: fitModel.count > 0 }  // wire: model_to_sed
+                                        // Only for a model that varies with wavelength. One that
+                                        // does not has an SED of flat lines, which is a control
+                                        // that looks broken rather than a spectrum.
+                                        Button {
+                                            text: "SED"; implicitHeight: root.dp(20)
+                                            enabled: paramModel.count > 0 && root.dependsWl
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: root.dependsWl
+                                                ? "flux against wavelength, total and per component"
+                                                : "this model references no $WL, so its SED is flat"
+                                            onClicked: root.showSed()
+                                        }
                                         Button {
                                             text: "Adopt"; implicitHeight: root.dp(20)
                                             enabled: fitModel.count > 0
@@ -2138,7 +2620,11 @@ Item {
                                                 font.pointSize: root.pt(root.baseFontPt - 2) }
                                         Label { Layout.preferredWidth: root.dp(130); text: "optimiser"
                                                 color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
-                                        Label { Layout.preferredWidth: root.dp(80); text: "χ²r"
+                                        Label { Layout.preferredWidth: root.dp(92); text: "χ²r start"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.preferredWidth: root.dp(92); text: "χ²r final"
+                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
+                                        Label { Layout.preferredWidth: root.dp(80); text: "work"
                                                 color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
                                         Label { Layout.preferredWidth: root.dp(90); text: "points"
                                                 color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
@@ -2167,7 +2653,25 @@ Item {
                                                 leftPadding: root.dp(6); elide: Text.ElideRight }
                                         Label { Layout.preferredWidth: root.dp(130); text: model.optimiser
                                                 color: "#666" }
-                                        Label { Layout.preferredWidth: root.dp(80);  text: root.fmt(model.chi2r, 4) }
+                                        // Where the fit began and where it ended, in the same
+                                        // units and against the same ndof. A fit whose two
+                                        // numbers are equal did not move.
+                                        Label { Layout.preferredWidth: root.dp(92)
+                                                text: root.fmtChi2(model.chi2rStart); color: "#666" }
+                                        Label { Layout.preferredWidth: root.dp(92)
+                                                text: root.fmtChi2(model.chi2r) }
+                                        // Iterations or chi2 evaluations -- whichever the
+                                        // optimiser reports; they are not the same quantity, so
+                                        // the unit is in the cell rather than in the header.
+                                        Label {
+                                            Layout.preferredWidth: root.dp(80)
+                                            text: model.work; color: "#666"
+                                            ToolTip.visible: fitWorkHover.hovered && model.work !== "—"
+                                            ToolTip.text: model.work.indexOf("it") >= 0
+                                                ? "Levenberg–Marquardt iterations, each costing a residual and a Jacobian"
+                                                : "χ² evaluations; NLopt reports no iteration count"
+                                            HoverHandler { id: fitWorkHover }
+                                        }
                                         // ndof counts data points and is NOT reduced by the number of free
                                         // parameters, so it is labelled as such and AIC/BIC are computed
                                         // properly rather than read off chi2r.
@@ -2227,7 +2731,24 @@ Item {
                                 id: chi2MapArea
                                 anchors.fill: parent
                                 anchors.margins: root.dp(1)
+                                visible: root.diagView === "chi2map"
                                 scene: chi2MapPlot
+                            }
+
+                            MakieArea {
+                                id: residArea
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                visible: root.diagView === "residuals"
+                                scene: residPlot
+                            }
+
+                            MakieArea {
+                                id: sedArea
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                visible: root.diagView === "sed"
+                                scene: sedPlot
                             }
 
                                 // ── Save PNG ──────────────────────────────────
@@ -2242,11 +2763,18 @@ Item {
                                     anchors.top: parent.top
                                     anchors.margins: root.dp(6)
                                     text: "Save PNG"
-                                    enabled: root.chi2MapP1.length > 0
+                                    // Saves whichever of the two is on screen. One button in
+                                    // the corner every other plot area puts one in, rather than
+                                    // a second that appears and disappears with the view.
+                                    enabled: root.diagView === "residuals" ? root.residText.length > 0
+                                           : root.diagView === "sed"       ? root.sedText.length > 0
+                                           : root.chi2MapP1.length > 0
                                     opacity: hovered ? 1.0 : 0.5
                                     ToolTip.visible: hovered
                                     ToolTip.text: "write this plot to a PNG file"
-                                    onClicked: root.savePng("chi2map", chi2MapArea)
+                                    onClicked: root.diagView === "residuals" ? root.savePng("residuals", residArea)
+                                             : root.diagView === "sed"       ? root.savePng("sed", sedArea)
+                                             : root.savePng("chi2map", chi2MapArea)
                                 }
 
                             // Covers the chart until there is one. The Makie figure exists from
@@ -2255,7 +2783,7 @@ Item {
                             Rectangle {
                                 anchors.fill: parent
                                 anchors.margins: root.dp(1)
-                                visible: root.chi2MapP1.length === 0
+                                visible: root.diagView === "chi2map" && root.chi2MapP1.length === 0
                                 color: "#f4f4f4"
                                 ColumnLayout {
                                     anchors.centerIn: parent
@@ -2276,11 +2804,33 @@ Item {
 
                             // The contours are the quantitative part, so they are named.
                             Label {
-                                visible: root.chi2MapP1.length > 0
+                                visible: root.diagView === "chi2map" && root.chi2MapP1.length > 0
                                 anchors.left: parent.left
                                 anchors.bottom: parent.bottom
                                 anchors.margins: root.dp(6)
                                 text: "contours: Δχ² = 2.30, 6.17, 11.8  (68.3, 95.4, 99.7% for two parameters)"
+                                color: "#666"
+                                font.pointSize: root.pt(root.baseFontPt - 2)
+                            }
+
+                            Label {
+                                visible: root.diagView === "sed" && root.sedText.length > 0
+                                anchors.left: parent.left
+                                anchors.bottom: parent.bottom
+                                anchors.margins: root.dp(6)
+                                text: root.sedText
+                                color: "#666"
+                                font.pointSize: root.pt(root.baseFontPt - 2)
+                            }
+
+                            // rms per observable, which is what the ±1 and ±3 lines are drawn
+                            // at -- so the caption and the picture say the same thing.
+                            Label {
+                                visible: root.diagView === "residuals" && root.residText.length > 0
+                                anchors.left: parent.left
+                                anchors.bottom: parent.bottom
+                                anchors.margins: root.dp(6)
+                                text: root.residText
                                 color: "#666"
                                 font.pointSize: root.pt(root.baseFontPt - 2)
                             }
@@ -2296,6 +2846,7 @@ Item {
     // ═════════════════════════════════════════════════════════════════════════
 
     property string selectedComponent: ""
+    onSelectedComponentChanged: { refreshProfile(); refreshLdLaw(); refreshGeometry() }
 
     // The geometry key that DECIDED the selected component's kind, or "" when nothing is
     // selected. `_identity_kind` searches the keys in order and the first match wins, so this
@@ -2318,6 +2869,7 @@ Item {
     property string profileRMaxKey: "r_max"
     property int    profileNr: 100
     property var    profileParams: []
+    property var    profileMissing: []      // names the expression needs and the model lacks
 
     ListModel {
         id: azModel
@@ -2393,6 +2945,10 @@ Item {
         }
         if (root.selectedComponent.length === 0 && componentModel.count > 0)
             root.selectedComponent = componentModel.get(0).name
+        refreshProfile()
+        refreshLdLaw()
+        refreshGeometry()
+        refreshAzModes()
 
         var chi2 = Julia.shell_model_chi2()
         root.currentChi2r = chi2.length > 0 ? parseFloat(chi2) : NaN
@@ -2405,6 +2961,49 @@ Item {
         // the only other symptom is a χ² in the hundreds of millions.
         var w = Julia.shell_model_warnings()
         root.validationWarnings = w.length > 0 ? w.split("\n") : []
+
+        // Residuals of the model as it was two keystrokes ago would be the wrong picture, so
+        // they follow the edits -- quietly, since one transcript line per keystroke is not a
+        // transcript. Only while the panel is actually showing them.
+        if (root.diagView === "residuals") {
+            root.residText = Julia.shell_model_residuals(true)
+            residArea.update()
+        }
+
+        // Which of the render panel's two controls are live, and whether the SED is a curve
+        // or a set of flat lines.
+        var dep = Julia.shell_model_depends().split("\t")
+        root.dependsWl  = dep.length > 0 && dep[0] === "1"
+        root.dependsMjd = dep.length > 1 && dep[1] === "1"
+        root.displayWl  = dep.length > 2 && dep[2].length > 0 ? parseFloat(dep[2]) : NaN
+    }
+
+    // Which diagnostic the surface under the fits table is showing. One rectangle, two
+    // figures: only one is ever on screen, and a plot that appeared somewhere else would be
+    // missed. "chi2map" is the default because the grid search is the optimiser that fills it
+    // on its own; residuals are drawn when asked for.
+    property string diagView: "chi2map"
+    property string residText: ""
+    property string sedText: ""
+
+    function showSed() {
+        root.sedText = Julia.shell_model_sed()
+        root.consoleChanged()
+        if (root.sedText.length > 0 && root.sedText.charAt(0) === "!") {
+            root.fitText = root.sedText; return
+        }
+        root.diagView = "sed"
+        sedArea.update()
+    }
+
+    function showResiduals() {
+        root.residText = Julia.shell_model_residuals()
+        root.consoleChanged()
+        if (root.residText.length > 0 && root.residText.charAt(0) === "!") {
+            root.fitText = root.residText; return
+        }
+        root.diagView = "residuals"
+        residArea.update()
     }
 
     // Whether the most recent fit left a χ² map behind, and over what.
@@ -2484,12 +3083,34 @@ Item {
             seedDialog.open()
             return
         }
-        if (r.mode === "free" && newMode === "expr") {
+        if (newMode === "expr") {
+            // From EITHER of the other two. Going expr means supplying an expression, and
+            // `shell_set_param(key, "mode", "expr")` cannot: all it does is drop the row from
+            // the free list, so a fixed row asked to become derived kept its number, came back
+            // from `model_rows` as fixed again, and the click did nothing at all.
             exprDialog.row = row
             exprDialog.open()
             return
         }
         root.applyMode(row, newMode)
+    }
+
+    // The expression ITSELF, which is the part `applyMode` cannot carry: `shell_set_param`'s
+    // "mode" field only decides membership of the fit vector, so sending `mode = expr` and
+    // nothing else left the typed string on the floor and the value still a number -- and
+    // `model_rows`, reading a number, reported the row as fixed again.
+    //
+    // The "expr" field writes the string into the dict AND drops the row from the free list,
+    // which is the whole conversion in one call.
+    function commitExpr(row, text) {
+        if (row < 0 || row >= paramModel.count) return
+        if (text.length === 0) { refreshModel(); return }
+        var err = Julia.shell_set_param(paramModel.get(row).key, "expr", text)
+        if (err.length > 0 && err.charAt(0) === "!") { root.fitText = err; refreshModel(); return }
+        root.modelDirty = true
+        refreshModel()
+        refreshProfile()
+        root.consoleChanged()
     }
 
     // Through the shell, not a local assignment: `list_free_params` lives in Julia, and a row
@@ -2579,6 +3200,63 @@ Item {
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Ok | Dialog.Cancel
 
+        // The key being edited decides which implicit variables are in scope, so both the
+        // palette and the checker are re-read whenever the dialog opens on a different row.
+        property string editKey: row >= 0 && row < paramModel.count ? paramModel.get(row).key : ""
+        property var keywords: []
+        property var refs: []
+
+        function refresh() {
+            var kw = []
+            var txt = Julia.shell_expression_keywords(editKey)
+            if (txt.length > 0) {
+                var lines = txt.split("\n")
+                for (var i = 0; i < lines.length; ++i) {
+                    var f = lines[i].split("\t")
+                    if (f.length === 4)
+                        kw.push({ name: f[0], meaning: f[1], enabled: f[2] === "1", reason: f[3] })
+                }
+            }
+            keywords = kw
+            check()
+        }
+
+        // Names a profile expression needs that the model does not have yet. Empty for any
+        // other key: only a profile discovers its parameters from what is written.
+        property var missing: []
+
+        function check() {
+            var miss = []
+            var mt = Julia.shell_profile_params(editKey, exprField.text)
+            if (mt.length > 0) {
+                var ml = mt.split("\n")
+                for (var j = 0; j < ml.length; ++j) {
+                    var mf = ml[j].split("\t")
+                    if (mf.length === 2) miss.push(mf[0])
+                }
+            }
+            missing = miss
+
+            var out = []
+            var txt = Julia.shell_check_expression(editKey, exprField.text)
+            if (txt.length > 0) {
+                var lines = txt.split("\n")
+                for (var i = 0; i < lines.length; ++i) {
+                    var f = lines[i].split("\t")
+                    if (f.length === 3) out.push({ ref: f[0], cls: f[1], msg: f[2] })
+                }
+            }
+            refs = out
+        }
+
+        function insert(kw) {
+            exprField.insert(exprField.cursorPosition, kw)
+            exprField.forceActiveFocus()
+            check()
+        }
+
+        onOpened: refresh()
+
         ColumnLayout {
             spacing: root.dp(6)
             Label {
@@ -2587,16 +3265,92 @@ Item {
                       Math.max(0, root.nFree - 1) + " free parameters will remain."
                 wrapMode: Text.WordWrap
                 Layout.maximumWidth: root.dp(360)
+                visible: !exprDialog.editKey.endsWith(",profile")
             }
+            InfoTip { tip: "The radial profile I(r). Every name here that is not $R or $MU is a parameter, discovered from the expression and resolved component-qualified first, then global." }
             TextField {
                 id: exprField
                 Layout.fillWidth: true
                 Layout.preferredWidth: root.dp(360)
-                placeholderText: "expression, e.g. $star,ud * 3"
+                placeholderText: exprDialog.editKey.endsWith(",profile")
+                                 ? "I(r), e.g. exp(-($R / $scale)^2 / 2)"
+                                 : "expression, e.g. $star,ud * 3"
                 font.family: "monospace"
+                onTextEdited: exprDialog.check()
+            }
+
+            // ── the implicit variables, and which of them apply here ──────────
+            //
+            // All four always listed. The two that are out of scope are disabled with the
+            // reason rather than hidden: a keyword that is simply absent reads as one that
+            // does not exist, and the whole difficulty with these is that nothing anywhere
+            // names them.
+            Label {
+                text: "Keywords"
+                font.bold: true
+                font.pointSize: root.pt(root.baseFontPt - 1)
+            }
+            Repeater {
+                model: exprDialog.keywords
+                delegate: RowLayout {
+                    Layout.maximumWidth: root.dp(360)
+                    spacing: root.dp(6)
+                    Button {
+                        text: modelData.name
+                        enabled: modelData.enabled
+                        opacity: enabled ? 1.0 : 0.5
+                        font.family: "monospace"
+                        implicitWidth: root.dp(52)
+                        onClicked: exprDialog.insert(modelData.name)
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: modelData.enabled ? modelData.meaning : modelData.reason
+                        color: modelData.enabled ? "#666" : "#c62828"
+                        font.pointSize: root.pt(root.baseFontPt - 2)
+                    }
+                }
+            }
+
+            // A profile is the one place where writing a name CREATES the need for a
+            // parameter rather than referring to one, so the offer to make them belongs here
+            // and not in the component card.
+            Button {
+                Layout.fillWidth: true
+                visible: exprDialog.missing.length > 0
+                text: exprDialog.missing.length === 1
+                      ? "Create $" + exprDialog.missing[0]
+                      : "Create " + exprDialog.missing.length + " missing parameters"
+                onClicked: {
+                    var err = Julia.shell_add_profile_params(exprDialog.editKey, exprField.text)
+                    root.consoleChanged()
+                    if (err.length > 0 && err.charAt(0) === "!") { root.fitText = err; return }
+                    root.modelDirty = true
+                    root.refreshModel()
+                    exprDialog.check()
+                }
+            }
+
+            // ── what the references resolve to, as they are typed ─────────────
+            //
+            // `dict_to_model` accepts an out-of-scope keyword and a misspelt parameter alike,
+            // and both surface much later as the same `UndefVarError` naming an internal
+            // module. Telling them apart here is the point.
+            Repeater {
+                model: exprDialog.refs
+                delegate: Label {
+                    Layout.maximumWidth: root.dp(360)
+                    wrapMode: Text.WordWrap
+                    visible: modelData.cls !== "ok" || modelData.msg.length > 0
+                    font.pointSize: root.pt(root.baseFontPt - 2)
+                    color: modelData.cls === "unknown" ? root.cBad
+                         : modelData.cls === "scope"   ? root.cWarn : "#666"
+                    text: "$" + modelData.ref + " — " + modelData.msg
+                }
             }
         }
-        onAccepted: root.applyMode(row, "expr")
+        onAccepted: root.commitExpr(row, exprField.text)
     }
 
     // Name and kind together: the kind decides which keys are written, and the parser reads the
@@ -2624,11 +3378,22 @@ Item {
             return false
         }
 
+        // The subtypes of the selected category, or [] before one is selected.
+        readonly property var subs:
+            (kindField.currentIndex >= 0 && kindField.currentIndex < root.componentKinds.length)
+                ? root.componentKinds[kindField.currentIndex].subs : []
+
+        // What OK sends: the subtype's id, which is what `shell_add_component` takes.
+        readonly property string chosenId:
+            (subs.length === 0) ? ""
+          : (subs.length === 1) ? subs[0].key
+          : (subField.currentIndex >= 0 && subField.currentIndex < subs.length)
+                ? subs[subField.currentIndex].key : subs[0].key
+
         function suggestName() {
             var base = "c"
-            for (var j = 0; j < root.componentKinds.length; ++j)
-                if (root.componentKinds[j].key === kindField.currentValue)
-                    base = root.componentKinds[j].base
+            for (var j = 0; j < subs.length; ++j)
+                if (subs[j].key === chosenId) base = subs[j].base
             var name = base, i = 1
             while (taken(name)) { i++; name = base + i }
             nameField.text = name
@@ -2660,21 +3425,56 @@ Item {
                     model: root.componentKinds
                     // `onActivated`, not `onCurrentIndexChanged`: it fires only when the user
                     // picks, so populating the box does not overwrite a typed name.
+                    onActivated: {
+                        subField.currentIndex = 0
+                        if (!addComponentDialog.nameEdited) addComponentDialog.suggestName()
+                    }
+                }
+            }
+
+            // Shown only where the shape HAS a sub-choice: a disc's law across the face, a
+            // ring's cross-section. A category of one is already fully chosen.
+            RowLayout {
+                Layout.fillWidth: true
+                visible: addComponentDialog.subs.length > 1
+                Label {
+                    text: kindField.currentValue === "disc" ? "law" : "shape"
+                    color: "#666"; Layout.preferredWidth: root.dp(50)
+                }
+                ComboBox {
+                    id: subField
+                    Layout.fillWidth: true
+                    textRole: "label"
+                    valueRole: "key"
+                    model: addComponentDialog.subs
                     onActivated: if (!addComponentDialog.nameEdited) addComponentDialog.suggestName()
                 }
             }
+            // The law's own note, for the discs, which is where the choice is least obvious.
             Label {
                 Layout.fillWidth: true
+                visible: text.length > 0
                 wrapMode: Text.WordWrap
                 color: "#666"
                 font.pointSize: root.pt(root.baseFontPt - 2)
-                text: "Values start somewhere sane rather than at anything measured, the " +
-                      "geometry parameter starts free, and the flux is shared with whatever " +
-                      "is already there."
+                text: {
+                    for (var i = 0; i < root.ldLaws.length; ++i)
+                        if (root.ldLaws[i].key === addComponentDialog.chosenId)
+                            return root.ldLaws[i].note
+                    if (addComponentDialog.chosenId === "ring_profile")
+                        return "the ring's radial cross-section, written in $R and evaluated " +
+                               "between diamin/2 and diamout/2"
+                    if (addComponentDialog.chosenId === "image_func")
+                        return "I(r) written in $R and $MU, Hankel-transformed to a visibility"
+                    if (addComponentDialog.chosenId === "vis_func")
+                        return "V written directly in $B, the baseline in Mλ"
+                    return ""
+                }
             }
+            InfoTip { tip: "Values start somewhere sane rather than at anything measured, the geometry parameter starts free, and the flux is shared with whatever is already there." }
         }
 
-        onAccepted: root.addComponent(nameField.text, kindField.currentValue)
+        onAccepted: root.addComponent(nameField.text, chosenId)
     }
 
     // FilePicker, not QtQuick.Dialogs.FileDialog. That dialog sets `visible = false` and
@@ -2722,8 +3522,23 @@ Item {
         title: "Import a PMOIRED model"
         filters: [{ label: "Python files (*.py)", patterns: "*.py" },
                   { label: "All files", patterns: "*" }]
-        // wire: pmoired_to_julia_file. Import is a transpiler, not a validator, so run the
-        // inspector's unrecognised-key check afterwards.
+        // Import is a transpiler, not a validator: `shell_import_pmoired` runs the inspector
+        // afterwards and puts anything the parser did not recognise in the console, which is
+        // where a model that transpiled cleanly but means something else shows up.
+        //
+        // Replaces the model, so the free list, the bounds and the selection go with it --
+        // keeping a selection that named a component of the previous model would leave the
+        // panel describing something no longer there.
+        onAccepted: function (path) {
+            var name = Julia.shell_import_pmoired(path)
+            root.consoleChanged()
+            if (name.length === 0 || name.charAt(0) === "!") { root.fitText = name; return }
+            root.modelPath = ""          // a .py is not a model file we can save back to
+            root.modelName = name
+            root.modelDirty = true       // nothing on disk holds this as a TOML yet
+            root.selectedComponent = ""
+            root.refreshModel()
+        }
     }
 
     FilePicker {
@@ -2734,8 +3549,14 @@ Item {
         defaultSuffix: "py"
         filters: [{ label: "Python files (*.py)", patterns: "*.py" },
                   { label: "All files", patterns: "*" }]
-        // wire: dict_to_pmoired_file, surfacing its warnings -- the OITOOLS-only geometries
-        // (ldlin, ldquad, ldpow, resolved) and azimuthal modes cannot be represented, and
-        // writing them anyway would mean something different on the other side.
+        // `dict_to_pmoired_file` warns rather than failing on what PMOIRED cannot represent --
+        // the OITOOLS-only geometries (ldlin, ldquad, ldpow, resolved). Those warnings go to
+        // the console: silently writing a model that means something else on the other side is
+        // the failure worth preventing.
+        onAccepted: function (path) {
+            var err = Julia.shell_export_pmoired(path)
+            root.consoleChanged()
+            if (err.length > 0 && err.charAt(0) === "!") root.fitText = err
+        }
     }
 }

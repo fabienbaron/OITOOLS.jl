@@ -145,8 +145,9 @@ Partition `data` into resampling blocks.
     that would collapse onto one value and their blocks would merge.  `readoifits`
     therefore stores `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` as `Float64`
     whatever `T` is — the block structure is identical at `T=Float32` and
-    `T=Float64`.  (`uv_mjd` follows `T`: it is the array handed to the model
-    evaluator as `\$MJD`, where the precision is irrelevant.)
+    `T=Float64`.  (`uv_mjd` follows `T`, so it is coarser than these — see the
+    `\$MJD` note in the modelling docs — but block structure is built from the
+    per-table MJDs above, not from `uv_mjd`, so bootstrapping is unaffected.)
 """
 function data_blocks(data::OIdata; granularity::Symbol=:config, mjd_digits::Int=5)
     granularity in (:config, :epoch, :point) ||

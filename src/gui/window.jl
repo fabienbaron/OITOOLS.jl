@@ -24,6 +24,16 @@ function __init__()
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component,
                      shell_rename_component, shell_save_figure,
+                     shell_expression_keywords, shell_check_expression,
+                     shell_profile_params, shell_add_profile_params, shell_profile_grid,
+                     shell_profile_curves,
+                     shell_flux_constraint,
+                     shell_default_bounds, shell_check_constraints,
+                     shell_profile_templates, shell_profile_template,
+                     shell_component_geometry, shell_set_component_geometry,
+                     shell_ld_laws, shell_ld_law, shell_set_ld_law,
+                     shell_az_modes, shell_add_az_mode, shell_remove_az_mode,
+                     shell_model_residuals, shell_model_sed, shell_model_depends,
                      shell_chi2_map_info, shell_free_names, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,
@@ -168,9 +178,37 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(oax)
     chi2map = build_chi2_map(ofig, oax)
 
+    # And a seventh for the radial-profile preview. Two axes side by side rather than two
+    # figures: I(r) and V(B) are read together -- the question is always what a change to the
+    # profile does to the signature the data actually measures.
+    # Stacked, not side by side: this figure lives in the ~300dp preview column beside the
+    # profile editor, and two axes across that width leaves the r ticks an unreadable smear.
+    # And an eighth for the model residuals. It shares the χ² map's rectangle -- only one of
+    # the two is ever visible -- but not its figure: that one is a heatmap with a colorbar in
+    # `fig[1, 2]`, and this is a scatter with a legend there.
+    rfig = Makie.Figure(fonts = PLOT_FONTS)
+    rax  = Makie.Axis(rfig[1, 1])
+    style_axis!(rax)
+    residplot = build_residuals(rfig, rax)
+
+    # And a ninth for the SED, in the same rectangle again. Its own figure rather than the
+    # residuals': that one is a scatter against baseline, this is a set of curves against
+    # wavelength, and an axis cannot be both.
+    sfig = Makie.Figure(fonts = PLOT_FONTS)
+    sax  = Makie.Axis(sfig[1, 1])
+    style_axis!(sax)
+    sedplot = build_sed(sfig, sax)
+
+    prfig = Makie.Figure(fonts = PLOT_FONTS)
+    priax = Makie.Axis(prfig[1, 1])
+    prvax = Makie.Axis(prfig[2, 1])
+    style_axis!(priax); style_axis!(prvax)
+    profileplot = build_profile_plot(prfig, priax, prvax)
+
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false, false,
                      "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
-                     delayplot, modelcanvas, nothing, Any[], chi2map, "", "", nothing)
+                     delayplot, modelcanvas, nothing, Any[], chi2map, profileplot, residplot, sedplot,
+                     "", "", nothing)
     SHELL[] = sh
     install_interactions!(sh)
 
@@ -202,6 +240,9 @@ function OITOOLS.gui(session::Session = Session();
                 delayPlot       = dfig,
                 modelPlot       = mfig,
                 chi2MapPlot     = ofig,
+                profilePlot     = prfig,
+                residPlot       = rfig,
+                sedPlot         = sfig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,

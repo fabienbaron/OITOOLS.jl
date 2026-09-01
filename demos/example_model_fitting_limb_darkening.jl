@@ -33,7 +33,7 @@ using OITOOLS
 using Printf, Statistics
 # The pure-Julia nested sampler. Add `using PythonCall` as well to have the
 # comparison below run UltraNest too and check the two against each other.
-using NestedSamplers
+using Nautilus
 
 const DATADIR = joinpath(@__DIR__, "data")
 const GAMMA   = 1.00481          # PIONIER wavelength scaling, Kervella+2017 Eq. 1

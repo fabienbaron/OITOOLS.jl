@@ -83,6 +83,9 @@ export NightPlan, config_catalog, facility_telescopes, telescope_config,
        baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
        delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info
 export build_chi2_map, update_chi2_map!
+export build_residuals, update_residuals!, residual_series,
+       RESIDUAL_KINDS, RESIDUAL_SPECS, RESIDUAL_COLORS
+export build_sed, update_sed!, SED_MAX_COMPONENTS
 export ZOOM_STEP_USER, zoom_per_detent, set_zoom_step!
 export picker_list, picker_places, picker_join, picker_parent, picker_start,
        picker_kind, picker_would_overwrite, picker_matches, picker_examples
@@ -102,6 +105,8 @@ include(joinpath(GUIDIR, "observing.jl"))   # Observe perspective: configs, targ
 include(joinpath(GUIDIR, "gantt.jl"))       # the Gantt chart, in Makie
 include(joinpath(GUIDIR, "livecanvas.jl"))    # the live, allocation-free drawing surface
 include(joinpath(GUIDIR, "chi2map.jl"))       # the grid-search chi2 surface, in Makie
+include(joinpath(GUIDIR, "residuals.jl"))     # normalised model residuals, in Makie
+include(joinpath(GUIDIR, "sed.jl"))           # the model SED, in Makie
 include(joinpath(GUIDIR, "shell.jl"))
 include(joinpath(GUIDIR, "snapshot.jl"))      # "Save PNG": rebuilds a panel offscreen
 include(joinpath(GUIDIR, "window.jl"))        # gui(): builds the window and runs Qt

@@ -4,7 +4,7 @@
 using OITOOLS
 # Activates the pure-Julia nested sampler that `fit_model_nested` runs. `using
 # PythonCall` instead would select the UltraNest backend.
-using NestedSamplers
+using Nautilus
 oifitsfile = "./data/pigru.oifits"
 pixsize = .5 # size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
