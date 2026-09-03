@@ -415,6 +415,11 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
     best_obj = Inf
     best_x = copy(x)
 
+    # Built once: the x-update runs a full VMLMB per ADMM iteration, so a workspace allocated
+    # per criterion evaluation would be re-allocated thousands of times. Only the 1x1 case
+    # reaches the single-cell kernel; anything wider dispatches to the 4-D path instead.
+    chi2_cache = size(data) == (1, 1) ? ImageChi2Cache(ft[1], data[1]) : nothing
+
     for k in 1:maxit
         # ── z-updates (parallelizable) ──
         for blk in blocks
@@ -443,7 +448,9 @@ function reconstruct_bsdmm(x_init, d::OIdata, ft, data;
             x_2d = reshape(x_val, nx, nx)
             g_2d = reshape(g_val, nx, nx)
             # chi2 with chain-rule normalization (flux-invariant)
-            fval = image_to_chi2_fg(x_2d, g_2d, ft, data; verb=false)
+            fval = chi2_cache === nothing ?
+                image_to_chi2_fg(x_2d, g_2d, ft, data; verb=false) :
+                image_to_chi2_fg(x_2d, g_2d, ft, data; verb=false, cache=chi2_cache)
             # Augmented Lagrangian penalty toward proximal targets
             if rho_sum > 0
                 r = x_val .- target
@@ -652,6 +659,8 @@ function _reconstruct_bsdmm_poly(x_init, data, ft;
     best_obj = Inf
     best_x = copy(x)
 
+    caches = [ImageChi2Cache(ft[w,t], data[w,t]) for w in axes(data,1), t in axes(data,2)]
+
     for k in 1:maxit
         # ── z-updates ──
         for blk in blocks
@@ -678,7 +687,7 @@ function _reconstruct_bsdmm_poly(x_init, data, ft;
         function crit_bsdmm_poly(x_val, g_val)
             x_4d = reshape(x_val, nx, nx, nwav, 1)
             g_4d = reshape(g_val, nx, nx, nwav, 1)
-            fval = image_to_chi2_fg(x_4d, g_4d, ft, data; verb=false)
+            fval = image_to_chi2_fg(x_4d, g_4d, ft, data; verb=false, caches=caches)
             if rho_sum > 0
                 r = x_val .- target
                 fval += (rho_sum / 2) * dot(r, r)

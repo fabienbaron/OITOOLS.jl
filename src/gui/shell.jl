@@ -2886,6 +2886,124 @@ function shell_best_pops(facility::AbstractString, dec::Real, dateiso::AbstractS
 end
 
 """
+    shell_bin_info() -> String
+
+How the current dataset is binned and what it could be, as
+`nbins <TAB> nchannels <TAB> has_diffvis <TAB> mergeable`.
+
+`nchannels` is the number of DISTINCT wavelengths in the file, which is the most bins that
+mean anything -- past that a bin holds no data. `mergeable` says whether the file carries
+several OI_WAVELENGTH tables sharing one grid, the case where reading per channel without
+merging silently multiplies the data by the number of tables.
+"""
+function shell_bin_info()
+    e = current_dataset(_shell())
+    e === nothing && return ""
+    nb = size(e.data, 1)
+    lams = Float64[]
+    for d in e.data
+        append!(lams, Float64.(d.uv_lam))
+    end
+    nch = length(unique(round.(lams; sigdigits = 10)))
+    hasdv = any(d -> d.nvisphi > 0, e.data)
+    return string(nb, '\t', nch, '\t', hasdv ? 1 : 0, '\t',
+                  get(e.readopts, :merge_oi_wavelength, false) ? 1 : 0)
+end
+
+"""
+    shell_rebin(mode, nbins) -> String
+
+Re-read the current dataset with a different spectral binning, and log the `readoifits` call.
+
+`mode` is `single`, `channels` or `groups`:
+
+  * `single` -- one bin over the whole band, which is what every monochromatic engine wants.
+  * `channels` -- one image plane per spectral channel, ALWAYS with `merge_oi_wavelength`.
+    That is not a preference. A file carrying several OI_WAVELENGTH tables on one grid --
+    v1295 Aql has seven -- otherwise yields one bin per channel PER TABLE, and since the grids
+    coincide every measurement lands in every matching bin and is counted once per table.
+    `readoifits` warns about the tables but not about that consequence, which inflates chi2 and
+    over-weights the data against the regularisers.
+  * `groups` -- `nbins` equal windows across the band. A window then holds several channels,
+    and that is what forces `use_vis = false`: the cross-channel differential term pairs one
+    baseline per bin, so a bin holding many channels makes the pairing ambiguous and
+    `image_to_chi2` raises a DimensionMismatch. Dropping OI_VIS costs nothing in the fit --
+    the imaging criterion is V2, T3amp and T3phi, and a reconstruction with and without it is
+    bit-identical -- but it is a real observable to lose from the reported chi2, so it is said
+    out loud rather than done quietly.
+
+Re-reading, not re-slicing: binning happens inside `readoifits` and there is no way to rebin an
+`OIdata` after the fact. The entry keeps its name and its place, so everything pointing at it
+still does.
+"""
+function shell_rebin(mode::AbstractString, nbins::Integer = 0)
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    m = String(mode)
+
+    kw = Dict{Symbol,Any}()
+    for (k, v) in e.readopts
+        k in (:polychromatic, :merge_oi_wavelength, :spectralbin, :use_vis) || (kw[k] = v)
+    end
+
+    if m == "single"
+        # nothing to add: one bin is readoifits' own default
+    elseif m == "channels"
+        kw[:polychromatic] = true
+        kw[:merge_oi_wavelength] = true
+    elseif m == "groups"
+        n = Int(nbins)
+        n > 1 || return "! grouping needs at least 2 bins"
+        lams = Float64[]
+        for d in e.data
+            append!(lams, Float64.(d.uv_lam))
+        end
+        isempty(lams) && return "! this dataset carries no wavelengths"
+        lo, hi = extrema(lams)
+        hi > lo || return "! this dataset is at a single wavelength; there is nothing to bin"
+        nch = length(unique(round.(lams; sigdigits = 10)))
+        n <= nch || return "! only $(nch) distinct wavelengths; $(n) bins would leave some empty"
+        edges = range(lo - 1e-12, hi + 1e-12; length = n + 1)
+        kw[:spectralbin] = [[edges[i], edges[i+1]] for i in 1:n]
+        if any(d -> d.nvisphi > 0, e.data)
+            kw[:use_vis] = false
+            console!(sh, "  grouped bins hold several channels, so OI_VIS is dropped: the " *
+                         "differential term pairs one baseline per bin. The fit is unchanged " *
+                         "— it uses V2, T3amp and T3phi — only the reported chi2 loses a term.")
+        end
+    else
+        return "! unknown binning mode: " * m
+    end
+
+    data = try
+        OITOOLS.readoifits(e.path; warn = false, verbose = false, kw...)
+    catch err
+        msg = "! could not re-read " * basename(e.path) * ": " * _cause(err)
+        console!(sh, msg; kind = :err); return msg
+    end
+    data isa AbstractArray || return "! readoifits returned nothing for " * basename(e.path)
+
+    e.data = data
+    e.readopts = kw
+    e.spectralbin = get(kw, :spectralbin, nothing)
+
+    kwstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(kw), by = first)];
+                    defaults = _READOIFITS_DEFAULTS)
+    call = isempty(kwstr) ? "readoifits($(_literal(e.path)))" :
+                            "readoifits($(_literal(e.path)); $kwstr)"
+    log!(sh.session, "$(e.name) = $call"; note = "rebin $(basename(e.path))", binding = e.name)
+    console!(sh, "$(e.name) = $call"; kind = :cmd)
+
+    sh.ftcache = nothing          # the plan is per bin; a rebin invalidates every cell
+    line = "$(size(data, 1)) wavelength bin" * (size(data, 1) == 1 ? "" : "s") *
+           " × $(size(data, 2)) epoch" * (size(data, 2) == 1 ? "" : "s")
+    console!(sh, line)
+    sh.status = refresh_plot!(sh)
+    return line
+end
+
+"""
     shell_ft_setup(nx, pixsize, mode) -> String
 
 Build the Fourier plan for this geometry and describe it, reusing the last one when nothing
@@ -2935,7 +3053,8 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
                            startfwhm::Real = AUTO_FWHM, startseed::Integer = 1,
                            from_previous::Bool = false,
                            engine::AbstractString = "vmlmb",
-                           options::AbstractString = "")
+                           options::AbstractString = "",
+                           startpath::AbstractString = "")
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "no dataset loaded"
@@ -2949,10 +3068,14 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
                join(sort(string.(keys(IMAGING_ENGINES))), ", ")
     opts = _parse_options(options)
 
+    # `startpath` is carried through: without it a FITS start worked from "Show start image",
+    # which passes it, and silently fell back to whatever `start_image` does with an empty path
+    # from Run, which did not -- the two buttons disagreeing about the starting image.
     setup = ImagingSetup(; engine = eng,
                            nx = Int(nx), pixsize = Float64(pixsize),
                            mode = Symbol(mode), startkind = Symbol(startkind),
-                           startfwhm = Float64(startfwhm), startseed = Int(startseed))
+                           startfwhm = Float64(startfwhm), startseed = Int(startseed),
+                           startpath = String(startpath))
     regs = try
         parse_regularizers(regularizers)
     catch err
@@ -3050,6 +3173,69 @@ function shell_image_defaults()
     e === nothing && return ""
     s = imaging_defaults(e.data)
     return "pixsize=$(round(s.pixsize; digits = 4)),nx=$(s.nx)"
+end
+
+"""
+    shell_result_ensemble() -> String
+
+What the last reconstruction offers beyond one image, as `nsamples<TAB>source`, or `""`.
+
+`""` means the engine returned a point estimate and the panel's mean/spread/sample controls
+have nothing to show — which is every engine but the samplers.
+"""
+function shell_result_ensemble()
+    r = _shell().imaging
+    (r === nothing || r.ensemble === nothing) && return ""
+    return string(length(r.ensemble.samples), '\t', r.ensemble.source)
+end
+
+"""
+    shell_show_result(mode, index) -> String
+
+Put one view of the last reconstruction on the canvas and return a one-line description.
+
+`mode` is `result`, `mean`, `sigma` or `sample`:
+
+  * `result` is the image the engine actually returned. For annealing that is the BEST chain,
+    not the mean of them, so it and `mean` are different images and both are offered.
+  * `mean` averages the ensemble.
+  * `sigma` is the spread across it — for annealing, chain-to-chain disagreement rather than a
+    within-chain posterior width. The colourbar is relabelled, because a spread map shares no
+    units with a flux map and an unchanged legend would say it did.
+  * `sample` is one member, `index` counted from 1.
+
+GUI thread only: `show_image!` is a Makie call.
+"""
+function shell_show_result(mode::AbstractString, index::Integer = 1)
+    sh = _shell()
+    r  = sh.imaging
+    r === nothing && return "! nothing reconstructed yet"
+    sh.imcanvas === nothing && return "! no canvas"
+    m = String(mode)
+    px = r.setup.pixsize
+
+    if m == "result"
+        show_image!(sh.imcanvas, r.image, px)
+        return "showing the reconstruction"
+    end
+
+    e = r.ensemble
+    e === nothing && return "! this engine returned one image, not an ensemble"
+
+    if m == "mean"
+        show_image!(sh.imcanvas, e.mean, px; label = "mean flux / pixel")
+        return "showing the mean of " * e.source
+    elseif m == "sigma"
+        e.sigma === nothing && return "! only one member; there is no spread to show"
+        show_image!(sh.imcanvas, e.sigma, px; label = "spread / pixel")
+        return "showing the spread across " * e.source
+    elseif m == "sample"
+        n = length(e.samples)
+        i = clamp(Int(index), 1, n)
+        show_image!(sh.imcanvas, e.samples[i], px)
+        return "showing member $(i) of $(n)"
+    end
+    return "! unknown result view: " * m
 end
 
 "The last reconstruction, or an empty string when there is none."

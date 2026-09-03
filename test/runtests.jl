@@ -21,7 +21,6 @@ BLAS.set_num_threads(1)
     include("test_bsmem_precision.jl")   # cheap structural checks first
     include("test_chromatic_params.jl")  # $WL / $MJD / $B model parameters
     include("test_model_gradients.jl")   # analytic model gradients vs finite differences
-    include("test_vis_functions.jl")     # legacy (param, uv) visibility function API
     include("test_bootstrap.jl")         # resampling / uncertainty estimation
     include("test_constraints.jl")       # fit constraints + TOML model files
     include("test_oifits_tdim.jl")       # OIFITS writing interoperability
@@ -35,5 +34,6 @@ BLAS.set_num_threads(1)
     include("test_squeeze_tempering.jl") # SQUEEZE + Pigeons (skipped if absent)
     include("test_ft_plans.jl")          # OIft/NFFTCell/DFTCell, and the plan naming
     include("test_component_widths.jl") # absolute scale: fwhm/diameter mean what they say
+    include("test_image_orientation.jl") # East/North of an image array, and of its displays
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end

@@ -184,8 +184,8 @@ imdisp(img, pixsize=0.1)
 #
 # The other five are out of reach here:
 #
-#     square root   — `visibility_ldsquareroot` exists in src/vis_functions.jl and
-#                     `init_bounds` still knows about it, but it was never wired into
+#     square root   — available as the `ldsqrt` geometry key in the model dictionary;
+#                     the old standalone `visibility_ldsquareroot` was never wired into
 #                     parse_model, so no dict-based fit can select it.
 #     4-parameter   — not implemented (the paper holds its coefficients fixed at
 #                     Claret & Bloemen 2011 values rather than fitting them).

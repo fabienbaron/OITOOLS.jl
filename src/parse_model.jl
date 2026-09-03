@@ -97,9 +97,9 @@ const _ANALYTIC_PARAM_SUFFIXES = Dict{Symbol,Vector{String}}(
 
 # Default bounds by parameter suffix, for the dict interface.
 #
-# `init_bounds` in vis_functions.jl is keyed by *function object* and belongs to the legacy
-# (param, uv) API, so it cannot answer "what are sensible bounds for the key `star,ud`?".
-# This table can. The values are deliberately generous starting points, not physics: their
+# Keyed by SUFFIX, which is what lets it answer "what are sensible bounds for the key
+# `star,ud`?" -- the question the removed `init_bounds` could not, being keyed by function
+# object. The values are deliberately generous starting points, not physics: their
 # job is to give a fit somewhere sane to begin and to satisfy samplers that require finite
 # bounds (`fit_model_ultranest` errors without them), not to encode prior knowledge.
 """

@@ -50,7 +50,7 @@ function _snapshot_image_figure(img, pixsize, colormap, size)
     ax = Makie.Axis(fig[1, 1]; aspect = 1, xlabel = "α (mas)", ylabel = "δ (mas)")
     style_axis!(ax; scale = live_plot_scale())
     image_minorticks!(ax, nx * pixsize, nx * pixsize; scale = live_plot_scale())
-    hm = Makie.heatmap!(ax, range(half, -half; length = nx), range(-half, half; length = nx),
+    hm = Makie.heatmap!(ax, range(-half, half; length = nx), range(-half, half; length = nx),
                         img; colormap)
     Makie.Colorbar(fig[1, 2], hm; label = "flux / pixel")
     Makie.limits!(ax, half, -half, -half, half)

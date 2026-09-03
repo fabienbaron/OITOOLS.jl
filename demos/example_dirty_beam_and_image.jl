@@ -7,7 +7,8 @@ pixsize=.101
 ft = setup_nfft(data, nx, pixsize);
 
 # Dirty Beam
-V= Complex.(visibility_ud([0.0], data.uv)) # point source
+# A point source: V = 1 everywhere, which is what makes the transform of it the dirty beam.
+V = ones(ComplexF64, size(data.uv, 2))
 img = real.(adjoint(ft[1])*V); img = img.*(img .>0); imdisp(img, pixsize=pixsize, colormap="gist_earth");
 text(6,5.8,"Dirty Beam",color="white",size="large")
 savefig("dirty-beam.png")

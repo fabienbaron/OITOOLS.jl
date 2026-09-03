@@ -248,6 +248,10 @@ ApplicationWindow {
                 if (kv2[0] === "nx")      imageTab.nx      = parseInt(kv2[1])
             }
         }
+        // A new file arrives unbinned, and its channel count is what the binning control has
+        // to offer -- so this comes before the plan, which is built per bin.
+        imageTab.binMode = "single"
+        imageTab.refreshBins()
         // The plan is keyed on the dataset as well as the geometry, so a new file needs one
         // even when nx and the pixel size happen to be unchanged.
         imageTab.refreshPlan()

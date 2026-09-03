@@ -1301,7 +1301,8 @@ function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
                        weights = [1.0, 1.0, 1.0],
                        use_diffphases = false,
                        verb = false,
-                       vonmises = false)
+                       vonmises = false,
+                       caches = nothing)
     nwav, nepoch = size(data)
     T = ft_eltype(ft)
     npix = size(x, 1)
@@ -1327,20 +1328,12 @@ function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
         for w in 1:nwav_t
             verb && nepoch > 1 && printstyled("Epoch $t ", color=:normal)
             verb && nwav_t > 1 && printstyled("Channel $w ", color=:normal)
-            if need_cvis
-                chi2_total += _chi2_f(x[:,:,w,t], ft[w,t], data[w,t];
-                    cvis=cvis[w], verb=verb, weights=weights, vonmises=vonmises)
-            else
-                chi2_total += _chi2_f(x[:,:,w,t], ft[w,t], data[w,t];
-                    verb=verb, weights=weights, vonmises=vonmises)
-            end
-            # Per-channel absolute VISAMP (handled inside chi2_polychromatic_f but not in chi2_f)
-            if uava && !udva && !isempty(cvis[w])
-                va_model = abs.(cvis[w])
-                chi2_va = norm((va_model - data[w,t].visamp) ./ data[w,t].visamp_err)^2
-                chi2_total += chi2_va
-                verb && printstyled(@sprintf("VA: %.2f ", chi2_va/data[w,t].nvisamp), color=:magenta)
-            end
+            ws = caches === nothing ? ImageChi2Cache(ft[w,t], data[w,t]) : caches[w,t]
+            chi2_total += T(image_chi2_f((@view x[:,:,w,t]), ft[w,t], data[w,t], ws;
+                cvis=(need_cvis ? cvis[w] : []), verb=verb, weights=weights, vonmises=vonmises))
+            # Absolute VISAMP arrives through weights[4], which the kernel fits directly.
+            # Adding it here as well would count it twice, and would put chi2 that `_ndof`
+            # does not count into a reduced chi2.
             verb && print("\n")
         end
 
@@ -1364,8 +1357,10 @@ end
 Mono convenience: compute chi-squared for a single 2-D image against a single `OIdata`.
 """
 function image_to_chi2(x::AbstractMatrix{<:AbstractFloat}, ft, data::OIdata;
-                       weights = [1.0, 1.0, 1.0], verb = false, vonmises = false)
-    return _chi2_f(x, ft, data; weights=weights, verb=verb, vonmises=vonmises)
+                       weights = [1.0, 1.0, 1.0], verb = false, vonmises = false,
+                       cache = nothing)
+    ws = cache === nothing ? ImageChi2Cache(ft, data) : cache
+    return image_chi2_f(x, ft, data, ws; weights=weights, verb=verb, vonmises=vonmises)
 end
 
 # ===========================================================================
@@ -1392,7 +1387,8 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
                           use_diffphases = false,
                           verb = false,
                           vonmises = false,
-                          normalize = true)
+                          normalize = true,
+                          caches = nothing)
     nwav, nepoch = size(data)
     T = ft_eltype(ft)
     npix = size(x, 1)
@@ -1420,13 +1416,11 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
             subg = zeros(eltype(x), npix, npix)
             verb && nepoch > 1 && printstyled("Epoch $t ", color=:normal)
             verb && nwav_t > 1 && printstyled("Channel $w ", color=:normal)
-            if need_cvis
-                chi2_total += _chi2_fg(x[:,:,w,t], subg, ft[w,t], data[w,t];
-                    cvis=cvis[w], verb=verb, weights=weights, vonmises=vonmises)
-            else
-                chi2_total += _chi2_fg(x[:,:,w,t], subg, ft[w,t], data[w,t];
-                    verb=verb, weights=weights, vonmises=vonmises)
-            end
+            ws = caches === nothing ? ImageChi2Cache(ft[w,t], data[w,t]) : caches[w,t]
+            # Cast back to the plan's precision: the kernel accumulates its adjoint source at
+            # Float64, but this function's chi2 keeps the element type it always returned.
+            chi2_total += T(image_chi2_fg!(subg, (@view x[:,:,w,t]), ft[w,t], data[w,t], ws;
+                cvis=(need_cvis ? cvis[w] : []), verb=verb, weights=weights, vonmises=vonmises))
             g[:,:,w,t] = subg
             verb && print("\n")
         end
@@ -1447,7 +1441,7 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
             chi2_total += _polychromatic_vis_gradient!(
                 (@view x[:,:,:,t]), g_epoch, data_epoch, cvis, nwav_t, npix, vis_adjoint;
                 use_diffphases=udp, use_diffvisamp=udva,
-                use_abs_visamp=uava, verb=verb)
+                use_abs_visamp=false, verb=verb)
         end
 
         # Apply per-cell flux correction
@@ -1474,8 +1468,9 @@ function image_to_chi2_fg(x::AbstractMatrix{<:AbstractFloat},
                           g::AbstractMatrix{<:AbstractFloat},
                           ft, data::OIdata;
                           weights = [1.0, 1.0, 1.0], verb = false, vonmises = false,
-                          normalize = true)
-    chi2 = _chi2_fg(x, g, ft, data; weights=weights, verb=verb, vonmises=vonmises)
+                          normalize = true, cache = nothing)
+    ws = cache === nothing ? ImageChi2Cache(ft, data) : cache
+    chi2 = image_chi2_fg!(g, x, ft, data, ws; weights=weights, verb=verb, vonmises=vonmises)
     if normalize
         flux = sum(x)
         g .= (g .- sum(x .* g) / flux) ./ flux
@@ -1943,7 +1938,8 @@ function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
                  epochs_weights = [],
                  use_diffphases = false,
                  verb = false,
-                 vonmises = false)
+                 vonmises = false,
+                 caches = nothing)
     nwav, nepoch = size(data)
     npix = size(x4, 1)
     T = eltype(x4)
@@ -1952,11 +1948,14 @@ function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
         epochs_weights = ones(T, nepoch)
     end
 
-    # Total degrees of freedom
+    # Total degrees of freedom. Counts every observable the criterion can now fit, not just
+    # the first three, so chi2r stays a reduced chi2 when visamp/visphi/flux are weighted.
+    wpad = _pad_weights(weights)
     ndof = 0.0
     for t in 1:nepoch, w in 1:nwav
         d = data[w,t]
-        ndof += weights[1]*d.nv2 + weights[2]*d.nt3amp + weights[3]*d.nt3phi
+        ndof += wpad[1]*d.nv2 + wpad[2]*d.nt3amp + wpad[3]*d.nt3phi +
+                wpad[4]*d.nvisamp + wpad[5]*d.nvisphi + wpad[6]*d.nflux
     end
     ndof = max(ndof, 1.0)
 
@@ -1973,7 +1972,8 @@ function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
         for w in 1:nwav
             subg = zeros(T, npix, npix)
             verb && nwav > 1 && printstyled("Channel $w ", color=:normal)
-            f_epoch += _chi2_fg((@view x4[:,:,w,t]), subg, ft[w,t], data[w,t];
+            ws = caches === nothing ? ImageChi2Cache(ft[w,t], data[w,t]) : caches[w,t]
+            f_epoch += image_chi2_fg!(subg, (@view x4[:,:,w,t]), ft[w,t], data[w,t], ws;
                 verb=verb, weights=weights, vonmises=vonmises)
             g_epoch[:,:,w] .= subg
             verb && print("\n")
@@ -2359,7 +2359,7 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
     vis_adjoint_nfft = (rhs, i) -> vec(adjoint(ft[i][2]) * rhs)
     f += _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint_nfft;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=use_abs_visamp, verb=verb)
+        use_abs_visamp=false, verb=verb)   # weights[4] carries it, via crit_fg's kernel
 
     f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb, data=data)
     g[:] = g[:]/ndof
@@ -2401,7 +2401,7 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
     vis_adjoint_dft = (rhs, i) -> vec(conj.(transpose(ft[i][data[i].indx_vis, :]) * conj.(rhs)))
     f += _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint_dft;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=use_abs_visamp, verb=verb)
+        use_abs_visamp=false, verb=verb)   # weights[4] carries it, via crit_fg's kernel
 
     f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb, data=data)
     g[:] = g[:]/ndof
@@ -2469,7 +2469,10 @@ function reconstruct(x_start::AbstractArray{<:AbstractFloat,4},
     # default): a Float64 starting image is converted down rather than forcing Float64
     # through every criterion evaluation.
     x_start = to_ft_precision(x_start, ft)
-    _crit = (x4, g4) -> crit_fg(x4, g4, ft, data;
+    # Built once and reused: the criterion runs maxiter times, and a fresh workspace each
+    # evaluation would allocate megabytes per iteration at large nx.
+    caches = [ImageChi2Cache(ft[w,t], data[w,t]) for w in axes(data,1), t in axes(data,2)]
+    _crit = (x4, g4) -> crit_fg(x4, g4, ft, data; caches=caches,
         weights=weights, regularizers=regularizers,
         transspectral_regularizers=transspectral_regularizers,
         temporal_regularizers=temporal_regularizers,

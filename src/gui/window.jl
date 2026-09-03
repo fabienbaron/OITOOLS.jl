@@ -35,6 +35,8 @@ function __init__()
                      shell_az_modes, shell_add_az_mode, shell_remove_az_mode,
                      shell_model_residuals, shell_model_sed, shell_model_depends,
                      shell_sparco_converged,
+                     shell_result_ensemble, shell_show_result,
+                     shell_bin_info, shell_rebin,
                      shell_chi2_map_info, shell_free_names, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,

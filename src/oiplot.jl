@@ -1330,10 +1330,10 @@ function imdisp(image; figtitle="OITOOLS image", colormap = "gist_heat", pixsize
     img = []
     if ndims(image) ==1
         ny=nx=Int64(sqrt(length(image)))
-        img = imshow(rotl90(reshape(image,nx,nx))/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize, -0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
+        img = imshow(reverse(rotl90(reshape(image,nx,nx)), dims=2)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize, -0.5*ny*pixsize,0.5*ny*pixsize]); # Monnier's orientation: East left, North up
     else
         nx,ny = size(image);
-        img = imshow(rotl90(image)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # uses Monnier's orientation
+        img = imshow(reverse(rotl90(image), dims=2)/scaling_factor, ColorMap(colormap), interpolation="none", extent=[0.5*nx*pixsize,-0.5*nx*pixsize,-0.5*ny*pixsize,0.5*ny*pixsize]); # Monnier's orientation: East left, North up
     end
     if pixmode == false
         xlabel("x ← E (mas)")
@@ -1430,7 +1430,7 @@ function imdisp_multi(cube::AbstractArray{<:Real,3};
             scaling = 1.0
         end
 
-        img = imshow(rotl90(panel) / scaling, ColorMap(colormap),
+        img = imshow(reverse(rotl90(panel), dims=2) / scaling, ColorMap(colormap),
                       interpolation="none",
                       extent=[0.5*nx*pix, -0.5*nx*pix, -0.5*ny*pix, 0.5*ny*pix])
 

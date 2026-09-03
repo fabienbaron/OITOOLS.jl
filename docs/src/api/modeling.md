@@ -168,22 +168,14 @@ DataBlocks
 
 ## Visibility functions
 
-Analytic visibility functions for standard source geometries.
-All take baseline spatial frequency arguments and return complex visibilities.
+Evaluate a model's visibilities through the model dictionary:
 
-| Function | Model |
-|----------|-------|
-| `visibility_ud(b, diam)` | Uniform disk |
-| `visibility_ldlin(b, diam, u)` | Linear limb-darkened disk |
-| `visibility_ldquad(b, diam, u, w)` | Quadratic limb-darkened disk |
-| `visibility_ldquad_alt(b, diam, u, w)` | Quadratic LD disk (alternative convention) |
-| `visibility_ldpow(b, diam, alpha)` | Power-law limb-darkened disk |
-| `visibility_ldsquareroot(b, diam, u, w)` | Square-root limb-darkened disk |
-| `visibility_annulus(b, din, dout)` | Uniform annulus |
-| `visibility_ellipse_uniform(u, v, a, b, pa)` | Uniform ellipse |
-| `visibility_ellipse_quad(u, v, a, b, pa, c1, c2)` | Quadratic LD ellipse |
-| `visibility_thin_ring(b, diam)` | Infinitely thin ring |
-| `visibility_Gaussian_ring(b, diam, fwhm)` | Gaussian ring |
-| `visibility_Gaussian_ring_az(...)` | Gaussian ring with azimuthal modulation |
-| `visibility_Lorentzian_ring(b, diam, fwhm)` | Lorentzian ring |
-| `visibility_GaussianLorentzian_ring_az(...)` | Gaussian-Lorentzian ring with azimuthal modulation |
+```julia
+model = dict_to_model(Dict{String,Any}("star,ud" => 6.5, "star,f" => 1.0), String[])
+V     = eval_model(model, Float64[], data.uv)
+```
+
+The geometry `kind` names are listed with their parameters under **Parametric models** above.
+
+!!! note
+    The standalone `visibility_*(param, uv)` functions were removed in 0.13.2.

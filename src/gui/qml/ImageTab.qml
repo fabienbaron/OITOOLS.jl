@@ -48,6 +48,43 @@ Item {
     property bool scaleRegs: true                               // scale_regularizers on pixsize change
     property string ftMode: "nfft"                              // setup_ft mode
 
+    // Spectral binning. `binMode` is what the controls ask for; `binCount` and `chanCount` are
+    // what Julia reports the dataset actually has, so the readout describes the data rather
+    // than the request.
+    property string binMode: "single"          // single | channels | groups
+    property int    binGroups: 4               // requested, for binMode === "groups"
+    property int    binCount: 1                // bins the dataset actually has
+    property int    chanCount: 1               // distinct wavelengths in the file
+    property bool   hasDiffvisData: false
+    readonly property bool polychromatic: binCount > 1
+    // Both cells of the note row share this. A GridLayout SKIPS invisible items rather than
+    // reserving their cells, so a hidden note beside a visible spacer left the row one cell
+    // wide and shifted every row after it by a column.
+    readonly property bool showDiffvisNote: binMode === "groups" && hasDiffvisData
+
+    function refreshBins() {
+        var t = Julia.shell_bin_info()
+        if (t.length === 0) { root.binCount = 1; root.chanCount = 1; return }
+        var f = t.split("\t")
+        if (f.length !== 4) return
+        root.binCount       = parseInt(f[0])
+        root.chanCount      = parseInt(f[1])
+        root.hasDiffvisData = f[2] === "1"
+    }
+
+    // Re-reads the file, so it is not free and is not done on every keystroke — only when a
+    // control is released. The engine list re-evaluates off `binCount`, which is why the
+    // monochromatic engines grey out the moment a cube exists.
+    function applyBinning(mode, n) {
+        root.binMode = mode
+        var line = Julia.shell_rebin(mode, n)
+        root.consoleChanged()
+        if (line.length > 0 && line.charAt(0) === "!") { root.statusText = line; return }
+        root.statusText = line
+        root.refreshBins()
+        root.refreshPlan()
+    }
+
     // Gaussian, not Dirac. A single lit pixel is the least committal image there is and the
     // worst possible start for an unregularised gradient descent: measured on 2004-data1 it
     // begins at chi2r 1.4e10 and ends at 1.2e6 with the flux blown up to 4234, where a
@@ -112,9 +149,16 @@ Item {
     // to the centre on top of that fights the star for the same position.
     readonly property bool centeringApplies: !(engine === "sparco" || engine === "squeeze_sparco")
 
+    // Which engines can reconstruct a wavelength cube. Mirrors POLYCHROMATIC_ENGINES in
+    // src/gui/imaging.jl; the Julia side refuses regardless, so this is the panel saying why
+    // before the run rather than a second source of truth.
+    readonly property var cubeEngines: ["vmlmb", "bsdmm"]
+
     function engineReasonFor(key) {
         if (key === "tempering" && !pigeonsAvailable) return "needs Pigeons"
         if (key === "vi"        && !oiviAvailable)    return "needs OIVI"
+        if (root.polychromatic && cubeEngines.indexOf(key) < 0)
+            return "runs on one wavelength bin; this dataset has " + root.binCount
         return ""
     }
     function engineAvailableFor(key) { return engineReasonFor(key) === "" }
@@ -303,13 +347,41 @@ Item {
     // The display is showing the STARTING image rather than a reconstruction. Tracked so the
     // "no reconstruction yet" cover does not sit on top of something the user just asked to see.
     property bool   showingStart: false
-    property bool   resultIsPosterior: false   // set by Julia; only the stochastic engines produce one
 
     // Everything the last run printed, shown verbatim in the Engine output console.
     property string engineOutput: ""
-    property string resultMode: "mean"         // mean | sigma | sample
-    property int    sampleCount: 0
+    property string resultMode: "result"       // result | mean | sigma | sample
+    property int    sampleCount: 0             // ensemble members; 0 = a point estimate
     property int    sampleIndex: 0
+    property string ensembleSource: ""         // e.g. "4 chains", from the engine
+
+    // Read after every run. An engine that returns one image reports nothing, which is what
+    // greys the mean/spread/member controls and their reason.
+    function refreshEnsemble() {
+        root.sampleCount = 0
+        root.ensembleSource = ""
+        root.sampleIndex = 0
+        root.resultMode = "result"
+        var t = Julia.shell_result_ensemble()
+        if (t.length === 0) return
+        var f = t.split("\t")
+        if (f.length !== 2) return
+        root.sampleCount = parseInt(f[0])
+        root.ensembleSource = f[1]
+    }
+
+    // Every view goes through Julia, which owns the ensemble; QML holds only the mode and the
+    // index. `imageArea.update()` because Makie draws on demand and assigning an Observable
+    // does not by itself ask Qt for a frame.
+    function showResult(mode) {
+        root.resultMode = mode
+        var line = Julia.shell_show_result(mode, root.sampleIndex + 1)
+        if (line.length > 0 && line.charAt(0) === "!") { root.statusText = line; return }
+        root.statusText = line
+        root.showingStart = false
+        imageArea.update()
+        root.consoleChanged()
+    }
 
     // ── diagnostics (§5.5) ────────────────────────────────────────────────────
     //
@@ -627,7 +699,8 @@ Item {
                                                root.regulariserSpec(),
                                                root.startFwhm, root.startSeed,
                                                root._continueRun,
-                                               root.engine, root.engineOptions())
+                                               root.engine, root.engineOptions(),
+                                               root.startImagePath)
             root.engineOutput = ""
             root.showingStart = false
             root.statusText = line
@@ -661,6 +734,7 @@ Item {
                 root.hasResult = f[1].indexOf("chi2r") >= 0
                 root.refreshBreakdown()
                 root.refreshSparcoConverged()
+                root.refreshEnsemble()
                 // Makie draws on demand; without this the new image is not painted until
                 // something else invalidates the area.
                 imageArea.update()
@@ -1120,6 +1194,56 @@ Item {
                                 HoverHandler { id: planHover }
                             }
                             Item { Layout.fillWidth: true; visible: root.planText.indexOf("!") !== 0 }
+
+                            Label { text: "wavelengths" }
+                            ComboBox {
+                                Layout.preferredWidth: dp(150)
+                                model: ["one grey image", "one per channel", "group into N bins"]
+                                currentIndex: root.binMode === "channels" ? 1
+                                            : root.binMode === "groups"   ? 2 : 0
+                                onActivated: root.applyBinning(
+                                    currentIndex === 1 ? "channels" :
+                                    currentIndex === 2 ? "groups"   : "single", root.binGroups)
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: dp(6)
+                                SpinBox {
+                                    visible: root.binMode === "groups"
+                                    from: 2; to: Math.max(2, root.chanCount); editable: true
+                                    value: root.binGroups
+                                    onValueModified: {
+                                        root.binGroups = value
+                                        root.applyBinning("groups", value)
+                                    }
+                                }
+                                Label {
+                                    // What the data HAS, not what was asked for.
+                                    text: root.binCount === 1
+                                          ? root.chanCount + " channels in the file"
+                                          : root.binCount + " image planes  ·  " +
+                                            root.chanCount + " channels"
+                                    color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            // Both cells share one visibility. A GridLayout SKIPS invisible
+                            // items rather than reserving their cells, so a hidden note beside
+                            // a visible spacer left the row one cell wide and every row after
+                            // it shifted a column.
+                            Label { text: ""; visible: root.showDiffvisNote }
+                            Label {
+                                Layout.columnSpan: 2
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                wrapMode: Text.WordWrap
+                                visible: root.showDiffvisNote
+                                color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                text: "Grouped bins hold several channels, so OI_VIS is dropped — " +
+                                      "the differential term pairs one baseline per bin. The fit is " +
+                                      "unchanged; only the reported χ² loses that term."
+                            }
 
                             Label { text: "starting image" }
                             ComboBox {
@@ -1944,30 +2068,43 @@ Item {
                     RowLayout {
                         id: modeRow
                         spacing: dp(8)
-                        enabled: root.stochastic
+                        enabled: root.hasResult
 
+                        // "the reconstruction" is not the same picture as "the mean": annealing
+                        // returns its BEST chain, so both are offered rather than one standing
+                        // in for the other.
                         RadioButton {
-                            text: "mean image"
+                            text: "reconstruction"
+                            checked: root.resultMode === "result"
+                            onClicked: root.showResult("result")
+                        }
+                        RadioButton {
+                            text: "mean"
+                            enabled: root.sampleCount > 0
                             checked: root.resultMode === "mean"
-                            // wire: push the posterior mean into the canvas
-                            onClicked: root.resultMode = "mean"
+                            onClicked: root.showResult("mean")
                         }
                         RadioButton {
-                            text: "uncertainty map"
+                            text: "spread"
+                            enabled: root.sampleCount > 1
                             checked: root.resultMode === "sigma"
-                            // wire: push the per-pixel σ map into the canvas
-                            onClicked: root.resultMode = "sigma"
+                            ToolTip.visible: hovered && root.sampleCount > 1
+                            ToolTip.text: "how much the " + root.ensembleSource +
+                                          " disagree, pixel by pixel — not a within-chain posterior width"
+                            onClicked: root.showResult("sigma")
                         }
                         RadioButton {
-                            text: "sample"
+                            text: "member"
+                            enabled: root.sampleCount > 1
                             checked: root.resultMode === "sample"
-                            // wire: push sample sampleIndex into the canvas
-                            onClicked: root.resultMode = "sample"
+                            onClicked: root.showResult("sample")
                         }
                     }
                     ReasonTip {
-                        reason: root.stochastic ? ""
-                              : "this engine returns one image, not a distribution — there is no mean, σ or sample to show"
+                        reason: !root.hasResult ? "run a reconstruction first"
+                              : root.sampleCount === 0
+                              ? "this engine returns one image, not an ensemble — there is no mean, spread or member to show"
+                              : ""
                     }
                 }
 
@@ -1979,14 +2116,17 @@ Item {
                     stepSize: 1
                     snapMode: Slider.SnapAlways
                     value: root.sampleIndex
-                    enabled: root.stochastic && root.resultMode === "sample" && root.sampleCount > 1
-                    // wire: show that sample of the ensemble
-                    onMoved: root.sampleIndex = Math.round(value)
+                    enabled: root.resultMode === "sample" && root.sampleCount > 1
+                    onMoved: {
+                        root.sampleIndex = Math.round(value)
+                        root.showResult("sample")
+                    }
                 }
                 Label {
-                    text: root.sampleCount > 0
-                          ? (root.sampleIndex + 1) + " / " + root.sampleCount
-                          : "no samples"
+                    text: root.sampleCount > 1
+                          ? (root.sampleIndex + 1) + " / " + root.sampleCount +
+                            "  " + root.ensembleSource
+                          : root.sampleCount === 1 ? root.ensembleSource : "one image"
                     color: "#888"; font.pointSize: pt(baseFontPt - 2)
                 }
                 Item { Layout.fillWidth: true }
@@ -2113,7 +2253,11 @@ Item {
                 title: "Engine output"
                 Layout.fillWidth: true
                 Layout.preferredHeight: dp(200)
-                visible: root.engineOutput.length > 0
+                // Also while running, even though the text has just been cleared: a GridLayout
+                // skips invisible items rather than reserving their cell, so binding this to
+                // the text alone collapsed 200dp the moment Run was pressed and restored it
+                // when the first output arrived -- the image below jumped size twice per run.
+                visible: root.engineOutput.length > 0 || root.running
 
                 OutputConsole {
                     anchors.fill: parent

@@ -77,6 +77,10 @@ struct LiveCanvas
     # measures against this, so "10x out" means ten times the data extent rather than ten
     # times whatever the user last left on screen.
     homespan    :: Base.RefValue{Tuple{Float64,Float64}}
+    # The view right-click returns to, as (xlo, xhi, ylo, yhi) in the AXIS's own direction.
+    # Makie's own `:limitreset` resets to `ax.limits[]`, and the zoom clamp sets that on every
+    # step, so the built-in reset returned to the last zoom rather than to the whole picture.
+    homelimits  :: Base.RefValue{NTuple{4,Float64}}
 end
 
 """
@@ -147,7 +151,8 @@ function build_canvas(fig, ax)
                         legax, legmarks, legcols, legtpos, legtxt, legfs,
                         cblim, cblab, cbar,
                         imdata, imx, imy, implot, cmap, cbmap, panels,
-                        Base.RefValue((1.0, 1.0)))
+                        Base.RefValue((1.0, 1.0)),
+                        Base.RefValue((0.0, 1.0, 0.0, 1.0)))
     _install_zoom!(canvas)
 
     # The legend axis is a drawing surface, not a plot. Left interactive it responds to the
@@ -188,8 +193,9 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::A
     # milliarcseconds, which is a spacing you can read a position off, where a fixed count
     # between majors moves with whatever the major locator chose.
     image_minorticks!(c.axis, 2half, 2half; scale = sc)
-    # Descending x: East left. Makie takes the coordinate vectors as cell centres.
-    c.imagex[] = Float32.(range(half, -half; length = nx))
+    # Ascending x against reversed axis limits: array dimension 1 runs EAST, and the reversed
+    # limits put East on the left. Makie takes the coordinate vectors as cell centres.
+    c.imagex[] = Float32.(range(-half, half; length = nx))
     c.imagey[] = Float32.(range(-half, half; length = nx))
     c.imagedata[] = Float32.(img)
 
@@ -216,6 +222,8 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::A
     # one -- not whatever scatter plot the canvas last held. Without this, zooming a
     # reconstruction is bounded against the uv coverage that happened to precede it.
     c.homespan[] = (2 * Float64(half), 2 * Float64(half))
+    # Reversed in x, exactly as `limits!` above: East stays on the left across a reset.
+    c.homelimits[] = (Float64(half), -Float64(half), -Float64(half), Float64(half))
     return c
 end
 
@@ -348,6 +356,22 @@ function set_zoom_step!(x::Real)
 end
 
 """
+Return the canvas to its home view: the whole image, or the extent `autolimits!` chose for the
+current scatter data.
+
+Replaces Makie's `:limitreset`. That one resets to `ax.limits[]`, which the zoom clamp
+overwrites on every step, so right-click returned to the last zoom instead of the full picture
+-- and where it did fall through to autolimits it added Makie's 5% margin, leaving the image
+floating inside a border of axis background.
+"""
+function reset_view!(c::LiveCanvas)
+    xlo, xhi, ylo, yhi = c.homelimits[]
+    (isfinite(xlo) && isfinite(xhi) && xlo != xhi) || return c
+    Makie.limits!(c.axis, xlo, xhi, ylo, yhi)
+    return c
+end
+
+"""
     _install_zoom!(canvas)
 
 Replace the axis's stock scroll zoom with one that normalises the event and bounds the result.
@@ -374,6 +398,16 @@ function _install_zoom!(c::LiveCanvas)
         mp = Makie.mouseposition(axis.scene)
         zoom_step!(c, Float64(event.y) / WHEEL_DETENT; at = (Float64(mp[1]), Float64(mp[2])))
         return Makie.Consume(true)
+    end
+    # Own the right-click reset rather than leaving Makie's, which resets to `ax.limits[]` --
+    # the rectangle the zoom clamp just wrote.
+    Makie.deregister_interaction!(ax, :limitreset)
+    Makie.register_interaction!(ax, :limitreset) do event::Makie.MouseEvent, axis
+        if event.type === Makie.MouseEventTypes.rightclick
+            reset_view!(c)
+            return Makie.Consume(true)
+        end
+        return Makie.Consume(false)
     end
     return nothing
 end
@@ -900,6 +934,13 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
     Makie.autolimits!(ax)
     let fl = ax.finallimits[]
         c.homespan[] = (Float64(fl.widths[1]), Float64(fl.widths[2]))
+        x0, y0 = Float64(fl.origin[1]), Float64(fl.origin[2])
+        wx, wy = Float64(fl.widths[1]), Float64(fl.widths[2])
+        # `finallimits` always reports positive widths, so emit the pair the way the axis is
+        # actually pointing -- the same rule the zoom clamp follows.
+        xlo, xhi = ax.xreversed[] ? (x0 + wx, x0) : (x0, x0 + wx)
+        ylo, yhi = ax.yreversed[] ? (y0 + wy, y0) : (y0, y0 + wy)
+        c.homelimits[] = (xlo, xhi, ylo, yhi)
     end
     if pd.logscale
         pd.ylims !== nothing && Makie.ylims!(ax, pd.ylims...)

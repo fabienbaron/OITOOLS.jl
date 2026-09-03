@@ -328,9 +328,18 @@ end
     @test all(v -> v ≈ 0.6, fr)
     @test all(i -> real(pv[i]) + fr[i] ≈ 1.0, 1:data.nuv)
 
-    # a uniform-disc star must equal OITOOLS' own closed form
+    # A uniform-disc star must equal the closed form, written out here rather than taken from
+    # another OITOOLS function. That is the point of the check: an independent expression can
+    # disagree with the package, where a second OITOOLS implementation of the same formula
+    # would only confirm that the package agrees with itself.
+    #   V(rho) = 2 J1(pi d rho) / (pi d rho),  d in mas, rho in cycles/rad
     SQ.sparco_vis!(pv, fr, [1.0, 1.5, 0.0, lam0, 0.0, 0.0], data)
-    @test maximum(abs, pv .- visibility_ud([1.5], data.uv)) < 1e-9
+    let d = 1.5, mas2rad = 2.0626480624709636e8
+        rho = vec(sqrt.(sum(abs2, data.uv; dims = 1)))
+        x   = @. pi * d * rho / mas2rad
+        ud  = @. ifelse(x < 1e-8, 1.0, 2 * OITOOLS.besselj1(x) / x)
+        @test maximum(abs, pv .- ud) < 1e-9
+    end
 
     SQ.sparco_vis!(pv, fr, [0.0, 0.0, 0.0, lam0, 0.0, 0.0], data)
     @test all(iszero, pv) && all(≈(1.0), fr)

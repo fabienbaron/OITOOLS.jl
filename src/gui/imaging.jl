@@ -56,6 +56,18 @@ const IMAGING_ENGINES = Dict{Symbol,String}(
     :squeeze_sparco => "reconstruct_squeeze (model = SqueezeSparco)")
 
 """
+The engines that reconstruct a WAVELENGTH CUBE rather than one grey image.
+
+`reconstruct` takes a 4-D `(nx, nx, nwav, nepoch)` image with `transspectral_regularizers`;
+`reconstruct_bsdmm` takes the same shape with `mu_group` coupling the channels. Every other
+engine here takes one `OIdata` and one plan cell.
+
+A set rather than a check on the function: whether an engine can do this is a property of the
+engine, and `_require_mono` needs to answer it for engines it is not otherwise dispatching.
+"""
+const POLYCHROMATIC_ENGINES = Set([:vmlmb, :bsdmm])
+
+"""
 Sentinel for "work the starting width out from the field of view".
 
 Negative, not zero. Zero is a width — a degenerate one, but a reader has no way to tell it from
@@ -73,8 +85,12 @@ The field of view that falls out is `nx * pixsize`; whether it covers the source
 judgement the panel shows rather than makes.
 """
 function imaging_defaults(data; nx::Integer = 64)
-    d = data isa AbstractArray ? data[1] : data
-    ImagingSetup(; nx = Int(nx), pixsize = auto_pixsize(d))
+    # The FINEST pixel any bin needs, not bin 1's. `auto_pixsize` takes a single `OIdata` and
+    # sizes the pixel from that bin's longest baseline; the shortest wavelength resolves the
+    # most, so a cube reconstructed at bin 1's pixel would be under-sampled wherever the
+    # baselines reach further. Taking the minimum costs nothing on a single bin.
+    ds = data isa AbstractArray ? vec(data) : [data]
+    ImagingSetup(; nx = Int(nx), pixsize = minimum(auto_pixsize(d) for d in ds))
 end
 
 "Field of view in mas."
@@ -150,6 +166,25 @@ imaging_weights(; v2::Bool = true, t3amp::Bool = true, t3phi::Bool = true) =
     Float64[v2 ? 1.0 : 0.0, t3amp ? 1.0 : 0.0, t3phi ? 1.0 : 0.0]
 
 """
+    _cube_for_chi2(image, data) -> image in the shape `image_to_chi2` needs
+
+A 2-D image against a single bin stays 2-D. Against several bins it is REPLICATED to
+`(nx, nx, nwav, nepoch)`, which is what a grey image means when it is scored against
+polychromatic data: the same brightness distribution in every channel. An image that is already
+a cube is passed through.
+
+Replicated, not reshaped to `(nx, nx, 1, 1)`. The 4-D criterion loops `w in 1:nwav` and indexes
+`x[:, :, w, t]`, so a one-channel cube against several bins raises a `BoundsError` — the same
+failure this is here to prevent, moved one function along.
+"""
+function _cube_for_chi2(image, data)
+    ndims(image) == 2 || return image
+    (data isa AbstractArray && length(data) > 1) || return image
+    nwav, nepoch = size(data)
+    return repeat(image, 1, 1, nwav, nepoch)
+end
+
+"""
     chi2_breakdown(image, ft, data, weights; chi2_of = nothing) -> Vector{NamedTuple}
 
 Reduced χ² per observable: `(; name, chi2, n, chi2r, used)`.
@@ -173,6 +208,12 @@ still has a χ² worth seeing: it says how well the reconstruction predicts data
 """
 function chi2_breakdown(image, ft, data, weights = [1.0, 1.0, 1.0]; chi2_of = nothing)
     ds = data isa AbstractArray ? vec(data) : [data]
+    # `n` below counts points across EVERY bin, so the chi2 has to as well. A 2-D image against
+    # a multi-bin `data` silently reduces to `ft[1], data[1]` inside `image_to_chi2`
+    # (oichi2.jl), which would score one channel and divide it by the point count of all of
+    # them -- a reduced chi2 wrong by roughly the number of bins, in the direction that
+    # flatters the fit. Reshaping to the 4-D form picks the method that loops the cells.
+    img = _cube_for_chi2(image, data)
     counts = (v2 = sum(d -> d.nv2, ds; init = 0),
               t3amp = sum(d -> d.nt3amp, ds; init = 0),
               t3phi = sum(d -> d.nt3phi, ds; init = 0))
@@ -185,7 +226,7 @@ function chi2_breakdown(image, ft, data, weights = [1.0, 1.0, 1.0]; chi2_of = no
         onehot = [j == i ? 1.0 : 0.0 for j in 1:3]
         c2 = try
             chi2_of === nothing ?
-                Float64(image_to_chi2(image, ft, data; weights = onehot, verb = false)) :
+                Float64(image_to_chi2(img, ft, data; weights = onehot, verb = false)) :
                 Float64(chi2_of(onehot))
         catch err
             # Named, not swallowed. A bare `catch` here turned a precision or shape mismatch
@@ -233,12 +274,46 @@ struct ImagingResult
     # Whatever the engine returned beyond the image: SQUEEZE's diagnostics NamedTuple, SPARCO's
     # fitted parametric values. `nothing` for the engines that hand back an image and no more.
     extra       :: Any
+    # The ensemble, for the engines that return a distribution rather than a point estimate:
+    # `nothing`, or `(; mean, sigma, samples, source)`. Shaped to match `ImageEntry.posterior`
+    # so a result can become a session entry unchanged.
+    ensemble    :: Any
 end
 
 # The engine is on `setup`, so a result always says which reconstructor made it.
 ImagingResult(image, chi2, chi2_start, ndof, flux, maxiter, seconds, setup, weights, breakdown) =
     ImagingResult(image, chi2, chi2_start, ndof, flux, maxiter, seconds, setup, weights,
-                  breakdown, nothing)
+                  breakdown, nothing, nothing)
+
+"""
+    result_ensemble(extra) -> nothing or (; mean, sigma, samples, source)
+
+The ensemble an engine returned, or `nothing` for the engines that return one image.
+
+Only the sampling engines produce one, and what they produce is worth naming precisely:
+`reconstruct_squeeze` runs `nchains` independent chains and hands back
+`diagnostics.images`, **one posterior mean per chain** (each already averaged over that chain's
+post-burn-in samples). So the spread across them is CHAIN-TO-CHAIN disagreement, not a within-
+chain posterior width, and the panel says so rather than calling it σ and leaving it at that.
+
+The reconstruction itself returns the BEST chain, not this mean — `reconstruct_squeeze` ends
+with `results[best].image`. The two are different images and the panel offers both.
+
+`sigma` is `nothing` for a single chain, where there is no spread to report.
+"""
+function result_ensemble(extra)
+    extra isa NamedTuple && haskey(extra, :images) || return nothing
+    imgs = extra.images
+    (imgs isa AbstractVector && !isempty(imgs)) || return nothing
+    all(m -> m isa AbstractMatrix, imgs) || return nothing
+    samples = [Float64.(m) for m in imgs]
+    allequal(size.(samples)) || return nothing
+    n = length(samples)
+    mn = reduce(+, samples) ./ n
+    sg = n > 1 ? sqrt.(reduce(+, ((s .- mn).^2 for s in samples)) ./ (n - 1)) : nothing
+    return (; mean = mn, sigma = sg, samples,
+              source = n == 1 ? "1 chain" : "$(n) chains")
+end
 
 "Reduced χ², against the points actually fitted. `NaN` when nothing was."
 chi2r(r::ImagingResult) = r.ndof > 0 ? r.chi2 / r.ndof : NaN
@@ -378,7 +453,8 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
 
     img = Float64.(x)
     return ImagingResult(img, chi2, Float64(chi2_start), ndof, sum(img),
-                         Int(maxiter), t, setup, Float64.(weights), bd, extra)
+                         Int(maxiter), t, setup, Float64.(weights), bd, extra,
+                         result_ensemble(extra))
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -422,8 +498,29 @@ end
 function _require_mono(data, engine)
     size(data) == (1, 1) || error(
         "$(get(IMAGING_ENGINES, engine, engine)) runs on one wavelength bin; this dataset has " *
-        "$(size(data, 1))×$(size(data, 2)). Use VMLMB, or read the file with a single bin.")
+        "$(size(data, 1))×$(size(data, 2)). Use an engine that reconstructs a cube — " *
+        join(sort(string.(collect(POLYCHROMATIC_ENGINES))), " or ") *
+        " — or read the file with a single bin.")
     return data[1, 1]
+end
+
+"""
+    _check_bins(data, engine)
+
+Refuse a multi-bin dataset for an engine that cannot reconstruct a cube.
+
+Every engine needs this, INCLUDING the ones that can: until the cube is threaded all the way
+through, `run_engine` still hands them a 2-D `x0`. VMLMB is the case that matters, because it
+is the one engine `_require_mono` never guarded: `reconstruct(::Matrix, ::Matrix{OIdata}, …)`
+reshapes the image to one channel but forwards every bin, and `crit_fg` then indexes
+`x4[:,:,w,t]` for `w in 1:nwav` and throws a `BoundsError` from inside OITOOLS with nothing to
+say which control caused it.
+"""
+function _check_bins(data, engine)
+    size(data) == (1, 1) && return data
+    error("$(get(IMAGING_ENGINES, engine, engine)) cannot yet reconstruct a wavelength cube; " *
+          "this dataset has $(size(data, 1)) bins × $(size(data, 2)) epochs. " *
+          "Read the file with a single bin.")
 end
 
 """
@@ -443,6 +540,7 @@ function run_engine(engine::Symbol, x0, data, ft;
     o = options
 
     if engine === :vmlmb
+        _check_bins(data, engine)
         return (reconstruct(x0, data, ft; weights, regularizers, maxiter, verb), nothing, nothing)
 
     elseif engine === :bsmem
@@ -469,7 +567,7 @@ function run_engine(engine::Symbol, x0, data, ft;
         return (img[:, :, 1], (; history = hist), nothing)
 
     elseif engine === :bsdmm
-        _require_mono(data, engine)
+        _check_bins(data, engine)
         # Not string specs at all: ADMM takes μ weights and two mode symbols.
         mu_reg, mu_cen = _optreal(o, "mu_reg", 0.0), _optreal(o, "mu_cen", 0.0)
         # Centering specifically, not just any block. ADMM splits the problem across proximal

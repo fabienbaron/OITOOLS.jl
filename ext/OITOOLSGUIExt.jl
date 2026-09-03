@@ -75,7 +75,7 @@ export parse_model_lines, parse_free_lines, parse_constraint_lines, parse_prior_
 export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        start_image, reconstruct_image, observable_availability, observable_flags_string,
        parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start,
-       IMAGING_ENGINES, run_engine, prior_image
+       IMAGING_ENGINES, POLYCHROMATIC_ENGINES, run_engine, prior_image, result_ensemble
 export NightPlan, config_catalog, facility_telescopes, telescope_config,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,

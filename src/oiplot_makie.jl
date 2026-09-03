@@ -369,10 +369,14 @@ plot_into!(fig, ax, d, kind::Symbol; kwargs...) = draw!(fig, ax, d, kind; kwargs
 # and a Makie one — and a single name over both would have to lie about which.
 #
 # ORIENTATION IS EAST-LEFT, NORTH-UP, which is Monnier's convention and what `imdisp` draws.
-# `imdisp` gets there with `rotl90` and a reversed extent; here the x coordinate vector simply
-# descends, which is the same picture and one fewer transform to get wrong. The GUI's
-# `show_image!` does it this way too, so a reconstruction looks identical in a window and in a
-# saved figure.
+# The axis limits are reversed so that +x lands on the left; the coordinate vector then has to
+# ASCEND, because array dimension 1 increases eastward. That is not a free choice: `setup_nfft`
+# passes u as NFFT node row 1, and NFFT indexes the first array dimension by it, so a pixel at
+# index c+k reproduces a model offset of `+k*pixsize` EAST (verified to 1.9e-07 against
+# `parse_model`'s `cis(-2pi*(u*ra + v*dec))`). Pairing a descending vector with the reversed
+# limits draws that pixel on the western side, and mirrored every image the package produced.
+# The GUI's `show_image!` and the snapshot figure use the same vector, so a reconstruction
+# looks identical in a window and in a saved figure.
 
 """
     imdisp_makie(image; pixsize = -1, kwargs...) -> PlotData
@@ -444,7 +448,7 @@ function image_into!(fig, ax, image::AbstractArray; pixsize::Real = -1.0,
 
     halfx = nx * ps / 2
     halfy = ny * ps / 2
-    xs = range(halfx, -halfx; length = nx)      # descending: East is to the LEFT
+    xs = range(-halfx, halfx; length = nx)      # ascending: dim 1 runs EAST (drawn leftward)
     ys = range(-halfy, halfy; length = ny)
 
     hm = Makie.heatmap!(ax, xs, ys, Float32.(img ./ norm);

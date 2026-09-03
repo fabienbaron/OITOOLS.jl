@@ -20,7 +20,6 @@ include("graphics.jl")           # GL driver environment; must be callable befor
 include("readoifits.jl")
 include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
 include("plot_data.jl")      # what to draw: groups, colours, labels, click text -- no toolkit
-include("vis_functions.jl")
 include("model_chainrules.jl")
 
 # ── Flat-dict model fitting stack ────────────────────────────────────────────
@@ -38,6 +37,7 @@ include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
 include("utils.jl")
 include("simbad.jl")         # SIMBAD over TAP: one HTTP request, no Python
 include("oichi2.jl")
+include("image_chi2_kernel.jl")  # image chi2+gradient: one adjoint, all observables
 include("sparco_flat.jl")
 include("astrometry.jl")
 include("atmosphere.jl")     # bands, seeing, AO Strehl — used by simulate.jl
@@ -214,13 +214,6 @@ export data_blocks, DataBlocks, resample_blocks
 export block_counts, apply_block_counts, block_weights, apply_block_weights
 export perturb_data
 export resample_data          # deprecated alias for perturb_data
-
-# ── Visibility functions ─────────────────────────────────────────────────────
-export visibility_ud, visibility_ldlin, visibility_ldquad, visibility_ldquad_tri,
-       visibility_ldpow, visibility_ldsquareroot,
-       visibility_annulus, visibility_ellipse_uniform, visibility_ellipse_quad,
-       visibility_thin_ring, visibility_Gaussian_ring, visibility_Gaussian_ring_az,
-       visibility_Lorentzian_ring, visibility_GaussianLorentzian_ring_az
 
 # ── Image reconstruction ─────────────────────────────────────────────────────
 export setup_ft, setup_dft, setup_nfft, ft_info, OIft, NFFTCell, DFTCell

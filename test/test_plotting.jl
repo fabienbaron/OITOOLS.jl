@@ -373,13 +373,16 @@ yscale_of(ax) = _pystr(ax.get_yscale())
             ax  = axes_of()[1]
             @test _pyint(PC.pylen(ax.images)) == 1
             arr = PC.pyconvert(Matrix{Float64}, ax.images[0].get_array())
-            expected = rotl90(img) ./ maximum(img)
+            expected = reverse(rotl90(img), dims = 2) ./ maximum(img)
             @test size(arr) == size(expected)
             @test isapprox(arr, expected; rtol = 1e-5)
             @test isapprox(maximum(arr), 1.0; rtol = 1e-6)
             # guard the orientation specifically: an unrotated image would also be
             # peak-normalised and the same size, so equality above must not be vacuous
             @test !isapprox(arr, img ./ maximum(img); rtol = 1e-5)
+            # and reject the bare `rotl90`, which pairs with the reversed extent to draw
+            # East on the western side. See test_image_orientation.jl for why that is wrong.
+            @test !isapprox(arr, rotl90(img) ./ maximum(img); rtol = 1e-5)
             _close()
         end
 
@@ -392,7 +395,9 @@ yscale_of(ax) = _pystr(ax.get_yscale())
             for k in 1:size(cube, 3)
                 arr   = PC.pyconvert(Matrix{Float64}, imgaxes[k].images[0].get_array())
                 slice = cube[:, :, k]
-                @test isapprox(arr, rotl90(slice) ./ maximum(slice); rtol = 1e-5)
+                @test isapprox(arr, reverse(rotl90(slice), dims = 2) ./ maximum(slice);
+                               rtol = 1e-5)
+                @test !isapprox(arr, rotl90(slice) ./ maximum(slice); rtol = 1e-5)
             end
             _close()
         end

@@ -127,4 +127,30 @@
         # the fitted one is fitted; the unfitted one is merely predicted, and much worse
         @test by["V²"].chi2r < by["T3φ"].chi2r
     end
+
+    # The sampling engines return a distribution, and what they return is worth naming
+    # precisely: `reconstruct_squeeze` gives one posterior mean PER CHAIN and returns the best
+    # of them, so the ensemble mean and the reconstruction are different images. The panel
+    # offers both, and this pins that they really are different.
+    @testset "an ensemble is recognised, and only where there is one" begin
+        # A point estimate has no ensemble, whatever else the engine attached.
+        @test result_ensemble(nothing) === nothing
+        @test result_ensemble((; history = NamedTuple[])) === nothing          # BSMEM/BSDMM
+        @test result_ensemble((; params = [1.0], param_names = Dict())) === nothing  # SPARCO
+
+        # Per-chain images become mean, spread and members.
+        imgs = [fill(Float64(i), 4, 4) for i in 1:4]
+        e = result_ensemble((; images = imgs, best_chain = 2))
+        @test length(e.samples) == 4
+        @test e.source == "4 chains"
+        @test e.mean[1, 1] ≈ 2.5
+        @test e.sigma[1, 1] ≈ sqrt(sum(abs2, [1.0,2.0,3.0,4.0] .- 2.5) / 3)   # sample std
+
+        # One chain has a mean but no spread; saying "0" would claim a precision that was
+        # never measured.
+        @test result_ensemble((; images = [imgs[1]])).sigma === nothing
+
+        # Ragged input is refused rather than broadcast into a wrong answer.
+        @test result_ensemble((; images = [zeros(4, 4), zeros(5, 5)])) === nothing
+    end
 end

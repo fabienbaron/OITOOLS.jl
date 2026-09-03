@@ -1,15 +1,20 @@
 # model_chainrules.jl
 #
-# Differentiable (ForwardDiff / Zygote / AutoMALA-compatible) implementations
-# of the limb-darkened disk visibility functions from vis_functions.jl, plus
-# explicit ChainRules rrules for each.
+# Differentiable (ForwardDiff / Zygote / AutoMALA-compatible) implementations of the
+# limb-darkened disk visibility functions, plus explicit ChainRules rrules for each. These are
+# what `parse_model.jl` builds a FlatModel from.
+#
+# Imported here rather than inherited. These names used to arrive from a module-level `using`
+# in a sibling file that happened to be included first; depending on include order for a name
+# is how a reordering becomes an UndefVarError at precompile time.
+using SpecialFunctions
 #
 # This file provides:
 #   - Scalar-parameter variants  vis_ldXXX(θ, params..., ρ) returning a Vector
 #   - rrules for those scalar variants
 #   - Safe (ifelse-based) drop-in replacements for the full (param, uv) API
 #
-# Conventions (matching vis_functions.jl)
+# Conventions
 #   θ        : angular diameter in mas
 #   ρ        : baseline / wavelength  (cycles / rad), vector of length nuv
 #   C        : mas-to-radian conversion constant  =  360*3600*1000 / (2π)
@@ -53,7 +58,7 @@ _dparam(::AbstractVector, v) = v
 #
 # ∂V/∂θ  = (∂V/∂t) * (∂t/∂θ)
 #         = [ 2(t J₀(t) - 2 J₁(t)) / t² ]  *  (π ρ / C)
-#   (matches dvisibility_ud in vis_functions.jl)
+#   (the analytic derivative of the uniform-disc visibility)
 #
 # Note: jinc(y) = 2 J₁(πy) / (πy), i.e. V = jinc(θ ρ / C)
 
@@ -77,7 +82,7 @@ function ChainRulesCore.rrule(::typeof(vis_ud), θ::VisParam, ρ::AbstractVector
 end
 
 # ---------------------------------------------------------------------------
-# 2.  Linear limb-darkening   (vis_functions.jl: visibility_ldlin)
+# 2.  Linear limb-darkening
 # ---------------------------------------------------------------------------
 #
 # Profile: I(μ) ∝ 1 - u(1 - μ)
@@ -212,7 +217,7 @@ function ChainRulesCore.rrule(::typeof(vis_ldlin), θ::VisParam, u::VisParam, ρ
 end
 
 # ---------------------------------------------------------------------------
-# 3.  Quadratic limb-darkening   (vis_functions.jl: visibility_ldquad)
+# 3.  Quadratic limb-darkening
 # ---------------------------------------------------------------------------
 #
 # Profile: I(μ) ∝ 1 - u(1-μ) - w(1-μ)²
@@ -418,7 +423,7 @@ function ChainRulesCore.rrule(::typeof(vis_ldclaret4), θ::VisParam, c1::VisPara
 end
 
 # ---------------------------------------------------------------------------
-# 4.  Power-law limb-darkening   (vis_functions.jl: visibility_ldpow)
+# 4.  Power-law limb-darkening
 # ---------------------------------------------------------------------------
 #
 # Profile: I(μ) ∝ μ^α
@@ -548,32 +553,8 @@ function ChainRulesCore.rrule(::typeof(vis_ldpow), θ::VisParam, α::VisParam, �
 end
 
 # ---------------------------------------------------------------------------
-# 5.  Drop-in replacements for the (param, uv) API in vis_functions.jl
 # ---------------------------------------------------------------------------
 #
 # These match the original signatures exactly and are safe for ForwardDiff /
 # Zygote because they use ifelse instead of mutating findall/setindex!.
-# The ChainRules above are automatically invoked when differentiating
-# through the scalar-param variants; the (param, uv) wrappers below
-# will be differentiated by AD directly since they call the scalar variants.
-
-function visibility_ud_d(param, uv::AbstractMatrix)
-    ρ = @. sqrt(uv[1,:]^2 + uv[2,:]^2)
-    return vis_ud(param[1], ρ)
-end
-
-function visibility_ldlin_d(param, uv::AbstractMatrix)
-    ρ = @. sqrt(uv[1,:]^2 + uv[2,:]^2)
-    return vis_ldlin(param[1], param[2], ρ)
-end
-
-function visibility_ldquad_d(param, uv::AbstractMatrix)
-    ρ = @. sqrt(uv[1,:]^2 + uv[2,:]^2)
-    return vis_ldquad(param[1], param[2], param[3], ρ)
-end
-
-function visibility_ldpow_d(param, uv::AbstractMatrix)
-    ρ = @. sqrt(uv[1,:]^2 + uv[2,:]^2)
-    return vis_ldpow(param[1], param[2], ρ)
-end
 
