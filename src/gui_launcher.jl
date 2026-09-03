@@ -13,9 +13,36 @@
 # wrong platform.
 # ===========================================================================
 
+# Without these three there is no window at all.
 const _GUI_PACKAGES = (("GLMakie",  "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"),
                        ("QMLMakie", "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"),
                        ("QML",      "2db162a6-7e43-52c3-8d84-290c1c42d82a"))
+
+# Loaded when present, suggested once when not. The note is what the package does TODAY, which
+# for two of them is less than their name suggests -- see the caveats in each line. The Python
+# extensions (PythonPlot for matplotlib figures, PythonCall for UltraNest) are deliberately
+# absent: they pull a Conda environment, which is a much larger thing to install than any of
+# these, and the GUI works fully without them.
+# The fourth field is how to install it. Nautilus is UNREGISTERED -- `Pkg.add("Nautilus")`
+# cannot find it -- so it carries the same url `[sources]` uses in Project.toml, and a
+# suggestion that told you to add it by name would simply fail.
+const NAUTILUS_URL = "https://github.com/fabienbaron/Nautilus.jl.git"
+
+const _GUI_OPTIONAL = (
+    ("GLFW_jll",  "0656b61e-2033-5cc2-a64a-77c0f6c09b89",
+     "native Wayland instead of XWayland (pure binary, no display needed to load)",
+     :registered),
+    ("Nautilus",  "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73",
+     "enables \"Nested sampling\" in the Model panel, which is greyed out without it",
+     :url),
+    ("Pigeons",   "0eb8d820-af6a-4919-95ae-11206f830c31",
+     "parallel tempering; activates reconstruct_squeeze_tempered for scripts. The Image " *
+     "tab's \"Tempering\" entry stays greyed for now -- nothing probes for it yet",
+     :registered),
+    ("PairPlots", "43a3c2be-4208-490b-832a-a21dcd55d7da",
+     "plot_corner_makie for sampler posteriors, from the REPL. Not reachable from the GUI",
+     :registered),
+)
 
 _pkgid(name, uuid) = Base.PkgId(Base.UUID(uuid), name)
 _is_loaded(name, uuid) = haskey(Base.loaded_modules, _pkgid(name, uuid))
@@ -42,7 +69,7 @@ function _require_or_explain(name, uuid)
 end
 
 """
-    oitoolsgui(files...; nautilus = true, verbose = true)
+    oitoolsgui(files...; optional = true, verbose = true)
 
 Open the GUI, loading everything it needs on the way.
 
@@ -54,13 +81,19 @@ GLMakie, QMLMakie and QML are weak dependencies, so they are not installed along
 `Pkg.add` them once into whatever environment you work in, or use `--project=bin`, which pins
 known-good versions in its manifest.
 
+Four further packages are loaded when present and named in one message when not: `GLFW_jll`
+(native Wayland), `Nautilus` (nested sampling in the Model panel), `Pigeons` (tempering) and
+`PairPlots` (corner plots). None is needed for the window, and `optional = false` skips the
+check. The Python extensions are deliberately not among them: matplotlib figures and UltraNest
+need a Conda environment, which is a far larger install than any of these.
+
 !!! note "Call this before loading GLMakie yourself"
     The Mesa, GLFW and Qt platform hints are only read once, when the first OpenGL context is
     created and when Qt starts. This function sets them and then loads those packages, in that
     order. If GLMakie is already loaded the hints have been missed, and it says so rather than
     opening a window whose platform silently disagrees with Qt's.
 """
-function oitoolsgui(files::AbstractString...; nautilus::Bool = true, verbose::Bool = true)
+function oitoolsgui(files::AbstractString...; optional::Bool = true, verbose::Bool = true)
     if _is_loaded("GLMakie", "e9467ef8-e4e7-5192-8a1a-b1aee30e663a")
         @warn """
             GLMakie was already loaded, so the graphics hints could not be applied in time.
@@ -87,11 +120,39 @@ function oitoolsgui(files::AbstractString...; nautilus::Bool = true, verbose::Bo
     for (name, uuid) in _GUI_PACKAGES
         _require_or_explain(name, uuid)
     end
-    # Cheap and pure Julia; without it "Nested sampling" is greyed out in the Model panel.
-    nautilus && try
-        _require_or_explain("Nautilus", "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73")
-    catch err
-        verbose && @debug "Nautilus not loaded; nested sampling stays disabled" err
+
+    # The optional ones are never fatal: one message naming all of them, once, beats four
+    # separate failures for things the GUI runs perfectly well without.
+    if optional
+        missing_pkgs = Tuple{String,String,Symbol}[]
+        for (name, uuid, what, how) in _GUI_OPTIONAL
+            try
+                Base.require(_pkgid(name, uuid))
+            catch
+                push!(missing_pkgs, (name, what, how))
+            end
+        end
+        if verbose && !isempty(missing_pkgs)
+            lines = join(["    $name  --  $what" for (name, what, _) in missing_pkgs], "\n")
+            reg = [n for (n, _, how) in missing_pkgs if how === :registered]
+            cmds = String[]
+            isempty(reg) || push!(cmds,
+                "    Pkg.add([" * join(["\"" * n * "\"" for n in reg], ", ") * "])")
+            any(how === :url for (_, _, how) in missing_pkgs) &&
+                push!(cmds, "    Pkg.add(url = \"" * NAUTILUS_URL * "\")   # unregistered")
+            @info """
+                The GUI is running. These optional packages are not installed:
+
+                $lines
+
+                To add them:
+
+                    using Pkg
+                $(join(cmds, "\n"))
+
+                Pass `optional = false` to skip this check entirely.
+                """
+        end
     end
 
     ext = Base.get_extension(@__MODULE__, :OITOOLSGUIExt)

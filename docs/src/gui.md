@@ -4,13 +4,41 @@ One window with four perspectives over a single session, so a dataset moves from
 exploration to fitting to imaging without being exported and read back.
 
 ```julia
-using OITOOLS, GLMakie, QMLMakie, QML   # these three activate the GUI extension
-gui()                                   # optionally gui(session), or pass files to load
+using OITOOLS
+oitoolsgui()                  # or oitoolsgui("mydata.oifits")
 ```
 
-GLMakie, QMLMakie and QML are weak dependencies, so `using OITOOLS` still costs no Makie and no
-Qt. From a clone there is a pinned launcher environment which also sets the graphics hints that
-have to precede the first OpenGL context:
+[`oitoolsgui`](@ref) is the whole launch: it loads GLMakie, QMLMakie and QML itself, in the
+order the graphics hints require, then opens the window. Call it *before* loading GLMakie
+yourself — Mesa, GLFW and Qt each read their configuration exactly once, when the first OpenGL
+context is created and when Qt starts, so a `using GLMakie` that has already run cannot be
+taken back. It warns in that case rather than opening a window whose platform silently
+disagrees with Qt's.
+
+Any optional package you do not have is named once, not treated as a failure: `GLFW_jll`
+(native Wayland rather than XWayland), `Nautilus` (enables "Nested sampling" in the Model
+panel), `Pigeons` and `PairPlots`. Pass `optional = false` to skip that check.
+
+### Why these are not installed for you
+
+GLMakie, QMLMakie and QML are **weak dependencies**. A weak dependency is declared in
+`Project.toml` under `[weakdeps]` rather than `[deps]`: it is not installed with the package
+and not loaded by `using OITOOLS`, but when *you* load it, the matching entry under
+`[extensions]` fires and the code that needs it becomes available. That is what keeps
+`using OITOOLS` free of Makie, of Qt and of Python — which matters on a headless machine, in a
+script that only reads OIFITS files, and alongside any other application that maps its own Qt.
+
+The cost is that you install them once yourself:
+
+```julia
+using Pkg; Pkg.add(["GLMakie", "QMLMakie", "QML"])
+```
+
+Weak dependencies also cannot be loaded from the package's own environment, so `--project=.`
+either fails to find them or picks them up from your default environment at whatever versions
+happen to be there. From a clone, `bin/` is an ordinary environment where all three are real
+dependencies with a pinned manifest, and it is the right entry point for a desktop icon or a
+sysimage:
 
 ```
 julia --project=bin bin/oitoolsgui.jl [file.oifits]

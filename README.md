@@ -34,29 +34,47 @@ using Pkg
 pkg"registry add General"
 pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
-Pkg.add("PythonPlot")          # for plotting; see below
+Pkg.add("GLMakie")             # for plotting; see below
 using OITOOLS
 ```
 
-**Plotting needs PythonPlot.** `uvplot`, `plot_v2`, `imdisp` and the rest live in a package
-extension, so they exist only once PythonPlot is loaded alongside OITOOLS. This keeps
-`using OITOOLS` free of matplotlib and of Qt, which matters on headless machines and beside
-other Qt applications.
+**Plotting needs a backend.** Every figure lives in a package extension, so `using OITOOLS` on
+its own draws nothing — which is what keeps it free of Makie, of matplotlib and of Qt, and
+what makes it usable on a headless machine and beside other Qt applications.
 
-`using OITOOLS` needs no Python. The optional Python dependencies (matplotlib-base for the
-`PythonPlot` figures, ultranest for the `:ultranest` sampler) are provisioned automatically by
-[CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time something loads PythonCall. See
-the [installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for details,
+**Makie is the recommended one.** It is pure Julia, needs no Python, and is the same backend
+the GUI draws with, so a figure looks the same in a script and in the window. Load any Makie
+backend — `GLMakie` for interactive windows, `CairoMakie` for files — and the `*_makie`
+functions appear: `uvplot_makie`, `plot_v2_makie`, `plot_t3phi_makie`, `imdisp_makie` and the
+rest.
+
+**PythonPlot remains available** as an alternative, and is what the unsuffixed names
+(`uvplot`, `plot_v2`, `imdisp`) use. The two are kept in step: the test suite asserts the
+Makie ports draw the same values and the same orientation as their matplotlib originals. Reach
+for it if you want matplotlib's output specifically, or already have a workflow built on it.
+
+`using OITOOLS` needs no Python either way. The optional Python dependencies (matplotlib-base
+for the `PythonPlot` figures, ultranest for the `:ultranest` sampler) are provisioned
+automatically by [CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time something
+loads PythonCall. See the
+[installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for details,
 including how to reuse an existing Python instead.
 
 ## Quick start
 
 ```julia
-using OITOOLS, PythonPlot      # PythonPlot activates the plotting extension
+using OITOOLS, GLMakie         # any Makie backend activates the plotting extension
 data = readoifits("mydata.oifits")
-uvplot(data)
-plot_v2(data)
-plot_t3phi(data)
+uvplot_makie(data)
+plot_v2_makie(data)
+plot_t3phi_makie(data)
+```
+
+The matplotlib equivalents, if you prefer them:
+
+```julia
+using OITOOLS, PythonPlot
+uvplot(data); plot_v2(data); plot_t3phi(data)
 ```
 
 ## Features
@@ -157,14 +175,20 @@ exploration to fitting to imaging without being exported and read back. It is un
 development: the panels below work, but not every control behind them is wired yet.
 
 ```julia
-using OITOOLS, GLMakie, QMLMakie, QML   # these three activate the GUI extension
-gui()                                   # optionally gui(session), or pass files to load
+using OITOOLS
+oitoolsgui()                  # or oitoolsgui("mydata.oifits")
 ```
 
-GLMakie, QMLMakie and QML are weak dependencies, so `using OITOOLS` still costs no Makie and
-no Qt; add them to your environment to open the window. From a clone there is a pinned
-launcher environment which also sets the graphics hints that must precede the first OpenGL
-context:
+`oitoolsgui` loads GLMakie, QMLMakie and QML for you, in the order the graphics hints require —
+Mesa, GLFW and Qt each read their configuration once, when the first OpenGL context is created
+and when Qt starts, so the loading has to happen after the hints are set. Call it before
+loading GLMakie yourself; it warns rather than opening a window whose platform silently
+disagrees with Qt's. It also names any optional package you do not have (`GLFW_jll` for native
+Wayland, `Nautilus` for nested sampling, `Pigeons`, `PairPlots`) instead of failing on them.
+
+Those three are weak dependencies, so `using OITOOLS` still costs no Makie and no Qt — add
+them once with `Pkg.add(["GLMakie", "QMLMakie", "QML"])`. From a clone there is a pinned
+launcher environment, which is the right entry point for a desktop icon or a sysimage:
 
 ```
 julia --project=bin bin/oitoolsgui.jl [file.oifits]
