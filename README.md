@@ -42,6 +42,26 @@ using OITOOLS
 its own draws nothing — which is what keeps it free of Makie, of matplotlib and of Qt, and
 what makes it usable on a headless machine and beside other Qt applications.
 
+<details>
+<summary><b>What a weak dependency is, and why you install these yourself</b></summary>
+
+Makie, PythonPlot, GLMakie, QMLMakie, QML, Nautilus, Pigeons and PairPlots are all declared
+under `[weakdeps]` in `Project.toml` rather than `[deps]`. A weak dependency is **not**
+installed with OITOOLS and **not** loaded by `using OITOOLS`; when you load it yourself, the
+matching entry under `[extensions]` fires and the code that needed it appears.
+
+So `using OITOOLS` stays small and pulls in no plotting stack, no Qt and no Python — which is
+what you want in a script that only reads OIFITS files, on a headless machine, or next to
+another application that maps its own Qt. The price is one `Pkg.add` for whichever backends
+you actually want.
+
+One consequence worth knowing: weak dependencies cannot be loaded from the package's own
+environment. Working from a clone with `--project=.`, they either fail to resolve or come from
+your default environment at whatever versions are there. `bin/` exists for that reason — an
+ordinary environment where the GUI stack is a real dependency with a pinned manifest.
+
+</details>
+
 **Makie is the recommended one.** It is pure Julia, needs no Python, and is the same backend
 the GUI draws with, so a figure looks the same in a script and in the window. Load any Makie
 backend — `GLMakie` for interactive windows, `CairoMakie` for files — and the `*_makie`
