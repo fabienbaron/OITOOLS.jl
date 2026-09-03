@@ -63,7 +63,8 @@ export point_info, uv_point_labels, plot_into!
 export OBS_SPECS, group_names, baseline_names, triplet_names, station_names
 export panel_data, grouping_noun
 export baseline_color_map, style_axis!, add_baseline_legend!
-export LiveCanvas, build_canvas, update_canvas!, canvas_data, zoom_step!,
+export LiveCanvas, build_canvas, update_canvas!, canvas_data, zoom_step!, reset_view!,
+       show_image!, hide_image!,
        set_colormap!, image_colormap_names, IMAGE_COLORMAPS,
        show_panels!, update_panels!, MAX_PANELS,
        ZOOM_MIN_SPAN, ZOOM_MAX_SPAN, ZOOM_PER_DETENT

@@ -243,6 +243,25 @@ versions back later.
 
 ### Starting it from your own session
 
+One call does the whole sequence below, in the order it has to happen:
+
+```julia
+using OITOOLS
+oitoolsgui()                       # or oitoolsgui("mydata.oifits")
+```
+
+That is the shortest route from a REPL, and it is worth knowing what it does, because the
+ordering is the entire difficulty. Call it *before* loading GLMakie yourself — the Mesa, GLFW
+and Qt hints are read once, when the first OpenGL context is created and when Qt starts, so a
+`using GLMakie` that has already run cannot be taken back. `oitoolsgui` warns rather than
+opening a window whose platform silently disagrees with Qt's.
+
+It loads GLMakie, QMLMakie and QML from whatever environment is active. They are weak
+dependencies, so they are not installed with OITOOLS: `Pkg.add(["GLMakie", "QMLMakie", "QML"])`
+once, or use `--project=bin`, whose manifest pins versions known to work together.
+
+The long form, for a launcher or when the steps need to be interleaved with something else:
+
 ```julia
 using OITOOLS
 configure_graphics!()                                   # before the first OpenGL context
@@ -298,6 +317,7 @@ QSG_INFO=1                     # make Qt report which GL renderer it actually go
 ```
 
 ```@docs
+oitoolsgui
 gui
 configure_graphics!
 configure_qt_platform!

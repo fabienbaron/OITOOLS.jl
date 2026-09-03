@@ -17,6 +17,7 @@ using PrecompileTools
 version() = println("OITOOLS v$(pkgversion(OITOOLS))")
 
 include("graphics.jl")           # GL driver environment; must be callable before GLMakie
+include("gui_launcher.jl")       # oitoolsgui(): loads the GUI stack in the required order
 include("readoifits.jl")
 include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
 include("plot_data.jl")      # what to draw: groups, colours, labels, click text -- no toolkit
@@ -166,6 +167,7 @@ function empty_night end
 function prefer_native_wayland! end
 
 export configure_graphics!, configure_qt_platform!, prefer_native_wayland!, is_wsl
+export oitoolsgui
 
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata

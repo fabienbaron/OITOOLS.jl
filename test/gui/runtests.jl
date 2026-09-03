@@ -192,6 +192,24 @@ end
         # Every limit stays finite: the assertion in the tick locator fires on the way to Inf.
         @test all(isfinite, (ax.finallimits[].origin..., ax.finallimits[].widths...))
 
+        # Right-click reset, without a mouse. Makie's own `:limitreset` returns to
+        # `ax.limits[]`, which `zoom_step!` overwrites on every step, so the stock reset came
+        # back to the last zoom rather than to the whole picture.
+        reset_view!(c)
+        @test all(isapprox.(span(), (hx, hy); rtol = 1e-6))
+        # and it is idempotent, rather than creeping outwards on each press
+        reset_view!(c); @test all(isapprox.(span(), (hx, hy); rtol = 1e-6))
+
+        # An image reverses x to put East on the left. A reset must not quietly clear that:
+        # `limits!` takes the reversal as an ORDERING, so handing it an ascending pair mirrors
+        # the reconstruction east-for-west.
+        show_image!(c, [Float64(i) for i in 1:16, _ in 1:16], 0.25)
+        @test ax.xreversed[]
+        for _ in 1:5; zoom_step!(c, 1); end
+        reset_view!(c)
+        @test ax.xreversed[]
+        @test isapprox(Float64(ax.finallimits[].widths[1]), 16 * 0.25; rtol = 1e-6)
+
         # Aspect is preserved, which DataAspect makes a correctness claim about the sky.
         zoom_step!(c, 0)                          # no-op
         update_canvas!(c, d, :uv; color = :baseline)
