@@ -41,7 +41,7 @@
 # constraint contributes exactly zero and exactly zero gradient, and so cannot pull a fit that
 # already obeys it.
 #
-# A penalty is soft, and soft is not a detail. Measured on `test/oifits_for_tests/AlphaCenA.oifits`,
+# A penalty is soft, and soft is not a detail. Measured on `demos/data/AlphaCenA.oifits`,
 # capping a uniform-disc diameter 0.5 mas below its best fit costs Δχ² ≈ 1.5e6; a penalty stiff
 # enough to win against that would wreck the conditioning, and one that is not simply loses.
 # The fit then settles where the two gradients balance — neither the constrained answer nor the
@@ -343,7 +343,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # NLopt implements nonlinear constraints properly, and a properly-implemented constraint is
-# worth far more than a penalty here. Measured on `test/oifits_for_tests/AlphaCenA.oifits`,
+# worth far more than a penalty here. Measured on `demos/data/AlphaCenA.oifits`,
 # capping a uniform-disc diameter 0.5 mas below its best fit costs Δχ² ≈ 1.5e6 — so a penalty
 # stiff enough to bind would have to out-weigh that, and one that does not simply loses. The
 # fit settles wherever the two gradients balance, which is neither the constrained optimum nor

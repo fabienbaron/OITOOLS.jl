@@ -56,7 +56,7 @@ if _THREAD_UNSAFE
     @test_skip false
 else
 
-    data = readoifits(joinpath(_DATA, "2004-data1.oifits"); warn = false, verbose = false)[1,1]
+    data = readoifits(joinpath(_DATA, "BC2004", "2004-data1.oifits"); warn = false, verbose = false)[1,1]
     poly = readoifits(joinpath(_DATA, "BC2026", "OBJECT1_N.oifits"); warn = false, verbose = false)[1,1]
     # Keep the image at the data's precision: readoifits defaults to Float32, so the NFFT
     # plan is Float32 and a Float64 image would not dispatch. This also exercises the

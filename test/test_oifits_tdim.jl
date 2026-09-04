@@ -6,7 +6,7 @@
 using OITOOLS, Test
 
 @testset "oifits_fix_tdim" begin
-    src = joinpath(@__DIR__, "oifits_for_tests", "2004-data1.oifits")
+    src = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
     out = joinpath(mktempdir(), "written.oifits")
 
     model = dict_to_model(Dict{String,Any}("star,ud" => 3.0, "star,f" => 1.0), String[])

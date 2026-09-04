@@ -19,6 +19,7 @@ function __init__()
                      shell_reset_image_zoom,
                      shell_set_plot_scale, shell_set_marker_size,
                      shell_save_settings, shell_load_settings, shell_plot_scale,
+                     shell_version,
                      shell_set_zoom_step,
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
@@ -251,6 +252,11 @@ function OITOOLS.gui(session::Session = Session();
                 uiScaleOverride = uiscale.scale,
                 initialFolder   = _initial_folder(session),
                 fullscreenOnStart = get(ENV, "OITOOLSGUI_FULLSCREEN", "") == "1",
+                # The startup scale and settings lines are diagnostics, not news: they print on
+                # every launch and say nothing a working window has not already shown. Kept
+                # behind a switch because the scale line is how the DPI exponent gets refitted
+                # -- it reports the screen's real physical dpi, which is the measurement.
+                verboseStartup  = get(ENV, "OITOOLSGUI_VERBOSE", "") == "1",
                 initialStatus   = sh.status)
     QML.exec()
 

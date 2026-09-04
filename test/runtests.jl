@@ -34,6 +34,18 @@ BLAS.set_num_threads(1)
     include("test_squeeze_tempering.jl") # SQUEEZE + Pigeons (skipped if absent)
     include("test_ft_plans.jl")          # OIft/NFFTCell/DFTCell, and the plan naming
     include("test_component_widths.jl") # absolute scale: fwhm/diameter mean what they say
+    # The fixtures live in demos/data (see demos/data/README.md -- they used to be duplicated
+    # here, 42 MB of byte-identical files). Demo data gets pruned, so name a missing one plainly
+    # instead of letting it surface as a readoifits error three files later.
+    @testset "test fixtures are present" begin
+        for f in (joinpath("BC2004", "2004-data1.oifits"), "AlphaCenA.oifits",
+                  "2019_v1295Aql.WL_SMOOTH.A.oifits", "polaris.oifits",
+                  joinpath("BC2026", "OBJECT1_N.oifits"))
+            path = joinpath(@__DIR__, "..", "demos", "data", f)
+            @test isfile(path) || error("missing test fixture: demos/data/$f")
+        end
+    end
+
     include("test_image_orientation.jl") # East/North of an image array, and of its displays
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end

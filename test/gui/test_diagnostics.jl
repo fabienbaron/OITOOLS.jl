@@ -8,7 +8,7 @@
 @testset "Model diagnostics" begin
 
     datadir = joinpath(@__DIR__, "..", "..", "demos", "data")
-    data = readoifits(joinpath(datadir, "2004-data1.oifits"); warn = false)[1, 1]
+    data = readoifits(joinpath(datadir, "BC2004", "2004-data1.oifits"); warn = false)[1, 1]
 
     md = Dict{String,Any}("star,ud" => 6.5, "star,f" => 0.7,
                           "disk,fwhm" => 12.0, "disk,f" => 0.3)

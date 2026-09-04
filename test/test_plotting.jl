@@ -58,7 +58,7 @@ const _DPI = parse(Int, get(ENV, "OITOOLS_PLOT_DPI", "300"))
 #   poly 286 kB  V2/T3/VISAMP/VISPHI, 18 wavelengths, 67 MJDs -> the main polychromatic set
 #   flux 2.4 MB  the only tracked files carrying OI_FLUX are the BC2026 pair, so FLUX
 #                coverage uses the smaller of the two and nothing else
-const mono = readoifits(joinpath(_DATA, "2004-data1.oifits");
+const mono = readoifits(joinpath(_DATA, "BC2004", "2004-data1.oifits");
                         warn = false, verbose = false)[1, 1]
 const poly = readoifits(joinpath(_DATA, "MWC275_T4a.oifits");
                         warn = false, verbose = false)[1, 1]

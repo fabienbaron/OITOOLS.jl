@@ -111,7 +111,7 @@ end
         "star,ud"   => 2.0, "star,f"   => "0.7 * ($WL/1.6e-6)^-4",
         "disk,fwhm" => 6.0, "disk,f"   => "0.3 * ($WL/1.6e-6)^-1.5")
 
-    for f in ("2004-data1.oifits", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+    for f in (joinpath("BC2004", "2004-data1.oifits"), "2019_v1295Aql.WL_SMOOTH.A.oifits")
         d  = readoifits(joinpath(datadir, f); warn = false)[1, 1]
         m  = dict_to_model(chromatic, String[])
         o  = model_to_obs(m, Float64[], d)
@@ -130,7 +130,7 @@ end
     # A grey model was never affected, and must not have moved.
     grey = Dict{String,Any}("star,ud" => 2.0, "star,f" => 0.7,
                             "disk,fwhm" => 6.0, "disk,f" => 0.3)
-    d = readoifits(joinpath(datadir, "2004-data1.oifits"); warn = false)[1, 1]
+    d = readoifits(joinpath(datadir, "BC2004", "2004-data1.oifits"); warn = false)[1, 1]
     m = dict_to_model(grey, String[])
     r = model_to_residuals(m, Float64[], d)
     @test sum(sum(abs2, getproperty(r, k)) for k in (:v2, :t3amp, :t3phi)) ≈

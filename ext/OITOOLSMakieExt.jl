@@ -55,7 +55,7 @@ include(joinpath(pkgdir(OITOOLS), "src", "oiplot_makie.jl"))
 using PrecompileTools
 
 @setup_workload begin
-    file = joinpath(pkgdir(OITOOLS), "test", "oifits_for_tests", "2004-data1.oifits")
+    file = joinpath(pkgdir(OITOOLS), "demos", "data", "BC2004", "2004-data1.oifits")
     @compile_workload begin
         if isfile(file)
             d = OITOOLS.readoifits(file; warn = false, verbose = false)[1, 1]

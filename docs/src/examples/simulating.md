@@ -11,7 +11,7 @@ dataset:
 
 ```julia
 using OITOOLS
-simulate_from_oifits("data/2004-data1.oifits", "data/sim.oifits";
+simulate_from_oifits("data/BC2004/2004-data1.oifits", "data/sim.oifits";
                      image="data/2004true.fits", pixsize=0.101)
 ```
 
@@ -21,7 +21,7 @@ A flat-dict parametric model can be used instead of an image:
 params = Dict("star,ud" => 3.0, "star,f" => 1.0)
 model = dict_to_model(params, String[])
 
-simulate_from_oifits("data/2004-data1.oifits", "data/sim.oifits";
+simulate_from_oifits("data/BC2004/2004-data1.oifits", "data/sim.oifits";
                      flat_model=model, flat_params=Float64[])
 ```
 

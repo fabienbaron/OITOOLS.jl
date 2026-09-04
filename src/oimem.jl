@@ -661,7 +661,7 @@ are inferred from the OITOOLS NFFT plan `ft`; you do not need to call
 # Example
 
 ```julia
-data   = readoifits("data/2004-data1.oifits")[1,1]
+data   = readoifits("data/BC2004/2004-data1.oifits")[1,1]
 nx     = 128
 pixsize = 0.05   # mas/pixel
 ft      = setup_nfft(data, nx, pixsize)

@@ -864,6 +864,22 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
+            // The style's handle is a hairline, so both panes' text ran flush against the
+            // divider. Widening the handle is the fix that costs no layout surgery: the gap
+            // belongs to the splitter, so it stays symmetric and travels with the divider
+            // instead of being a margin one pane has and the other does not.
+            handle: Rectangle {
+                implicitWidth: root.dp(11)
+                color: "transparent"
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 1
+                    height: parent.height
+                    color: SplitHandle.pressed ? "#8a8a8a"
+                         : SplitHandle.hovered ? "#aaaaaa" : "#d0d0d0"
+                }
+            }
+
             ColumnLayout {
                 SplitView.preferredWidth: root.dp(620)
                 SplitView.minimumWidth: root.dp(420)
@@ -1123,7 +1139,7 @@ Item {
                                     TextField {
                                         Layout.preferredWidth: root.dp(96)
                                         Layout.maximumWidth: root.dp(96)
-                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                        implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         readOnly: rowItem.rMode === "expr"
                                         color: rowItem.rMode === "expr" ? root.cExpr
@@ -1136,7 +1152,7 @@ Item {
                                     TextField {
                                         Layout.preferredWidth: root.dp(76)
                                         Layout.maximumWidth: root.dp(76)
-                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                        implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
@@ -1147,7 +1163,7 @@ Item {
                                     TextField {
                                         Layout.preferredWidth: root.dp(76)
                                         Layout.maximumWidth: root.dp(76)
-                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                        implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
@@ -1851,7 +1867,7 @@ Item {
                                                                 font.pointSize: root.pt(root.baseFontPt - 2) }
                                                         TextField {
                                                             Layout.preferredWidth: root.dp(70)
-                                                            implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                            implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                             text: model.amp.toFixed(3)
                                                             font.pointSize: root.pt(root.baseFontPt - 1)
                                                             onEditingFinished:
@@ -1861,7 +1877,7 @@ Item {
                                                                 font.pointSize: root.pt(root.baseFontPt - 2) }
                                                         TextField {
                                                             Layout.preferredWidth: root.dp(70)
-                                                            implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                            implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                             text: model.projang.toFixed(2)
                                                             font.pointSize: root.pt(root.baseFontPt - 1)
                                                             onEditingFinished:
@@ -1924,7 +1940,7 @@ Item {
                                         font.bold: true
                                         font.pointSize: root.pt(root.baseFontPt + 1)
                                     }
-                                    InfoTip { tip: "A bound is a box on one parameter. A relation between two is not, and needs a constraint. Either side may be an expression; the right may be a number." }
+                                    InfoTip { tip: "A bound is a box on one parameter. A relation between two is not, and needs a constraint. Either side may be an expression; the right may be a number.\n\nHARD: NLopt takes these as real nonlinear constraints, so they hold at the optimum; an algorithm that cannot is wrapped in AUGLAG rather than replaced.\n\nSOFT: enforced by a penalty, which a steep enough χ² can overrule — the fit then reports a number that is neither the constrained nor the free answer. Choose an NLopt optimiser for constraints that must hold." }
                                     Item { Layout.fillWidth: true }
                                 }
                                 ColumnLayout {
@@ -1937,7 +1953,7 @@ Item {
                                             spacing: root.dp(4)
                                             TextField {
                                                 Layout.fillWidth: true
-                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                 text: model.lhs
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
@@ -1949,7 +1965,7 @@ Item {
                                             }
                                             TextField {
                                                 Layout.fillWidth: true
-                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                 text: model.rhs
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
@@ -1959,7 +1975,7 @@ Item {
                                             }
                                             TextField {
                                                 Layout.preferredWidth: root.dp(64)
-                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                 text: String(model.tol)
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
@@ -2038,19 +2054,18 @@ Item {
                                     Label {
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
-                                        color: root.optimiser === "lsqfit" || root.optimiser === "nested"
-                                               ? root.cWarn : "#666"
+                                        color: root.constraintsAreHard() ? "#666" : root.cWarn
                                         font.pointSize: root.pt(root.baseFontPt - 2)
-                                        // The difference is not a detail: a soft penalty can be
-                                        // overruled by a steep enough χ², and then the fit reports a
-                                        // number that is neither the constrained nor the free answer.
-                                        text: (root.optimiser === "lsqfit" || root.optimiser === "nested")
-                                              ? "This fitter enforces constraints with a SOFT penalty — a " +
-                                                "steep χ² can overrule them. Use an NLopt optimiser for " +
-                                                "constraints that must hold."
-                                              : "NLopt takes these as real nonlinear constraints, so they " +
-                                                "hold at the optimum. An algorithm that cannot is wrapped " +
-                                                "in AUGLAG rather than replaced."
+                                        // Names the fitter in force, then what it does with a
+                                        // constraint. The difference is not a detail: a soft penalty
+                                        // can be overruled by a steep enough χ², and then the fit
+                                        // reports a number that is neither the constrained nor the
+                                        // free answer -- so which fitter is selected has to be part
+                                        // of the sentence, not something to infer from the combo box
+                                        // further down the panel.
+                                        text: root.optimiserShortName(root.optimiser) + ":  " +
+                                              (root.constraintsAreHard() ? "HARD constraints"
+                                                                         : "SOFT constraints")
                                     }
 
                                     RowLayout {
@@ -2066,20 +2081,20 @@ Item {
                                             spacing: root.dp(4)
                                             TextField {
                                                 Layout.fillWidth: true
-                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                 text: model.expr
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
                                             TextField {
                                                 Layout.preferredWidth: root.dp(70)
-                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                 text: model.target.toFixed(4)
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
                                             Label { text: "±"; color: "#666" }
                                             TextField {
                                                 Layout.preferredWidth: root.dp(64)
-                                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
                                                 text: model.sigma.toFixed(4)
                                                 font.pointSize: root.pt(root.baseFontPt - 1)
                                             }
@@ -3175,6 +3190,21 @@ Item {
 
     // The separator has no key and is not an optimiser; an entry with a reason cannot run.
     function optimiserUsable(m) { return m.key.length > 0 && m.reason.length === 0 }
+
+    // Just the fitter's name, without the "  ·  what it is" half the combo box shows. The
+    // constraints note needs to name the fitter in a sentence, where the description would
+    // read as part of the claim being made about it.
+    function optimiserShortName(key) {
+        for (var i = 0; i < root.optimisers.length; ++i)
+            if (root.optimisers[i].key === key)
+                return root.optimisers[i].name.split("\u00b7")[0].trim()
+        return key
+    }
+
+    // Whether the CURRENT fitter can hold a constraint or only lean on it.
+    function constraintsAreHard() {
+        return !(root.optimiser === "lsqfit" || root.optimiser === "nested")
+    }
 
     // Selecting something unusable keeps whatever was chosen before rather than silently
     // switching to it -- the red note beside the row says why it was refused.

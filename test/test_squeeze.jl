@@ -11,7 +11,7 @@ using PythonPlot           # live-monitor testset: pyplot.switch_backend, plotcl
 # ─────────────────────────────────────────────────────────────────────────────
 
 const SQ = OITOOLS
-const SQ_DATAFILE = joinpath(@__DIR__, "oifits_for_tests", "2004-data1.oifits")
+const SQ_DATAFILE = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
 
 @testset "squeeze" begin
 
@@ -374,7 +374,7 @@ end
     # OIdata spanning several wavelengths is all that is needed.  On MONOCHROMATIC
     # data a central point star is degenerate with a central image component and
     # f_star is NOT identifiable.
-    polyfile   = joinpath(@__DIR__, "oifits_for_tests", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+    polyfile   = joinpath(@__DIR__, "..", "demos", "data", "2019_v1295Aql.WL_SMOOTH.A.oifits")
     v1295_lam0 = 1.6e-6
     v1295_w    = [1.0, 0.0, 1.0]
     if !isfile(polyfile)

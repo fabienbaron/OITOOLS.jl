@@ -19,7 +19,7 @@ cd "$(dirname "$0")/../.."
 
 DISP=${SHOT_DISPLAY:-:97}
 GEOM=${GEOM:-1920x1200x24}
-DATA=${DATA:-demos/data/2004-data1.oifits}
+DATA=${DATA:-demos/data/BC2004/2004-data1.oifits}
 OUT=${OUT:-docs/src/assets/gui}
 LOG=$(mktemp /tmp/shots-XXXX.log)
 say() { printf '  %s\n' "$*"; }

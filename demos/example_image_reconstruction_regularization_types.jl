@@ -3,7 +3,7 @@
 #
 using OITOOLS, PythonPlot
 set_oiplot_defaults()
-oifitsfile = "./data/2004-data1.oifits"
+oifitsfile = "./data/BC2004/2004-data1.oifits"
 pixsize = 0.1 # size of a pixel in milliarcseconds
 nx = 137 # width of image (number of pixels)
 data = readoifits(oifitsfile);

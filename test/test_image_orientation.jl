@@ -11,7 +11,7 @@
     MAS = 2.0626480624709636e8
     nx, ps = 32, 0.4
     c = nx ÷ 2 + 1                       # the NFFT's zero-frequency pixel
-    data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "2004-data1.oifits");
+    data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits");
                        filter_bad_data = true, T = Float64)
     ft = setup_ft(data, nx, ps)
     cell = ft[1, 1]

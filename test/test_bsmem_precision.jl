@@ -92,7 +92,7 @@ end
 end
 
 @testset "precision flows to plan, scratch and state" begin
-    data = readoifits(joinpath(@__DIR__, "oifits_for_tests", "2004-data1.oifits");
+    data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits");
                       verbose=false, warn=false, T=Float32)
     ft = setup_ft(data, 32, 0.4)
     @test OITOOLS.ft_eltype(ft) === Float32
@@ -121,7 +121,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 @testset "precision flows through chi2 and gradient" begin
-    f = joinpath(@__DIR__, "oifits_for_tests", "2004-data1.oifits")
+    f = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
     d32 = readoifits(f; T=Float32, filter_bad_data=false, verbose=false, warn=false)[1,1]
     d64 = readoifits(f; T=Float64, filter_bad_data=false, verbose=false, warn=false)[1,1]
 
@@ -198,7 +198,7 @@ end
 end
 
 @testset "sparco_flat precision" begin
-    f = joinpath(@__DIR__, "oifits_for_tests", "2004-data1.oifits")
+    f = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
     spec = Dict{String,Any}("s,ud"=>3.0, "s,f"=>0.5, "W"=>1.0)
     chi2s = Dict{DataType,Any}()
     for T in (Float32, Float64)

@@ -31,7 +31,7 @@ const MK  = Base.get_extension(OITOOLS, :OITOOLSMakieExt)
 (GUI === nothing || MK === nothing) && error("extensions did not load; nothing to trace")
 using .GUI
 
-const FILE = joinpath(pkgdir(OITOOLS), "test", "oifits_for_tests", "2004-data1.oifits")
+const FILE = joinpath(pkgdir(OITOOLS), "demos", "data", "BC2004", "2004-data1.oifits")
 const OUT  = joinpath(mktempdir(), "trace.png")
 
 """

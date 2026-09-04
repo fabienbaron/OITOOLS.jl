@@ -14,7 +14,7 @@ using OITOOLS, Test, LinearAlgebra
 
 @testset "constraints and model files" begin
 
-data = readoifits(joinpath(@__DIR__, "oifits_for_tests", "AlphaCenA.oifits");
+data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "AlphaCenA.oifits");
                   warn = false, verbose = false)[1, 1]
 
 UD    = Dict{String,Any}("star,ud" => 8.0, "star,f" => 1.0)

@@ -1,6 +1,6 @@
 using LinearAlgebra, Statistics, OITOOLS
 
-oifitsfile = "./data/2004-data1.oifits"
+oifitsfile = "./data/BC2004/2004-data1.oifits"
 pixsize = 0.2# size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
 data = readoifits(oifitsfile)[1,1];

@@ -380,7 +380,7 @@ end
         # missed on the first pass here, and neither shows up until the figure is saved.
         # A fixture that actually contains non-positive V². The one this file loads by default
         # does not, and a log-axis test on all-positive data proves nothing.
-        dn = readoifits(joinpath(@__DIR__, "..", "oifits_for_tests", "polaris.oifits");
+        dn = readoifits(joinpath(@__DIR__, "..", "..", "demos", "data", "polaris.oifits");
                         warn = false, verbose = false)[1, 1]
         @test any(v -> v <= 0, dn.v2)
         out = joinpath(mktempdir(), "log.png")

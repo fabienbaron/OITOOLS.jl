@@ -24,7 +24,7 @@ function numgrad_1D(func;x=[], N=100, δ = 1e-6)
     return numerical_g;
 end
 
-oifitsfile = "./data/2004-data1.oifits"
+oifitsfile = "./data/BC2004/2004-data1.oifits"
 pixsize = 0.4# size of a pixel in milliarcseconds
 nx = 32 # width of image (number of pixels)
 data = readoifits(oifitsfile)[1,1];
@@ -153,7 +153,7 @@ mean(numerical_g./analytic_g)
 # end
 #
 # using LinearAlgebra, Statistics, OITOOLS, PyPlot
-# oifitsfile = "./data/2004-data1.oifits"
+# oifitsfile = "./data/BC2004/2004-data1.oifits"
 # pixsize = 0.4 # size of a pixel in milliarcseconds
 # nx = 32 # width of image (number of pixels)
 # data = readoifits(oifitsfile)[1,1];

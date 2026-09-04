@@ -2,7 +2,7 @@
 
 using OITOOLS, Test, Random, Statistics, LinearAlgebra
 
-const _BOOT_FILE = joinpath(@__DIR__, "oifits_for_tests", "AlphaCenA.oifits")
+const _BOOT_FILE = joinpath(@__DIR__, "..", "demos", "data", "AlphaCenA.oifits")
 
 @testset "bootstrap" begin
 

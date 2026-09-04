@@ -12,7 +12,7 @@
 #
 using OITOOLS
 
-oifitsfile = joinpath(@__DIR__, "data", "2004-data1.oifits")
+oifitsfile = joinpath(@__DIR__, "data", "BC2004", "2004-data1.oifits")
 nx, pixsize = 64, 0.2
 
 # Float64 while exploring; Float32 halves the DFT matrix and is ~2x faster on the

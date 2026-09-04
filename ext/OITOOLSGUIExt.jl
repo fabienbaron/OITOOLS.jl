@@ -124,7 +124,7 @@ include(joinpath(GUIDIR, "window.jl"))        # gui(): builds the window and run
 using PrecompileTools
 
 @setup_workload begin
-    _pcfile = joinpath(pkgdir(OITOOLS), "test", "gui", "data", "2004-data1.oifits")
+    _pcfile = joinpath(pkgdir(OITOOLS), "test", "gui", "data", "BC2004", "2004-data1.oifits")
     @compile_workload begin
         if isfile(_pcfile)
             data = readoifits(_pcfile; verbose = false, warn = false)

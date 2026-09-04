@@ -7,7 +7,7 @@ using OITOOLS
 # Example 1 -- using a FITS image
 image_file="./data/2004true.fits"
 pixsize=0.101
-in_oifits  = "./data/2004-data1.oifits"
+in_oifits  = "./data/BC2004/2004-data1.oifits"
 out_oifits  = "./data/2004-simulated.oifits"
 simulate_from_oifits(in_oifits,out_oifits,image=image_file,pixsize=pixsize)
 # One can then compare simulated data to input

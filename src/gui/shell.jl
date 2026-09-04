@@ -1309,6 +1309,24 @@ function shell_set_marker_size(x)
 end
 
 """
+    shell_version() -> String
+
+The OITOOLS version, and the Julia it is running on, as one line for the settings panel.
+
+`pkgversion` reads the loaded package's own `Project.toml`, so a `dev`ed checkout reports what
+that checkout declares rather than whatever a registry last published — which is the useful
+answer when a bug report has to say which code was running.
+"""
+function shell_version()
+    v = try
+        string(pkgversion(@__MODULE__))
+    catch
+        "unknown"
+    end
+    return "OITOOLS v" * v * "  ·  Julia " * string(VERSION)
+end
+
+"""
     gui_settings_file() -> String
 
 Where the appearance defaults live: `oitools/gui.toml` under the platform's per-user config

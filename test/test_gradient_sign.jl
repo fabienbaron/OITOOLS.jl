@@ -16,7 +16,7 @@
 using OITOOLS, FITSIO, LinearAlgebra, Printf
 
 # ── Load data ────────────────────────────────────────────────────────────────
-datafile = joinpath(@__DIR__, "..", "demos", "data", "2004-data1.oifits")
+datafile = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
 if !isfile(datafile)
     error("Test data not found: $datafile")
 end

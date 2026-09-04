@@ -223,7 +223,7 @@ julia --project=bin bin/oitoolsgui.jl                   # every time
 An OIFITS file given on the command line is opened at startup:
 
 ```bash
-julia --project=bin bin/oitoolsgui.jl demos/data/2004-data1.oifits
+julia --project=bin bin/oitoolsgui.jl demos/data/BC2004/2004-data1.oifits
 ```
 
 Three things about that command are deliberate.

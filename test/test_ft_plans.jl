@@ -13,7 +13,7 @@
 using OITOOLS, Test, LinearAlgebra
 
 @testset "Fourier transform plans" begin
-    data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "2004-data1.oifits");
+    data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits");
                       warn = false, verbose = false)
     d = data[1, 1]
 
@@ -73,7 +73,7 @@ using OITOOLS, Test, LinearAlgebra
     end
 
     @testset "precision flows through" begin
-        d64 = readoifits(joinpath(@__DIR__, "..", "demos", "data", "2004-data1.oifits");
+        d64 = readoifits(joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits");
                          warn = false, verbose = false, T = Float64)
         @test setup_ft(data, 16, 0.5) isa OIft{Float32}
         @test setup_ft(d64,  16, 0.5) isa OIft{Float64}

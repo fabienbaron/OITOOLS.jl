@@ -28,7 +28,7 @@
 
 using OITOOLS, LinearAlgebra, FFTW
 
-const DATA_DIR = joinpath(@__DIR__, "oifits_for_tests")
+const DATA_DIR = joinpath(@__DIR__, "..", "demos", "data")
 
 # The cases pin FFTW to ESTIMATE even though the package default is MEASURE (see FFT_FLAGS
 # in oichi2.jl). MEASURE *times* candidate algorithms at plan time, so under varying system
@@ -43,21 +43,21 @@ const CASE_FFTFLAGS = FFTW.ESTIMATE
 
 
 const BSMEM_CASES = (
-    (name = "mono_default_m4", file = "2004-data1.oifits", nx = 64, pixsize = 0.2, nwav = 1,
+    (name = "mono_default_m4", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
      kw = (; method = [4, 1, 1, 2], maxiter = 40)),
-    (name = "mono_default_m4_nx128", file = "2004-data1.oifits", nx = 128, pixsize = 0.1, nwav = 1,
+    (name = "mono_default_m4_nx128", file = joinpath("BC2004", "2004-data1.oifits"), nx = 128, pixsize = 0.1, nwav = 1,
      kw = (; method = [4, 1, 1, 2], maxiter = 20)),
-    (name = "mono_method1", file = "2004-data1.oifits", nx = 64, pixsize = 0.2, nwav = 1,
+    (name = "mono_method1", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
      kw = (; method = [1, 1, 1, 2], maxiter = 20, nrand = 10, iseed = 0)),
-    (name = "mono_method2", file = "2004-data1.oifits", nx = 64, pixsize = 0.2, nwav = 1,
+    (name = "mono_method2", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
      kw = (; method = [2, 1, 1, 2], maxiter = 20, nrand = 10, iseed = 0)),
-    (name = "mono_method3", file = "2004-data1.oifits", nx = 64, pixsize = 0.2, nwav = 1,
+    (name = "mono_method3", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
      kw = (; method = [3, 1, 1, 2], maxiter = 20, nrand = 10, iseed = 0)),
-    (name = "mono_mackay", file = "2004-data1.oifits", nx = 64, pixsize = 0.2, nwav = 1,
+    (name = "mono_mackay", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
      kw = (; method = [4, 1, 1, 2], maxiter = 30, mackay_alpha = true)),
-    (name = "mono_ritz", file = "2004-data1.oifits", nx = 64, pixsize = 0.2, nwav = 1,
+    (name = "mono_ritz", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
      kw = (; method = [2, 1, 1, 2], maxiter = 20, nrand = 10, iseed = 0, ritz_alpha = true)),
-    (name = "poly_object1n", file = "OBJECT1_N.oifits", nx = 32, pixsize = 0.5, nwav = 4,
+    (name = "poly_object1n", file = joinpath("BC2026", "OBJECT1_N.oifits"), nx = 32, pixsize = 0.5, nwav = 4,
      kw = (; method = [4, 1, 1, 2], maxiter = 15)),
 )
 

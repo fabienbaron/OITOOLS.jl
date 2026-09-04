@@ -1,0 +1,31 @@
+# Power-law limb-darkened disc (Hestroffer 1997): I(μ) ∝ μ^α, with `ldpow` the angular
+# diameter in milliarcseconds and `alpha` the darkening exponent.
+#
+# Two free parameters, and they are correlated — a larger disc with weaker darkening looks much
+# like a smaller one with stronger darkening at low spatial frequency. Separating them needs
+# visibilities past the first null. So fit UD.toml first, read the diameter off it and seed
+# `ldpow` with that: the same seed sensitivity applies here, for the same reason (see UD.toml).
+#
+# On demos/data/AlphaCenA.oifits this file fits as it stands — θ_LD = 8.457 mas, α = 0.136,
+# χ²r = 4.3, against 15.2 for the uniform disc, which is the whole argument for using it.
+# Both free parameters are bounded, so UltraNest runs on it directly: it returns
+# θ_LD = 8.4565 +- 0.0031 mas and α = 0.1358 +- 0.0025, and a log-evidence some 1760 above
+# UD.toml on the same data — the model comparison the point estimate alone cannot make.
+#
+# α ≈ 0.15 is a reasonable start for a main-sequence star in the near infrared; cooler and more
+# extended atmospheres darken harder.
+
+name = "power-law limb-darkened disk"
+
+free = ["star,ldpow", "star,alpha"]
+
+[model]
+"star,ldpow" = 8.0
+"star,alpha" = 0.15
+"star,f"     = 1.0
+
+# `alpha` is bounded below at 0: a negative exponent is limb BRIGHTENING, which this law is not
+# meant to describe and which the data will happily wander into if allowed.
+[bounds]
+"star,ldpow" = [0.0, 20.0]
+"star,alpha" = [0.0, 3.0]

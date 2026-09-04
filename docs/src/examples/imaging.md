@@ -8,7 +8,7 @@ forward model uses the NFFT for speed or the exact DFT for accuracy.
 
 ```julia
 using OITOOLS, PythonPlot
-data = readoifits("data/2004-data1.oifits")
+data = readoifits("data/BC2004/2004-data1.oifits")
 
 nx      = 64       # image size (pixels per side)
 pixsize = 0.1      # pixel scale (mas)

@@ -8,7 +8,7 @@
 # Both are weak dependencies, declared in this package's test target. If one is missing its
 # testsets skip rather than fail: the suite must still run in an environment that has only one.
 
-const _NESTED_FILE = joinpath(@__DIR__, "oifits_for_tests", "AlphaCenA.oifits")
+const _NESTED_FILE = joinpath(@__DIR__, "..", "demos", "data", "AlphaCenA.oifits")
 
 # The resampler lives in the extension module, not in OITOOLS itself, so it is reached the
 # same way test/gui/ reaches the GUI extension's internals. At file top level, because a

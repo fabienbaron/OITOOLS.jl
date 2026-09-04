@@ -50,7 +50,7 @@
         # The MONOCHROMATIC read, which is a different branch from the polychromatic one above
         # and is what the GUI takes for an ordinary file. Cheap, and it is the very first thing
         # any session does.
-        mono = joinpath(@__DIR__, "..", "demos", "data", "2004-data1.oifits")
+        mono = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
         if isfile(mono)
             dmono = readoifits(mono; verbose=false, warn=false)
             ftm = setup_ft(dmono, 32, 0.3)

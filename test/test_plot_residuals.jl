@@ -4,7 +4,7 @@ datadir = joinpath(@__DIR__, "..", "demos", "data")
 
 # --- Monochromatic data ---
 println("=== Monochromatic (2004-data1) ===")
-data = readoifits(joinpath(datadir, "2004-data1.oifits"), warn=false)[1,1]
+data = readoifits(joinpath(datadir, "BC2004", "2004-data1.oifits"), warn=false)[1,1]
 nx = 64; pixsize = 0.2
 ft = setup_nfft(data, nx, pixsize)
 x = gaussian2d(nx, nx, nx/6)

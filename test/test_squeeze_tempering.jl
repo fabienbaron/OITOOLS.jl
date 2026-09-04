@@ -25,7 +25,7 @@ if !_HAVE_PIGEONS
     @test true
 else
 
-datafile = joinpath(@__DIR__, "oifits_for_tests", "2004-data1.oifits")
+datafile = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
 nx, pixsize = 64, 0.2
 data = readoifits(datafile; T=Float64, verbose=false, warn=false)[1,1]
 ft = setup_dft(data, nx, pixsize)
@@ -119,7 +119,7 @@ end
 end
 
 @testset "SPARCO under tempering" begin
-    polyfile = joinpath(@__DIR__, "oifits_for_tests", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+    polyfile = joinpath(@__DIR__, "..", "demos", "data", "2019_v1295Aql.WL_SMOOTH.A.oifits")
     if !isfile(polyfile)
         @warn "V1295 Aql not found — skipping SPARCO tempering tests"
     else

@@ -5,7 +5,7 @@ using OITOOLS
 # PythonCall` instead would select the UltraNest backend.
 using Nautilus
 
-data = readoifits("./data/2004-data1.oifits")[1,1];
+data = readoifits("./data/BC2004/2004-data1.oifits")[1,1];
 
 # Setup model: unresolved star + Gaussian ring.
 #

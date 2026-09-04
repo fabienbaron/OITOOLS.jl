@@ -275,7 +275,7 @@ ApplicationWindow {
         // Hand the scale to Julia before anything is drawn: Makie font and marker sizes are
         // computed there, and they have to follow the same factor as the chrome around them.
         Julia.shell_ui_scale(uiScale, physicalDpi)
-        console.log(
+        if (verboseStartup) console.log(
         "OITOOLSGUI ui scale: screen=" + physicalDpi.toFixed(1) + " dpi physical, "
         + (Screen.logicalPixelDensity * 25.4).toFixed(1) + " logical"
         + "  devicePixelRatio=" + Screen.devicePixelRatio.toFixed(2)
@@ -307,7 +307,7 @@ ApplicationWindow {
                                              Julia.shell_set_zoom_step(v) } break
             }
         }
-        console.log("OITOOLSGUI applied saved appearance defaults")
+        if (verboseStartup) console.log("OITOOLSGUI applied saved appearance defaults")
     }
 
     // Reads the dataset list back from the session and selects the newest entry. Called both
@@ -634,6 +634,17 @@ ApplicationWindow {
                     }
                 }
                 Button { text: "Close"; onClicked: settingsPanel.close() }
+            }
+
+            // Which code is actually running. The first thing to establish about any bug
+            // report, and the settings panel is where a user already comes to look at what
+            // the window is doing rather than at their data.
+            Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignRight
+                text: Julia.shell_version()
+                color: "#888"
+                font.pointSize: pt(baseFontPt - 2)
             }
         }
     }

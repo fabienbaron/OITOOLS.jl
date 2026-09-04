@@ -9,7 +9,7 @@ nx         = size(x_true, 1)
 imdisp(x_true; pixsize, tickinterval=1.0, beamsize=1.0,
        beamlocation=[0.85, 0.85], use_colorbar=true)
 
-oifitsfile = "./data/2004-data1.oifits"
+oifitsfile = "./data/BC2004/2004-data1.oifits"
 data       = readoifits(oifitsfile, warn=)[1,1]
 
 # ── Inspect the data ─────────────────────────────────────────────────────────
