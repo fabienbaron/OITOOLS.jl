@@ -45,6 +45,9 @@ struct LiveCanvas
     colors      :: Makie.Observable{Vector{Makie.RGBAf}}
     markersize  :: Makie.Observable{Float32}
     scatterplot :: Any
+    # The model/image overplot: its own points, and the plot that draws them.
+    overpoints  :: Makie.Observable{Vector{Makie.Point2f}}
+    overplot    :: Any
     # error bars, empty for uv coverage
     errpoints   :: Makie.Observable{Vector{Makie.Point2f}}
     errlow      :: Makie.Observable{Vector{Float32}}
@@ -100,6 +103,13 @@ function build_canvas(fig, ax)
     errplot = Makie.errorbars!(ax, errpts, errlo, errhi; color = OIPLOT_ECOLOR)
     sc      = Makie.scatter!(ax, points; color = colors, marker = OIPLOT_MARKER,
                              markersize = msize)
+    # The model / image overplot, built here like everything else because nothing may be
+    # created once the window exists. One colour and an open marker: it is a prediction laid
+    # over the data, and colouring it by baseline too would make the two indistinguishable.
+    overpts  = Makie.Observable(Makie.Point2f[])
+    overplot = Makie.scatter!(ax, overpts; color = (:black, 0.75), marker = :circle,
+                              markersize = msize, strokewidth = 1.2,
+                              strokecolor = (:black, 0.9), visible = false)
 
     # The legend is drawn by hand rather than with Makie.Legend.
     #
@@ -147,6 +157,7 @@ function build_canvas(fig, ax)
     panels = _build_panels(fig)
 
     canvas = LiveCanvas(fig, ax, points, colors, msize, sc,
+                        overpts, overplot,
                         errpts, errlo, errhi, errplot,
                         legax, legmarks, legcols, legtpos, legtxt, legfs,
                         cblim, cblab, cbar,
@@ -205,6 +216,7 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::A
     set_legend!(c, Pair{String,Makie.RGBAf}[])
 
     c.scatterplot.visible[] = false
+    c.overplot.visible[] = false
     c.errplot.visible[] = false
     c.imageplot.visible[] = true
 
@@ -756,7 +768,8 @@ Shared with `draw!` through the same helpers (`uv_point_labels`, `group_names`,
 `baseline_color_map`, `OBS_SPECS`), and asserted equal to it in the tests.
 """
 function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
-                     conjugate::Bool = true, logscale::Bool = false)
+                     conjugate::Bool = true, logscale::Bool = false,
+                     residual::Union{Nothing,AbstractVector} = nothing)
     if kind === :uv
         color = color === nothing ? :baseline : color
         names, info = uv_point_labels(d)
@@ -807,8 +820,13 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
 
     names = group_names(d, spec)
     x = Float64.(getfield(d, spec.x)) .* spec.xscale
-    y = Float64.(getfield(d, spec.y))
-    e = Float64.(getfield(d, spec.yerr))
+    # A residual replaces the observable on the SAME axes, against the same baseline and in the
+    # same groups — it is a different y for this plot, not a different plot. Its error bar is
+    # gone rather than 1: the residual is already in units of sigma, so drawing +-1 on every
+    # point would say nothing and hide the scatter that is the whole picture.
+    isresid = residual !== nothing && length(residual) == length(x)
+    y = isresid ? Float64.(residual) : Float64.(getfield(d, spec.y))
+    e = isresid ? zeros(length(x))   : Float64.(getfield(d, spec.yerr))
     isempty(x) && throw(ArgumentError("no $(kind) data in $(basename(d.filename))"))
     info = [obs_info(d, spec, i, names) for i in eachindex(x)]
 
@@ -858,8 +876,10 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
     end
 
     return (; x, y = yv, err = e, errlow = lo_err, colors = cols, info, legend, cvals, clabel,
-            cmap, xlabel = spec.xlabel, ylabel = spec.ylabel,
-            title = string(kind) * " — " * basename(d.filename),
+            cmap, xlabel = spec.xlabel,
+            ylabel = isresid ? "(model − data) / σ" : spec.ylabel,
+            title = (isresid ? string(kind) * " residuals — " : string(kind) * " — ") *
+                    basename(d.filename),
             isotropic = false, logscale, ylims, markersize = 7.0f0)
 end
 
@@ -871,8 +891,11 @@ call from a QML callback with no GL context bound. Returns the per-point info st
 """
 function update_canvas!(c::LiveCanvas, d, kind::Symbol;
                         color::Union{Nothing,Symbol} = nothing, conjugate::Bool = true,
-                        logscale::Bool = false, markersize::Union{Nothing,Real} = nothing)
-    pd = canvas_data(d, kind; color = color, conjugate = conjugate, logscale = logscale)
+                        logscale::Bool = false, markersize::Union{Nothing,Real} = nothing,
+                        residual::Union{Nothing,AbstractVector} = nothing,
+                        overlay::Union{Nothing,AbstractVector} = nothing)
+    pd = canvas_data(d, kind; color = color, conjugate = conjugate, logscale = logscale,
+                     residual = residual)
 
     ax = c.axis
     ax.xlabel[] = pd.xlabel
@@ -897,6 +920,14 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
                      Float32(something(markersize, pd.markersize) * sc)
     c.points[]     = Makie.Point2f.(pd.x, pd.y)
     c.colors[]     = pd.colors
+
+    # The overplot shares the data's x, so it is only drawable when it has one value per point
+    # — and never on uv coverage or on a residual, where "the model's observable" is either
+    # meaningless or already subtracted.
+    canover = overlay !== nothing && kind !== :uv && residual === nothing &&
+              length(overlay) == length(pd.x)
+    c.overpoints[] = canover ? Makie.Point2f.(pd.x, Float64.(overlay)) : Makie.Point2f[]
+    c.overplot.visible[] = canover
 
     if isempty(pd.err)
         c.errpoints[] = Makie.Point2f[]

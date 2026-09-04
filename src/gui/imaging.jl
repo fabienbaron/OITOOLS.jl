@@ -44,10 +44,15 @@ Every engine here is genuinely dispatched to. A name that appears in the panel b
 through to `reconstruct` would be worse than an absent one: the run succeeds, the image looks
 plausible, and the label on it is wrong.
 
-`:tempering` and `:vi` are deliberately absent. Both need a package that is not a dependency --
-Pigeons and OIVI -- so the panel blocks them with that reason rather than offering them here.
+`:tempering` is deliberately absent: it needs Pigeons, which is not a dependency, so the panel
+blocks it with that reason rather than offering it here.
+
+`:vi` IS here, but it only dispatches when `VarInf` is loaded — the VI code lives in
+`src/vi/`, behind the `OITOOLSVarInfExt` extension. `vi_available()` is what the panel greys
+the entry on.
 """
 const IMAGING_ENGINES = Dict{Symbol,String}(
+    :vi             => "reconstruct_hybrid  (MAP -> MGVI -> geoVI)",
     :vmlmb          => "reconstruct",
     :bsmem          => "reconstruct_bsmem",
     :bsdmm          => "reconstruct_bsdmm",
@@ -645,11 +650,62 @@ function run_engine(engine::Symbol, x0, data, ft;
         # component it is not, and the sampler's own reduced χ² is the honest number.
         own = engine === :squeeze_sparco ? _squeeze_chi2(diag) : nothing
         return (img, diag, own)
+
+    elseif engine === :vi
+        ext = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)
+        ext === nothing && error("Variational inference needs VarInf. Install it once with " *
+                                 "`Pkg.develop(path = \"…/VarInf.jl\")`, then restart.")
+        d = _require_mono(data, engine)
+
+        # VI runs at Float64 and the panel's plans are Float32 by default, so the geometry is
+        # rebuilt here rather than pushing double precision onto every other engine. `nx` and
+        # `pixsize` come off the plans that were handed in, so the two cannot disagree.
+        nx  = size(x0, 1)
+        ps  = ft.pixsize
+        d64 = readoifits(d.filename; T = Float64, filter_bad_data = true,
+                         verbose = false, warn = false)
+        ft64 = setup_ft(d64, nx, ps)
+
+        p = ext.SkyModelParams(nx, Float64(ps), [3e8 / _mean_lam(d)];
+                               R_mas = _optreal(o, "vi_radius", nx * ps / 5),
+                               u     = _optreal(o, "vi_limb",   0.2))
+        # One channel means the spectral field has nothing to vary over; left free it is a
+        # degenerate direction the sampler spends its effort on.
+        frozen = size(d64, 1) == 1 ? ext.frozen_spectral_range(p) : nothing
+
+        z, mean_img, std_img, samples = ext.reconstruct_hybrid(p, ft64, d64;
+            weights, verb,
+            n_mgvi  = Int(_optreal(o, "vi_mgvi",  10)),
+            n_geovi = Int(_optreal(o, "vi_geovi",  6)),
+            map_maxiter = maxiter, frozen_ranges = frozen)
+
+        # Per-sample images, so `result_ensemble` builds the mean and sigma the same way it
+        # does for a sampler's chains: one definition of "the ensemble" for every engine that
+        # returns a distribution rather than a point.
+        nlat = ext._latent_size(p)
+        imgs = [Float64.(ext.sky_forward(s[1:nlat], p)[:, :, 1]) for s in samples]
+        diag = (; images = imgs, mean = mean_img[:, :, 1], sigma = std_img[:, :, 1],
+                  n_samples = length(samples))
+        return (mean_img[:, :, 1], diag, nothing)
     end
 
     error("Unknown imaging engine $(repr(engine)); known ones are " *
           join(sort(string.(keys(IMAGING_ENGINES))), ", "))
 end
+
+"""
+    vi_available() -> Bool
+
+Whether variational inference can run: the `OITOOLSVarInfExt` extension is loaded, which
+happens when `VarInf` is.
+
+The panel greys the entry on this rather than hiding it, so that an engine the build could
+offer is visible with its reason rather than silently absent.
+"""
+vi_available() = Base.get_extension(OITOOLS, :OITOOLSVarInfExt) !== nothing
+
+"Mean wavelength of a dataset, for the VI sky model's reference frequency."
+_mean_lam(d) = sum(d.uv_lam) / length(d.uv_lam)
 
 """
     prior_image(path, nx) -> Matrix{Float64}

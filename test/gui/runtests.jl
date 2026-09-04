@@ -713,7 +713,7 @@ end
     @testset "console pane" begin
         G = GUI
         sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
-                          :uv, :baseline, false, false, "", String[], nothing, "", nothing, nothing, nothing,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing, "", nothing, nothing, nothing,
                           nothing, nothing, nothing, nothing, Any[], nothing, nothing, nothing,
                           nothing, "", "", nothing)
 

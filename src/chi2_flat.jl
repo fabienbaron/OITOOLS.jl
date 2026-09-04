@@ -251,13 +251,18 @@ about a sign or a factor, and only one of them would be under test.
 `g_t3phi` and `g_visphi` are cotangents **per radian**, not per degree, even though the stored
 observables are in degrees.
 
+`data` is duck-typed rather than an `OIdata`: it needs `indx_v2` and `indx_t3_1/2/3`, and
+`indx_vis` only when a vis cotangent is given. The VI extension's `ObservationConfig` carries
+the same index vectors without being an `OIdata`, and requiring one there would mean either a
+second copy of this scatter or a conversion that exists only to satisfy a signature.
+
 Pass `V1`/`V2`/`V3`/`Vvis` when the caller already holds the per-leg slices; they are taken
 from `V` otherwise. `scale_*` folds a per-observable weight in without materialising a scaled
 copy of the cotangent, which matters because this runs once per criterion evaluation.
 """
 function scatter_obs_cotangent!(g_cvis::AbstractVector{<:Complex},
                                 V::AbstractVector{<:Complex},
-                                data::OIdata;
+                                data;
                                 g_v2 = nothing, g_t3amp = nothing, g_t3phi = nothing,
                                 g_visamp = nothing, g_visphi = nothing,
                                 scale_v2 = 1, scale_t3amp = 1, scale_t3phi = 1,

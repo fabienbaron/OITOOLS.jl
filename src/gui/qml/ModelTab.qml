@@ -2585,18 +2585,11 @@ Item {
                                         spacing: root.dp(6)
                                         Label { text: "Fits"; font.bold: true }
                                         Item { Layout.fillWidth: true }
-                                        // The model as it stands, so this works before a fit as
-                                        // well as after one: whether a starting point is anywhere
-                                        // near the data is worth knowing before spending an
-                                        // optimiser on it.
-                                        Button {
-                                            text: "Residuals"; implicitHeight: root.dp(20)
-                                            enabled: paramModel.count > 0
-                                            ToolTip.visible: hovered
-                                            ToolTip.text: "(model − data)/σ against baseline, " +
-                                                          "for the values in the table"
-                                            onClicked: root.showResiduals()
-                                        }
+                                        // Residuals moved to the Exploring perspective, as a
+                                        // tick beside the other views of the data. They are a
+                                        // view OF the data rather than a property of the model,
+                                        // and this panel is dense enough with the chi2 map and
+                                        // the SED. See `setResidualView` in Main.qml.
                                         // Shows the map the grid search made; it does not run a
                                         // second one. Running a grid search IS the grid-search
                                         // optimiser, and a button that quietly ran another would
@@ -2746,7 +2739,11 @@ Item {
                             title: "Optimiser output"
                             Layout.fillWidth: true
                             Layout.preferredHeight: root.dp(150)
-                            visible: root.fitOutput.length > 0
+                            // Also while fitting, even though the text has just been cleared: a
+                            // GridLayout skips invisible items rather than reserving their cell,
+                            // so binding this to the text alone made the panel below jump 150dp
+                            // the moment Fit was pressed and back when the first line arrived.
+                            visible: root.fitOutput.length > 0 || root.running
 
                             OutputConsole {
                                 anchors.fill: parent
@@ -2776,14 +2773,6 @@ Item {
                             }
 
                             MakieArea {
-                                id: residArea
-                                anchors.fill: parent
-                                anchors.margins: root.dp(1)
-                                visible: root.diagView === "residuals"
-                                scene: residPlot
-                            }
-
-                            MakieArea {
                                 id: sedArea
                                 anchors.fill: parent
                                 anchors.margins: root.dp(1)
@@ -2806,15 +2795,13 @@ Item {
                                     // Saves whichever of the two is on screen. One button in
                                     // the corner every other plot area puts one in, rather than
                                     // a second that appears and disappears with the view.
-                                    enabled: root.diagView === "residuals" ? root.residText.length > 0
-                                           : root.diagView === "sed"       ? root.sedText.length > 0
-                                           : root.chi2MapP1.length > 0
+                                    enabled: root.diagView === "sed" ? root.sedText.length > 0
+                                                                     : root.chi2MapP1.length > 0
                                     opacity: hovered ? 1.0 : 0.5
                                     ToolTip.visible: hovered
                                     ToolTip.text: "write this plot to a PNG file"
-                                    onClicked: root.diagView === "residuals" ? root.savePng("residuals", residArea)
-                                             : root.diagView === "sed"       ? root.savePng("sed", sedArea)
-                                             : root.savePng("chi2map", chi2MapArea)
+                                    onClicked: root.diagView === "sed" ? root.savePng("sed", sedArea)
+                                                                       : root.savePng("chi2map", chi2MapArea)
                                 }
 
                             // Covers the chart until there is one. The Makie figure exists from
@@ -2865,15 +2852,6 @@ Item {
 
                             // rms per observable, which is what the ±1 and ±3 lines are drawn
                             // at -- so the caption and the picture say the same thing.
-                            Label {
-                                visible: root.diagView === "residuals" && root.residText.length > 0
-                                anchors.left: parent.left
-                                anchors.bottom: parent.bottom
-                                anchors.margins: root.dp(6)
-                                text: root.residText
-                                color: "#666"
-                                font.pointSize: root.pt(root.baseFontPt - 2)
-                            }
                         }
                     }
                 }
@@ -3002,14 +2980,6 @@ Item {
         var w = Julia.shell_model_warnings()
         root.validationWarnings = w.length > 0 ? w.split("\n") : []
 
-        // Residuals of the model as it was two keystrokes ago would be the wrong picture, so
-        // they follow the edits -- quietly, since one transcript line per keystroke is not a
-        // transcript. Only while the panel is actually showing them.
-        if (root.diagView === "residuals") {
-            root.residText = Julia.shell_model_residuals(true)
-            residArea.update()
-        }
-
         // Which of the render panel's two controls are live, and whether the SED is a curve
         // or a set of flat lines.
         var dep = Julia.shell_model_depends().split("\t")
@@ -3023,7 +2993,6 @@ Item {
     // missed. "chi2map" is the default because the grid search is the optimiser that fills it
     // on its own; residuals are drawn when asked for.
     property string diagView: "chi2map"
-    property string residText: ""
     property string sedText: ""
 
     function showSed() {
@@ -3034,16 +3003,6 @@ Item {
         }
         root.diagView = "sed"
         sedArea.update()
-    }
-
-    function showResiduals() {
-        root.residText = Julia.shell_model_residuals()
-        root.consoleChanged()
-        if (root.residText.length > 0 && root.residText.charAt(0) === "!") {
-            root.fitText = root.residText; return
-        }
-        root.diagView = "residuals"
-        residArea.update()
     }
 
     // Whether the most recent fit left a χ² map behind, and over what.

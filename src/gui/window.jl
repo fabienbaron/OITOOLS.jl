@@ -35,6 +35,7 @@ function __init__()
                      shell_ld_laws, shell_ld_law, shell_set_ld_law,
                      shell_az_modes, shell_add_az_mode, shell_remove_az_mode,
                      shell_model_residuals, shell_model_sed, shell_model_depends,
+                     shell_set_residual_mode, shell_set_overlay_mode,
                      shell_sparco_converged,
                      shell_result_ensemble, shell_show_result,
                      shell_bin_info, shell_rebin,
@@ -209,7 +210,8 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(priax); style_axis!(prvax)
     profileplot = build_profile_plot(prfig, priax, prvax)
 
-    sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false, false,
+    sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false,
+                     :none, :none, false,
                      "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
                      delayplot, modelcanvas, nothing, Any[], chi2map, profileplot, residplot, sedplot,
                      "", "", nothing)

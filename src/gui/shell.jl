@@ -32,6 +32,14 @@ mutable struct ShellState
     kind    :: Symbol
     color   :: Symbol
     logy    :: Bool             # log y axis, where the observable allows one
+    # :none, :model or :image -- plot (model - data)/sigma for the SELECTED observable rather
+    # than the observable itself. A modifier on the current plot, not a panel of its own: a
+    # residual belongs on the same axes as the quantity it is a residual OF.
+    residual :: Symbol
+    # :none, :model or :image -- draw the model's or the reconstruction's OBSERVABLES on top of
+    # the data, rather than replacing them. Independent of `residual`: seeing the curve through
+    # the points and seeing what is left over are different questions.
+    overlay  :: Symbol
     panels  :: Bool             # one panel per baseline/triplet/station, against wavelength
     status  :: String
     console :: Vector{String}   # what the bottom pane shows: commands and outcomes, in order
@@ -121,12 +129,101 @@ function refresh_plot!(sh::ShellState = _shell())
     else
         # Live: assignment only. See src/livecanvas.jl for why nothing may be created here.
         show_panels!(sh.canvas, false)
+        # Residuals and the model/image overlay, both derived from the same two producers.
+        # A failure is RETURNED, not just recorded: writing it to `sh.status` here and then
+        # falling through to the usual "N points" line at the end overwrote it, so a residual
+        # that could not be computed showed the plain data plot and said nothing at all.
+        rset = residual_set(sh)
+        rset isa String && return rset
+        oset = overlay_set(sh)
+        oset isa String && return oset
         sh.info    = update_canvas!(sh.canvas, d, sh.kind; color = sh.color,
-                                    logscale = sh.logy)
+                                    logscale = sh.logy,
+                                    residual = residual_for(rset, sh.kind),
+                                    overlay  = residual_for(oset, sh.kind))
         sh.plotobj = sh.canvas.scatterplot
     end
+    suffix = sh.residual === :none ? "" : " — " * String(sh.residual) * " residuals"
+    suffix *= sh.overlay === :none ? "" : " + " * String(sh.overlay) * " overplotted"
     return string(e.name, " — ", basename(e.path), " — ", sh.kind,
-                  " (", length(sh.info), " points)")
+                  " (", length(sh.info), " points)", suffix)
+end
+
+"""
+    residual_set(sh) -> NamedTuple or an error String
+
+`(model - data)/sigma` per observable, from the model or from the last reconstruction.
+
+Both producers key their result identically -- `v2`, `t3amp`, `t3phi`, `visamp`, `visphi` --
+so the caller picks a field by the plot kind and never learns which made it.
+"""
+function residual_set(sh::ShellState)
+    sh.residual === :none && return nothing
+    if sh.residual === :model
+        r = _current_residuals(sh; quiet = true)
+        r isa String && return r
+        return r.res
+    end
+    im = sh.imaging
+    im === nothing && return "! no reconstruction yet — run one in Imaging first"
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    return try
+        ft = setup_ft(e.data, im.setup.nx, im.setup.pixsize; mode = String(im.setup.mode))
+        image_to_residuals(im.image, ft, e.data)
+    catch err
+        "! image residuals not available: " * _cause(err)
+    end
+end
+
+"""
+    overlay_set(sh) -> NamedTuple or an error String
+
+The model's or the reconstruction's OBSERVABLES, keyed like the residual set so `residual_for`
+picks a kind out of either.
+
+`model_to_obs` and `image_to_obs` are what the two engines already use to compare against the
+data, so an overlay drawn from them is the same prediction the chi2 is computed from — not a
+second evaluation that could disagree with it.
+"""
+function overlay_set(sh::ShellState)
+    sh.overlay === :none && return nothing
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    if sh.overlay === :model
+        m = _model()
+        return try
+            fm = parse_model(Dict{String,Any}(String(k) => v for (k, v) in m.dict),
+                             String.(m.free); nB_workspace = 1)
+            x = Float64[_row_value(m, k) for k in m.free]
+            model_to_obs(fm, x, e.data[1, 1])
+        catch err
+            "! model observables not available: " * _cause(err)
+        end
+    end
+    im = sh.imaging
+    im === nothing && return "! no reconstruction yet — run one in Imaging first"
+    return try
+        ft = setup_ft(e.data, im.setup.nx, im.setup.pixsize; mode = String(im.setup.mode))
+        image_to_obs(im.image, ft, e.data)
+    catch err
+        "! image observables not available: " * _cause(err)
+    end
+end
+
+"""
+    residual_for(res, kind) -> Vector or nothing
+
+The residual vector matching a plot kind, or `nothing` where the kind has none.
+
+`t3amp_max` and `t3phi_max` differ from their plain forms only in which baseline they are drawn
+against, so they share a residual. `uv`, `flux` and the differential views have none: the first
+is geometry, and the others are not what `model_to_residuals` reports.
+"""
+function residual_for(res, kind::Symbol)
+    res === nothing && return nothing
+    k = kind === :t3amp_max ? :t3amp : kind === :t3phi_max ? :t3phi : kind
+    return hasproperty(res, k) ? getproperty(res, k) : nothing
 end
 
 # ── callbacks reachable from QML ──────────────────────────────────────────────
@@ -417,6 +514,21 @@ function shell_shift_date(iso::AbstractString, days::Integer, months::Integer)
 end
 
 """
+    _collapse_cr(s) -> String
+
+Show a carriage-return progress line the way a terminal does: keep only what follows the last
+`\r` on each line.
+
+Samplers redraw a progress bar in place with `\r` rather than emitting a line per update.
+Captured verbatim into a `TextArea` that string is ONE line, thousands of characters wide — and
+the console does not wrap (`OutputConsole` sets `NoWrap` on purpose, so columns of numbers stay
+in columns). The result is a horizontal rule where the output should be. Nautilus is where this
+was first noticed; anything with a progress bar does it.
+"""
+_collapse_cr(s::AbstractString) =
+    join((last(split(line, '\r')) for line in split(String(s), '\n')), '\n')
+
+"""
     shell_fit_model(model_lines, free_lines, constraint_lines, prior_lines,
                     v2, t3amp, t3phi, cvis, flux, diffvis, optimiser, maxeval) -> String
 
@@ -534,7 +646,7 @@ a Makie call.
 function finish_fit!(sh::ShellState, res)
     if !res.ok
         msg = "! fit failed: " * _cause(res.err)
-        sh.fitlog = isempty(res.output) ? msg : res.output * "\n" * msg
+        sh.fitlog = isempty(res.output) ? msg : _collapse_cr(res.output) * "\n" * msg
         console!(sh, msg)
         return msg
     end
@@ -545,7 +657,7 @@ function finish_fit!(sh::ShellState, res)
     sh.fitlog = isempty(strip(res.output)) && f.optimiser == "grid" ?
         "grid search evaluates χ² on a fixed grid and has no iteration trace to report.\n" *
         "the surface itself is the output: see the χ² map below." :
-        res.output
+        _collapse_cr(res.output)
 
     # The map belongs to the fit that produced it, not to the shell: two grid fits over
     # different parameter pairs both stay reachable, and selecting an older fit can redraw it.
@@ -1919,7 +2031,10 @@ function shell_flux_constraint()
     length(fkeys) < 2 && return "! a flux constraint needs at least two components with " *
                                 "numeric flux fractions"
     lhs = join(("\$" * k for k in fkeys), " + ")
-    return join((lhs, "==", "1", "0.001"), '\t')
+    # "=", not "==": `_op_string` canonicalises equality to a single "=", and that is what the
+    # operator menu offers. Handing QML "==" left it with no matching entry, so the combo fell
+    # back to its first item and the button silently produced `sum < 1`.
+    return join((lhs, "=", "1", "0.001"), '\t')
 end
 
 """
@@ -2369,7 +2484,9 @@ function shell_job_poll()
     sh = SHELL[]
     (sh === nothing || sh.job === nothing) && return "idle\t"
     j = sh.job
-    istaskdone(j.task) || return "running\t" * job_output(sh)
+    # Collapsed on the live path too, or a progress bar is a horizontal rule for the whole run
+    # and only tidies itself up at the end.
+    istaskdone(j.task) || return "running\t" * _collapse_cr(job_output(sh))
 
     stopped = j.stop[]
     kind = j.kind
@@ -2378,7 +2495,8 @@ function shell_job_poll()
         # Abandoned rather than aborted; see `shell_job_stop`. Whatever came back is discarded,
         # because the user asked to stop looking at it.
         line = "stopped"
-        kind === :image ? (sh.enginelog = res.output) : (sh.fitlog = res.output)
+        kind === :image ? (sh.enginelog = _collapse_cr(res.output)) :
+                          (sh.fitlog   = _collapse_cr(res.output))
         console!(sh, "  " * line)
     else
         line = kind === :image ? finish_reconstruct!(sh, res) : finish_fit!(sh, res)
@@ -2609,6 +2727,50 @@ function shell_show_start_image(nx::Integer, pixsize::Real, mode::AbstractString
                                            label = "starting image")
     console!(sh, "> start_image(setup, ft)   # $(startkind), $(Int(nx))×$(Int(nx))")
     return "showing the starting image"
+end
+
+"""
+    shell_set_overlay_mode(mode) -> String
+
+Draw the model's or the reconstruction's observables ON TOP of the data: `""`, `"model"` or
+`"image"`.
+
+The companion of [`shell_set_residual_mode`](@ref) and the other half of the same question: an
+overplot shows whether the prediction goes through the points, a residual shows what is left
+when it does not. Mutually exclusive with the residual view, because a residual already has the
+model subtracted — overplotting it there would draw the prediction against its own difference.
+"""
+function shell_set_overlay_mode(mode::AbstractString)
+    sh = _shell()
+    m = mode == "model" ? :model : mode == "image" ? :image : :none
+    sh.overlay = m
+    m === :none || (sh.residual = :none)
+    sh.status = refresh_plot!(sh)
+    m === :none || console!(sh, m === :model ? "model_to_obs(model, x, data)" :
+                                               "image_to_obs(x, ft, data)"; kind = :cmd)
+    return sh.status
+end
+
+"""
+    shell_set_residual_mode(mode) -> String
+
+Switch the plot between the observable and its residual: `""`, `"model"` or `"image"`.
+
+A modifier on whatever the kind menu has selected, so `v2` becomes `v2` residuals and `t3phi`
+becomes `t3phi` residuals, each against its own baseline and in its own groups. That is the
+point of doing it here rather than in a panel of its own: the residual is read against the same
+axes as the quantity it came from, and every view that works for the data — colour-by, per
+group, picking — works for it unchanged.
+"""
+function shell_set_residual_mode(mode::AbstractString)
+    sh = _shell()
+    m = mode == "model" ? :model : mode == "image" ? :image : :none
+    sh.residual = m
+    m === :none || (sh.overlay = :none)   # a residual has the model subtracted already
+    sh.status = refresh_plot!(sh)
+    m === :none || console!(sh, m === :model ? "model_to_residuals(model, x, data)" :
+                                               "image_to_residuals(x, ft, data)"; kind = :cmd)
+    return sh.status
 end
 
 """

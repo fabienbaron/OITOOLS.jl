@@ -3,7 +3,7 @@ uuid = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 keywords = ["astronomy", "interferometry"]
 license = "GPLv3"
 desc = "The all-in-one data analysis package for optical interferometry"
-version = "0.13.2"
+version = "0.14.0"
 authors = ["Fabien Baron <fbaron@gsu.edu>"]
 
 [workspace]
@@ -59,6 +59,7 @@ Pigeons = "0eb8d820-af6a-4919-95ae-11206f830c31"
 PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
 QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
+VarInf = "cd771066-68b7-4d72-889c-da7b55f139d5"
 QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
 
 # Triggers are the packages that must be loaded, not the feature's name. Two are worth reading
@@ -84,10 +85,16 @@ OITOOLSPairPlotsExt = ["PairPlots", "Makie"]
 OITOOLSMakieExt = "Makie"
 OITOOLSPigeonsExt = "Pigeons"
 OITOOLSPythonPlotExt = ["PythonPlot", "PythonCall"]
+# Variational inference. Triggered by VarInf, the generic VI core; everything
+# interferometric lives in src/vi/ so it cannot drift from OIdata and setup_ft.
+OITOOLSVarInfExt = "VarInf"
 OITOOLSUltraNestExt = "PythonCall"
 
 [compat]
 ADTypes = "1.21.0"
+# VarInf is UNREGISTERED and has no public remote, so it cannot go in [sources] the way
+# Nautilus does: install it with `Pkg.develop(path = "…/VarInf.jl")`.
+VarInf = "0.1"
 CondaPkg = "0.2"
 Downloads = "1"
 FiniteDifferences = "0.12.33"

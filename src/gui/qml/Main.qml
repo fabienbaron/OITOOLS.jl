@@ -174,6 +174,30 @@ ApplicationWindow {
                                                       : kindBox.currentText
     }
 
+    // Both are "", "model" or "image", and at most one of the four ticks is ever on: a
+    // residual has the model subtracted already, so overplotting it there would draw the
+    // prediction against its own difference.
+    property string residualView: ""
+    property string overlayView: ""
+
+    // uv coverage is geometry, not an observable — there is nothing for a model to predict and
+    // nothing to subtract. The ticks are disabled there rather than hidden, like every other
+    // control in this bar.
+    function comparableKind() {
+        return ["v2", "t3amp", "t3phi", "visamp", "visphi"].indexOf(kindBox.currentText) >= 0
+    }
+
+    function setCompareView() {
+        win.residualView = residModelBox.checked ? "model"
+                         : residImageBox.checked ? "image" : ""
+        win.overlayView  = overModelBox.checked  ? "model"
+                         : overImageBox.checked  ? "image" : ""
+        win.status = win.residualView.length > 0
+                   ? Julia.shell_set_residual_mode(win.residualView)
+                   : Julia.shell_set_overlay_mode(win.overlayView)
+        win.afterAction()
+    }
+
     function setView() {
         win.groupingNoun = Julia.shell_grouping_noun(effectiveKind())
         win.status = Julia.shell_set_view(effectiveKind(), colorBox.currentText,
@@ -741,6 +765,48 @@ ApplicationWindow {
                         id: colorBox
                         model: ["baseline", "wav", "mjd", "none"]
                         onActivated: win.setView()
+                    }
+                    // Residuals and the model/image overplot live here rather than inside
+                    // Modeling and Imaging. They are views OF the data, so they belong beside
+                    // the other views of it, and the two perspectives that produce them are
+                    // dense enough already. Both follow the kind menu: ticking one turns `v2`
+                    // into v2 residuals, `t3phi` into t3phi residuals, and so on, on the same
+                    // axes and in the same groups.
+                    CheckBox {
+                        id: residModelBox
+                        text: "Residuals (model)"
+                        enabled: win.comparableKind()
+                        onToggled: { if (checked) { residImageBox.checked = false
+                                                    overModelBox.checked = false
+                                                    overImageBox.checked = false }
+                                     win.setCompareView() }
+                    }
+                    CheckBox {
+                        id: residImageBox
+                        text: "Residuals (imaging)"
+                        enabled: win.comparableKind()
+                        onToggled: { if (checked) { residModelBox.checked = false
+                                                    overModelBox.checked = false
+                                                    overImageBox.checked = false }
+                                     win.setCompareView() }
+                    }
+                    CheckBox {
+                        id: overModelBox
+                        text: "Overplot model obs"
+                        enabled: win.comparableKind()
+                        onToggled: { if (checked) { overImageBox.checked = false
+                                                    residModelBox.checked = false
+                                                    residImageBox.checked = false }
+                                     win.setCompareView() }
+                    }
+                    CheckBox {
+                        id: overImageBox
+                        text: "Overplot image obs"
+                        enabled: win.comparableKind()
+                        onToggled: { if (checked) { overModelBox.checked = false
+                                                    residModelBox.checked = false
+                                                    residImageBox.checked = false }
+                                     win.setCompareView() }
                     }
                     CheckBox {
                         id: maxBlBox
