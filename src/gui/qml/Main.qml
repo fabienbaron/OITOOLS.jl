@@ -166,9 +166,17 @@ ApplicationWindow {
     // What one panel of the per-group view would hold, for whichever observable is selected.
     property string groupingNoun: ""
 
+    // The kind actually plotted. `t3phi`/`t3amp` each have a `_max` twin in `OBS_SPECS` that
+    // differs only in which baseline it plots against, so the tick selects the twin rather
+    // than adding a second axis convention anywhere.
+    function effectiveKind() {
+        return (maxBlBox.enabled && maxBlBox.checked) ? kindBox.currentText + "_max"
+                                                      : kindBox.currentText
+    }
+
     function setView() {
-        win.groupingNoun = Julia.shell_grouping_noun(kindBox.currentText)
-        win.status = Julia.shell_set_view(kindBox.currentText, colorBox.currentText,
+        win.groupingNoun = Julia.shell_grouping_noun(effectiveKind())
+        win.status = Julia.shell_set_view(effectiveKind(), colorBox.currentText,
                                           logyBox.enabled && logyBox.checked,
                                           panelsBox.enabled && panelsBox.checked)
         win.afterAction()
@@ -233,7 +241,7 @@ ApplicationWindow {
         imageTab.haveDiffvis = have.diffvis
         imageTab.resetObservables()
         win.refreshPlotKinds()
-        win.groupingNoun = Julia.shell_grouping_noun(kindBox.currentText)
+        win.groupingNoun = Julia.shell_grouping_noun(effectiveKind())
 
         // Geometry the data suggests. A constant pixel size is not a neutral default: too
         // coarse and the image cannot represent what the data resolves, too fine and it is
@@ -733,6 +741,20 @@ ApplicationWindow {
                         id: colorBox
                         model: ["baseline", "wav", "mjd", "none"]
                         onActivated: win.setView()
+                    }
+                    CheckBox {
+                        id: maxBlBox
+                        text: "max baseline"
+                        // Closure quantities have three baselines and one x position. The
+                        // default is the geometric mean; this plots them against the LONGEST
+                        // leg instead, which is what sets the resolution the triangle actually
+                        // reaches. On the 2004 contest data the two differ by a factor 1.6, so
+                        // it is not a cosmetic choice.
+                        //
+                        // Enabled rather than hidden, like every other entry in this bar: the
+                        // toolbar keeps its width, and which options exist stays visible.
+                        enabled: ["t3phi", "t3amp"].indexOf(kindBox.currentText) >= 0
+                        onToggled: win.setView()
                     }
                     CheckBox {
                         id: logyBox

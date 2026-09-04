@@ -230,6 +230,103 @@ function _total_chi2(t, weights; chi2_flux=zero(eltype(weights)), chi2_diffphase
 end
 
 
+"""
+    scatter_obs_cotangent!(g_cvis, V, data; g_v2, g_t3amp, g_t3phi, g_visamp, g_visphi,
+                           scale_v2 = 1, …, V1 = nothing, V2 = nothing, V3 = nothing,
+                           Vvis = nothing) -> g_cvis
+
+Adjoint of the map from complex visibilities to observables: given `dL/d(observable)` for **any**
+scalar `L`, accumulate `dL/dV` into `g_cvis`.
+
+Each observable contributes `(dL/dobs) * (dobs/dV)`, scatter-added at its own `indx_*` so that
+a uv point shared between observables — and the repeated legs of a closure triangle — sum
+rather than overwrite.
+
+chi² is the special case `L = chi²`, which is what [`_accumulate_g_cvis!`](@ref) supplies. It is
+not the only one: variational inference needs the same operator applied to an arbitrary
+direction, because the Fisher metric is the forward map linearised about a point rather than
+the gradient at the data. Having one definition is the point — two would be free to disagree
+about a sign or a factor, and only one of them would be under test.
+
+`g_t3phi` and `g_visphi` are cotangents **per radian**, not per degree, even though the stored
+observables are in degrees.
+
+Pass `V1`/`V2`/`V3`/`Vvis` when the caller already holds the per-leg slices; they are taken
+from `V` otherwise. `scale_*` folds a per-observable weight in without materialising a scaled
+copy of the cotangent, which matters because this runs once per criterion evaluation.
+"""
+function scatter_obs_cotangent!(g_cvis::AbstractVector{<:Complex},
+                                V::AbstractVector{<:Complex},
+                                data::OIdata;
+                                g_v2 = nothing, g_t3amp = nothing, g_t3phi = nothing,
+                                g_visamp = nothing, g_visphi = nothing,
+                                scale_v2 = 1, scale_t3amp = 1, scale_t3phi = 1,
+                                scale_visamp = 1, scale_visphi = 1,
+                                V1 = nothing, V2 = nothing, V3 = nothing, Vvis = nothing)
+    # Divide-safety floor at the working precision: eps(Float64) would be nine orders of
+    # magnitude below eps(Float32) and so no guard at all for a Float32 pipeline.
+    ε = eps(real(eltype(V)))
+
+    # V²  =  |V|²,      d(V²)/dV = 2 conj(V)
+    if g_v2 !== nothing
+        @inbounds for j in eachindex(g_v2)
+            k = data.indx_v2[j]
+            g_cvis[k] += scale_v2 * 2 * g_v2[j] * conj(V[k])
+        end
+    end
+
+    need_t3 = g_t3amp !== nothing || g_t3phi !== nothing
+    if need_t3
+        z1 = V1 === nothing ? view(V, data.indx_t3_1) : V1
+        z2 = V2 === nothing ? view(V, data.indx_t3_2) : V2
+        z3 = V3 === nothing ? view(V, data.indx_t3_3) : V3
+
+        # T3amp = |V1||V2||V3|,   d/dV1 = conj(V1)/|V1| * |V2| * |V3|
+        if g_t3amp !== nothing
+            @inbounds for j in eachindex(g_t3amp)
+                a1 = abs(z1[j]); a2 = abs(z2[j]); a3 = abs(z3[j])
+                c = scale_t3amp * g_t3amp[j]
+                g_cvis[data.indx_t3_1[j]] += c * conj(z1[j]) / max(a1, ε) * a2 * a3
+                g_cvis[data.indx_t3_2[j]] += c * conj(z2[j]) / max(a2, ε) * a1 * a3
+                g_cvis[data.indx_t3_3[j]] += c * conj(z3[j]) / max(a3, ε) * a1 * a2
+            end
+        end
+
+        # T3phi = arg(V1 V2 V3),  d/dV1 = -im conj(V1)/|V1|²  in the g_cvis convention above
+        if g_t3phi !== nothing
+            @inbounds for j in eachindex(g_t3phi)
+                c = -im * scale_t3phi * g_t3phi[j]
+                g_cvis[data.indx_t3_1[j]] += c * conj(z1[j]) / max(abs2(z1[j]), ε)
+                g_cvis[data.indx_t3_2[j]] += c * conj(z2[j]) / max(abs2(z2[j]), ε)
+                g_cvis[data.indx_t3_3[j]] += c * conj(z3[j]) / max(abs2(z3[j]), ε)
+            end
+        end
+    end
+
+    if g_visamp !== nothing || g_visphi !== nothing
+        zv = Vvis === nothing ? view(V, data.indx_vis) : Vvis
+
+        # visamp = |V|,   d/dV = conj(V)/|V|
+        if g_visamp !== nothing
+            @inbounds for j in eachindex(g_visamp)
+                k = data.indx_vis[j]
+                g_cvis[k] += scale_visamp * g_visamp[j] * conj(zv[j]) / max(abs(zv[j]), ε)
+            end
+        end
+
+        # visphi = arg(V), d/dV = -im conj(V)/|V|²
+        if g_visphi !== nothing
+            @inbounds for j in eachindex(g_visphi)
+                k = data.indx_vis[j]
+                g_cvis[k] += -im * scale_visphi * g_visphi[j] * conj(zv[j]) / max(abs2(zv[j]), ε)
+            end
+        end
+    end
+
+    return g_cvis
+end
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # _accumulate_g_cvis!: compute the complex adjoint source vector from chi2 terms.
 #
@@ -247,66 +344,17 @@ function _accumulate_g_cvis!(g_cvis::AbstractVector{<:Complex},
                              t::NamedTuple, data::OIdata,
                              weights::AbstractVector{<:Real})
     w = _pad_weights(weights)
-    w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi = w[1], w[2], w[3], w[4], w[5]
-    # Divide-safety floor at the working precision: eps(Float64) would be nine orders of
-    # magnitude below eps(Float32) and so no guard at all for a Float32 pipeline.
-    ε = eps(real(eltype(V)))
-
-    # V2: g_cvis[k] += w_v2 * 4 * r_v2 * conj(V[k])
-    if w_v2 > 0 && data.nv2 > 0
-        for j in eachindex(t.r_v2)
-            k = data.indx_v2[j]
-            g_cvis[k] += w_v2 * 4 * t.r_v2[j] * conj(V[k])
-        end
-    end
-
-    # T3amp: scatter-add over three legs
-    if w_t3amp > 0 && data.nt3amp > 0
-        a1 = abs.(t.V1); a2 = abs.(t.V2); a3 = abs.(t.V3)
-        safe1 = max.(a1, ε); safe2 = max.(a2, ε); safe3 = max.(a3, ε)
-        for j in eachindex(t.r_t3amp)
-            c1 = t.r_t3amp[j] * conj(t.V1[j]) / safe1[j] * a2[j] * a3[j]
-            c2 = t.r_t3amp[j] * conj(t.V2[j]) / safe2[j] * a1[j] * a3[j]
-            c3 = t.r_t3amp[j] * conj(t.V3[j]) / safe3[j] * a1[j] * a2[j]
-            g_cvis[data.indx_t3_1[j]] += w_t3amp * c1
-            g_cvis[data.indx_t3_2[j]] += w_t3amp * c2
-            g_cvis[data.indx_t3_3[j]] += w_t3amp * c3
-        end
-    end
-
-    # T3phi: scatter-add with -im factor
-    if w_t3phi > 0 && data.nt3phi > 0
-        safe1 = max.(abs2.(t.V1), ε)
-        safe2 = max.(abs2.(t.V2), ε)
-        safe3 = max.(abs2.(t.V3), ε)
-        for j in eachindex(t.r_t3phi)
-            c1 = t.r_t3phi[j] * conj(t.V1[j]) / safe1[j]
-            c2 = t.r_t3phi[j] * conj(t.V2[j]) / safe2[j]
-            c3 = t.r_t3phi[j] * conj(t.V3[j]) / safe3[j]
-            g_cvis[data.indx_t3_1[j]] += -im * w_t3phi * c1
-            g_cvis[data.indx_t3_2[j]] += -im * w_t3phi * c2
-            g_cvis[data.indx_t3_3[j]] += -im * w_t3phi * c3
-        end
-    end
-
-    # Visamp: g_cvis[k] += w_visamp * r_visamp * conj(Vvis) / |Vvis|
-    if w_visamp > 0 && data.nvisamp > 0
-        safe = max.(abs.(t.Vvis), ε)
-        for j in eachindex(t.r_visamp)
-            k = data.indx_vis[j]
-            g_cvis[k] += w_visamp * t.r_visamp[j] * conj(t.Vvis[j]) / safe[j]
-        end
-    end
-
-    # Visphi: g_cvis[k] += -im * w_visphi * r_visphi * conj(Vvis) / |Vvis|²
-    if w_visphi > 0 && data.nvisphi > 0
-        safe = max.(abs2.(t.Vvis), ε)
-        for j in eachindex(t.r_visphi)
-            k = data.indx_vis[j]
-            g_cvis[k] += -im * w_visphi * t.r_visphi[j] * conj(t.Vvis[j]) / safe[j]
-        end
-    end
-
+    # The chi2 cotangents. `_chi2_terms` returns each `r_*` already equal to d(chi2)/d(obs),
+    # except V², whose residual is defined without the factor 2 that differentiating a square
+    # introduces — hence `2 * w[1]` there and a bare weight everywhere else. Phase residuals
+    # carry the degree-to-radian conversion, which is why the scatter takes radians.
+    scatter_obs_cotangent!(g_cvis, V, data;
+        g_v2      = (w[1] > 0 && data.nv2 > 0)     ? t.r_v2     : nothing, scale_v2     = 2 * w[1],
+        g_t3amp   = (w[2] > 0 && data.nt3amp > 0)  ? t.r_t3amp  : nothing, scale_t3amp  = w[2],
+        g_t3phi   = (w[3] > 0 && data.nt3phi > 0)  ? t.r_t3phi  : nothing, scale_t3phi  = w[3],
+        g_visamp  = (w[4] > 0 && data.nvisamp > 0) ? t.r_visamp : nothing, scale_visamp = w[4],
+        g_visphi  = (w[5] > 0 && data.nvisphi > 0) ? t.r_visphi : nothing, scale_visphi = w[5],
+        V1 = t.V1, V2 = t.V2, V3 = t.V3, Vvis = t.Vvis)
     return g_cvis
 end
 

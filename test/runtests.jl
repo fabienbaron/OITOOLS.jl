@@ -46,6 +46,7 @@ BLAS.set_num_threads(1)
         end
     end
 
+    include("test_obs_cotangent.jl")     # the shared cvis<-observables adjoint, general form
     include("test_image_orientation.jl") # East/North of an image array, and of its displays
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end
