@@ -1,0 +1,31 @@
+# Linear limb-darkened disc: I(μ)/I(0) = 1 − u(1 − μ), with `ldlin` the angular diameter in
+# milliarcseconds and `u` the one darkening coefficient.
+#
+# The cheapest step beyond a uniform disc, and on most data the one that earns its parameter.
+# On demos/data/AlphaCenA.oifits, fitting V² only: θ = 8.4175 mas, u = 0.176, χ²r = 4.224,
+# against 15.234 for Uniform_Disk.toml — one extra parameter takes χ²r down by a factor 3.6.
+#
+# It buys almost nothing further to go beyond it on this dataset: quadratic reaches 4.219 and
+# square-root 4.216, differences no V² curve without measurements past the first null can
+# justify. Fit this one first and only add coefficients if the residuals ask for them.
+#
+# SEED THE DIAMETER FROM THE DATA, not from a table — V² from a disc oscillates, so a seed in
+# the wrong lobe converges to the wrong lobe. Uniform_Disk.toml explains the failure mode; the
+# first V² null sits near 1.22 λ/B.
+
+name = "linear limb-darkened disk"
+
+free = ["star,ldlin", "star,u"]
+
+[model]
+"star,ldlin" = 8.0
+"star,u"     = 0.3
+"star,f"     = 1.0
+
+# u is bounded to [−1, 1] rather than [0, 1]: negative u is limb BRIGHTENING, which is physical
+# for some sources and should be reachable, but outside ±1 the profile goes negative somewhere
+# on the disc and the law stops describing an intensity at all. Finite bounds also let
+# UltraNest run on this file as it stands.
+[bounds]
+"star,ldlin" = [0.0, 20.0]
+"star,u"     = [-1.0, 1.0]

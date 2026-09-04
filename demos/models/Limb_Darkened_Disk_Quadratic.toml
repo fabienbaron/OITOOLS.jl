@@ -1,0 +1,32 @@
+# Quadratic limb-darkened disc: I(μ)/I(0) = 1 − u(1 − μ) − w(1 − μ)², with `ldquad` the angular
+# diameter in milliarcseconds. The standard law in the transit and eclipsing-binary literature,
+# which is the usual reason to want it here: it makes an interferometric diameter directly
+# comparable with coefficients tabulated for those fits.
+#
+# u and w are strongly correlated, and interferometric V² separates them poorly. Measured on
+# demos/data/AlphaCenA.oifits, V² only: θ = 8.4102 mas, u = 0.1918, w = −0.0342, χ²r = 4.219 —
+# against 4.224 for the linear law with one parameter fewer. The second coefficient is not
+# doing measurable work on this data, and w has come out slightly negative, which is the fit
+# absorbing noise rather than a physical brightening.
+#
+# Use it when you want to COMPARE with published (u, w) pairs, or when you have visibilities
+# past the first null, where the profile's curvature actually shows. Otherwise prefer
+# Limb_Darkened_Disk_Linear.toml and report one coefficient you can defend.
+
+name = "quadratic limb-darkened disk"
+
+free = ["star,ldquad", "star,u", "star,w"]
+
+[model]
+"star,ldquad" = 8.0
+"star,u"      = 0.3
+"star,w"      = 0.1
+"star,f"      = 1.0
+
+# Both coefficients span ±1 for the reason given in the linear file. The pair can still reach
+# combinations that make I(μ) negative near the limb; the bounds keep each term sane rather
+# than policing their sum, which is a check the law itself does not carry.
+[bounds]
+"star,ldquad" = [0.0, 20.0]
+"star,u"      = [-1.0, 1.0]
+"star,w"      = [-1.0, 1.0]

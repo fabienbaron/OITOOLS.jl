@@ -1,0 +1,44 @@
+# Claret's four-parameter law: I(μ)/I(0) = 1 − Σ cₖ (1 − μ^(k/2)), k = 1…4, with `ldclaret4`
+# the angular diameter in milliarcseconds.
+#
+# The most flexible of the standard laws, and the one to use when you are ADOPTING published
+# coefficients from a model atmosphere and fitting only the diameter — which is what it is
+# really for. Claret tabulates (c1…c4) per Teff, log g and band; fix them to the tabulated set,
+# leave `ldclaret4` free, and the diameter comes out on the same scale as the tables.
+#
+# DO NOT FIT ALL FIVE PARAMETERS TO ONE V² CURVE. Measured on demos/data/AlphaCenA.oifits,
+# V² only, with all five free: χ²r = 4.145 against 4.224 for the two-parameter linear law —
+# three extra parameters buy 2% — and the fit lands on c1 = −3.0000 and c3 = 3.0000, both
+# exactly on their bounds, with c2 = 0.998 and c4 = −1.960. Coefficients pinned to a bound are
+# not a measurement; they are the optimiser exploiting a degeneracy the data cannot break. The
+# diameter it returns, 8.3389 mas, is correspondingly the least trustworthy of the set.
+#
+# So the intended use is the `free` line below reduced to the diameter alone:
+#
+#     free = ["star,ldclaret4"]
+#
+# with c1…c4 set to tabulated values. The four-free version is left here because seeing it fail
+# is the clearest argument for not doing it.
+
+name = "Claret four-parameter limb-darkened disk"
+
+free = ["star,ldclaret4", "star,c1", "star,c2", "star,c3", "star,c4"]
+
+[model]
+"star,ldclaret4" = 8.0
+"star,c1"        = 0.5
+"star,c2"        = 0.0
+"star,c3"        = 0.0
+"star,c4"        = 0.0
+"star,f"         = 1.0
+
+# Claret's coefficients are individually unbounded in sign and routinely exceed 1 — they trade
+# against each other, and only the profile they sum to has to stay positive. ±3 is wide enough
+# not to shape a well-behaved fit and finite enough for UltraNest to run. Treat a result sitting
+# on one of these as a failed fit, not a value.
+[bounds]
+"star,ldclaret4" = [0.0, 20.0]
+"star,c1"        = [-3.0, 3.0]
+"star,c2"        = [-3.0, 3.0]
+"star,c3"        = [-3.0, 3.0]
+"star,c4"        = [-3.0, 3.0]

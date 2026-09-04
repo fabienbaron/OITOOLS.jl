@@ -1,0 +1,30 @@
+# Square-root limb-darkened disc: I(μ)/I(0) = 1 − u(1 − μ) − w(1 − √μ), with `ldsqrt` the
+# angular diameter in milliarcseconds.
+#
+# The √μ term falls off more steeply near the limb than any polynomial in μ, which is why this
+# law is preferred for cool, extended atmospheres where the edge is sharper than a quadratic
+# can follow. For a solar-type photosphere it has little to add.
+#
+# Measured on demos/data/AlphaCenA.oifits, V² only: θ = 8.4046 mas, u = 0.2937, w = −0.2035,
+# χ²r = 4.216. That is the best of the two-coefficient laws here, but only just — linear gives
+# 4.224 with one parameter, and the difference is far below what this data can resolve. The
+# large, opposite-signed u and w are the signature of the degeneracy rather than of structure:
+# the two terms are cancelling, and each is meaningless on its own.
+#
+# Fit Limb_Darkened_Disk_Linear.toml first and come here when the star is cool and extended, or
+# when you have baselines past the first null.
+
+name = "square-root limb-darkened disk"
+
+free = ["star,ldsqrt", "star,u", "star,w"]
+
+[model]
+"star,ldsqrt" = 8.0
+"star,u"      = 0.3
+"star,w"      = 0.1
+"star,f"      = 1.0
+
+[bounds]
+"star,ldsqrt" = [0.0, 20.0]
+"star,u"      = [-1.0, 1.0]
+"star,w"      = [-1.0, 1.0]

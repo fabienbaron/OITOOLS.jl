@@ -1,0 +1,55 @@
+# SPARCO-style star + disc, the standard model for a young stellar object: an unresolved
+# central star on top of a resolved circumstellar disc, with the two fluxes varying
+# independently across the band.
+#
+# What makes it SPARCO rather than a two-component fit is the CHROMATIC flux ratio. The star is
+# a photosphere, so in the near infrared its flux follows Rayleigh-Jeans, (λ/λ0)^−4. The disc is
+# warm dust with a different, unknown slope. Fitting one grey flux ratio to both forces a
+# compromise that biases the disc size, because a disc whose flux is over-estimated at long
+# wavelengths is fitted smaller to compensate.
+#
+# The two `f` entries below are expressions, not numbers: `$WL` is the per-baseline wavelength
+# in METRES, and the shared denominator normalises the pair so the total flux is 1 at every
+# wavelength. `fs` is the star's fraction at the reference wavelength λ0 = 1.6 µm, and it is
+# the free parameter; the disc gets whatever is left. Written this way there is one flux
+# unknown rather than two, and the constraint holds identically instead of being fitted.
+#
+# Measured on demos/data/2019_v1295Aql.WL_SMOOTH.A.oifits (V², T3amp, T3φ, wavelengths merged):
+# fs = 0.4174, disc FWHM = 3.5169 mas, disc slope = +0.8168, χ²r = 4.362.
+#
+# NOTE the sign of the disc slope. It comes out POSITIVE, meaning the disc contributes
+# relatively more at long wavelengths — which is what warm dust against a Rayleigh-Jeans
+# photosphere should do, and is the check that the chromatic part is doing something physical
+# rather than absorbing calibration error.
+#
+# The disc here is a Gaussian, which is the least committal resolved shape. Swap `disk,fwhm`
+# for a ring or a Hankel radial profile when the data justify it — the flux expressions are
+# unchanged, since they refer to the component by name and not by shape. Adding an over-resolved
+# halo is the usual third component: give it `"halo,resolved" = true` and extend the
+# denominator with its own slope.
+
+name = "SPARCO star + disk"
+
+free = ["fs", "disk,fwhm", "disk,slope"]
+
+[model]
+# The star: unresolved, so it has no geometry key at all — only a flux.
+"star,f"     = "$fs * ($WL/1.6e-6)^(-4) / ($fs * ($WL/1.6e-6)^(-4) + (1 - $fs) * ($WL/1.6e-6)^$disk,slope)"
+
+# The disc: resolved, Gaussian, with a free spectral slope.
+"disk,fwhm"  = 3.0
+"disk,f"     = "(1 - $fs) * ($WL/1.6e-6)^$disk,slope / ($fs * ($WL/1.6e-6)^(-4) + (1 - $fs) * ($WL/1.6e-6)^$disk,slope)"
+"disk,slope" = 0.5
+
+# A free global: the star's flux fraction at λ0. It belongs to no component, which is why it
+# has no comma in its name.
+fs = 0.4
+
+# `fs` is a fraction and must stay one — outside [0, 1] the "disc" flux goes negative and the
+# normalisation stops meaning anything. The slope range is generous: −4 is the star's own
+# Rayleigh-Jeans value, so anything at or below that is a disc indistinguishable from the
+# photosphere, and a fit that lands there has not separated the two components.
+[bounds]
+fs           = [0.0, 1.0]
+"disk,fwhm"  = [0.1, 20.0]
+"disk,slope" = [-4.0, 4.0]
