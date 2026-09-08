@@ -129,6 +129,8 @@ Item {
     // clone, so the entries stay visible-but-disabled with the reason on them rather than
     // vanishing, which would leave no trace of the capability existing at all.
     property bool pigeonsAvailable: false
+    // Set from `shell_optional_engines` at startup; the VI code is in this package now, but
+    // it only dispatches when VarInf — the generic VI core — is loaded.
     property bool oiviAvailable:    false
 
     // The three SQUEEZE rows share a sampler, so almost every branch wants "is this SQUEEZE"
@@ -156,7 +158,7 @@ Item {
 
     function engineReasonFor(key) {
         if (key === "tempering" && !pigeonsAvailable) return "needs Pigeons"
-        if (key === "vi"        && !oiviAvailable)    return "needs OIVI"
+        if (key === "vi"        && !oiviAvailable)    return "needs VarInf"
         if (root.polychromatic && cubeEngines.indexOf(key) < 0)
             return "runs on one wavelength bin; this dataset has " + root.binCount
         return ""
@@ -183,12 +185,19 @@ Item {
 
     // Only these names exist. Offering a free-text field would let a typo through, and an
     // unknown name is an error deep inside the engine rather than a message here.
-    readonly property var specNames: [
+    readonly property var allSpecNames: [
         "centering", "tv", "tvsq", "l1l2", "l1l2w", "l1hyp", "l2sq",
         "compactness", "radialvar", "entropy", "support",
         "transspectral_tv", "transspectral_tvsq", "transspectral_structnorm",
         "transspectral_l1l2", "transspectral_grouptv", "transspectral_poly"
     ]
+    // What the CURRENT engine can actually be given. `regulariserSpec()` drops a centering row
+    // when a parametric component is fitting the centre; a name that would be dropped is not
+    // offered, because accepting it and discarding it silently is how a run comes to differ
+    // from the panel that described it.
+    readonly property var specNames:
+        centeringApplies ? allSpecNames
+                         : allSpecNames.filter(function (n) { return n !== "centering" })
     // l1l2 cannot be evaluated without its α, so that row grows a field the others do not
     // have; the rest of these extras are optional and default inside the engine.
     function specExtraLabel(name) {
@@ -313,20 +322,45 @@ Item {
 
     // VI (OIVI): there are no regularisers at all — the correlated-field prior IS the
     // regularisation, so that panel shows prior hyperparameters where the others show μ.
-    property string viEngine: "mgvi"          // map | mgvi | geovi | hybrid
-    property int    viSamples: 8
-    property real   cfSlopeMean: -3.0
-    property real   cfSlopeStd: 0.5
-    property real   cfFluctMean: 1.0
-    property real   cfFluctStd: 0.5
+    property string viEngine: "hybrid"        // map | mgvi | geovi | hybrid
+    property int    viSamples: 4
+    // Iterations of each stage. The hybrid runs both in turn; MGVI and geoVI on their own
+    // take the one that is theirs.
+    property int    viMgviIters: 10
+    property int    viGeoviIters: 6
+    // The L-BFGS warm start every VI algorithm begins with, and the whole of the run when the
+    // algorithm is MAP. It is `maxiter` for this engine — `engineMaxiter()` hands it over —
+    // because VMLMB's box lives on VMLMB's own page and is unreachable from here.
+    property int    viMapIters: 200
+    // The limb-darkened disc the correlated field is drawn on: its radius and darkening
+    // coefficient. Zero is "follow the field of view" and is NOT sent — a zero radius is not a
+    // point source but an empty weight, which divides the whole image by 1e-12.
+    property real   viRadius: 0
+    // FOV/3, matching `vi_sky_params`' own default -- see the measurements there. The disc is
+    // a hard support, so too small a one cannot be fitted out of: on BC2004 FOV/5 stalls at
+    // chi2r 19 where FOV/3 reaches 0.85.
+    readonly property real viRadiusAuto: nx * pixsize / 3
+    property real   viLimb: 0.2
+    // A support map of one's own, in place of the disc. It is the same object — `D` in
+    // `SkyModelParams` — so loading one supersedes the radius and the limb coefficient rather
+    // than adding to them.
+    property string viPriorPath: ""
+    readonly property bool viHasPrior: viPriorPath.length > 0
+    // Correlated-field priors, in SkyModelParams' own values so an untouched panel runs
+    // exactly what the package would.
+    property real   cfSlopeMean: -4.0
+    property real   cfSlopeStd: 1.0
+    property real   cfFluctMean: 1.6487
+    property real   cfFluctStd: 2.1612
     property real   cfFlexMean: 1.0
     property real   cfFlexStd: 0.5
     property bool   cfUseIwp: false
     property real   cfAspMean: 1.0
     property real   cfAspStd: 0.5
+    // Shown, greyed, and never sent: `SkyModelParams` fixes the DC mode with the disc weight
+    // and the zero-mean projection, so there is no offset prior to set.
     property real   cfOffsetMean: 0.0
     property real   cfOffsetStd: 0.1
-    property bool   cfUseOffset: false
 
     // ── run state ─────────────────────────────────────────────────────────────
     property bool   running: false
@@ -466,7 +500,10 @@ Item {
               state: !hasDiagnostics ? "unknown" : (Math.abs(diagElboDelta) > 0.1 ? "warn" : "ok"),
               tip: "the variational bound must settle before the posterior means anything." },
             { label: "posterior samples",
-              value: hasDiagnostics ? String(sampleCount) : "—",
+              // Read off the ensemble rather than gated on `hasDiagnostics`, which nothing
+              // sets: after a run this number is known, and showing "—" beside a working
+              // sample scrubber said the opposite.
+              value: sampleCount > 0 ? String(sampleCount) : "—",
               state: "unknown",
               tip: "how many samples back the σ map and the scrubber." }
           ]
@@ -519,6 +556,7 @@ Item {
     function engineMaxiter() {
         if (engine === "bsmem") return bsmemMaxiter
         if (engine === "bsdmm") return bsdmmMaxiter
+        if (engine === "vi")    return viMapIters
         if (isSqueeze)          return niter
         return vmlmbMaxiter
     }
@@ -540,6 +578,26 @@ Item {
         } else if (engine === "bsdmm") {
             put("mu_reg", bsdmmMuTv); put("mu_cen", bsdmmMuCen)
             put("reg_type", bsdmmRegType); put("maxiter", bsdmmMaxiter)
+
+        } else if (engine === "vi") {
+            // The algorithm is an OPTION, not an engine: all four share one geometry, one
+            // prior and one result shape, and splitting them into four rows in the engine
+            // list would say they differ in more than the sampler.
+            put("vi_engine", viEngine); put("vi_samples", viSamples)
+            put("vi_mgvi", viMgviIters); put("vi_geovi", viGeoviIters)
+            if (viPriorPath.length > 0) {
+                put("vi_prior", viPriorPath)     // supersedes the disc
+            } else {
+                if (viRadius > 0) put("vi_radius", viRadius)
+                put("vi_limb", viLimb)
+            }
+            put("vi_slope_mean", cfSlopeMean); put("vi_slope_std", cfSlopeStd)
+            put("vi_fluct_mean", cfFluctMean); put("vi_fluct_std", cfFluctStd)
+            put("vi_use_iwp", cfUseIwp ? 1 : 0)
+            if (cfUseIwp) {
+                put("vi_flex_mean", cfFlexMean); put("vi_flex_std", cfFlexStd)
+                put("vi_asp_mean",  cfAspMean);  put("vi_asp_std",  cfAspStd)
+            }
 
         } else if (engine === "sparco") {
             put("lambda0", sparcoLambda0); put("f_star", sparcoFStar)
@@ -661,13 +719,15 @@ Item {
         }
     }
 
-    // Twice the size it has on screen, so the file is usable in a talk rather than being a
-    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
-    // a software GL stack refuses the very large ones.
+    // The panel's own size, which Julia uses only when it cannot measure the live scene: the
+    // file has to be laid out like the picture on screen, and Makie sizes text in points, so
+    // asking for a bigger figure would re-lay it out rather than enlarge it. Resolution comes
+    // from `px_per_unit` at save time instead. Capped because the figure is rendered into a
+    // real framebuffer and a software GL stack refuses the very large ones.
     function savePng(which, area) {
         savePngDialog.which = which
-        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
-        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
         savePngDialog.openAt("")
     }
 
@@ -826,7 +886,8 @@ Item {
                       entry: "reconstruct_squeeze_tempered" }
         ListElement { key: "squeeze_sparco"; name: "Squeeze (Annealing + SPARCO)";
                       entry: "reconstruct_squeeze  (model = SqueezeSparco)" }
-        ListElement { key: "vi";        name: "Variational inference (OIVI)";          entry: "reconstruct_map / mgvi / geovi" }
+        ListElement { key: "vi";        name: "Variational inference";
+                      entry: "reconstruct_map / mgvi / geovi / hybrid" }
     }
 
     // Empty on purpose. Positivity is already in force — it is VMLMB's `lower = 0`, not a
@@ -896,6 +957,17 @@ Item {
     }
 
     FilePicker {
+        id: viPriorDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Sky prior support map (FITS)"
+        // Non-negative, nx × nx, and rescaled to a maximum of 1 by `SkyModelParams`: a zero
+        // pixel is a hard mask, since the image is `D · exp(field)`.
+        filters: [{ label: "FITS images (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.viPriorPath = path }
+    }
+
+    FilePicker {
         id: specImageDialog
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Regulariser image (FITS)"
@@ -943,6 +1015,12 @@ Item {
                         enabled: specRow.model.on === undefined ? true : specRow.model.on
                         model: root.specNames
                         currentIndex: root.specNames.indexOf(specRow.model.name)
+                        // A row can hold a name the CURRENT engine does not accept — a
+                        // centering row left behind by an engine change. `currentIndex` is then
+                        // -1 and the box would go blank, which reads as a broken control rather
+                        // than as a row this run will skip.
+                        displayText: currentIndex >= 0 ? currentText
+                                                       : specRow.model.name + "  (not for this engine)"
                         onActivated: regModel.setProperty(specRow.index, "name", root.specNames[currentIndex])
                     }
                     Label { text: "μ" }
@@ -1645,6 +1723,14 @@ Item {
                                             required property var model
                                             Layout.fillWidth: true
                                             spacing: dp(6)
+                                            // `regulariserSpec()` drops a centering row when a
+                                            // parametric component is fitting the centre, so
+                                            // showing it — ticked, with a λ — describes a term
+                                            // the run will not have. Hidden for the same reason
+                                            // cent_mult and auto-centering are.
+                                            visible: squeezeRow.model.name !== "centering" ||
+                                                     root.centeringApplies
+                                            Layout.preferredHeight: visible ? implicitHeight : 0
                                             CheckBox {
                                                 Layout.preferredWidth: dp(140)
                                                 text: squeezeRow.model.name
@@ -1718,38 +1804,30 @@ Item {
                                             onCommitted: (v) => root.fCopycat = v
                                         }
 
+                                        // Hidden, not greyed, when the engine has a parametric
+                                        // component: that component fixes the centre, so these
+                                        // send 0 whatever they show. A tick box that stays
+                                        // ticked while the run is told 0 is worse than an
+                                        // absent one — and it could not be kept honest, because
+                                        // toggling a CheckBox destroys the binding on `checked`
+                                        // and the stale tick then survives an engine change.
                                         Label {
                                             text: "cent_mult"
-                                            color: root.centeringApplies ? "#000" : "#999"
+                                            visible: root.centeringApplies
                                         }
                                         NumField {
                                             Layout.preferredWidth: dp(90); minimum: 0
+                                            visible: root.centeringApplies
                                             value: root.centMult
-                                            enabled: root.centeringApplies
                                             onCommitted: (v) => root.centMult = v
                                         }
                                         CheckBox {
                                             Layout.columnSpan: 2
                                             text: "auto-centering"
-                                            checked: root.autoCentering && root.centeringApplies
-                                            enabled: root.centeringApplies &&
-                                                     root.squeezePriorPath === ""
+                                            visible: root.centeringApplies
+                                            checked: root.autoCentering
+                                            enabled: root.squeezePriorPath === ""
                                             onToggled: root.autoCentering = checked
-                                        }
-                                        // Greyed rather than hidden, and with the reason: a
-                                        // control that vanishes reads as a missing feature,
-                                        // where one that is dimmed and explained says the
-                                        // engine has already dealt with it.
-                                        Label {
-                                            Layout.columnSpan: 2
-                                            Layout.fillWidth: true
-                                            visible: !root.centeringApplies
-                                            wrapMode: Text.WordWrap
-                                            color: "#c62828"
-                                            font.pointSize: pt(baseFontPt - 2)
-                                            text: "the SPARCO component fixes the centre, so " +
-                                                  "centering is off — a centering term would " +
-                                                  "pull the image against the star"
                                         }
                                     }
 
@@ -1798,17 +1876,142 @@ Item {
                                     }
                                     RowLayout {
                                         spacing: dp(8)
-                                        Label { text: "engine" }
+                                        Label { text: "algorithm" }
                                         ComboBox {
                                             Layout.preferredWidth: dp(140)
                                             model: ["map", "mgvi", "geovi", "hybrid"]
-                                            currentIndex: 1
+                                            currentIndex: 3
                                             onActivated: root.viEngine = currentText
                                         }
-                                        Label { text: "samples" }
+                                        // MAP is an optimiser: it returns the posterior mode
+                                        // and nothing to average, so the sampling controls
+                                        // beside it have nothing to act on.
+                                        Label { text: "samples"; enabled: root.viEngine !== "map" }
                                         SpinBox {
-                                            from: 1; to: 4096; value: 8; editable: true
+                                            from: 1; to: 4096; value: 4; editable: true
+                                            enabled: root.viEngine !== "map"
                                             onValueModified: root.viSamples = value
+                                        }
+                                        Label {
+                                            // Every draw is mirrored, so the ensemble the
+                                            // scrubber walks is twice this number. Elided
+                                            // rather than allowed to push the row: this column
+                                            // is narrow and a hint must not clip a control.
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                            text: root.viEngine === "map" ? "" : "± pairs: 2× drawn"
+                                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                        }
+                                    }
+                                    RowLayout {
+                                        spacing: dp(8)
+                                        // One box per stage, shown for the algorithms that run
+                                        // that stage. The hybrid runs both in turn.
+                                        Label { text: "MGVI iters"
+                                                visible: root.viEngine === "mgvi" || root.viEngine === "hybrid" }
+                                        SpinBox {
+                                            from: 1; to: 200; value: 10; editable: true
+                                            visible: root.viEngine === "mgvi" || root.viEngine === "hybrid"
+                                            onValueModified: root.viMgviIters = value
+                                        }
+                                        Label { text: "geoVI iters"
+                                                visible: root.viEngine === "geovi" || root.viEngine === "hybrid" }
+                                        SpinBox {
+                                            from: 1; to: 200; value: 6; editable: true
+                                            visible: root.viEngine === "geovi" || root.viEngine === "hybrid"
+                                            onValueModified: root.viGeoviIters = value
+                                        }
+                                        Item { Layout.fillWidth: true }
+                                    }
+                                    RowLayout {
+                                        spacing: dp(8)
+                                        // Its own row: VMLMB's iteration box lives on VMLMB's
+                                        // page, so this is the only way to reach the L-BFGS
+                                        // step from here.
+                                        Label { text: "MAP iters" }
+                                        SpinBox {
+                                            from: 1; to: 100000; stepSize: 50; value: 200
+                                            editable: true
+                                            onValueModified: root.viMapIters = value
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideRight
+                                            text: root.viEngine === "map" ? "the whole run"
+                                                                          : "warm start"
+                                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                        }
+                                    }
+                                    RowLayout {
+                                        spacing: dp(8)
+                                        // The disc the correlated field is drawn on. It is the
+                                        // support of the image, so it is a prior about size,
+                                        // not a display choice — and it is greyed rather than
+                                        // hidden when a map of one's own replaces it, so the
+                                        // panel says which of the two is in force.
+                                        Label { text: "disc R (mas)"; enabled: !root.viHasPrior }
+                                        NumField {
+                                            Layout.preferredWidth: dp(84); minimum: 0
+                                            enabled: !root.viHasPrior
+                                            value: root.viRadius > 0 ? root.viRadius : root.viRadiusAuto
+                                            onCommitted: (v) => root.viRadius = v
+                                        }
+                                        Label {
+                                            enabled: !root.viHasPrior
+                                            text: root.viRadius > 0 ? "" : "= FOV / 3"
+                                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                        }
+                                        Label { text: "limb u"; enabled: !root.viHasPrior }
+                                        NumField {
+                                            Layout.preferredWidth: dp(84); minimum: 0; maximum: 1
+                                            enabled: !root.viHasPrior
+                                            value: root.viLimb; onCommitted: (v) => root.viLimb = v
+                                        }
+                                        Item { Layout.fillWidth: true }
+                                    }
+                                    RowLayout {
+                                        spacing: dp(8)
+                                        Button {
+                                            text: root.viHasPrior ? "support ✓" : "support…"
+                                            onClicked: viPriorDialog.openAt("")
+                                        }
+                                        Button {
+                                            text: "clear"
+                                            visible: root.viHasPrior
+                                            onClicked: root.viPriorPath = ""
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            elide: Text.ElideLeft
+                                            text: root.viHasPrior ? root.viPriorPath
+                                                                  : "a FITS map replaces the disc"
+                                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                        }
+                                    }
+                                    RowLayout {
+                                        spacing: dp(8)
+                                        // The Show-start-image of VI: a prior is the whole of
+                                        // what this engine adds to the data, and a draw from it
+                                        // is the only way to see what that amounts to before
+                                        // spending a run.
+                                        Button {
+                                            text: "Generate prior sample"
+                                            enabled: root.oiviAvailable && !root.running
+                                            onClicked: {
+                                                root.statusText = Julia.shell_vi_prior_sample(
+                                                    root.nx, root.pixsize, root.engineOptions())
+                                                root.showingStart = true
+                                                imageArea.update()
+                                                root.consoleChanged()
+                                            }
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            text: "the field is drawn on the support, so its " +
+                                                  "size and shape are a prior about the source. " +
+                                                  "Each click draws again."
+                                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
                                         }
                                     }
                                     GridLayout {
@@ -1838,7 +2041,11 @@ Item {
                                         Label { Layout.columnSpan: 2; text: "lognormal"
                                                 color: "#888"; font.pointSize: pt(baseFontPt - 2) }
 
-                                        Label { text: "flex" }
+                                        // The whole row follows the tick, LABEL included: a
+                                        // black "flex" beside two greyed boxes reads as a
+                                        // control that is merely empty rather than one the
+                                        // Wiener layer switches on.
+                                        Label { text: "flex"; enabled: root.cfUseIwp }
                                         NumField { Layout.preferredWidth: dp(80); minimum: 0; enabled: root.cfUseIwp
                                                    value: root.cfFlexMean; onCommitted: (v) => root.cfFlexMean = v }
                                         NumField { Layout.preferredWidth: dp(80); minimum: 0; enabled: root.cfUseIwp
@@ -1846,21 +2053,27 @@ Item {
                                         CheckBox { Layout.columnSpan: 2; text: "integrated Wiener layer"
                                                    checked: root.cfUseIwp; onToggled: root.cfUseIwp = checked }
 
-                                        Label { text: "asp" }
+                                        Label { text: "asp"; enabled: root.cfUseIwp }
                                         NumField { Layout.preferredWidth: dp(80); minimum: 0; enabled: root.cfUseIwp
                                                    value: root.cfAspMean; onCommitted: (v) => root.cfAspMean = v }
                                         NumField { Layout.preferredWidth: dp(80); minimum: 0; enabled: root.cfUseIwp
                                                    value: root.cfAspStd; onCommitted: (v) => root.cfAspStd = v }
                                         Label { Layout.columnSpan: 2; text: "asperity, with the Wiener layer"
+                                                enabled: root.cfUseIwp
                                                 color: "#888"; font.pointSize: pt(baseFontPt - 2) }
 
-                                        Label { text: "offset" }
-                                        NumField { Layout.preferredWidth: dp(80); enabled: root.cfUseOffset
-                                                   value: root.cfOffsetMean; onCommitted: (v) => root.cfOffsetMean = v }
-                                        NumField { Layout.preferredWidth: dp(80); minimum: 0; enabled: root.cfUseOffset
-                                                   value: root.cfOffsetStd; onCommitted: (v) => root.cfOffsetStd = v }
-                                        CheckBox { Layout.columnSpan: 2; text: "explicit DC mode"
-                                                   checked: root.cfUseOffset; onToggled: root.cfUseOffset = checked }
+                                        // Greyed rather than hidden, with the reason: the DC
+                                        // mode is already fixed here — the disc weight and the
+                                        // zero-mean projection set the image's mean — so
+                                        // `SkyModelParams` offers no offset prior to send.
+                                        Label { text: "offset"; enabled: false }
+                                        NumField { Layout.preferredWidth: dp(80); enabled: false
+                                                   value: root.cfOffsetMean }
+                                        NumField { Layout.preferredWidth: dp(80); enabled: false
+                                                   value: root.cfOffsetStd }
+                                        Label { Layout.columnSpan: 2
+                                                text: "DC mode fixed by the disc weight"
+                                                color: "#888"; font.pointSize: pt(baseFontPt - 2) }
                                     }
                                 }
 

@@ -71,6 +71,19 @@ using GLMakie, QMLMakie, QML   # these three activate OITOOLSGUIExt, which defin
 #     julia --project=bin -e 'using PythonCall; include("bin/oitoolsgui.jl")'
 using Nautilus
 
+# The two optional ENGINES, on the same argument as Nautilus: an extension activates only when
+# its trigger package is LOADED, not when it is merely installed, and the Image tab greys
+# "Tempering" and "Variational inference" on exactly that check. Installed-but-invisible is the
+# worst of the three states, so they are loaded when present and skipped in silence when not —
+# this environment pins both, but the script has to run in environments that do not.
+for opt in (:Pigeons, :VarInf)
+    try
+        @eval using $opt
+    catch err
+        @debug "optional engine package not available" opt err
+    end
+end
+
 # An extension's exports do not reach the caller on their own, so name the module and pull them
 # in. This is the same route test/gui/runtests.jl uses.
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)

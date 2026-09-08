@@ -1792,14 +1792,78 @@ function readfits(fitsfile; normalize=false, vectorize=false)
     return x
 end
 
+"""
+    fits_pixsize(fitsfile) -> Float64 or nothing
+
+The pixel size of an image FITS, in **milliarcseconds**, or `nothing` when the header does not
+say.
+
+Reads `CDELT2` (then `CDELT1`, then the `CD2_2`/`CD1_1` matrix form) and converts with the
+axis's own `CUNIT` when it has one — `deg` is what the FITS standard says and what other tools
+write.
+
+Without a `CUNIT` the number is ambiguous, and the ambiguity is real: `writefits` writes
+RADIANS per pixel with no unit at all, while a file from elsewhere is usually degrees, and both
+are tiny numbers for an interferometric image. The reading that lands in a plausible range for
+one — 1e-4 to 1e4 mas — is taken, radians first because that is this package's own convention;
+if neither is plausible, `nothing`, because a wrong pixel size is worse than an absent one.
+"""
+function fits_pixsize(fitsfile)
+    hdr = try
+        read_header(FITS(String(fitsfile))[1])
+    catch
+        return nothing
+    end
+    get_num(k) = try
+        haskey(hdr, k) && hdr[k] isa Real && isfinite(hdr[k]) ? abs(Float64(hdr[k])) : nothing
+    catch; nothing end
+    get_str(k) = try
+        haskey(hdr, k) && hdr[k] isa AbstractString ? lowercase(strip(hdr[k])) : ""
+    catch; "" end
+
+    get_comment(k) = try
+        haskey(hdr, k) ? lowercase(FITSIO.get_comment(hdr, k)) : ""
+    catch; "" end
+
+    v, unit = nothing, ""
+    for (kv, ku) in (("CDELT2", "CUNIT2"), ("CDELT1", "CUNIT1"),
+                     ("CD2_2", "CUNIT2"), ("CD1_1", "CUNIT1"))
+        w = get_num(kv)
+        if w !== nothing && w > 0
+            u = get_str(ku)
+            # No CUNIT: the comment is the only other place a unit is ever written, and it is
+            # where this package used to put it ("Radians per Pixel").
+            v, unit = w, isempty(u) ? (occursin("rad", get_comment(kv)) ? "rad" : "") : u
+            break
+        end
+    end
+    v === nothing && return nothing
+
+    startswith(unit, "deg")     && return v * 3.6e6
+    startswith(unit, "arcsec")  && return v * 1e3
+    unit == "as"                && return v * 1e3
+    startswith(unit, "mas")     && return v
+    startswith(unit, "rad")     && return v * 206264806.2
+    # Nothing says. The FITS standard's default for a celestial axis is degrees, so that is the
+    # reading — but only when it lands somewhere an interferometric image could plausibly be.
+    # Guessing wrong here is worse than declining: the panel keeps whatever the user set.
+    deg = v * 3.6e6
+    return 1e-4 <= deg <= 1e4 ? deg : nothing
+end
+
 function writefits(data, fitsfile; pixsize=-1)
     f = FITS(fitsfile, "w")
     if pixsize != -1
+        # CUNIT is written because CDELT here is in RADIANS and the FITS standard's default for
+        # a celestial axis is DEGREES -- a reader with no unit to go on has to guess, and the
+        # two differ by 5.7e4. Older files carry the unit only in the comment, which is why
+        # `fits_pixsize` reads that too.
         header = FITSHeader(
-            ["CDELT1","CDELT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],
-            [-(pixsize/1000.0)/206265.0, (pixsize/1000.0)/206265.0, 0.0, 0.0,
-             size(data,1)/2, size(data,1)/2],
+            ["CDELT1","CDELT2","CUNIT1","CUNIT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],
+            Any[-(pixsize/1000.0)/206265.0, (pixsize/1000.0)/206265.0, "rad", "rad", 0.0, 0.0,
+                size(data,1)/2, size(data,1)/2],
             ["Radians per Pixel","Radians per Pixel",
+             "unit of CDELT1","unit of CDELT2",
              "X-coordinate of reference pixel","Y-coordinate of reference pixel",
              "reference pixel in X","reference pixel in Y"])
         write(f, data, header=header)

@@ -14,6 +14,10 @@ bin/*.so
 bin/*.dylib
 bin/*.dll
 
+# The application bundle built by app/build.jl: the sysimage, Julia's libraries, every artifact
+# and the staged resources, so roughly 2.5 GB. Built, never committed.
+build/
+
 # Machine-local Preferences. The one you are most likely to want here is PrecompileTools':
 #
 #     [PrecompileTools]

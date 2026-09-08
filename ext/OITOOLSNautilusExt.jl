@@ -1,6 +1,6 @@
 # The Nautilus.jl backend of `fit_model_nested`.
 #
-# Pure Julia, like `:nestedsamplers`, so this is a nested sampler a PackageCompiler build can
+# Pure Julia, so this is the nested sampler a PackageCompiler build can
 # contain — and unlike that one it is an importance sampler, which is where the reduction in
 # χ² evaluations comes from.
 #

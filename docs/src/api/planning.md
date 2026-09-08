@@ -64,6 +64,7 @@ index_runs
 | `WaveConfig` | Wavelength/spectral configuration |
 
 ```@docs
+simulate_from_oifits
 observable_epochs
 AOConfig
 CombinerConfig

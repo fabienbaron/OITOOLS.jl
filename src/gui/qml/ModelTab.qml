@@ -460,13 +460,15 @@ Item {
         }
     }
 
-    // Twice the size it has on screen, so the file is usable in a talk rather than being a
-    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
-    // a software GL stack refuses the very large ones.
+    // The panel's own size, which Julia uses only when it cannot measure the live scene: the
+    // file has to be laid out like the picture on screen, and Makie sizes text in points, so
+    // asking for a bigger figure would re-lay it out rather than enlarge it. Resolution comes
+    // from `px_per_unit` at save time instead. Capped because the figure is rendered into a
+    // real framebuffer and a software GL stack refuses the very large ones.
     function savePng(which, area) {
         savePngDialog.which = which
-        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
-        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
         savePngDialog.openAt("")
     }
 

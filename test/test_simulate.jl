@@ -302,6 +302,124 @@ _ud(d) = dict_to_model(Dict{String,Any}("star,ud"=>d, "star,f"=>1.0), String[])
         @test !all(d.flux .== 1.0)                   # no longer hard-coded to 1
     end
 
+    # ── Step 5: re-observing an existing file's structure ────────────────────
+    #
+    # The other simulator, and the one the Observing panel's "Copy existing OIFITS structure"
+    # runs. It had no tests at all, which is how a cube reached it as a flat vector and how a
+    # copied SNR wrote NaN over every point of a file with a zero-valued V².
+    @testset "simulate_from_oifits" begin
+        f, t, c, w, dates = _setup(nep=3)
+        nw = length(w.λ)
+        src = joinpath(_TMP, "src.oifits")
+        simulate(f, t, c, w, dates, src; flat_model=_ud(2.5), flat_params=Float64[], seed=7)
+        din = readoifits(src; T=Float64, filter_bad_data=false)[1,1]
+
+        @testset "a model through another file's coverage" begin
+            out = joinpath(_TMP, "from_model.oifits")
+            simulate_from_oifits(src, out; flat_model=_ud(1.0), flat_params=Float64[], seed=1)
+            d = readoifits(out; T=Float64, filter_bad_data=false)[1,1]
+            # The COVERAGE is copied, point for point: same uv, same wavelengths, same count.
+            @test d.nv2 == din.nv2 && d.nt3amp == din.nt3amp
+            @test d.uv ≈ din.uv
+            # ...and the sky is the new one: a 1 mas disc is resolved far less than a 2.5 mas one.
+            @test mean(d.v2) > mean(din.v2)
+            @test all(isfinite, d.v2) && all(isfinite, d.v2_err)
+        end
+
+        @testset "noise = false is noiseless, and reproducible" begin
+            q1 = joinpath(_TMP, "quiet1.oifits"); q2 = joinpath(_TMP, "quiet2.oifits")
+            n1 = joinpath(_TMP, "noisy1.oifits")
+            for (o, kw) in ((q1, (; noise=false)), (q2, (; noise=false)), (n1, (; seed=3)))
+                simulate_from_oifits(src, o; mode="copy_snr", flat_model=_ud(1.5),
+                                     flat_params=Float64[], kw...)
+            end
+            a = readoifits(q1; T=Float64, filter_bad_data=false)[1,1]
+            b = readoifits(q2; T=Float64, filter_bad_data=false)[1,1]
+            n = readoifits(n1; T=Float64, filter_bad_data=false)[1,1]
+            @test a.v2 == b.v2                       # nothing random left in it
+            @test a.t3phi == b.t3phi
+            @test a.v2 != n.v2                       # and the noisy one is not the same file
+            # The error bars are written either way: a truth file says what the noise WOULD be.
+            @test all(a.v2_err .> 0)
+            # One sigma, and no more: E|N(0,1)| = 0.798.
+            @test isapprox(mean(abs.(n.v2 - a.v2) ./ a.v2_err), 0.798; atol=0.15)
+        end
+
+        @testset "a cube, one plane per channel" begin
+            nx = 32
+            g(σ) = [exp(-((i-nx/2)^2 + (j-nx/2)^2)/(2σ^2)) for i in 1:nx, j in 1:nx]
+            # A source that grows with wavelength, so the channels cannot agree by accident.
+            cube = cat([g(1.5 + 0.4k) for k in 1:nw]...; dims=3)
+            out = joinpath(_TMP, "from_cube.oifits")
+            simulate_from_oifits(src, out; mode="copy_snr", image=cube, pixsize=0.25, noise=false)
+            d = readoifits(out; T=Float64, filter_bad_data=false)[1,1]
+            @test all(isfinite, d.v2)
+            lams = sort(unique(d.uv_lam))
+            @test length(lams) == nw
+            mv2 = [mean(d.v2[findall(==(l), d.v2_lam)]) for l in lams]
+            # Each plane was observed through its own channel's uv points, so a growing disc
+            # gives a falling mean V². A cube collapsed to one plane could not do this.
+            @test mv2[1] > mv2[end]
+            @test !all(mv2 .≈ mv2[1])
+            # The plane count is the file's channel count, and a mismatch is refused rather
+            # than broadcast into a wrong answer.
+            @test_throws DimensionMismatch simulate_from_oifits(src, out;
+                image=cat([g(2.0) for _ in 1:(nw+1)]...; dims=3), pixsize=0.25)
+        end
+
+        @testset "a point with no SNR to copy does not poison the file" begin
+            # A zero V² makes `v2_model/v2 * v2_err` infinite, and `v2 += Inf*randn()` then
+            # writes NaN. Measured on HD140573, where every V² came back NaN.
+            zeroed = joinpath(_TMP, "zeroed.oifits")
+            ds = OIFITS.OIDataSet(src)
+            for db in ds.vis2; db.vis2data[1, 1] = 0.0; end
+            OIFITS.write(zeroed, ds; overwrite=true)
+            out = joinpath(_TMP, "from_zeroed.oifits")
+            simulate_from_oifits(zeroed, out; mode="copy_snr", flat_model=_ud(1.0),
+                                 flat_params=Float64[], seed=1)
+            d = readoifits(out; T=Float64, filter_bad_data=false)[1,1]
+            @test all(isfinite, d.v2)
+            @test all(isfinite, d.v2_err)
+            @test all(d.v2_err .> 0)
+        end
+
+        @testset "the input is never the output" begin
+            # The reads all happen before the write, so writing back would not corrupt anything
+            # mid-flight — it would replace an observer's real data with a complete, plausible
+            # simulation of a different source. Silent and irreversible, so it is refused.
+            keep = read(src)
+            @test_throws ErrorException simulate_from_oifits(src, src;
+                flat_model=_ud(1.0), flat_params=Float64[])
+            # And not by spelling, either: `..` and a relative path name the same file.
+            sneaky = joinpath(dirname(src), "..", basename(dirname(src)), basename(src))
+            @test_throws ErrorException simulate_from_oifits(src, sneaky;
+                flat_model=_ud(1.0), flat_params=Float64[])
+            @test_throws ErrorException simulate_from_oifits(src, relpath(src, pwd());
+                flat_model=_ud(1.0), flat_params=Float64[])
+            @test read(src) == keep                      # byte for byte
+        end
+
+        @testset "the mode is checked" begin
+            @test_throws ErrorException simulate_from_oifits(src, joinpath(_TMP, "x.oifits");
+                mode="nonsense", flat_model=_ud(1.0), flat_params=Float64[])
+        end
+    end
+
+    # The uv-only plan, which `simulate_from_oifits` uses per channel. It has to agree with the
+    # plan `setup_nfft` builds from the same points, or a cube would be simulated on a
+    # different grid from everything else.
+    @testset "setup_nfft_uv matches setup_nfft" begin
+        f, t, c, w, dates = _setup(nep=2)
+        src = joinpath(_TMP, "plan.oifits")
+        simulate(f, t, c, w, dates, src; flat_model=_ud(2.0), flat_params=Float64[], noise=false)
+        d = readoifits(src; T=Float64, filter_bad_data=false)[1,1]
+        nx, ps = 32, 0.2
+        x = zeros(nx, nx); x[nx÷2+1, nx÷2+3] = 1.0; x[nx÷2+4, nx÷2+1] = 0.5
+        full = setup_nfft(d, nx, ps)
+        only = setup_nfft_uv(d.uv, nx, ps)
+        @test image_to_vis(x, only) ≈ image_to_vis(x, full)
+    end
+
     @testset "deprecated nonoise" begin
         f, t, c, w, dates = _setup(nep=2)
         out = joinpath(_TMP, "dep.oifits")

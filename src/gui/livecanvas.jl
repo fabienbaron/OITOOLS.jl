@@ -576,6 +576,13 @@ destroyed, the same way the legend and colorbar are hidden.
 """
 function show_panels!(c::LiveCanvas, on::Bool)
     _set_axis_visible!(c.axis, !on)
+    # ...and the PLOTS inside it, which `_set_axis_visible!` does not touch: it hides the
+    # spines, ticks and labels, so a scatter left visible in a row collapsed to `Fixed(0)`
+    # still draws — squashed into a hairline strip of coloured dashes above the grid, which
+    # reads as a stray colorbar or legend. Only the decorations were being hidden.
+    c.scatterplot.visible[] = !on
+    c.errplot.visible[]     = !on
+    on && (c.overplot.visible[] = false)
     Makie.rowsize!(c.figure.layout, 1, on ? Makie.Fixed(0) : Makie.Auto())
     Makie.rowsize!(c.figure.layout, 3, on ? Makie.Auto() : Makie.Fixed(0))
     on && set_legend!(c, Pair{String,Makie.RGBAf}[])

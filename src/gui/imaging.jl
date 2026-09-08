@@ -52,13 +52,30 @@ blocks it with that reason rather than offering it here.
 the entry on.
 """
 const IMAGING_ENGINES = Dict{Symbol,String}(
-    :vi             => "reconstruct_hybrid  (MAP -> MGVI -> geoVI)",
+    :vi             => "reconstruct_hybrid",
     :vmlmb          => "reconstruct",
     :bsmem          => "reconstruct_bsmem",
     :bsdmm          => "reconstruct_bsdmm",
     :sparco         => "reconstruct_sparco",
     :squeeze        => "reconstruct_squeeze",
     :squeeze_sparco => "reconstruct_squeeze (model = SqueezeSparco)")
+
+"""
+    engine_call_name(engine, options) -> String
+
+The call to echo in the console, which for VI depends on what the panel chose.
+
+Every other engine has one entry point, so `IMAGING_ENGINES` names it outright. VI has four —
+MAP, MGVI, geoVI and the hybrid of the last two — selected by an option rather than by a
+separate engine, and a console that said `reconstruct_hybrid` for all of them would be a log
+of something that did not run.
+"""
+function engine_call_name(engine::Symbol, options::AbstractDict = Dict{String,String}())
+    name = get(IMAGING_ENGINES, engine, String(engine))
+    engine === :vi || return name
+    v = get(options, "vi_engine", "hybrid")
+    return v in ("map", "mgvi", "geovi", "hybrid") ? "reconstruct_" * v : name
+end
 
 """
 The engines that reconstruct a WAVELENGTH CUBE rather than one grey image.
@@ -304,7 +321,12 @@ chain posterior width, and the panel says so rather than calling it σ and leavi
 The reconstruction itself returns the BEST chain, not this mean — `reconstruct_squeeze` ends
 with `results[best].image`. The two are different images and the panel offers both.
 
-`sigma` is `nothing` for a single chain, where there is no spread to report.
+VI is the other producer, and what it returns is a different thing: posterior draws around one
+centre, whose spread IS a posterior width. So the engine supplies the noun (`ensemble_noun`)
+along with the images, and the panel reports "4 posterior samples" or "4 chains" rather than
+one word for both.
+
+`sigma` is `nothing` for a single member, where there is no spread to report.
 """
 function result_ensemble(extra)
     extra isa NamedTuple && haskey(extra, :images) || return nothing
@@ -316,8 +338,9 @@ function result_ensemble(extra)
     n = length(samples)
     mn = reduce(+, samples) ./ n
     sg = n > 1 ? sqrt.(reduce(+, ((s .- mn).^2 for s in samples)) ./ (n - 1)) : nothing
+    noun = get(extra, :ensemble_noun, "chain")
     return (; mean = mn, sigma = sg, samples,
-              source = n == 1 ? "1 chain" : "$(n) chains")
+              source = string(n, " ", n == 1 ? noun : noun * "s"))
 end
 
 "Reduced χ², against the points actually fitted. `NaN` when nothing was."
@@ -657,40 +680,122 @@ function run_engine(engine::Symbol, x0, data, ft;
                                  "`Pkg.develop(path = \"…/VarInf.jl\")`, then restart.")
         d = _require_mono(data, engine)
 
-        # VI runs at Float64 and the panel's plans are Float32 by default, so the geometry is
-        # rebuilt here rather than pushing double precision onto every other engine. `nx` and
-        # `pixsize` come off the plans that were handed in, so the two cannot disagree.
-        nx  = size(x0, 1)
-        ps  = ft.pixsize
-        d64 = readoifits(d.filename; T = Float64, filter_bad_data = true,
-                         verbose = false, warn = false)
-        ft64 = setup_ft(d64, nx, ps)
+        # The panel's own data and plans, at whatever precision they were read. VI takes
+        # Float32 as well as Float64 now; what stays Float64 regardless of the plans is the
+        # adjoint-source accumulation and the latent space, which `plan_precision` in
+        # src/vi/observe.jl explains. Float32 costs about 8e-04 relative gradient error against
+        # Float64's 1e-05, and buys a transform that is twice as fast.
+        nx = size(x0, 1)
+        ps = ft.pixsize
 
-        p = ext.SkyModelParams(nx, Float64(ps), [3e8 / _mean_lam(d)];
-                               R_mas = _optreal(o, "vi_radius", nx * ps / 5),
-                               u     = _optreal(o, "vi_limb",   0.2))
+        p = vi_sky_params(ext, o, nx, ps, _mean_lam(d))
+
         # One channel means the spectral field has nothing to vary over; left free it is a
-        # degenerate direction the sampler spends its effort on.
-        frozen = size(d64, 1) == 1 ? ext.frozen_spectral_range(p) : nothing
+        # degenerate direction the sampler spends its effort on. Only the hybrid entry point
+        # takes `frozen_ranges`, so MGVI and geoVI pay for those directions.
+        frozen = size(data, 1) == 1 ? ext.frozen_spectral_range(p) : nothing
+        nsamp  = max(1, _optint(o, "vi_samples", 4))
+        n_mgvi  = max(1, _optint(o, "vi_mgvi",  10))
+        n_geovi = max(1, _optint(o, "vi_geovi",  6))
+        variant = Symbol(get(o, "vi_engine", "hybrid"))
+        variant in (:map, :mgvi, :geovi, :hybrid) ||
+            error("unknown VI algorithm $(repr(String(variant))); " *
+                  "it is one of map, mgvi, geovi, hybrid")
 
-        z, mean_img, std_img, samples = ext.reconstruct_hybrid(p, ft64, d64;
-            weights, verb,
-            n_mgvi  = Int(_optreal(o, "vi_mgvi",  10)),
-            n_geovi = Int(_optreal(o, "vi_geovi",  6)),
-            map_maxiter = maxiter, frozen_ranges = frozen)
+        # MAP is an optimiser, not a sampler: it returns the posterior mode and no ensemble,
+        # so it reports none rather than an ensemble of one that would read as a width.
+        if variant === :map
+            _, img = ext.reconstruct_map(p, ft, data; weights, verb, maxiter)
+            return (Float64.(img[:, :, 1]), nothing, nothing)
+        end
+
+        _, mean_img, std_img, samples =
+            variant === :mgvi  ? ext.reconstruct_mgvi(p, ft, data; weights, verb,
+                                     n_iterations = n_mgvi, n_samples = nsamp,
+                                     map_maxiter = maxiter) :
+            variant === :geovi ? ext.reconstruct_geovi(p, ft, data; weights, verb,
+                                     n_iterations = n_geovi, n_samples = nsamp,
+                                     map_maxiter = maxiter) :
+                                 ext.reconstruct_hybrid(p, ft, data; weights, verb,
+                                     n_mgvi, n_geovi, n_samples = nsamp,
+                                     map_maxiter = maxiter, frozen_ranges = frozen)
 
         # Per-sample images, so `result_ensemble` builds the mean and sigma the same way it
         # does for a sampler's chains: one definition of "the ensemble" for every engine that
-        # returns a distribution rather than a point.
+        # returns a distribution rather than a point. The noun goes with them — these are
+        # posterior draws around one centre, not independent chains.
         nlat = ext._latent_size(p)
         imgs = [Float64.(ext.sky_forward(s[1:nlat], p)[:, :, 1]) for s in samples]
         diag = (; images = imgs, mean = mean_img[:, :, 1], sigma = std_img[:, :, 1],
-                  n_samples = length(samples))
+                  n_samples = length(samples), ensemble_noun = "posterior sample")
         return (mean_img[:, :, 1], diag, nothing)
     end
 
     error("Unknown imaging engine $(repr(engine)); known ones are " *
           join(sort(string.(keys(IMAGING_ENGINES))), ", "))
+end
+
+"""
+    vi_sky_params(ext, options, nx, pixsize, lam) -> SkyModelParams
+
+The sky prior a VI run uses, built from the panel's options and nothing else.
+
+Factored out because two callers must agree exactly: the engine that runs, and
+`shell_vi_prior_sample`, which draws from this prior so it can be looked at BEFORE a run. A
+preview built from a second reading of the same boxes would be a picture of a different prior
+the moment one of them was read differently.
+
+The prior boxes here are the SPATIAL field's. The spectral field keeps its own defaults and is
+frozen by the caller on one wavelength, where it has nothing to vary over. Every default is
+`SkyModelParams`' own, so an option the panel does not send leaves the prior exactly as the
+package sets it.
+"""
+function vi_sky_params(ext, o::AbstractDict, nx::Integer, pixsize::Real, lam::Real)
+    iwp = _optbool(o, "vi_use_iwp", false)
+    # A supplied support map REPLACES the disc: `R_mas` and `u` build the default one, and the
+    # panel greys them when a file is loaded, so passing both would say the radius still did
+    # something.
+    #
+    # FOV/3 for the automatic radius. The support disc is a HARD constraint -- the model is
+    # `D .* exp(field)`, so anything outside it is exactly zero -- and a disc smaller than the
+    # source cannot be fitted out of. Measured on BC2004 (nx = 32, 0.5 mas), MAP to
+    # convergence: FOV/5 stalls at chi2r 19.05, FOV/4 reaches 0.75, FOV/3 0.85, FOV/2.5 0.92,
+    # against VMLMB's 0.68 on the same geometry. Loosening the fluctuation prior instead barely
+    # moves it (19.05 -> 17.4), so it is the support and not the prior's strength.
+    #
+    # FOV/3 rather than the best-scoring FOV/4: it is within 15% of it on BC2004, better on
+    # v1295 Aql (7.56 against 7.79), and further from the cliff at FOV/2, where the disc
+    # reaches the grid edge and chi2r goes to 368.
+    path = String(get(o, "vi_prior", ""))
+    w = isempty(path) ? nothing : prior_image(path, Int(nx))
+    return ext.SkyModelParams(Int(nx), Float64(pixsize), [3e8 / Float64(lam)];
+            R_mas  = w === nothing ? _optreal(o, "vi_radius", nx * pixsize / 3) : NaN,
+            u      = _optreal(o, "vi_limb", 0.2),
+            weight = w,
+            spatial_slope_prior = (_optreal(o, "vi_slope_mean", -4.0),
+                                   _optreal(o, "vi_slope_std",   1.0)),
+            spatial_fluct_prior = (_optreal(o, "vi_fluct_mean", 1.6487),
+                                   _optreal(o, "vi_fluct_std",  2.1612)),
+            # Both or neither: the integrated Wiener layer is the flex and asperity pair, and
+            # `CorrFieldConfig` reads `flex_prior = nothing` as "no IWP".
+            spatial_flex_prior = iwp ? (_optreal(o, "vi_flex_mean", 1.0),
+                                        _optreal(o, "vi_flex_std",  0.5)) : nothing,
+            spatial_asp_prior  = iwp ? (_optreal(o, "vi_asp_mean",  1.0),
+                                        _optreal(o, "vi_asp_std",   0.5)) : nothing)
+end
+
+"""
+    vi_prior_draw(ext, p) -> Matrix{Float64}
+
+One image drawn from the sky prior, with no data involved.
+
+`xi ~ N(0, I)` is exactly what the model's latent space is, so pushing a standard normal
+through `sky_forward` gives a fair sample of what the prior believes before any observable is
+read. A fresh draw every call: the point is the SPREAD of what the prior allows, and one
+picture of it repeated would suggest a prior with a single face.
+"""
+function vi_prior_draw(ext, p)
+    return Float64.(ext.sky_forward(randn(ext._latent_size(p)), p)[:, :, 1])
 end
 
 """

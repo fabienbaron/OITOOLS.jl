@@ -152,5 +152,29 @@
 
         # Ragged input is refused rather than broadcast into a wrong answer.
         @test result_ensemble((; images = [zeros(4, 4), zeros(5, 5)])) === nothing
+
+        # The engine names its members. SQUEEZE returns one mean per CHAIN and VI returns
+        # posterior DRAWS around one centre; the spread means a different thing in each, so
+        # the panel must not call both "chains".
+        @test result_ensemble((; images = imgs,
+                                 ensemble_noun = "posterior sample")).source ==
+              "4 posterior samples"
+        @test result_ensemble((; images = [imgs[1]],
+                                 ensemble_noun = "posterior sample")).source ==
+              "1 posterior sample"
+    end
+
+    # VI is four algorithms behind one engine entry, chosen by an option. The console echoes
+    # the call that ran, so the name has to follow the option rather than the engine.
+    @testset "the console names the VI algorithm that ran" begin
+        @test engine_call_name(:vmlmb) == "reconstruct"
+        @test engine_call_name(:vi) == "reconstruct_hybrid"          # the default
+        for v in ("map", "mgvi", "geovi", "hybrid")
+            @test engine_call_name(:vi, Dict("vi_engine" => v)) == "reconstruct_" * v
+        end
+        # A name from nowhere falls back to the entry rather than inventing a function.
+        @test engine_call_name(:vi, Dict("vi_engine" => "nonsense")) == "reconstruct_hybrid"
+        # Options belonging to another engine change nothing.
+        @test engine_call_name(:squeeze, Dict("vi_engine" => "map")) == "reconstruct_squeeze"
     end
 end

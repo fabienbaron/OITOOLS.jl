@@ -28,7 +28,7 @@ function make_test_ps()
     end
 
     data = readoifits(oifitsfile; filter_bad_data=true, verbose=false,
-                      warn=false, polychromatic=true, merge_oi_wavelength=true)
+                      warn=false, polychromatic=true, merge_oi_wavelength=true, T=Float64)
     ft = setup_ft(data, 64, 0.2)
     nwav = size(data, 1)
 

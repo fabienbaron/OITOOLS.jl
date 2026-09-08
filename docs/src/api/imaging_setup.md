@@ -19,10 +19,12 @@ dense kernel). Typing `ft` at the REPL summarises it.
 | `DFTCell` | one channel's dense DFT kernel, `nuv × nx²` |
 | `setup_dft(data, nx, pixsize)` | Build a DFT matrix for a single `OIdata` |
 | `setup_nfft(data, nx, pixsize)` | Build an NFFT plan for a single `OIdata` |
+| `setup_nfft_uv(uv, nx, pixsize)` | Build the uv plan alone, for callers that need only `image_to_vis` |
 | `gaussian2d(nx, ny, sigma)` | Generate a 2D Gaussian starting image |
 
 ```@docs
 setup_ft
+setup_nfft_uv
 ft_info
 OIft
 NFFTCell

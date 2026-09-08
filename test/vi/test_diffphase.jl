@@ -1,11 +1,11 @@
-using OITOOLS, OIVI, LinearAlgebra, FiniteDifferences, Test
+using OITOOLS, LinearAlgebra, FiniteDifferences, Test
 using OITOOLS, VarInf
 const OIVI = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)
 using .OIVI
 using Statistics: mean
 
 oifits = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/BC2026/OBJECT1_N.oifits"
-data = readoifits(oifits; polychromatic=true, filter_bad_data=true, verbose=false, warn=false)
+data = readoifits(oifits; polychromatic=true, filter_bad_data=true, verbose=false, warn=false, T=Float64)
 
 nf_test = 3
 npix = 16; pixsize = 0.3

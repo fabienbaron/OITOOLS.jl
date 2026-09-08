@@ -23,8 +23,15 @@ using GLFW_jll
 configure_qt_platform!(; match_x11 = !prefer_native_wayland!().applied)
 
 using GLMakie, QMLMakie, QML
-using Nautilus, PairPlots
-using Random: Xoshiro
+using Nautilus
+# PairPlots is a dependency of `bin/` but not of `app/`: it draws corner plots from the REPL
+# and nothing in the GUI reaches it. Optional, so that one trace serves both builds -- it is
+# loaded here rather than exercised, since `create_sysimage` names it separately.
+try
+    @eval using PairPlots
+catch err
+    @debug "PairPlots is not in this environment; not traced" err
+end
 
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
 const MK  = Base.get_extension(OITOOLS, :OITOOLSMakieExt)
@@ -125,12 +132,28 @@ end
 # a property of rejection sampling at tight settings, not of the batching: stock
 # `Proposals.Rejection` throws the same way. A trace is not the place to run a sampler at its
 # limit.
-traced("nested sampling + corner plot") do
-    r = fit_model_nested(md, free, data; backend = :nestedsamplers,
-                         lb = Dict("s,ud" => 5.0), ub = Dict("s,ud" => 9.0),
-                         nactive = 200, rng = Xoshiro(1234),
-                         verb = false, cornerplot = false)
-    Makie.save(OUT, plot_corner_makie(r.posterior, r.list_free_params).figure)
+# Two sections, not one, because they have different requirements. The sampler is present in
+# every build that traces this file; the corner plot needs PairPlots, which `bin/` has and the
+# application deliberately does not. Joined, a missing PairPlots cost the SAMPLER its
+# specialisations too — the whole section was skipped on a `MethodError` at the last line.
+r_nested = nothing
+traced("nested sampling") do
+    global r_nested = fit_model_nested(md, free, data; backend = :nautilus,
+                                       lb = Dict("s,ud" => 5.0), ub = Dict("s,ud" => 9.0),
+                                       n_live = 200, seed = 1234,
+                                       verb = false, cornerplot = false)
+end
+
+# `plot_corner_makie` is declared in the core and given methods by OITOOLSPairPlotsExt, so
+# without PairPlots the name resolves and the call does not. Ask about the extension rather
+# than about the result of calling it.
+if r_nested !== nothing &&
+   Base.get_extension(OITOOLS, :OITOOLSPairPlotsExt) !== nothing
+    traced("corner plot") do
+        Makie.save(OUT, plot_corner_makie(r_nested.posterior, r_nested.list_free_params).figure)
+    end
+else
+    @info "PairPlots is not in this environment; the corner plot is not traced"
 end
 
 # ── Imaging ──────────────────────────────────────────────────────────────────

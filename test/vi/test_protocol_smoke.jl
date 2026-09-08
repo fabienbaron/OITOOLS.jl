@@ -31,7 +31,7 @@ npix = 32
 pixsize = 0.2
 
 println("Loading interferometric data ($oifitsfile)...")
-data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false)
+data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)
 ft = setup_ft(data, npix, pixsize)
 nf = size(data, 1)
 d1 = data[1, 1]

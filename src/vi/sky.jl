@@ -5,6 +5,27 @@
 const MAS2RAD = π / (180.0 * 3600.0 * 1000.0)
 
 """
+    _check_weight(w, npix) -> Matrix{Float64}
+
+A caller-supplied support map, checked and rescaled the way `limb_weight` returns one.
+
+Every requirement here is one the model cannot survive without. A negative weight would make
+`D .* exp(field)` a negative intensity; an all-zero map divides the zero-mean projection by
+`D_sum = 1e-12`; a wrong shape reaches the FFTs as a `DimensionMismatch` several calls later,
+where it says nothing about the file that caused it.
+"""
+function _check_weight(w::AbstractMatrix{<:Real}, npix::Int)
+    size(w) == (npix, npix) || throw(ArgumentError(
+        "the sky-prior weight is $(size(w,1))×$(size(w,2)) but npix is $npix"))
+    all(isfinite, w) || throw(ArgumentError("the sky-prior weight has non-finite pixels"))
+    any(<(0), w) && throw(ArgumentError(
+        "the sky-prior weight has negative pixels; it multiplies an intensity"))
+    m = maximum(w)
+    m > 0 || throw(ArgumentError("the sky-prior weight is everywhere zero"))
+    return Float64.(w) ./ m
+end
+
+"""
     limb_weight(nx, ny, R_pix, u) -> Matrix{Float64}
 
 Limb-darkened disk weight in pixel space.
@@ -79,7 +100,7 @@ end
 end
 
 """
-    SkyModelParams(npix, pixsize, freq; R_mas, u,
+    SkyModelParams(npix, pixsize, freq; R_mas, u, weight,
                    spatial_slope_prior, spatial_fluct_prior, ...,
                    spectral_slope_prior, spectral_fluct_prior, ...)
 
@@ -87,9 +108,17 @@ Construct sky model parameters from physical hyperparameters.
 `pixsize` is the pixel size in milliarcseconds (converted to radians internally).
 The spatial and spectral fields each get their own correlated field config.
 Set `spatial_flex_prior=nothing` to disable IWP.
+
+The weight `D` is the image's SUPPORT and envelope, not a display choice: the model is
+`D .* exp(field)`, so `D = 0` forces a pixel to zero flux and the zero-mean projection is taken
+against `D` as well. `R_mas` and `u` build a limb-darkened disc for it, which is the default;
+pass `weight` instead to supply any non-negative `npix × npix` map — a mask, a photosphere, a
+previous reconstruction — and `R_mas` is then unused. Whatever is given is rescaled to a
+maximum of 1, as `limb_weight` returns, so the flux parameters keep their meaning.
 """
 function SkyModelParams(npix::Int, pixsize::Float64, freq::Vector{Float64};
-                        R_mas::Float64, u::Float64=0.0,
+                        R_mas::Float64=NaN, u::Float64=0.0,
+                        weight::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
                         spatial_slope_prior::Tuple{Float64,Float64}=(-4.0, 1.0),
                         spatial_fluct_prior::Tuple{Float64,Float64}=(1.6487, 2.1612),  # value-space lognormal (≡ old log μ=0, σ=1)
                         spatial_flex_prior::Union{Nothing,Tuple{Float64,Float64}}=nothing,
@@ -115,8 +144,13 @@ function SkyModelParams(npix::Int, pixsize::Float64, freq::Vector{Float64};
     sc_flex  = ch_flex_prior !== nothing ? ch_flex_prior : spectral_flex_prior
     sc_asp   = ch_asp_prior  !== nothing ? ch_asp_prior  : spectral_asp_prior
 
-    R_pix = R_mas / pixsize
-    D = limb_weight(npix, npix, R_pix; u=u)
+    D = if weight === nothing
+        isfinite(R_mas) || throw(ArgumentError(
+            "SkyModelParams needs either R_mas (a limb-darkened disc) or weight (a map)"))
+        limb_weight(npix, npix, R_mas / pixsize; u=u)
+    else
+        _check_weight(weight, npix)
+    end
     D_sum = sum(D) + 1e-12
 
     grid = FourierGridInfo(npix, dx)

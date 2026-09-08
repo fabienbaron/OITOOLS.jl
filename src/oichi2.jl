@@ -265,7 +265,44 @@ end
 # pays (0.5 ms at nx<=128, ~670 ms at nx=256); every later plan of that size is ~0.7 ms.
 # setup_nfft builds six plans on one grid size, and polychromatic setups build 6·nwav, so
 # the measurement is amortised over all of them.
+#
+# On the NFFT path this package actually uses (m=4, σ=2, nx=256, Float32, 52425 uv points,
+# 16 threads, plan built once and the adjoint hoisted out of the timing):
+#
+#                    plan          forward      adjoint
+#   ESTIMATE        210 ms         0.778 ms     3.726 ms
+#   MEASURE         712 ms         0.418 ms     0.547 ms
+#   PATIENT       62648 ms         0.408 ms     0.537 ms
+#
+# The ADJOINT is where the flag earns its keep — 6.8x against 1.86x on the forward — and the
+# adjoint is what `image_chi2_fg!` runs once per iteration. PATIENT buys 2% for 88x the
+# planning cost, per grid size, so it is not a candidate.
+#
+# THE FLAG IS FFTW-SPECIFIC, and that is the reason to stay on FFTW. FFTW.jl can also run on
+# MKL (`FFTW.set_provider!("mkl")`), whose DFTI picks its algorithm at commit time and is
+# therefore flat across all three flags: 0.45 / 0.55 ms whichever is passed. MKL is 1.14-1.5x
+# faster than FFTW on an ISOLATED complex transform — measured on a Ryzen 9 9950X3D, where the
+# old "MKL cripples AMD" story does not apply — but none of that survives inside the NFFT,
+# which is dominated by gridding: against MEASURE it is a tie, and it wins only against an
+# unplanned ESTIMATE. So a raw-FFT benchmark makes MKL look worth having and the real workload
+# does not.
 const FFT_FLAGS = FFTW.MEASURE
+
+"""
+    setup_nfft_uv(uv, nx, pixsize) -> NFFTPlan
+
+The uv plan alone: image to complex visibility at the given points, and nothing else.
+
+`setup_nfft` builds six plans because a criterion needs one per observable index map. A caller
+that only wants `V(u,v)` — simulating from an existing file's coverage, say — needs one, and
+building six to use the first is five plans of waste.
+
+It exists rather than being written out at the call site so that the mas-to-radian scaling
+lives in ONE place: a second copy of `pixsize * π / 180 / 3.6e6` is a sign convention waiting
+to drift.
+"""
+setup_nfft_uv(uv::Matrix{T}, nx, pixsize; fftflags = FFT_FLAGS) where T<:AbstractFloat =
+    plan_nfft(T(pixsize * (pi / 180.0) / 3600000.0) .* uv, (nx, nx), m = 4, σ = 2.0; fftflags)
 
 # setup_nfft: dispatches on OIdata{T}; plan_nfft infers T from Matrix{T} uv coords,
 # returning NFFTPlan{T,2,1}. Works for both Float32 and Float64.
@@ -373,6 +410,12 @@ end
 function mod360(x::AbstractArray{T}) where T<:AbstractFloat
     mod.(mod.(x .+ T(180), T(360)) .+ T(360), T(360)) .- T(180)
 end
+
+# The same wrap for one angle. The array method covers every use in the chi2 kernels, which is
+# why this was missing; the VI code differentiates a single closure phase at a time and needs
+# it. Kept beside the array form so the two conventions cannot drift.
+mod360(x::T) where {T<:AbstractFloat} =
+    mod(mod(x + T(180), T(360)) + T(360), T(360)) - T(180)
 
 function vis_to_v2(cvis, indx)
     v2_model = abs2.(cvis[indx]);
@@ -2005,7 +2048,10 @@ function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
     # ndof normalization
     f /= ndof
     g4 ./= ndof
-    verb && printstyled(@sprintf("Crit/dof: %.4f\n", f), color=:blue)
+    # No "Crit/dof" line. The per-observable chi2r that `_chi2_fg` already prints on the same
+    # iteration is the number worth reading; the criterion includes the regularisers, so it is
+    # neither a reduced chi2 nor comparable between regularisation settings — one more figure
+    # per iteration that says less than the ones beside it.
     return f
 end
 
@@ -2095,7 +2141,10 @@ function crit_f(x4::AbstractArray{<:AbstractFloat,4},
     end
 
     f /= ndof
-    verb && printstyled(@sprintf("Crit/dof: %.4f\n", f), color=:blue)
+    # No "Crit/dof" line. The per-observable chi2r that `_chi2_fg` already prints on the same
+    # iteration is the number worth reading; the criterion includes the regularisers, so it is
+    # neither a reduced chi2 nor comparable between regularisation settings — one more figure
+    # per iteration that says less than the ones beside it.
     return f
 end
 

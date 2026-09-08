@@ -76,13 +76,15 @@ export parse_model_lines, parse_free_lines, parse_constraint_lines, parse_prior_
 export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        start_image, reconstruct_image, observable_availability, observable_flags_string,
        parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start,
-       IMAGING_ENGINES, POLYCHROMATIC_ENGINES, run_engine, prior_image, result_ensemble
+       IMAGING_ENGINES, POLYCHROMATIC_ENGINES, engine_call_name, run_engine, prior_image,
+       result_ensemble, vi_sky_params, vi_prior_draw
 export NightPlan, config_catalog, facility_telescopes, telescope_config,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,
        pop_label,
        baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
-       delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info
+       delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info,
+       facility_subset, epochs_for_hour_angles
 export build_chi2_map, update_chi2_map!
 export build_residuals, update_residuals!, residual_series,
        RESIDUAL_KINDS, RESIDUAL_SPECS, RESIDUAL_COLORS

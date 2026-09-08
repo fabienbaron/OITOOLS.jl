@@ -72,6 +72,32 @@ end
 # ============================================================================
 
 """
+    plan_precision(obs) -> Type
+
+Element type of the NFFT plans this configuration was built on.
+
+PRECISION HERE IS TWO NUMBERS, NOT ONE, and conflating them is a 20-60% error rather than a
+rounding difference. The plans may be Float32 — `readoifits` and `setup_ft` default to it, and
+at Float32 the transform is twice as fast — while the ADJOINT SOURCE must be accumulated at
+Float64. A single uv point collects contributions from several observables (it appears in V²
+and in all three legs of a T3) which are large and of opposite sign; summing them at Float32
+loses the cancellation. Measured against a Float64 reference, gradient error at nx = 512:
+0.57 with a Float32 accumulator, 8.0e-04 with a Float64 one.
+
+So there are exactly three boundaries, and each converts once:
+
+  * `_combined_cvis` and `observe_jvp` — image enters the plan at the plan's precision;
+  * `_obs_to_g_cvis` — the cotangent is accumulated at Float64, whatever the plan is;
+  * `_g_cvis_to_g_image` — that accumulator is rounded to the plan's precision once, at the
+    adjoint.
+
+This is the split `ImageChi2Cache{T,W}` makes in the image kernel, with T the plan and W the
+accumulation. `scatter_obs_cotangent!` already accepts the mixed pair and floors its divisions
+at `eps` of the VISIBILITIES, which is the right one of the two.
+"""
+plan_precision(obs::ObservationConfig) = ft_eltype(obs.ft_uv)
+
+"""
     _combined_cvis(image, obs; params=nothing) -> cvis
 
 Compute complex visibilities from image, optionally adding parametric model
@@ -80,7 +106,7 @@ contribution with SPARCO flux weighting.
 function _combined_cvis(image::AbstractMatrix{<:Real}, obs::ObservationConfig;
                         params::Union{Nothing, AbstractVector}=nothing)
     flux = sum(image)
-    img_norm = Complex{Float64}.(image ./ flux)
+    img_norm = Complex{plan_precision(obs)}.(image ./ flux)
     cvis_image = obs.ft_uv * img_norm
 
     if obs.model !== nothing && params !== nothing
@@ -181,7 +207,10 @@ function _obs_to_g_cvis(g_obs::AbstractVector{<:Real},
                         obs::ObservationConfig)
     nv2 = obs.nv2
     nt3 = obs.nt3amp
-    g_cvis = zeros(eltype(cvis), length(cvis))
+    # ComplexF64 whatever `cvis` is: this is the accumulator, and following the plan's
+    # precision here is exactly the mistake `plan_precision` documents. It costs 16 bytes per
+    # uv point -- under a megabyte on the largest set here -- and no arithmetic.
+    g_cvis = zeros(ComplexF64, length(cvis))
 
     # OITOOLS' scatter, not a second copy of it. Two conventions have to be bridged here, and
     # both are real differences rather than taste:
@@ -215,13 +244,16 @@ Backpropagate cvis cotangent to image gradient via NFFT adjoint,
 including flux normalization correction. Optionally scale by `scale`
 (used for SPARCO f_env weighting).
 """
-function _g_cvis_to_g_image(g_cvis::AbstractVector{ComplexF64},
-                            image::AbstractMatrix{Float64},
+function _g_cvis_to_g_image(g_cvis::AbstractVector{<:Complex},
+                            image::AbstractMatrix{<:Real},
                             obs::ObservationConfig;
                             scale::Float64=1.0)
     flux = sum(image)
     inv_flux = 1.0 / flux
-    g_img_norm = scale .* real.(adjoint(obs.ft_uv) * g_cvis)
+    # The one rounding of the accumulator, here at the plan boundary. Everything after it is
+    # Float64 again, since `inv_flux` and `scale` are.
+    src = convert(Vector{Complex{plan_precision(obs)}}, g_cvis)
+    g_img_norm = scale .* real.(adjoint(obs.ft_uv) * src)
     img_norm_real = image .* inv_flux
     correction = sum(g_img_norm .* img_norm_real)
     return (g_img_norm .- correction) .* inv_flux
@@ -397,8 +429,8 @@ end
 Compute observables and their tangents from combined complex visibilities.
 Shared by both image-only and hybrid observe_jvp.
 """
-function _cvis_to_obs_jvp(cvis::AbstractVector{ComplexF64},
-                          d_cvis::AbstractVector{ComplexF64},
+function _cvis_to_obs_jvp(cvis::AbstractVector{<:Complex},
+                          d_cvis::AbstractVector{<:Complex},
                           obs::ObservationConfig)
     cv2 = cvis[obs.indx_v2]
     dv2 = d_cvis[obs.indx_v2]
@@ -458,8 +490,8 @@ function observe_jvp(image::AbstractMatrix{Float64}, d_image::AbstractMatrix{Flo
     img_norm = image .* inv_flux
     d_img_norm = (d_image .* flux .- image .* d_flux) .* (inv_flux * inv_flux)
 
-    cvis_image = obs.ft_uv * Complex{Float64}.(img_norm)
-    d_cvis_image = obs.ft_uv * Complex{Float64}.(d_img_norm)
+    cvis_image   = obs.ft_uv * Complex{plan_precision(obs)}.(img_norm)
+    d_cvis_image = obs.ft_uv * Complex{plan_precision(obs)}.(d_img_norm)
 
     if obs.model !== nothing && params !== nothing && d_params !== nothing
         # Hybrid: add parametric model contribution

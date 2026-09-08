@@ -18,7 +18,7 @@ npix = 24
 pixsize = 0.4
 
 println("\n-- Loading data --")
-data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false)
+data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)
 ft = setup_ft(data, npix, pixsize)
 nf = size(data, 1)
 freq = [3e8 / mean(data[1, 1].uv_lam)]
@@ -47,6 +47,33 @@ println("samples drawn:    ", length(samples))
 @assert all(isfinite, image_std)  "image_std has non-finite values"
 @assert maximum(image_mean) > 0   "image_mean is non-positive"
 println("\nreconstruct_hybrid PASSED")
+
+# The other two domain wrappers, at one iteration each. They are what the GUI's `:vi` engine
+# calls when the panel picks MGVI or geoVI, and neither was covered here: the suites above
+# exercise VarInf's `reconstruct_*(prob; …)` entry points, not the `(p, ft, data)` wrappers, so
+# a kwarg the wrapper forwards and VarInf no longer takes went unnoticed until a run failed
+# with a MethodError. (That was `damping`, removed from VarInf's MGVI when it stopped
+# double-counting the prior.)
+println("\n-- reconstruct_mgvi(p, ft, data; …) (1 iter, 1 sample) --")
+z_m, mean_m, std_m, samples_m = OIVI.reconstruct_mgvi(
+    p, ft, data;
+    n_iterations=1, n_samples=1, map_maxiter=20, kl_maxiter=5, cg_maxiter=10, verb=false)
+@assert all(isfinite, mean_m) "MGVI image_mean has non-finite values"
+@assert all(isfinite, std_m)  "MGVI image_std has non-finite values"
+@assert maximum(mean_m) > 0   "MGVI image_mean is non-positive"
+# Antithetic pairs: MGVI mirrors every draw, so the ensemble is twice what was asked for.
+@assert length(samples_m) == 2 "MGVI returns ± pairs; got $(length(samples_m))"
+println("reconstruct_mgvi PASSED")
+
+println("\n-- reconstruct_geovi(p, ft, data; …) (1 iter, 1 sample) --")
+z_g, mean_g, std_g, samples_g = OIVI.reconstruct_geovi(
+    p, ft, data;
+    n_iterations=1, n_samples=1, map_maxiter=20, kl_maxiter=5, cg_maxiter=10,
+    geo_newton_maxiter=2, geo_cg_maxiter=8, verb=false)
+@assert all(isfinite, mean_g) "geoVI image_mean has non-finite values"
+@assert all(isfinite, std_g)  "geoVI image_std has non-finite values"
+@assert maximum(mean_g) > 0   "geoVI image_mean is non-positive"
+println("reconstruct_geovi PASSED")
 
 println("\n-- reconstruct_pointsource (2 MGVI + 1 GeoVI iters) --")
 N = 2

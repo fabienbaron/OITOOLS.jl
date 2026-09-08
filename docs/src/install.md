@@ -316,12 +316,27 @@ QT_QPA_PLATFORM=wayland        # say so explicitly; an existing setting is never
 QSG_INFO=1                     # make Qt report which GL renderer it actually got
 ```
 
+## Where the shipped files come from
+
+The QML that draws the window, the instrument configs behind the Observing perspective, and the
+demo data the file picker opens on are files read at run time, not code a sysimage can carry.
+[`resource_dir`](@ref) says which directory is supplying them:
+
+```julia
+julia> resource_dir()
+"/home/you/.julia/dev/OITOOLS"      # a checkout: the package directory itself
+```
+
+A checkout needs no configuration. `OITOOLS_RESOURCE_DIR` overrides the search, which is what
+an installed application sets and what makes the behaviour testable without building one.
+
 ```@docs
 oitoolsgui
 gui
 configure_graphics!
 configure_qt_platform!
 is_wsl
+resource_dir
 ```
 
 The GUI's own types (`Session`, `LiveCanvas`, `ShellState`) are defined inside the extension,

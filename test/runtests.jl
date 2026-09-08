@@ -18,6 +18,8 @@ using Random: Xoshiro
 BLAS.set_num_threads(1)
 
 @testset "OITOOLS" begin
+    include("test_aqua.jl")              # package hygiene: exports, compat, ambiguities, piracy
+    include("test_resources.jl")         # where shipped QML/configs/demo data are found
     include("test_bsmem_precision.jl")   # cheap structural checks first
     include("test_chromatic_params.jl")  # $WL / $MJD / $B model parameters
     include("test_model_gradients.jl")   # analytic model gradients vs finite differences
@@ -32,6 +34,7 @@ BLAS.set_num_threads(1)
     include("test_plotting.jl")          # every figure: renders, plotted values, options
     include("test_squeeze.jl")           # SQUEEZE MCMC sampler
     include("test_squeeze_tempering.jl") # SQUEEZE + Pigeons (skipped if absent)
+    include("vi/runtests.jl")            # variational inference (skipped if VarInf absent)
     include("test_ft_plans.jl")          # OIft/NFFTCell/DFTCell, and the plan naming
     include("test_component_widths.jl") # absolute scale: fwhm/diameter mean what they say
     # The fixtures live in demos/data (see demos/data/README.md -- they used to be duplicated

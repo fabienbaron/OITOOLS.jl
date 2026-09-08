@@ -11,11 +11,13 @@
 | `set_data_filter(data; kwargs...)` | Set persistent data filters |
 | `readfits(file)` | Read a FITS image into a matrix |
 | `writefits(data, file)` | Write a matrix to a FITS image |
+| `fits_pixsize(file)` | Pixel scale of a FITS image in mas, from its WCS keywords, or `nothing` |
 | `oifits_prep(data; kwargs...)` | Inflate error bars (additive/relative floors, multiplicative scaling) |
 | `updatefits_aspro(in, out, pixsize)` | Add ASPRO-compatible WCS headers to a FITS image |
 
 ```@docs
 OIdata
+fits_pixsize
 readoifits
 readoifits_multiepochs
 filter_data

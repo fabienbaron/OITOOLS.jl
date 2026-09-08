@@ -17,6 +17,43 @@ import Makie
 ApplicationWindow {
     id: win
 
+    // ── a fixed light palette ─────────────────────────────────────────────────
+    //
+    // Every panel, table and label below paints itself with a fixed light colour, and the
+    // Makie canvases are light too. Qt's controls, left alone, follow the SYSTEM theme -- so on
+    // a dark desktop the window came out mixed: dark chrome around white tables and white
+    // plots, with grey-on-grey text that was hard to read.
+    //
+    // `prefer_light_controls!` pins the style to Basic for the same reason; this pins the
+    // colours the style derives from, which is the half a style choice does not cover. The
+    // values are the ones already used throughout this file, so nothing shifts on a light
+    // desktop -- they only stop a dark one leaking in.
+    //
+    // If a dark theme is ever wanted, this block plus `style_axis!` for the figures are the two
+    // places that would have to change, and the 71 literals below would have to become palette
+    // roles first.
+    palette {
+        window:          "#f4f4f4"
+        windowText:      "#222222"
+        base:            "#ffffff"
+        alternateBase:   "#fbfbfb"
+        text:            "#222222"
+        button:          "#efefef"
+        buttonText:      "#222222"
+        placeholderText: "#888888"
+        light:           "#ffffff"
+        midlight:        "#eeeeee"
+        mid:             "#dddddd"
+        dark:            "#999999"
+        shadow:          "#666666"
+        highlight:       "#3874d8"
+        highlightedText: "#ffffff"
+        toolTipBase:     "#ffffe1"
+        toolTipText:     "#222222"
+        brightText:      "#ffffff"
+        link:            "#0645ad"
+    }
+
     // ── one scale factor for all the chrome ───────────────────────────────────
     //
     // Qt already scales `font.pointSize` by the font DPI, so text grows on a HiDPI screen by
@@ -66,18 +103,39 @@ ApplicationWindow {
 
     // Turned by hand in the settings panel; 0 means "no override". It wins over both the
     // startup variable and the screen, because it is the most recent thing the user said.
-    property real uiScaleUser: 0
-    property string uiFontFamily: ""
+    // The out-of-the-box appearance, in one place. Both the initial values below and the
+    // settings panel's "Reset to defaults" read it, so the button cannot drift from the
+    // declarations — a reset that restored the wrong number would be worse than none.
+    //
+    // Zero is not a size anywhere here: it is "unset", and the shipped value behind it lives in
+    // Julia (`PLOT_SCALE_AT_REF_DPI`, `ZOOM_PER_DETENT`, each plot's own marker size) or is
+    // computed from the screen. So the reset sends zero rather than a number, and the boxes are
+    // filled from what Julia then reports — repeating 1.25 here would pin today's constant as a
+    // user override and survive a change to it.
+    readonly property var appearanceDefaults: ({
+        uiScaleUser: 0, uiFontFamily: "", baseFontPt: 11, plotScaleUser: 0, markerSizeUser: 0,
+        // The shipped style is Julia's to name (`DEFAULT_CONTROLS_STYLE`), so it is asked for
+        // rather than repeated here: a reset has to restore what the window would ship with,
+        // not a literal that was true when this line was written.
+        zoomStepUser: 0, controlsStyle: Julia.shell_default_controls_style()
+    })
+
+    property real uiScaleUser: appearanceDefaults.uiScaleUser
+    property string uiFontFamily: appearanceDefaults.uiFontFamily
+    // Qt Quick Controls style. Read by `apply_controls_style!` from the settings file BEFORE
+    // the QML is loaded, so a change here takes effect at the next launch, not this one.
+    property string controlsStyle: appearanceDefaults.controlsStyle
 
     // What the plot layer was last TOLD, as opposed to what it is drawing: zero means the
-    // value is computed from the screen. "Save defaults" stores these rather than the numbers
+    // value is computed from the screen. "Save config" stores these rather than the numbers
     // in force, so a scale worked out from this monitor's DPI is not pinned onto the next one.
-    property real plotScaleUser: 0
-    property real markerSizeUser: 0
+    property real plotScaleUser: appearanceDefaults.plotScaleUser
+    property real markerSizeUser: appearanceDefaults.markerSizeUser
     // How far one wheel detent zooms a plot. A setting because it depends on the pointing
     // device as much as on taste: a detented wheel, a free-spinning one and a touchpad all
-    // deliver different amounts of scroll for the same gesture.
-    property real zoomStepUser: 1.25
+    // deliver different amounts of scroll for the same gesture. Filled from Julia when the
+    // panel opens, since it is Julia that zooms.
+    property real zoomStepUser: appearanceDefaults.zoomStepUser
 
     readonly property real uiScale: uiScaleUser > 0     ? uiScaleUser
                                   : uiScaleOverride > 0 ? uiScaleOverride
@@ -91,7 +149,7 @@ ApplicationWindow {
     // under WSL is 9 pt at 96 dpi -- small on a large panel. Everything inherits this unless
     // it sets its own size, so raising it here raises the whole UI, and OITOOLSGUI_SCALE
     // multiplies it along with the spacing.
-    property real baseFontPt: 11
+    property real baseFontPt: appearanceDefaults.baseFontPt
     font.pointSize: pt(baseFontPt)
     // Empty means whatever the platform theme chose, which is the sane default.
     font.family: uiFontFamily.length > 0 ? uiFontFamily : Qt.application.font.family
@@ -141,12 +199,14 @@ ApplicationWindow {
         }
     }
 
-    // Twice the size it has on screen, so the file is usable in a talk rather than being a
-    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
-    // a software GL stack refuses the very large ones.
+    // The panel's own size, which Julia uses only when it cannot measure the live scene: the
+    // file has to be laid out like the picture on screen, and Makie sizes text in points, so
+    // asking for a bigger figure would re-lay it out rather than enlarge it. Resolution comes
+    // from `px_per_unit` at save time instead. Capped because the figure is rendered into a
+    // real framebuffer and a software GL stack refuses the very large ones.
     function savePng(which, area) {
-        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
-        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
         savePngDialog.openAt("")
     }
 
@@ -161,7 +221,8 @@ ApplicationWindow {
     // handlers call update() for exactly this reason.
     function redrawPlot() { if (typeof makieArea !== "undefined") makieArea.update() }
 
-    function afterAction() { refreshConsole(); redrawPlot(); refreshObservables() }
+    function afterAction() { refreshConsole(); redrawPlot(); refreshObservables()
+                             refreshCompareAvailability() }
 
     // What one panel of the per-group view would hold, for whichever observable is selected.
     property string groupingNoun: ""
@@ -183,6 +244,42 @@ ApplicationWindow {
     // uv coverage is geometry, not an observable — there is nothing for a model to predict and
     // nothing to subtract. The ticks are disabled there rather than hidden, like every other
     // control in this bar.
+    // Whether there is anything to compare against. Refreshed with the observables, so it
+    // follows a fit, a reconstruction and a dataset change without a signal of its own.
+    property bool haveModelObs: false
+    property bool haveImageObs: false
+
+    // Plot scale, marker size and zoom step live in Julia, so ask it rather than trusting the
+    // numbers the spin boxes were built with. The first field is the scale in FORCE, which is
+    // what the box shows: `plotScaleUser` may be 0 for "computed from the screen", and a box
+    // reading 0 would say nothing about what the plots are doing.
+    function readPlotSettings() {
+        var f = Julia.shell_plot_scale().split("\t")
+        if (f.length !== 4) return
+        plotScaleSpin.value  = Math.round(parseFloat(f[0]) * 100)
+        win.plotScaleUser    = parseFloat(f[1])
+        win.markerSizeUser   = parseFloat(f[2])
+        markerSpin.value     = Math.round(win.markerSizeUser)
+        win.zoomStepUser     = parseFloat(f[3])
+        zoomSpin.value       = Math.round(win.zoomStepUser * 100)
+    }
+
+    function refreshCompareAvailability() {
+        var parts = Julia.shell_compare_available().split(",")
+        for (var i = 0; i < parts.length; ++i) {
+            var kv = parts[i].split("=")
+            if (kv[0] === "model") win.haveModelObs = (kv[1] === "1")
+            if (kv[0] === "image") win.haveImageObs = (kv[1] === "1")
+        }
+        // A tick that has just lost its source stops claiming to show it.
+        if (!win.haveModelObs && (residModelBox.checked || overModelBox.checked)) {
+            residModelBox.checked = false; overModelBox.checked = false; win.setCompareView()
+        }
+        if (!win.haveImageObs && (residImageBox.checked || overImageBox.checked)) {
+            residImageBox.checked = false; overImageBox.checked = false; win.setCompareView()
+        }
+    }
+
     function comparableKind() {
         return ["v2", "t3amp", "t3phi", "visamp", "visphi"].indexOf(kindBox.currentText) >= 0
     }
@@ -304,6 +401,15 @@ ApplicationWindow {
         // Saved defaults first: they can override the scale, and `shell_ui_scale` below has to
         // be told the value that actually wins.
         applySavedSettings()
+        // Which optional engines this build can run. A session property, not a dataset one:
+        // it depends on whether the package extension loaded, so it is read once here rather
+        // than left hardcoded false in ImageTab as both of these were.
+        var eng = Julia.shell_optional_engines().split(",")
+        for (var i = 0; i < eng.length; ++i) {
+            var kv = eng[i].split("=")
+            if (kv[0] === "vi")        imageTab.oiviAvailable    = (kv[1] === "1")
+            if (kv[0] === "tempering") imageTab.pigeonsAvailable = (kv[1] === "1")
+        }
         // Hand the scale to Julia before anything is drawn: Makie font and marker sizes are
         // computed there, and they have to follow the same factor as the chrome around them.
         Julia.shell_ui_scale(uiScale, physicalDpi)
@@ -316,7 +422,7 @@ ApplicationWindow {
         + "  -> uiScale=" + uiScale.toFixed(3) + " fontScale=" + fontScale.toFixed(3))
     }
 
-    // Applies whatever "Save defaults" last wrote. Silent when nothing has been saved, which is
+    // Applies whatever "Save config" last wrote. Silent when nothing has been saved, which is
     // the normal case -- the built-in defaults are a perfectly good answer, and a settings file
     // that cannot be read must not stop the window from opening.
     function applySavedSettings() {
@@ -330,6 +436,7 @@ ApplicationWindow {
             switch (f[0]) {
             case "ui_scale":    if (v > 0) win.uiScaleUser = v; break
             case "ui_font":     win.uiFontFamily = f[1]; break
+            case "controls_style": win.controlsStyle = f[1]; break
             case "ui_font_pt":  if (v > 0) win.baseFontPt = v; break
             case "plot_scale":  win.plotScaleUser = v > 0 ? v : 0
                                 Julia.shell_set_plot_scale(win.plotScaleUser); break
@@ -349,6 +456,10 @@ ApplicationWindow {
         var names = Julia.shell_dataset_names().split("\n").filter(function (s) { return s.length > 0 })
         datasetBox.model = names
         datasetBox.currentIndex = names.length - 1
+        // Observing's "Copy existing OIFITS structure" simulates through the loaded file's uv
+        // points, so it needs to know there IS one — and to say so beside the button rather
+        // than after Simulate is pressed.
+        observeTab.datasetCount = names.length
     }
 
     // ── context bar: what every perspective is looking at ─────────────────────
@@ -383,17 +494,7 @@ ApplicationWindow {
             // from the saved defaults has to be found in the list by hand. -1 for a name that
             // is not on the list, and 0 for none at all, both mean "(system default)".
             uiFontBox.currentIndex = Math.max(0, uiFontBox.model.indexOf(win.uiFontFamily))
-            // Plot scale and marker size live in Julia, so ask it rather than trusting the
-            // number the spin box was built with.
-            var f = Julia.shell_plot_scale().split("\t")
-            if (f.length === 4) {
-                plotScaleSpin.value  = Math.round(parseFloat(f[0]) * 100)
-                win.plotScaleUser    = parseFloat(f[1])
-                win.markerSizeUser   = parseFloat(f[2])
-                markerSpin.value     = Math.round(win.markerSizeUser)
-                win.zoomStepUser     = parseFloat(f[3])
-                zoomSpin.value       = Math.round(win.zoomStepUser * 100)
-            }
+            readPlotSettings()
             settingsPanel.open()
         }
             }
@@ -470,17 +571,34 @@ ApplicationWindow {
     // ── appearance settings ───────────────────────────────────────────────────
     //
     // The controls show what is CURRENTLY in force, and the scale, font and plot controls
-    // change it live. Plot font and theme are shown but disabled, each for a stated reason.
-    // "Save defaults" writes the lot to a per-user file that the window reads at startup.
+    // change it live. The plot font is shown but disabled, for a stated reason, and the
+    // controls style takes effect at the next launch because Qt reads it once, at load.
+    // "Save config" writes the lot to a per-user file that the window reads at startup.
     Popup {
         id: settingsPanel
         // Centred. Anchored to the top-left it landed on the Observing settings column, which
         // is also a stack of labelled rows in a light panel -- close enough in appearance that
         // it was not obvious which one had focus. The middle of the window belongs to nothing
         // else, so a panel there reads as a dialog.
-        x: Math.round((win.width  - width)  / 2)
-        y: Math.round((win.height - height) / 2)
-        width: dp(430)
+        // Centred, but never outside the window, and never larger than it. With no height set
+        // a Popup takes its content's, which grows with the font and the UI scale: at a large
+        // enough setting the panel outgrew the window and the buttons at the bottom went off
+        // the screen -- the settings panel being exactly where one goes to undo a setting like
+        // that. So both axes are capped, the position is clamped, and the content scrolls.
+        //
+        // Against `parent`, NOT `win`: a Popup is positioned inside the window's CONTENT item,
+        // which is the window less its header. Measured against `win.height` the panel sat a
+        // toolbar's height too low and ran off the bottom even when it would otherwise fit --
+        // photographed under Xvfb at 26 pt before this line was written.
+        //
+        // The width follows the content up to what the window can show, because the content is
+        // font-sized: at a large UI font a fixed 430 leaves the spin boxes to be reached by
+        // horizontal scrolling, which is a poor way to find a control you did not know was there.
+        x: Math.max(dp(12), Math.round((parent.width  - width)  / 2))
+        y: Math.max(dp(12), Math.round((parent.height - height) / 2))
+        width:  Math.min(Math.max(dp(430), settingsColumn.implicitWidth + dp(30)),
+                         parent.width - dp(24))
+        height: Math.min(implicitHeight, parent.height - dp(24))
         // Dimmed behind, for the same reason: it separates the panel from whatever it covers.
         modal: true
         dim: true
@@ -488,195 +606,260 @@ ApplicationWindow {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         padding: dp(12)
 
-        ColumnLayout {
-            width: parent.width
-            spacing: dp(10)
+        // A big font also widens the grid past the panel, so the view scrolls both ways and
+        // clips: a control drawn outside the panel is worse than one behind a scrollbar.
+        ScrollView {
+            id: settingsScroll
+            anchors.fill: parent
+            clip: true
+            // Derived from the POPUP's width, never from this view's availableWidth: that one
+            // shrinks when a scrollbar appears, and whether a scrollbar appears depends on
+            // contentWidth — which Qt reports, correctly, as a binding loop. The gutter is the
+            // vertical scrollbar's room, reserved whether or not it is showing.
+            contentWidth: Math.max(settingsPanel.availableWidth - dp(14),
+                                   settingsColumn.implicitWidth)
 
-            RowLayout {
-                Layout.fillWidth: true
-                Label { text: "Appearance"; font.bold: true }
-                Item { Layout.fillWidth: true }
-                Label {
-                    text: "plot font and theme need a restart"
-                    color: "#888"
-                    font.pointSize: pt(baseFontPt - 2)
-                }
-            }
+            ColumnLayout {
+                id: settingsColumn
+                width: settingsScroll.contentWidth
+                spacing: dp(10)
 
-            GridLayout {
-                columns: 3
-                columnSpacing: dp(8)
-                rowSpacing: dp(6)
-                Layout.fillWidth: true
-
-                // ── UI ────────────────────────────────────────────────────────
-                Label { text: "UI scale"; color: "#666" }
-                SpinBox {
-                    id: uiScaleSpin
-                    from: 50; to: 400; stepSize: 5
-                    value: Math.round(win.uiScale * 100)
-                    editable: true
-                    textFromValue: function (v) { return (v / 100).toFixed(2) }
-                    valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                RowLayout {
                     Layout.fillWidth: true
-                    // Everything sized through dp()/pt() rebinds, so the window resizes as the
-                    // number changes rather than on close.
-                    onValueModified: win.uiScaleUser = value / 100
-                }
-                Button {
-                    text: "auto"
-                    enabled: win.uiScaleUser > 0
-                    ToolTip.visible: hovered
-                    ToolTip.text: uiScaleOverride > 0
-                        ? "back to OITOOLSGUI_SCALE=" + uiScaleOverride.toFixed(2)
-                        : "back to the value computed from " + physicalDpi.toFixed(0) + " dpi"
-                    onClicked: win.uiScaleUser = 0
-                }
-
-                Label { text: "UI font"; color: "#666" }
-                ComboBox {
-                    id: uiFontBox
-                    model: ["(system default)", "DejaVu Sans", "Noto Sans", "Liberation Sans",
-                            "JuliaMono"]
-                    Layout.fillWidth: true
-                    onActivated: win.uiFontFamily = currentIndex === 0 ? "" : currentText
-                }
-                SpinBox {
-                    id: uiFontSizeSpin
-                    from: 6; to: 24; stepSize: 1
-                    value: Math.round(baseFontPt)
-                    editable: true
-                    onValueModified: win.baseFontPt = value
-                }
-
-                // ── plots ─────────────────────────────────────────────────────
-                Label { text: "Plot font"; color: "#666" }
-                ComboBox {
-                    id: plotFontBox
-                    // Shown, not settable. Makie takes the font at Figure CONSTRUCTION; every
-                    // route to change it afterwards throws `Failed to resolve
-                    // data_boundingbox` out of its compute graph -- tried on the axis label,
-                    // tick label and colorbar attributes alike. Changing it means restarting.
-                    model: ["DejaVu Sans", "JuliaMono", "Noto Sans", "Liberation Sans",
-                            "(Makie default)"]
-                    enabled: false
-                    Layout.fillWidth: true
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Set at startup; Makie cannot change a figure's font once it " +
-                                  "exists. Edit PLOT_FONT in src/gui/plots.jl."
-                }
-                SpinBox {
-                    id: plotScaleSpin
-                    from: 50; to: 500; stepSize: 5
-                    value: 119                     // replaced on open by the live value
-                    editable: true
-                    textFromValue: function (v) { return (v / 100).toFixed(2) }
-                    valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
-                    onValueModified: {
-                        win.plotScaleUser = value / 100
-                        Julia.shell_set_plot_scale(win.plotScaleUser)
+                    Label { text: "Appearance"; font.bold: true }
+                    Item { Layout.fillWidth: true }
+                    Label {
+                        text: "plot font and controls style need a restart"
+                        color: "#888"
+                        font.pointSize: pt(baseFontPt - 2)
                     }
                 }
 
-                Label { text: "Plot symbols"; color: "#666" }
-                SpinBox {
-                    id: markerSpin
-                    from: 0; to: 30; stepSize: 1
-                    value: 0
-                    editable: true
+                GridLayout {
+                    columns: 3
+                    columnSpacing: dp(8)
+                    rowSpacing: dp(6)
                     Layout.fillWidth: true
-                    // 0 means "whatever the plot chooses", which differs per view -- uv
-                    // coverage draws smaller points than an observable plot.
-                    textFromValue: function (v) { return v === 0 ? "auto" : String(v) }
-                    valueFromText: function (t) { return t === "auto" ? 0 : parseInt(t) }
-                    onValueModified: {
-                        win.markerSizeUser = value
-                        Julia.shell_set_marker_size(value)
+
+                    // ── UI ────────────────────────────────────────────────────────
+                    Label { text: "UI scale"; color: "#666" }
+                    SpinBox {
+                        id: uiScaleSpin
+                        from: 50; to: 400; stepSize: 5
+                        value: Math.round(win.uiScale * 100)
+                        editable: true
+                        textFromValue: function (v) { return (v / 100).toFixed(2) }
+                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                        Layout.fillWidth: true
+                        // Everything sized through dp()/pt() rebinds, so the window resizes as the
+                        // number changes rather than on close.
+                        onValueModified: win.uiScaleUser = value / 100
                     }
-                }
-                Label { text: "px"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
-
-                // ── zoom ──────────────────────────────────────────────────────
-                Label { text: "Wheel zoom"; color: "#666" }
-                SpinBox {
-                    id: zoomSpin
-                    from: 102; to: 300; stepSize: 5
-                    value: 125
-                    editable: true
-                    Layout.fillWidth: true
-                    textFromValue: function (v) { return (v / 100).toFixed(2) + "×" }
-                    valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
-                    onValueModified: {
-                        win.zoomStepUser = value / 100
-                        Julia.shell_set_zoom_step(win.zoomStepUser)
+                    Button {
+                        text: "auto"
+                        enabled: win.uiScaleUser > 0
+                        ToolTip.visible: hovered
+                        ToolTip.text: uiScaleOverride > 0
+                            ? "back to OITOOLSGUI_SCALE=" + uiScaleOverride.toFixed(2)
+                            : "back to the value computed from " + physicalDpi.toFixed(0) + " dpi"
+                        onClicked: win.uiScaleUser = 0
                     }
-                }
-                Label {
-                    text: "per detent"
-                    color: "#888"
-                    font.pointSize: pt(baseFontPt - 2)
+
+                    Label { text: "Controls style"; color: "#666" }
+                    ComboBox {
+                        id: controlsStyleBox
+                        Layout.fillWidth: true
+                        // The list comes from Julia rather than being repeated here: a second copy
+                        // would be free to drift from CONTROLS_STYLES, and offering a style the
+                        // bundled Qt does not carry would fail at the next launch rather than at
+                        // the click. Line 1 is the style in force; the rest are the choices.
+                        property var styleInfo: Julia.shell_controls_styles().split("\n")
+                        model: styleInfo.slice(1)
+                        // Line 1 is the style the window is actually RUNNING, which is what the
+                        // box has to show: after a change it stays the previous choice until the
+                        // next launch, and a box claiming otherwise would misreport the window.
+                        currentIndex: Math.max(0, model.indexOf(styleInfo[0]))
+                        onActivated: win.controlsStyle = currentText
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Basic is Qt's own and what this window was drawn against; " +
+                                      "Fusion is smaller and more desktop-like. Applies at the next launch."
+                    }
+                    Label {
+                        text: win.controlsStyle === controlsStyleBox.styleInfo[0] ? "" : "on restart"
+                        color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                    }
+
+                    Label { text: "UI font"; color: "#666" }
+                    ComboBox {
+                        id: uiFontBox
+                        model: ["(system default)", "DejaVu Sans", "Noto Sans", "Liberation Sans",
+                                "JuliaMono"]
+                        Layout.fillWidth: true
+                        onActivated: win.uiFontFamily = currentIndex === 0 ? "" : currentText
+                    }
+                    SpinBox {
+                        id: uiFontSizeSpin
+                        from: 6; to: 24; stepSize: 1
+                        value: Math.round(baseFontPt)
+                        editable: true
+                        onValueModified: win.baseFontPt = value
+                    }
+
+                    // ── plots ─────────────────────────────────────────────────────
+                    Label { text: "Plot font"; color: "#666" }
+                    ComboBox {
+                        id: plotFontBox
+                        // Shown, not settable. Makie takes the font at Figure CONSTRUCTION; every
+                        // route to change it afterwards throws `Failed to resolve
+                        // data_boundingbox` out of its compute graph -- tried on the axis label,
+                        // tick label and colorbar attributes alike. Changing it means restarting.
+                        model: ["DejaVu Sans", "JuliaMono", "Noto Sans", "Liberation Sans",
+                                "(Makie default)"]
+                        enabled: false
+                        Layout.fillWidth: true
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Set at startup; Makie cannot change a figure's font once it " +
+                                      "exists. Edit PLOT_FONT in src/gui/plots.jl."
+                    }
+                    SpinBox {
+                        id: plotScaleSpin
+                        from: 50; to: 500; stepSize: 5
+                        value: 119                     // replaced on open by the live value
+                        editable: true
+                        textFromValue: function (v) { return (v / 100).toFixed(2) }
+                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                        onValueModified: {
+                            win.plotScaleUser = value / 100
+                            Julia.shell_set_plot_scale(win.plotScaleUser)
+                        }
+                    }
+
+                    Label { text: "Plot symbols"; color: "#666" }
+                    SpinBox {
+                        id: markerSpin
+                        from: 0; to: 30; stepSize: 1
+                        value: 0
+                        editable: true
+                        Layout.fillWidth: true
+                        // 0 means "whatever the plot chooses", which differs per view -- uv
+                        // coverage draws smaller points than an observable plot.
+                        textFromValue: function (v) { return v === 0 ? "auto" : String(v) }
+                        valueFromText: function (t) { return t === "auto" ? 0 : parseInt(t) }
+                        onValueModified: {
+                            win.markerSizeUser = value
+                            Julia.shell_set_marker_size(value)
+                        }
+                    }
+                    Label { text: "px"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+
+                    // ── zoom ──────────────────────────────────────────────────────
+                    Label { text: "Wheel zoom"; color: "#666" }
+                    SpinBox {
+                        id: zoomSpin
+                        from: 102; to: 300; stepSize: 5
+                        value: 125
+                        editable: true
+                        Layout.fillWidth: true
+                        textFromValue: function (v) { return (v / 100).toFixed(2) + "×" }
+                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                        onValueModified: {
+                            win.zoomStepUser = value / 100
+                            Julia.shell_set_zoom_step(win.zoomStepUser)
+                        }
+                    }
+                    Label {
+                        text: "per detent"
+                        color: "#888"
+                        font.pointSize: pt(baseFontPt - 2)
+                    }
+
+                    // No light/dark selector: the window pins a light palette (see the top of
+                    // this file) because every panel, table and Makie canvas in it is drawn light.
+                    // A dark mode is a real piece of work — the colour literals would have to
+                    // become palette roles first — not a dropdown, so there is no dropdown.
                 }
 
-                // ── theme ─────────────────────────────────────────────────────
-                Label { text: "Theme"; color: "#666" }
-                ComboBox {
-                    id: themeBox
-                    model: ["Follow the desktop", "Light", "Dark"]
-                    enabled: false
+                RowLayout {
                     Layout.fillWidth: true
-                    ToolTip.visible: hovered
-                    ToolTip.text: "The panels hardcode light colours, so choosing Dark would " +
-                                  "leave parts of the window unreadable. Needs a theming pass."
+                    // The buttons get the row to themselves. What happened is reported on the line
+                    // BELOW: sharing the row, the message was elided to a middle-truncated path
+                    // sitting beside the buttons, which reads as a stray fragment rather than as
+                    // the answer to what the button just did — and it squeezed the buttons besides.
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        text: "Save config"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "write these settings to the per-user config file, which " +
+                                      "the window reads at every launch"
+                        onClicked: {
+                            // The OVERRIDES, not the values in force: a scale of 0 means "work it
+                            // out from the screen", which is the right thing to carry to a machine
+                            // with a different one.
+                            var path = Julia.shell_save_settings(
+                                [ "ui_scale\t"    + win.uiScaleUser,
+                                  "ui_font\t"     + win.uiFontFamily,
+                                  "controls_style\t" + win.controlsStyle,
+                                  "ui_font_pt\t"  + win.baseFontPt,
+                                  "plot_scale\t"  + win.plotScaleUser,
+                                  "marker_size\t" + win.markerSizeUser,
+                                  "zoom_step\t"   + win.zoomStepUser ].join("\n"))
+                            savedLabel.text = path.length > 0 ? "saved to " + path
+                                                              : "could not save — see the console"
+                        }
+                    }
+                    Button {
+                        text: "Reset to defaults"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "back to the out-of-the-box appearance, and delete the saved config"
+                        onClicked: {
+                            // Both halves, and the file matters more than the window: settings are
+                            // applied at startup, so restoring the look while leaving the file in
+                            // place would come back tweaked at the next launch.
+                            var d = win.appearanceDefaults
+                            win.uiScaleUser    = d.uiScaleUser
+                            win.uiFontFamily   = d.uiFontFamily
+                            win.baseFontPt     = d.baseFontPt
+                            win.controlsStyle  = d.controlsStyle
+                            uiFontBox.currentIndex        = 0
+                            uiFontSizeSpin.value          = d.baseFontPt
+                            controlsStyleBox.currentIndex = Math.max(0, controlsStyleBox.model.indexOf(d.controlsStyle))
+                            // The plot side is Julia's, and zero means "work it out from the
+                            // screen" rather than "zero" -- so the setters go first and the boxes
+                            // are read back from what Julia then computed, not from d.
+                            Julia.shell_set_plot_scale(d.plotScaleUser)
+                            Julia.shell_set_marker_size(d.markerSizeUser)
+                            Julia.shell_set_zoom_step(d.zoomStepUser)
+                            readPlotSettings()
+                            win.redrawPlot()
+                            var removed = Julia.shell_reset_settings()
+                            savedLabel.text = removed.length > 0 ? "reset — removed " + removed
+                                                                 : "reset — nothing had been saved"
+                        }
+                    }
+                    Button { text: "Close"; onClicked: settingsPanel.close() }
                 }
-                Label {
-                    // Honest about the state of it: the panels hardcode light colours, so a
-                    // dark desktop session leaves parts of the window unreadable today.
-                    text: "dark is unstyled"
-                    color: "#888"
-                    font.pointSize: pt(baseFontPt - 2)
-                }
-            }
 
-            RowLayout {
-                Layout.fillWidth: true
+                // Empty until a button has been pressed, and it takes no room until then. Wrapped
+                // rather than elided: the whole point of the line is the path it names.
                 Label {
                     id: savedLabel
                     Layout.fillWidth: true
-                    elide: Text.ElideMiddle
+                    visible: text.length > 0
+                    wrapMode: Text.Wrap
                     color: "#888"
                     font.pointSize: pt(baseFontPt - 2)
                 }
-                Button {
-                    text: "Save defaults"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "write these as the startup defaults for every project"
-                    onClicked: {
-                        // The OVERRIDES, not the values in force: a scale of 0 means "work it
-                        // out from the screen", which is the right thing to carry to a machine
-                        // with a different one.
-                        var path = Julia.shell_save_settings(
-                            [ "ui_scale\t"    + win.uiScaleUser,
-                              "ui_font\t"     + win.uiFontFamily,
-                              "ui_font_pt\t"  + win.baseFontPt,
-                              "plot_scale\t"  + win.plotScaleUser,
-                              "marker_size\t" + win.markerSizeUser,
-                              "zoom_step\t"   + win.zoomStepUser ].join("\n"))
-                        savedLabel.text = path.length > 0 ? "saved to " + path
-                                                          : "could not save — see the console"
-                    }
-                }
-                Button { text: "Close"; onClicked: settingsPanel.close() }
-            }
 
-            // Which code is actually running. The first thing to establish about any bug
-            // report, and the settings panel is where a user already comes to look at what
-            // the window is doing rather than at their data.
-            Label {
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignRight
-                text: Julia.shell_version()
-                color: "#888"
-                font.pointSize: pt(baseFontPt - 2)
+                // Which code is actually running. The first thing to establish about any bug
+                // report, and the settings panel is where a user already comes to look at what
+                // the window is doing rather than at their data.
+                Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignRight
+                    text: Julia.shell_version()
+                    color: "#888"
+                    font.pointSize: pt(baseFontPt - 2)
+                }
             }
         }
     }
@@ -774,8 +957,11 @@ ApplicationWindow {
                     // axes and in the same groups.
                     CheckBox {
                         id: residModelBox
-                        text: "Residuals (model)"
-                        enabled: win.comparableKind()
+                        text: "Resid (model)"
+                        enabled: win.comparableKind() && win.haveModelObs
+                        ToolTip.visible: hovered && !enabled
+                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
+                                                            : "build a model first"
                         onToggled: { if (checked) { residImageBox.checked = false
                                                     overModelBox.checked = false
                                                     overImageBox.checked = false }
@@ -783,8 +969,11 @@ ApplicationWindow {
                     }
                     CheckBox {
                         id: residImageBox
-                        text: "Residuals (imaging)"
-                        enabled: win.comparableKind()
+                        text: "Resid (image)"
+                        enabled: win.comparableKind() && win.haveImageObs
+                        ToolTip.visible: hovered && !enabled
+                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
+                                                            : "reconstruct an image first"
                         onToggled: { if (checked) { residModelBox.checked = false
                                                     overModelBox.checked = false
                                                     overImageBox.checked = false }
@@ -792,8 +981,11 @@ ApplicationWindow {
                     }
                     CheckBox {
                         id: overModelBox
-                        text: "Overplot model obs"
-                        enabled: win.comparableKind()
+                        text: "Model obs"
+                        enabled: win.comparableKind() && win.haveModelObs
+                        ToolTip.visible: hovered && !enabled
+                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
+                                                            : "build a model first"
                         onToggled: { if (checked) { overImageBox.checked = false
                                                     residModelBox.checked = false
                                                     residImageBox.checked = false }
@@ -801,8 +993,11 @@ ApplicationWindow {
                     }
                     CheckBox {
                         id: overImageBox
-                        text: "Overplot image obs"
-                        enabled: win.comparableKind()
+                        text: "Image obs"
+                        enabled: win.comparableKind() && win.haveImageObs
+                        ToolTip.visible: hovered && !enabled
+                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
+                                                            : "reconstruct an image first"
                         onToggled: { if (checked) { overModelBox.checked = false
                                                     residModelBox.checked = false
                                                     residImageBox.checked = false }
@@ -853,10 +1048,10 @@ ApplicationWindow {
                         onClicked: win.savePng("explore", makieArea)
                     }
                     Item { Layout.fillWidth: true }
-                    Label {
-                        text: "scroll = zoom · drag = pan · click = identify · right click = reset view"
-                        color: "#888"; font.pointSize: pt(9)
-                    }
+                    // Takes the slack so the controls stay left-aligned and the row never
+                    // grows past the window. A minimum of 0 means this is what gives way when
+                    // the window is narrow, rather than the controls being clipped.
+                    Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
                 }
 
                 MakieArea {
@@ -907,6 +1102,15 @@ ApplicationWindow {
                 fontScale:  win.fontScale
                 baseFontPt: win.baseFontPt
                 onConsoleChanged: win.refreshConsole()
+                // A simulated file becomes an ordinary dataset: the same load path a file
+                // chosen by hand takes, then the Exploring tab, because the point of the
+                // button is to LOOK at what was written.
+                onOpenRequested: function (path) {
+                    win.status = Julia.shell_open(path)
+                    win.refreshDatasets()
+                    win.afterAction()
+                    tabs.currentIndex = 0
+                }
             }
 
             // ── Model ────────────────────────────────────────────────────────

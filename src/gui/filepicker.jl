@@ -99,6 +99,46 @@ function picker_list(dir::AbstractString, patterns::AbstractString = "*",
 end
 
 """
+    picker_volumes() -> Vector{Tuple{String,String}}
+
+The filesystem roots this platform expects to see listed, as `label => path` pairs.
+
+Every place below `picker_places` is somewhere INSIDE one tree. On Unix that is enough, because
+everything hangs off `/` and a user can walk there. On Windows it is not: `D:` is not reachable
+from `C:` by walking up, so without this a file on another drive can only be opened by typing
+its path — which is what a picker exists to avoid.
+
+The drive scan is a bare `isdir` over the 26 letters. Windows offers `GetLogicalDrives`, but a
+26-element loop needs no `ccall` and no dependency, and a drive that is mapped but not ready
+(an empty optical drive, a disconnected network share) fails `isdir` — which is the answer we
+want, since listing it would only produce an error on click.
+
+Unix gets the mount points where removable media actually appear, and `/` itself, for the same
+reason: they are not reachable by walking up from `\$HOME`.
+"""
+function picker_volumes()
+    vols = Tuple{String,String}[]
+    if Sys.iswindows()
+        for c in 'A':'Z'
+            d = string(c, ":\\")
+            isdir(d) && push!(vols, (string(c, ":"), d))
+        end
+    elseif Sys.isapple()
+        isdir("/Volumes") && for v in readdir("/Volumes"; join = true)
+            isdir(v) && push!(vols, (basename(v), v))
+        end
+        push!(vols, ("Computer", "/"))
+    else
+        for m in ("/media/" * (get(ENV, "USER", "")), "/run/media/" * (get(ENV, "USER", "")),
+                  "/media", "/mnt")
+            isdir(m) && !isempty(readdir(m)) && push!(vols, (basename(m), m))
+        end
+        push!(vols, ("Filesystem", "/"))
+    end
+    return vols
+end
+
+"""
     picker_places() -> String
 
 Shortcut folders, as `label\\tpath` rows.
@@ -112,6 +152,9 @@ function picker_places()
     isdir(home) && push!(rows, ("Home", home))
     cwd = pwd()
     isdir(cwd) && cwd != home && push!(rows, ("Working directory", cwd))
+    for (label, path) in picker_volumes()
+        push!(rows, (label, path))
+    end
     for (label, sub) in (("OITOOLS demo data", joinpath("demos", "data")),
                          # The 2004 contest set: small, monochromatic and well understood, and
                          # what most of the imaging examples and tests are written against.
@@ -122,9 +165,13 @@ function picker_places()
                          # Starting points for the Model perspective, in the TOML format
                          # `read_model_file` takes -- a model to open and edit rather than one
                          # to build from an empty table.
-                         ("OITOOLS models", joinpath("demos", "models")))
-        p = joinpath(pkgdir(OITOOLS), sub)
-        isdir(p) && push!(rows, (label, p))
+                         ("OITOOLS models", joinpath("demos", "models")),
+                         # PMOIRED's own models: Python dicts, which is what "Import PMOIRED…"
+                         # reads. It already OPENS here; this is the way back after browsing
+                         # somewhere else.
+                         ("PMOIRED models", joinpath("demos", "data", "pmoired")))
+        p = OITOOLS.resource(sub)
+        (p !== nothing && isdir(p)) && push!(rows, (label, p))
     end
     return join((join(r, "\t") for r in rows), "\n")
 end
@@ -154,8 +201,8 @@ function picker_start(hint::AbstractString = "")
     forced = get(ENV, "OITOOLSGUI_DATA_DIR", "")
     isempty(forced) || (isdir(forced) && return abspath(forced))
     for sub in (joinpath("demos", "data"), joinpath("test", "gui", "data"))
-        p = joinpath(pkgdir(OITOOLS), sub)
-        isdir(p) && return p
+        p = OITOOLS.resource(sub)
+        p === nothing || return p
     end
     return pwd()
 end
@@ -175,8 +222,8 @@ function picker_examples(kind::AbstractString)
     sub = k == "pmoired" ? joinpath("demos", "data", "pmoired") :
           k == "model"   ? joinpath("demos", "models")          : ""
     isempty(sub) && return ""
-    p = joinpath(pkgdir(OITOOLS), sub)
-    return isdir(p) ? p : ""
+    p = OITOOLS.resource(sub)
+    return p === nothing ? "" : p
 end
 
 "`dir`, `file` or `none` — what QML needs to decide whether Open descends or accepts."

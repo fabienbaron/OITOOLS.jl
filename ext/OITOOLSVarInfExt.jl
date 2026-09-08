@@ -45,7 +45,7 @@ include(joinpath(VIDIR, "reconstruct.jl"))  # MAP / MGVI / geoVI / hybrid entry 
 export harmonic_smooth, make_smoothing_kernel
 export CorrFieldConfig, FourierGridInfo, fourier_mode_distributor, amplitude_spectrum
 export limb_weight, SkyModelParams, sky_forward, sky_adjoint, frozen_spectral_range,
-       frozen_chromatic_range
+       frozen_chromatic_range, _latent_size
 export report_chi2, minisanity
 export DiffPhaseConfig, ObservationConfig, ObsContext, observe, observe_adjoint, observe_data
 export build_diffphase_config, diffphi_forward, diffphi_adjoint, diffphi_jvp

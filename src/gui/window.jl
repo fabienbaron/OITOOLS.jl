@@ -11,14 +11,17 @@ function __init__()
                      shell_observables, shell_plot_kinds, shell_grouping_noun, shell_gantt_hover, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
                      shell_facilities, shell_telescopes, shell_gantt, shell_best_pops,
-                     shell_shift_date, shell_sim_source, shell_model_image, shell_simbad, shell_ui_scale,
+                     shell_shift_date, shell_sim_source, shell_simulate,
+                     shell_model_image, shell_simbad, shell_ui_scale,
                      shell_fit_model, shell_fit_values, shell_fit_rows,
                      shell_image_colormaps, shell_image_colormap, shell_recenter_image,
-                     shell_show_start_image, shell_save_image, shell_engine_output,
+                     shell_show_start_image, shell_vi_prior_sample,
+                     shell_save_image, shell_engine_output,
                      shell_job_poll, shell_job_stop, shell_job_running,
                      shell_reset_image_zoom,
                      shell_set_plot_scale, shell_set_marker_size,
-                     shell_save_settings, shell_load_settings, shell_plot_scale,
+                     shell_save_settings, shell_load_settings, shell_reset_settings,
+                     shell_controls_styles, shell_default_controls_style, shell_plot_scale,
                      shell_version,
                      shell_set_zoom_step,
                      shell_model_rows, shell_model_components, shell_model_inspection,
@@ -36,6 +39,7 @@ function __init__()
                      shell_az_modes, shell_add_az_mode, shell_remove_az_mode,
                      shell_model_residuals, shell_model_sed, shell_model_depends,
                      shell_set_residual_mode, shell_set_overlay_mode,
+                     shell_optional_engines, shell_compare_available,
                      shell_sparco_converged,
                      shell_result_ensemble, shell_show_result,
                      shell_bin_info, shell_rebin,
@@ -73,8 +77,8 @@ function _initial_folder(session::Session)
     forced = get(ENV, "OITOOLSGUI_DATA_DIR", "")
     isempty(forced) || (isdir(forced) && return "file://" * abspath(forced))
     for sub in (joinpath("demos", "data"), joinpath("test", "gui", "data"))
-        p = joinpath(pkgdir(OITOOLS), sub)
-        isdir(p) && return "file://" * p
+        p = OITOOLS.resource(sub)
+        p === nothing || return "file://" * p
     end
     return "file://" * pwd()
 end
@@ -104,8 +108,97 @@ function _initial_tab()
     return i - 1        # QML indexes from zero
 end
 
+"""
+    _main_qml() -> String
+
+`Main.qml`, from wherever the resources are.
+
+The one resource with no fallback: without it there is no window, so a missing file is reported
+here, naming the roots that were searched. `loadqml`'s own error names only the last path tried,
+which in a relocated application is a directory on the machine that built it.
+"""
+function _main_qml()
+    p = OITOOLS.resource("src", "gui", "qml", "Main.qml")
+    p === nothing && error("""
+        Main.qml was not found. The GUI's QML files are shipped resources, and none of the
+        resource roots holds them:
+
+        $(join("    " .* OITOOLS._resource_roots(), "\n"))
+
+        Set \$$(OITOOLS.RESOURCE_DIR_VAR) to the directory that contains src/gui/qml.
+        """)
+    return p
+end
+
+"Qt Quick Controls styles the bundled Qt carries, in the order the settings panel lists them."
+const CONTROLS_STYLES = ("Basic", "Fusion", "Universal", "Material", "Imagine", "FluentWinUI3")
+
+# What the window ships with. Fusion rather than Basic -- Basic is Qt's own default on Linux
+# and draws its checkboxes and spin boxes noticeably larger than the rest of the window is
+# scaled for. Named once here, since the settings panel offers a reset to it.
+const DEFAULT_CONTROLS_STYLE = "Fusion"
+
+"""
+    shell_controls_styles() -> String
+
+The style in force, then every style that can be chosen, one per line.
+
+QML asks rather than carrying its own copy of the list: a second list would be free to drift
+from `CONTROLS_STYLES`, and offering a style the bundled Qt does not have would fail silently
+at the next launch rather than at the click.
+"""
+shell_controls_styles() =
+    join((get(ENV, "QT_QUICK_CONTROLS_STYLE", DEFAULT_CONTROLS_STYLE), CONTROLS_STYLES...), '\n')
+
+"""
+    shell_default_controls_style() -> String
+
+The style the window ships with, for the settings panel's reset.
+
+Asked for rather than repeated in QML: the reset has to restore what an unconfigured install
+would run, and a literal in the panel would go on claiming the old answer after this changed.
+"""
+shell_default_controls_style() = DEFAULT_CONTROLS_STYLE
+
+"""
+    apply_controls_style!() -> String
+
+Choose the Qt Quick Controls style, from the settings file if one was saved.
+
+**The style is geometry as well as colour.** Basic is Qt's own default on Linux, and draws its
+checkboxes and spin boxes larger than the rest of the window is scaled for; Fusion draws the
+same controls appreciably smaller and more like a desktop toolkit, which is why it is
+`DEFAULT_CONTROLS_STYLE`; Material and Universal are touch-sized and follow their own theming
+rather than the palette; FluentWinUI3 is Windows 11's, which tracks the SYSTEM light/dark
+setting and is what made the window come out half dark on a dark desktop.
+
+Read from `gui_settings_file()` rather than from a constant so the settings panel can offer it.
+
+`\$QT_QUICK_CONTROLS_STYLE` still wins: an environment that has already chosen is never
+overridden, which keeps the escape hatch for a machine where a style misbehaves.
+
+It can be set here at all — unlike the WINDOWING platform, which cannot — because the style is
+read when the first Controls component is instantiated, at `loadqml`, not when
+`QGuiApplication` is constructed. That is still ahead of us even in a compiled application.
+Changing it therefore takes effect on the next launch, not the current one.
+"""
+function apply_controls_style!()
+    haskey(ENV, "QT_QUICK_CONTROLS_STYLE") && return ENV["QT_QUICK_CONTROLS_STYLE"]
+    want = DEFAULT_CONTROLS_STYLE
+    try
+        path = gui_settings_file()
+        if isfile(path)
+            saved = get(TOML.parsefile(path), "controls_style", "")
+            saved isa AbstractString && saved in CONTROLS_STYLES && (want = saved)
+        end
+    catch err
+        @debug "could not read the saved controls style; using the default" err DEFAULT_CONTROLS_STYLE
+    end
+    return ENV["QT_QUICK_CONTROLS_STYLE"] = want
+end
+
 function OITOOLS.gui(session::Session = Session();
-                        qmlfile::AbstractString = joinpath(pkgdir(OITOOLS), "src", "gui", "qml", "Main.qml"),
+                        qmlfile::AbstractString = _main_qml(),
                         autoquit_ms::Integer = 0,
                         on_ready = nothing)
     check_qt_conflict()
@@ -113,6 +206,7 @@ function OITOOLS.gui(session::Session = Session();
     # imported by now but has not built a context yet, and Mesa reads the variables at context
     # creation, so this is still early enough. A no-op when the launcher already ran it.
     READY_HOOK[] = on_ready
+    apply_controls_style!()
     gfx = configure_graphics!()
 
     # Backstop for a session started by hand rather than through bin/oitoolsgui.jl, where
@@ -126,8 +220,12 @@ function OITOOLS.gui(session::Session = Session();
     on_x11 = GLMakie.GLFW.GetPlatform() == GLMakie.GLFW.PLATFORM_X11
     qt = configure_qt_platform!(; match_x11 = on_x11, verbose = false)
 
+    # @debug, not @info: the usual answer is "unset, QML scales from the screen", which is a
+    # line of terminal output every launch saying nothing happened. It is worth reading when a
+    # window comes up the wrong size, so it stays reachable with
+    # `JULIA_DEBUG=OITOOLSGUIExt`, and the settings panel shows the value regardless.
     uiscale = ui_scale_override()
-    @info "UI scale: $(uiscale.reason)"
+    @debug "UI scale: $(uiscale.reason)"
 
     # Fill the glyph atlas before ANY figure exists. Text first rasterised after the Qt window
     # is up renders corrupted; the same text set beforehand is clean. See `PLOT_GLYPHS` for the

@@ -83,7 +83,13 @@ lines are the script, in order.
 function console!(sh::ShellState, text::AbstractString; kind::Symbol = :info)
     mark = kind === :cmd ? "> " : kind === :err ? "! " : "  "
     stamp = Dates.format(Dates.now(), "HH:MM:SS")
-    push!(sh.console, string(stamp, " ", mark, text))
+    # A marker already in the text is not repeated. Callers build an error as `"! ..."` because
+    # that leading `!` is what the panels test to decide something failed, and they then pass
+    # the same string here — which read as `! ! could not write ...` in the pane. Only `>` and
+    # `!` are de-duplicated: an info line's marker is two spaces, and a message that genuinely
+    # starts with an indent should keep it.
+    dup = (kind === :cmd || kind === :err) && startswith(text, mark)
+    push!(sh.console, string(stamp, " ", dup ? "" : mark, text))
     length(sh.console) > CONSOLE_MAX && deleteat!(sh.console, 1:(length(sh.console) - CONSOLE_MAX))
     return text
 end
@@ -170,7 +176,10 @@ function residual_set(sh::ShellState)
     e === nothing && return "! no dataset loaded"
     return try
         ft = setup_ft(e.data, im.setup.nx, im.setup.pixsize; mode = String(im.setup.mode))
-        image_to_residuals(im.image, ft, e.data)
+        # `ImagingResult.image` is always Float64, and the panel's plans follow `readoifits`,
+        # which is Float32 by default. Without the cast this is a MethodError inside
+        # `image_to_vis` — which is exactly why the image overlay drew nothing.
+        image_to_residuals(to_ft_precision(im.image, ft), ft, e.data)
     catch err
         "! image residuals not available: " * _cause(err)
     end
@@ -205,7 +214,10 @@ function overlay_set(sh::ShellState)
     im === nothing && return "! no reconstruction yet — run one in Imaging first"
     return try
         ft = setup_ft(e.data, im.setup.nx, im.setup.pixsize; mode = String(im.setup.mode))
-        image_to_obs(im.image, ft, e.data)
+        # `ImagingResult.image` is always Float64, and the panel's plans follow `readoifits`,
+        # which is Float32 by default. Without the cast this is a MethodError inside
+        # `image_to_vis` — which is exactly why the image overlay drew nothing.
+        image_to_obs(to_ft_precision(im.image, ft), ft, e.data)
     catch err
         "! image observables not available: " * _cause(err)
     end
@@ -1264,14 +1276,18 @@ end
 """
     shell_sim_source(kind, path) -> String
 
-Validate the sky a simulation would use: `"ok\t<summary>"` or `"bad\t<why>"`.
+Validate the sky a simulation would use: `"ok\t<summary>\t<pixsize>"` or `"bad\t<why>\t0"`.
 
 Checked when the file is chosen rather than when Simulate is pressed, so a 3-D cube picked as a
 grey image is caught before an observation is computed from it.
+
+The third field is the pixel size the FITS header declares, in mas, or `0` when it declares
+none — the panel fills its box with it rather than making the user retype a number the file
+already carries. A model has no pixel size and reports `0` too.
 """
 function shell_sim_source(kind::AbstractString, path::AbstractString)
     i = simulate_source_info(String(kind), String(path))
-    return (i.ok ? "ok\t" : "bad\t") * i.summary
+    return (i.ok ? "ok\t" : "bad\t") * i.summary * "\t" * string(i.pixsize)
 end
 
 """
@@ -1302,6 +1318,184 @@ function shell_sim_band(setup::AbstractString)
     λ = sum(w.λ) / length(w.λ)
     (isfinite(λ) && λ > 0) || return "\t"
     return string(band_for_wavelength(λ).name, '\t', round(λ * 1e6; digits = 3))
+end
+
+"""
+    _simulate_sky(sh, o) -> NamedTuple or String
+
+The sky a simulation is of, as the keyword arguments `simulate` and `simulate_from_oifits`
+both take: `(; image, pixsize)` for a FITS file, `(; flat_model, flat_params)` for a model.
+
+One resolver for both entry points, so "Copy existing OIFITS structure" changes the COVERAGE
+and nothing else — the sky the two produce cannot differ.
+
+An empty model path means the model the Modeling perspective is holding, which is the whole
+point of the "From Modeling tab" button: no file, no round trip, and what is simulated is what
+is on screen next door.
+"""
+function _simulate_sky(sh::ShellState, o::AbstractDict)
+    kind = String(get(o, "source", "image"))
+    path = String(get(o, "path", ""))
+
+    if kind == "model"
+        dict, free, value = if isempty(path)
+            m = _model(sh)
+            (Dict{String,Any}(String(k) => v for (k, v) in m.dict), String.(m.free),
+             k -> _row_value(m, k))
+        else
+            isfile(path) || return "! no model file at '$(path)'"
+            r = try
+                read_model_file(path)
+            catch err
+                return "! could not read the model: " * _cause(err)
+            end
+            (Dict{String,Any}(String(k) => v for (k, v) in r.model), String.(r.free),
+             k -> Float64(r.model[k]))
+        end
+        isempty(dict) && return "! no model to simulate"
+        return try
+            (; flat_model = parse_model(dict, free; nB_workspace = 1),
+               flat_params = Float64[value(k) for k in free])
+        catch err
+            "! the model does not parse: " * _cause(err)
+        end
+    end
+
+    isfile(path) || return "! no file at '$(path)'"
+    img = try
+        Float64.(readfits(path))
+    catch err
+        return "! could not read '$(basename(path))': " * _cause(err)
+    end
+    want = kind == "cube" ? 3 : 2
+    ndims(img) == want || return "! '$(basename(path))' is $(ndims(img))-D; " *
+        (want == 2 ? "a grey image must be 2-D — choose Image cube" :
+                     "a cube must be 3-D — choose Image")
+    return (; image = img, pixsize = _optreal(o, "pixsize", 0.1))
+end
+
+"""
+    shell_simulate(outfile, facility, telescopes, combiner, wavelength,
+                   name, ra, dec, dateiso, ha_min, ha_max, step_minutes, options) -> String
+
+Write an OIFITS of a simulated observation. `"ok\t<path>\t<summary>"`, or a message
+beginning with `!`.
+
+TWO simulators behind one button, chosen by the `copy` option:
+
+  * **the observing calculation** (default) — `simulate` builds the uv coverage from the array,
+    the hour angles and the wavelength table, and the error bars from the photon budget of the
+    combiner at the target's magnitude. Everything about the observation is computed.
+  * **copying a file's structure** (`copy = 1`) — `simulate_from_oifits` re-observes the sky
+    through the LOADED dataset's uv points and copies its signal-to-noise. Nothing is computed
+    about the array or the night; what comes back is that dataset, of a different source. It is
+    the right mode for "what would this dataset look like if the star were a binary", and the
+    only one whose result is comparable to the original point by point.
+
+`options` is `key\tvalue` lines, as the Image panel's engine options are: `source`
+(image | cube | model), `path`, `pixsize`, `mag`, `mag_ao`, `noise`, `debias`, `n_samples`,
+`seed`, `observability`, `alt_limit`, `alt_max`, `copy`, `copy_mode`.
+"""
+function shell_simulate(outfile::AbstractString, facility::AbstractString,
+                        telescopes::AbstractString, combiner::AbstractString,
+                        wavelength::AbstractString, name::AbstractString,
+                        ra::Real, dec::Real, dateiso::AbstractString,
+                        ha_min::Real, ha_max::Real, step_minutes::Real,
+                        options::AbstractString = "")
+    sh = _shell()
+    out = String(strip(String(outfile)))
+    isempty(out) && return "! no output file"
+
+    # Never write over a file the session has open — in EITHER mode. The copy path would
+    # replace the very data it is simulating from, and the observing path would replace an
+    # unrelated dataset the user is still looking at. The file picker asks before replacing a
+    # file, but "replace?" is a question about a name; this is a question about someone's
+    # observations, and the answer is no.
+    for e in sh.session.datasets
+        if OITOOLS._same_file(out, e.path)
+            msg = "! that is $(e.name)'s own file ($(basename(e.path))) — simulating into it " *
+                  "would overwrite the loaded data; choose another output file"
+            console!(sh, msg); return msg
+        end
+    end
+
+    o = _parse_options(options)
+
+    sky = _simulate_sky(sh, o)
+    sky isa String && (console!(sh, sky; kind = :err); return sky)
+
+    noise = _optbool(o, "noise", true)
+    seed  = _optint(o, "seed", 1)
+    t0 = time()
+
+    if _optbool(o, "copy", false)
+        e = current_dataset(sh)
+        e === nothing && return "! Copy existing OIFITS structure needs a dataset loaded in Exploring"
+        mode = get(o, "copy_mode", "copy_snr")
+        try
+            simulate_from_oifits(e.path, out; mode = mode, noise = noise, seed = seed, sky...)
+        catch err
+            why = _cause(err)
+            # One failure is worth naming, because it is a property of the FILE rather than of
+            # the simulation: this path re-writes the input through OIFITS.jl, and several
+            # perfectly readable files cannot be written back by it (a missing CATEGORY column
+            # in OI_TARGET, a missing FOV in OI_ARRAY, a CFITSIO conversion error). Everything
+            # else — a cube with the wrong number of planes, say — is the caller's to fix and
+            # must not be dressed up as the file's fault.
+            hint = (occursin("CFITSIO", why) || occursin("MissingColumn", why)) ?
+                   " — $(basename(e.path)) is readable but cannot be written back by OIFITS.jl" : ""
+            msg = "! simulating from $(basename(e.path)): " * why * hint
+            console!(sh, msg); return msg
+        end
+        console!(sh, "simulate_from_oifits(\"$(e.path)\", \"$(out)\"; mode = \"$(mode)\"" *
+                     (noise ? "" : ", noise = false") * ")"; kind = :cmd)
+    else
+        f = try
+            facility_subset(read_facility_file(String(facility)),
+                            [parse(Int, x) for x in split(String(telescopes)) if !isempty(x)])
+        catch err
+            msg = "! " * _cause(err); console!(sh, msg; kind = :err); return msg
+        end
+        date = try
+            Date(DateTime(String(dateiso)))
+        catch
+            return "! not a date: $(dateiso)"
+        end
+        tgt = read_obs_file("default_obs")
+        tgt.target = String(name); tgt.raep0 = Float64(ra); tgt.decep0 = Float64(dec)
+        dates = try
+            epochs_for_hour_angles(f, Float64(ra), date, Float64(ha_min), Float64(ha_max),
+                                   Float64(step_minutes))
+        catch err
+            msg = "! " * _cause(err); console!(sh, msg; kind = :err); return msg
+        end
+        obs = _optbool(o, "observability", false) ?
+              (; alt_limit = _optreal(o, "alt_limit", DEFAULT_ALT_LIMIT),
+                 alt_max   = _optreal(o, "alt_max",   DEFAULT_ALT_MAX)) : nothing
+        try
+            simulate(f, tgt, read_comb_file(String(combiner)), read_wave_file(String(wavelength)),
+                     dates, out;
+                     mag = _optreal(o, "mag", 2.0), mag_ao = _optreal(o, "mag_ao", 2.0),
+                     noise = noise, debias = _optbool(o, "debias", true),
+                     n_samples = _optint(o, "n_samples", 100), seed = seed,
+                     observability = obs, sky...)
+        catch err
+            msg = "! simulation failed: " * _cause(err)
+            console!(sh, msg; kind = :err); return msg
+        end
+        console!(sh, "simulate(facility, target, combiner, wavelength, dates, \"$(out)\"" *
+                     (noise ? "" : "; noise = false") * ")   # $(length(dates)) epochs, " *
+                     "$(f.ntel) telescopes"; kind = :cmd)
+    end
+
+    summary = try
+        d = readoifits(out; filter_bad_data = false, verbose = false, warn = false)[1, 1]
+        @sprintf("%d V², %d T3, %d channels", d.nv2, d.nt3amp, length(unique(d.uv_lam)))
+    catch err
+        return "! wrote $(out) but it does not read back: " * _cause(err)
+    end
+    console!(sh, @sprintf("  wrote %s — %s, %.1f s", out, summary, time() - t0))
+    return "ok\t" * out * "\t" * summary
 end
 
 """
@@ -1362,7 +1556,7 @@ it (zero when it is computed rather than chosen), the marker size (zero for the 
 default) and the zoom factor per wheel detent.
 
 Two scale numbers rather than one because they answer different questions -- the panel opens
-showing what is being drawn, while "Save defaults" stores the override, so a scale that was
+showing what is being drawn, while "Save config" stores the override, so a scale that was
 computed from this screen's DPI is not pinned onto the next screen.
 """
 shell_plot_scale() = join((live_plot_scale(), PLOT_SCALE_USER[], MARKER_SIZE_USER[],
@@ -1481,6 +1675,33 @@ function shell_save_settings(payload)
         return path
     catch err
         sh === nothing || console!(sh, "could not save settings: " * _cause(err); kind = :err)
+        return ""
+    end
+end
+
+"""
+    shell_reset_settings() -> String
+
+Delete the saved appearance defaults, and say where they were.
+
+The panel's reset has to remove the FILE and not merely the values on screen: settings are
+applied at startup, so a window restored to its built-in look while the file still says
+otherwise would come back tweaked at the next launch — which is precisely the confusion the
+button exists to end.
+
+Returns the path removed, or `""` when there was nothing saved, which is also the answer when
+the settings have never been touched.
+"""
+function shell_reset_settings()
+    sh = SHELL[]
+    path = gui_settings_file()
+    isfile(path) || return ""
+    try
+        rm(path)
+        sh === nothing || console!(sh, "removed saved appearance defaults: " * path)
+        return path
+    catch err
+        sh === nothing || console!(sh, "could not remove settings: " * _cause(err); kind = :err)
         return ""
     end
 end
@@ -2730,6 +2951,45 @@ function shell_show_start_image(nx::Integer, pixsize::Real, mode::AbstractString
 end
 
 """
+    shell_vi_prior_sample(nx, pixsize, options) -> String
+
+Draw one image from the VI sky prior and put it on the imaging canvas, without running
+anything. The Show-start-image of variational inference.
+
+A prior is the whole of what VI adds to the data, and until it can be looked at it is a set of
+numbers in boxes. This draws `xi ~ N(0, I)` through the same `SkyModelParams` a run would
+build — `vi_sky_params`, one definition for both — so what appears is the prior the next Run
+will use, support map included.
+
+Each call is a new draw. What matters about a prior is the range of images it allows, and a
+button that returned the same picture every time would hide exactly that.
+"""
+function shell_vi_prior_sample(nx::Integer, pixsize::Real, options::AbstractString = "")
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    ext = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)
+    ext === nothing && return "! variational inference needs VarInf; install it and restart"
+    o = _parse_options(options)
+    img = try
+        p = vi_sky_params(ext, o, Int(nx), Float64(pixsize), _mean_lam(e.data[1, 1]))
+        vi_prior_draw(ext, p)
+    catch err
+        msg = "! could not draw from the prior: " * _cause(err)
+        console!(sh, msg; kind = :err); return msg
+    end
+    sh.imcanvas === nothing || show_image!(sh.imcanvas, img, Float64(pixsize);
+                                           label = "prior sample")
+    support = haskey(o, "vi_prior") && !isempty(o["vi_prior"]) ?
+              "weight = " * basename(o["vi_prior"]) :
+              "disc R = " * string(round(_optreal(o, "vi_radius", nx * pixsize / 5);
+                                         digits = 3)) * " mas"
+    console!(sh, "sky_forward(randn(_latent_size(p)), p)   # $(support)"; kind = :cmd)
+    console!(sh, @sprintf("  prior sample: flux %.4g, peak %.4g", sum(img), maximum(img)))
+    return "showing a sample from the sky prior"
+end
+
+"""
     shell_set_overlay_mode(mode) -> String
 
 Draw the model's or the reconstruction's observables ON TOP of the data: `""`, `"model"` or
@@ -3266,7 +3526,7 @@ function shell_reconstruct(nx::Integer, pixsize::Real, mode::AbstractString,
     startdesc = from_previous ? "x_start = previous image" : "x_start = $(startkind)"
     # The call that was actually made, named by the engine that made it. A console that said
     # `reconstruct` for every engine would be a log of something that did not happen.
-    console!(sh, "> $(IMAGING_ENGINES[eng])(x_start, data, ft; maxiter = $(Int(maxiter)))  " *
+    console!(sh, "> $(engine_call_name(eng, opts))(x_start, data, ft; maxiter = $(Int(maxiter)))  " *
                  "# $(Int(nx))×$(Int(nx)) at $(round(Float64(pixsize); digits=4)) mas, " *
                  "$startdesc, " * regtext)
     isempty(opts) || console!(sh, "  " * join(("$k = $v" for (k, v) in sort(collect(opts), by = first)), ", "))
@@ -3528,6 +3788,43 @@ function shell_plot_kinds()
              "diffvisamp" => d.nvisamp > 0 && poly,
              "flux"       => a.flux)
     return join((string(k, "=", v ? 1 : 0) for (k, v) in flags), ",")
+end
+
+"""
+    shell_compare_available() -> String
+
+Whether a model and a reconstruction exist to compare against, as `"model=1,image=0"`.
+
+The residual and overplot ticks are disabled on this rather than being allowed to fail: with no
+model there is nothing to subtract or draw, and a tick that reports an error is a worse answer
+than one that is visibly not available yet.
+"""
+function shell_compare_available()
+    sh = SHELL[]
+    sh === nothing && return "model=0,image=0"
+    m = try
+        mm = _model()
+        !isempty(mm.dict)
+    catch
+        false
+    end
+    return string("model=", m ? 1 : 0, ",image=", sh.imaging === nothing ? 0 : 1)
+end
+
+"""
+    shell_optional_engines() -> String
+
+Which optional imaging engines this build can actually run, as `"vi=1,tempering=0"`.
+
+Both are gated on a package extension rather than a dependency, so whether they work is a
+property of the session and not of the data. The panel greys the entry and says which package
+is missing; before this the two flags were hardcoded `false` in QML, so an engine stayed greyed
+even with its package installed — the reason the VI entry has never been reachable.
+"""
+function shell_optional_engines()
+    vi   = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)  !== nothing
+    temp = Base.get_extension(OITOOLS, :OITOOLSPigeonsExt) !== nothing
+    return string("vi=", vi ? 1 : 0, ",tempering=", temp ? 1 : 0)
 end
 
 """

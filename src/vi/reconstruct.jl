@@ -51,7 +51,6 @@ function reconstruct_mgvi(p::SkyModelParams, ft, data;
                           kl_maxiter=80,
                           cg_maxiter=30,
                           cg_tol=0.1,
-                          damping=1.0,
                           verb=true)
     prob = _build_interferometric_problem(p, ft, data; weights=weights, verb=verb)
 
@@ -71,7 +70,6 @@ function reconstruct_mgvi(p::SkyModelParams, ft, data;
                                    kl_maxiter=kl_maxiter,
                                    cg_maxiter=cg_maxiter,
                                    cg_tol=cg_tol,
-                                   damping=damping,
                                    iter_callback=cb,
                                    verb=verb)
 
@@ -347,38 +345,42 @@ end
 
 
 """
-    _require_float64(ft)
+    _check_ft_precision(ft) -> Type
 
-Refuse Float32 plans up front, with the fix, instead of a `MethodError` ten frames down.
+The precision of the Fourier plans, refusing anything that is neither Float32 nor Float64.
 
-`readoifits` and `setup_ft` default to **Float32**, and that is the right default for image
-reconstruction. Variational inference is not image reconstruction: VarInf's correlated field is
-built on `ComplexF64` FFT plans and its CG / Newton-CG solvers are conditioned for double
-precision, so the whole latent space here is Float64. Promoting silently would mean rebuilding
-every NFFT plan behind the caller's back — expensive, and surprising when it shows up as a
-pause rather than an error.
+**Both are supported, and they are a real trade rather than a default.** The latent space, the
+correlated field and the CG / Newton-CG solvers run at Float64 either way; what this selects is
+the precision of the NFFT itself, and with it the accuracy of every gradient and every metric
+application:
 
-This was the single thing that broke when the package was last run against a current OITOOLS,
-and it surfaced as `_obs_to_g_cvis(::Vector{Float64}, ::Vector{ComplexF32}, …)` — a message
-that says nothing about what to do.
+| plans | forward NFFT error | gradient error at nx = 512 | transform cost |
+|---|---|---|---|
+| Float32 | 7.5e-06 | ~8e-04 | 1x |
+| Float64 | 8.1e-08 | ~1e-05 | 2x |
+
+Neither figure moves with the NFFT's own knobs: measured at Float32 the error is flat across
+`m` = 4, 6, 8 and gets WORSE with larger `σ`, because it is rounding-limited rather than
+truncation-limited. At Float64 `m` behaves as theory says (8.1e-08 at m = 4, 7.6e-12 at m = 6),
+so that is where accuracy can still be bought if it is ever wanted.
+
+The adjoint-source accumulation stays Float64 regardless — see `plan_precision` in observe.jl,
+which is where that split is made and why it is not optional.
 """
-function _require_float64(ft)
+function _check_ft_precision(ft)
     T = try
         ft_eltype(ft)
     catch
         return nothing        # not a shape we can inspect; let the caller proceed
     end
-    T === Float64 && return nothing
+    (T === Float64 || T === Float32) && return T
     error("""
-        Variational inference runs at Float64, and these Fourier plans are $(T).
+        Variational inference runs on Float32 or Float64 Fourier plans, and these are $(T).
 
-        Re-read the data and rebuild the plans at double precision:
+        Rebuild them at one of the two:
 
-            data = readoifits(file; T = Float64)
+            data = readoifits(file)               # Float32, the default
             ft   = setup_ft(data, nx, pixsize)
-
-        `readoifits` and `setup_ft` default to Float32, which is right for image
-        reconstruction and not for this.
         """)
 end
 
@@ -401,7 +403,7 @@ function _build_interferometric_problem(p::SkyModelParams, ft, data;
                                          model::Union{Nothing, FlatModel}=nothing,
                                          weights::AbstractVector=[1.0, 1.0, 1.0],
                                          verb::Bool=true)
-    _require_float64(ft)
+    _check_ft_precision(ft)
     nf = length(p.freq)
     obs_vec = ObservationConfig[]
     for c in 1:nf

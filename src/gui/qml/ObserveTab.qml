@@ -115,6 +115,13 @@ Item {
     // the one guarantee the command log makes.
     property int    simSeed: 1
     property bool   simObservability: true
+    // Copy an existing file's structure instead of computing an observation. Unticked by
+    // default: the panel's whole left half — the array, the night, the magnitudes — describes
+    // an observing calculation, and quietly ignoring all of it would be the wrong default.
+    property bool   simCopyStructure: false
+    // Set by the window after every load, because the copy mode needs a dataset and the reason
+    // has to be readable here rather than discovered when Simulate is pressed.
+    property int    datasetCount: 0
 
     // ── what the simulation is OF ────────────────────────────────────────────
     //
@@ -135,6 +142,11 @@ Item {
         var f = r.split("\t")
         simSourceOk   = f[0] === "ok"
         simSourceText = f.length > 1 ? f[1] : r
+        // The file's own pixel size, when its header carries one. Taken rather than offered:
+        // a truth image knows its scale, and a retyped one is how a simulation ends up being
+        // of a source a different size than the image it was made from.
+        var px = f.length > 2 ? parseFloat(f[2]) : 0
+        if (simSourceOk && !isNaN(px) && px > 0) simPixsize = px
     }
     onSimSourceChanged:    refreshSimSource()
     onSimImagePathChanged: refreshSimSource()
@@ -165,9 +177,15 @@ Item {
                                       : nSelectedTelescopes * (nSelectedTelescopes - 1) / 2
     // One string rather than a set of booleans: the reason a run is impossible has to be
     // readable next to the button, not deduced from which control happens to be grey.
+    // In copy mode the array, the night and the combiner are not consulted at all — the uv
+    // points come from the loaded file — so the only things that can block are the sky, the
+    // output file, and having a file to copy.
     readonly property string blockReason:
+        simCopyStructure           ? (datasetCount === 0 ? "no dataset loaded to copy" :
+                                      !simSourceOk       ? "no source: " + simSourceText :
+                                      outputFile.length === 0 ? "no output file" : "") :
         nNamedTargets === 0        ? "no target" :
-        nSelectedTelescopes < 2    ? "select at least 2 telescopes" :
+        nSelectedTelescopes < 3    ? "select at least 3 telescopes" :
         combiner.length === 0      ? "no combiner" :
         spectralSetup.length === 0 ? "no spectral setup" :
         // A simulation is OF something. Without a usable sky there is nothing to observe, and
@@ -251,9 +269,9 @@ Item {
     // ── target list plumbing ──────────────────────────────────────────────────
     ListModel {
         id: targetModel
-        // Two northern seeds so the panel is never empty on a first run.
-        ListElement { name: "Vega";   ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: false }
-        ListElement { name: "Altair"; ra: 297.695827; dec:  8.868322; magV: 0.76; magJ: 0.35; magH: 0.24; magK: 0.24; cached: false }
+        // One northern seed, so the panel is never empty on a first run and never carries a
+        // target nobody asked for. "+ target" and SIMBAD add the rest.
+        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: false }
     }
 
     function refreshTargets() {
@@ -268,6 +286,32 @@ Item {
         }
         root.targets = out
         root.cacheCount = nc
+    }
+
+    // Everything `simulate` needs beyond the array, the night and the target, as `key\tvalue`
+    // lines — the same shape the Image panel sends its engine options in. A long positional
+    // signature would have to change every time one control is added, and every caller with it.
+    function simulateOptions() {
+        var o = []
+        function put(k, v) { o.push(k + "\t" + v) }
+        put("source", simSource)
+        put("path", simSource === "model" ? simModelPath : simImagePath)
+        if (simSource !== "model") put("pixsize", simPixsize)
+        put("noise", simNoise ? 1 : 0)
+        put("seed", simSeed)
+        if (simCopyStructure) {
+            put("copy", 1)
+            // The SNR, not the absolute errors: the new source is rarely as bright as the old
+            // one, and copied error bars would then claim a precision the geometry never had.
+            put("copy_mode", "copy_snr")
+        } else {
+            put("mag", simMag); put("mag_ao", simMagAO)
+            put("debias", simDebias ? 1 : 0)
+            put("n_samples", simNSamples)
+            put("observability", simObservability ? 1 : 0)
+            put("alt_limit", altLimit); put("alt_max", altMax)
+        }
+        return o.join("\n")
     }
 
     // Set `simMag` from the current target's magnitude in the instrument's band.
@@ -1457,18 +1501,26 @@ Item {
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: dp(6)
-                                    Label { Layout.preferredWidth: dp(40);  text: "#";        font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.popColIndex; text: "#"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     // The telescopes, in the order the POP numbers below are
                                     // written. "POPs" alone leaves the reader counting columns
                                     // to work out which number belongs to which telescope, and
                                     // the whole point of the table is dialling those in exactly.
-                                    Label { Layout.fillWidth: true
+                                    Label { Layout.preferredWidth: root.popColPops
+                                            elide: Text.ElideRight
                                             text: root.telescopeNames.length > 0
-                                                  ? "POPs   (" + root.telescopeNames.join("  ") + ")"
+                                                  ? "POPs  (" + root.telescopeNames.join(" ") + ")"
                                                   : "POPs"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
-                                    Label { Layout.preferredWidth: dp(90);  text: "score";    font.bold: true; font.pointSize: pt(baseFontPt - 2) }
-                                    Label { Layout.preferredWidth: dp(130); text: "HA range"; font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.popColScore; text: "score"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.popColHA; text: "HA range"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    // The Use button's column, reserved so the heading above it
+                                    // does not drift left of the data it names.
+                                    Item { Layout.preferredWidth: root.popColUse }
+                                    Item { Layout.fillWidth: true }
                                 }
                                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: dp(1); color: "#ddd" }
 
@@ -1491,13 +1543,23 @@ Item {
                                         height: implicitHeight
                                         spacing: dp(6)
 
-                                        Label { Layout.preferredWidth: dp(40);  text: popRow.index + 1; font.family: "monospace" }
-                                        Label { Layout.fillWidth: true;         text: popRow.pops;      font.family: "monospace"; elide: Text.ElideRight
+                                        Label { Layout.preferredWidth: root.popColIndex
+                                                text: popRow.index + 1
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.popColPops
+                                                text: popRow.pops
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1)
+                                                elide: Text.ElideRight
                                                 color: popRow.pops === root.popString ? "#1a7f37" : "#222"
                                                 font.bold: popRow.pops === root.popString }
-                                        Label { Layout.preferredWidth: dp(90);  text: popRow.score;     font.family: "monospace" }
-                                        Label { Layout.preferredWidth: dp(130); text: popRow.haRange;   font.family: "monospace" }
+                                        Label { Layout.preferredWidth: root.popColScore
+                                                text: popRow.score
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.popColHA
+                                                text: popRow.haRange
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
                                         Button {
+                                            Layout.preferredWidth: root.popColUse
                                             text: popRow.pops === root.popString ? "in use" : "Use"
                                             enabled: popRow.pops !== root.popString
                                             implicitHeight: Math.max(dp(20), implicitContentHeight + topPadding + bottomPadding)
@@ -1505,6 +1567,7 @@ Item {
                                             ToolTip.text: "use these POPs, and stop AutoPOPs from replacing them"
                                             onClicked: root.adoptPops(popRow.pops)
                                         }
+                                        Item { Layout.fillWidth: true }
                                     }
                                 }
 
@@ -1594,7 +1657,11 @@ Item {
                         // Debiasing only means something once there is noise to debias, and
                         // n_samples only sizes the noise realisation, so both follow the box above.
                         enabled: root.simNoise
-                        checked: root.simDebias && root.simNoise
+                        // `checked` follows ONE property, and the gate is `enabled`. Binding it
+                        // to `simDebias && simNoise` went stale the moment either box was
+                        // clicked — toggling a CheckBox destroys the binding — and `simulate`
+                        // ignores debias without noise anyway (`if noise && debias`).
+                        checked: root.simDebias
                         onToggled: root.simDebias = checked
                     }
                     Label { text: "n_samples"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
@@ -1671,9 +1738,29 @@ Item {
                     Label { text: "mas"; visible: root.simSource !== "model"; color: "#666"
                             font.pointSize: pt(baseFontPt - 2) }
 
+                    // Here rather than on a row of its own: it is one switch, and the panel is
+                    // long enough already. What it means is in the tooltip and in the line
+                    // below, which only appears once it is on.
+                    CheckBox {
+                        id: copyStructureBox
+                        text: "Copy OIFITS structure"
+                        checked: root.simCopyStructure
+                        onToggled: root.simCopyStructure = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Re-observe this sky through the LOADED dataset's own uv " +
+                                      "points and signal-to-noise, instead of computing an " +
+                                      "observation from the array and the night. The result is " +
+                                      "that dataset, of a different source — comparable to it " +
+                                      "point by point."
+                    }
+
+                    // The sky's status either way — a simulation is OF something in both
+                    // modes — with the coverage's provenance appended when it is not the
+                    // array's, since that is what makes the HA range and the magnitudes idle.
                     Label {
                         Layout.fillWidth: true
-                        text: root.simSourceText
+                        text: root.simSourceText +
+                              (root.simCopyStructure ? "   ·   uv + SNR from the loaded file" : "")
                         color: root.simSourceOk ? "#2e7d32" : "#b00000"
                         elide: Text.ElideMiddle
                         font.pointSize: pt(baseFontPt - 1)
@@ -1713,9 +1800,7 @@ Item {
                         // Cross-tab moves are explicit verbs, never implicit state changes, so this
                         // stays a button and stays disabled until there is a file to carry across.
                         enabled: root.lastSimulatedFile.length > 0
-                        // wire: hand lastSimulatedFile to the shell's open path and switch the
-                        // window to the Explore tab.
-                        onClicked: root.statusText = "open " + root.lastSimulatedFile
+                        onClicked: root.openRequested(root.lastSimulatedFile)
                     }
                 }
 
@@ -1729,6 +1814,19 @@ Item {
             }
         }
     }
+
+    // The POP table's columns, in one place. The header and the delegate are separate items —
+    // a ListView delegate cannot share a layout with a header outside it — so the only way they
+    // can agree is by reading the same widths. They did not: the header had four columns and
+    // every row had five, the fifth being the Use button, which squeezed the fill-width column
+    // in the rows and in nothing else. Score and HA range then sat left of their own headings.
+    readonly property int popColIndex: dp(34)
+    // Six POP numbers in monospace, but the heading also carries the telescope names, so the
+    // column is sized for the heading — the wider of the two is what has to fit.
+    readonly property int popColPops:  dp(240)
+    readonly property int popColScore: dp(90)
+    readonly property int popColHA:    dp(130)
+    readonly property int popColUse:   dp(72)
 
     // POP search results. Empty until a search runs; the first append fixes the roles, which are
     // pops, score and haRange.
@@ -1770,11 +1868,24 @@ Item {
         id: simulateTimer
         interval: 250; repeat: false
         onTriggered: {
-            // wire: simulate(facility, target, combiner, wavelength, dates, out_file; mag, mag_ao,
-            // noise, debias, n_samples, seed, observability) — dates come from the HA range and
-            // step, and observability is the named-tuple form when the filter box is ticked. Then
-            // set root.lastSimulatedFile and register the file in the session as a new dataset.
-            root.statusText = "simulate -> " + root.outputFile
+            // A timer, not a direct call: `simulate` runs on Qt's thread and the window does
+            // not repaint during it, so "simulating…" has to be on screen BEFORE it starts.
+            var t = root.targets[root.currentTargetIndex]
+            var line = Julia.shell_simulate(
+                root.outputFile, root.facility, root.telescopeConfig.join(" "),
+                root.combiner, root.spectralSetup,
+                t ? t.name : "", t ? t.ra : 0.0, t ? t.dec : 0.0,
+                root.dateISO, root.haMin, root.haMax, root.stepMinutes,
+                root.simulateOptions())
+            root.consoleChanged()
+            if (line.length > 0 && line.charAt(0) === "!") { root.statusText = line; return }
+            var f = line.split("\t")
+            if (f[0] === "ok") {
+                root.lastSimulatedFile = f[1]
+                root.statusText = "wrote " + f[1] + " — " + (f.length > 2 ? f[2] : "")
+            } else {
+                root.statusText = line
+            }
         }
     }
 
@@ -1950,16 +2061,21 @@ Item {
         }
     }
 
-    // Twice the size it has on screen, so the file is usable in a talk rather than being a
-    // screenshot of a panel. Capped because the figure is rendered into a real framebuffer and
-    // a software GL stack refuses the very large ones.
+    // The panel's own size, which Julia uses only when it cannot measure the live scene: the
+    // file has to be laid out like the picture on screen, and Makie sizes text in points, so
+    // asking for a bigger figure would re-lay it out rather than enlarge it. Resolution comes
+    // from `px_per_unit` at save time instead. Capped because the figure is rendered into a
+    // real framebuffer and a software GL stack refuses the very large ones.
     function savePng(which, area) {
         savePngDialog.which = which
-        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width * 2))
-        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height * 2))
+        savePngDialog.pxw = Math.min(2400, Math.max(640, area.width))
+        savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
         savePngDialog.openAt("")
     }
 
     signal consoleChanged()
+    // Carrying a simulated file into Exploring is a cross-tab move, so it is a request the
+    // WINDOW acts on: this panel owns neither the dataset list nor the tab bar.
+    signal openRequested(string path)
 
 }

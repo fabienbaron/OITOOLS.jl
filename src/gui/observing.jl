@@ -563,6 +563,70 @@ end
 # has been computed.
 
 """
+    facility_subset(f, config) -> FacilityConfig
+
+The same array with only the selected telescopes in it.
+
+`simulate` observes with every telescope a `FacilityConfig` carries — there is no config vector
+in its signature — so simulating a 4T night on a 6T array means handing it a 4T array. Every
+per-telescope field is subset together; missing one leaves `simulate` indexing a name vector
+shorter than `sta_xyz` several hundred lines later.
+
+`config` is the panel's own encoding, 0 for out and non-zero for in, so it is the vector the
+telescope checkboxes already produce.
+"""
+function facility_subset(f, config::AbstractVector{<:Integer})
+    keep = findall(!iszero, config)
+    (isempty(keep) || length(keep) == f.ntel) && return f
+    length(config) == f.ntel || throw(ArgumentError(
+        "the telescope selection has $(length(config)) entries but $(f.name) has $(f.ntel)"))
+    length(keep) >= 3 || throw(ArgumentError(
+        "closure phases need three telescopes; $(length(keep)) selected"))
+    g = deepcopy(f)
+    g.ntel      = length(keep)
+    g.tel_names = f.tel_names[keep]
+    g.sta_names = isempty(f.sta_names) ? f.sta_names : f.sta_names[keep]
+    g.tel_diams = isempty(f.tel_diams) ? f.tel_diams : f.tel_diams[keep]
+    g.tel_gain  = isempty(f.tel_gain)  ? f.tel_gain  : f.tel_gain[keep]
+    # Renumbered rather than carried over: OI_ARRAY's station indices are positions in THIS
+    # array, and a subset that kept 1,3,5 would write rows pointing at stations it does not have.
+    g.sta_index = collect(1:length(keep))
+    g.sta_xyz   = f.sta_xyz[keep, :]
+    g.delay_lengths = isempty(f.delay_lengths) ? f.delay_lengths : f.delay_lengths[keep]
+    return g
+end
+
+"""
+    epochs_for_hour_angles(facility, ra_deg, date, ha_min, ha_max, step_minutes) -> Vector{DateTime}
+
+The UTC timestamps at which a target sits at each hour angle on a grid — what `simulate` takes,
+from what the panel actually asks for.
+
+The panel asks for hour angles because that is what a uv track is parameterised by; `simulate`
+takes UTC because that is what the sky knows. The two are related by the sidereal rate, which
+is a constant, so each epoch is solved for INDEPENDENTLY from its own hour angle rather than by
+stepping from the last: an epoch grid built by accumulation drifts by the sidereal-vs-solar
+difference, 4 minutes per day, which is a whole step over a long track.
+
+Anchored to the nearest occurrence to 00:00 UTC on `date`, so an hour-angle range straddling
+transit gives one continuous track around that night rather than two halves a day apart.
+"""
+function epochs_for_hour_angles(f, ra_deg::Real, date::Date,
+                                ha_min::Real, ha_max::Real, step_minutes::Real)
+    step_minutes > 0 || throw(ArgumentError("the epoch step must be positive"))
+    ha_max >= ha_min || throw(ArgumentError("the hour-angle range runs backwards"))
+    base = DateTime(date)                       # 00:00 UTC
+    _, h0 = OITOOLS.hour_angle_calc(base, f.lon, Float64(ra_deg) / 15)
+    href = first(h0)
+    # Sidereal hours per solar hour: the sky runs fast, so an hour of hour angle takes slightly
+    # less than an hour of clock.
+    SIDEREAL = 1.0027379093
+    at(ha) = base + Millisecond(round(Int, ((mod(ha - href + 12, 24) - 12) / SIDEREAL) * 3.6e6))
+    step_h = Float64(step_minutes) / 60
+    return [at(ha) for ha in Float64(ha_min):step_h:Float64(ha_max)]
+end
+
+"""
     simulate_source_info(kind, path) -> (; ok, kind, summary, ndims, nx, nwav, detail)
 
 Describe the sky a simulation would use, and whether it is usable.
@@ -578,12 +642,13 @@ function simulate_source_info(kind::AbstractString, path::AbstractString = "")
     k = lowercase(strip(String(kind)))
     p = String(path)
 
-    no(msg) = (; ok = false, kind = k, summary = msg, ndims = 0, nx = 0, nwav = 0, detail = "")
+    no(msg) = (; ok = false, kind = k, summary = msg, ndims = 0, nx = 0, nwav = 0, detail = "",
+                 pixsize = 0.0)
 
     if k == "model"
         isempty(p) && return (; ok = true, kind = k,
                                 summary = "the model held by the Modeling perspective",
-                                ndims = 0, nx = 0, nwav = 0, detail = "")
+                                ndims = 0, nx = 0, nwav = 0, detail = "", pixsize = 0.0)
         isfile(p) || return no("no model file at '$p'")
         m = try
             read_model_file(p)
@@ -593,7 +658,7 @@ function simulate_source_info(kind::AbstractString, path::AbstractString = "")
         ncomp = length(OITOOLS._component_names(m.model))
         return (; ok = true, kind = k,
                   summary = "$(basename(p)): $ncomp component(s), $(length(m.free)) free",
-                  ndims = 0, nx = 0, nwav = 0,
+                  ndims = 0, nx = 0, nwav = 0, pixsize = 0.0,
                   detail = join(sort(collect(keys(m.model))), ", "))
     end
 
@@ -606,18 +671,25 @@ function simulate_source_info(kind::AbstractString, path::AbstractString = "")
     end
 
     nd = ndims(img)
+    # The file's own pixel size, when its header carries one. A truth image already knows its
+    # scale, and retyping it is how a simulation ends up at a different scale from the image it
+    # is of -- a mistake that produces a perfectly plausible OIFITS of the wrong source size.
+    px = fits_pixsize(p)
+    pxnote = px === nothing ? "" : @sprintf(", %.4g mas/pixel", px)
     if k == "image"
         nd == 2 || return no("'$(basename(p))' is $(nd)-D; a grey image must be 2-D " *
                              (nd == 3 ? "— choose Image cube instead" : ""))
         return (; ok = true, kind = k,
-                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) grey",
-                  ndims = 2, nx = size(img, 1), nwav = 1, detail = "")
+                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) grey" * pxnote,
+                  ndims = 2, nx = size(img, 1), nwav = 1, detail = "",
+                  pixsize = px === nothing ? 0.0 : px)
     elseif k == "cube"
         nd == 3 || return no("'$(basename(p))' is $(nd)-D; a cube must be 3-D " *
                              (nd == 2 ? "— choose Image instead" : ""))
         return (; ok = true, kind = k,
-                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) × $(size(img,3)) channels",
-                  ndims = 3, nx = size(img, 1), nwav = size(img, 3), detail = "")
+                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) × $(size(img,3)) channels" * pxnote,
+                  ndims = 3, nx = size(img, 1), nwav = size(img, 3), detail = "",
+                  pixsize = px === nothing ? 0.0 : px)
     end
     return no("unknown source '$kind'; expected image, cube or model")
 end

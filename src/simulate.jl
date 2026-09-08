@@ -115,14 +115,24 @@ const wave_info     = WaveConfig
 
 # ─── Config file resolution ───────────────────────────────────────────────────
 
-const _CONFIGS_DIR = joinpath(@__DIR__, "configs")
+"""
+    _configs_dir() -> String
+
+Directory of the shipped instrument configs.
+
+A function rather than a `const`, because a `const` here is evaluated at PRECOMPILE time: the
+building machine's path is serialised into the sysimage, and an application bundle can never
+correct it. That made this the worst of the relocation sites -- a missing config directory
+raises nothing at all, the facility list is simply empty.
+"""
+_configs_dir() = something(resource("src", "configs"), joinpath(@__DIR__, "configs"))
 
 function _resolve_config(path::AbstractString)
     isfile(path) && return path
-    fallback = joinpath(_CONFIGS_DIR, basename(path))
+    fallback = joinpath(_configs_dir(), basename(path))
     isfile(fallback) && return fallback
     # Try adding .toml extension
-    for p in (path * ".toml", joinpath(_CONFIGS_DIR, basename(path) * ".toml"))
+    for p in (path * ".toml", joinpath(_configs_dir(), basename(path) * ".toml"))
         isfile(p) && return p
     end
     return path  # let downstream code raise the error
@@ -371,7 +381,7 @@ julia> c.wave_combiner["MIRCX_LOWH"]
 "MIRCX"
 ```
 """
-function list_configs(dir::AbstractString = _CONFIGS_DIR)
+function list_configs(dir::AbstractString = _configs_dir())
     facilities  = String[]
     combiners   = String[]
     wavelengths = String[]
@@ -1372,9 +1382,81 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     OIFITS.write(out_file, ds; overwrite=true)
 end
 
+"""
+    _same_file(a, b) -> Bool
+
+Whether two paths name the same file on disk.
+
+`realpath` where the file exists, so a symlink, a `..` or a relative path cannot be used to
+smuggle an output over an input; plain `abspath` where it does not, which is the normal case
+for an output that has not been written yet.
+"""
+function _same_file(a, b)
+    r(p) = try realpath(String(p)) catch; abspath(String(p)) end
+    return r(a) == r(b)
+end
+
+"""
+    _copy_snr_fallback!(err, ref_err, model, frac, add) -> err
+
+Replace the non-finite entries of an error vector, in place.
+
+An error bar that is not a finite number is not a large uncertainty, it is a missing one, and
+it poisons whatever reads the file: `model += Inf * randn()` writes NaN, and a NaN error bar
+makes every χ² NaN. Where the input has a usable error of its own that is what is taken;
+otherwise a fraction of the model value plus a floor, which is what this function's callers
+have always fallen back to for T3.
+"""
+function _copy_snr_fallback!(err, ref_err, model, frac, add)
+    for i in eachindex(err)
+        isfinite(err[i]) && continue
+        r = i <= length(ref_err) ? ref_err[i] : NaN
+        err[i] = isfinite(r) && r > 0 ? abs(r) : abs(model[i]) / frac + add
+    end
+    return err
+end
+
+"""
+    simulate_from_oifits(in_oifits, out_file; mode, image | flat_model, ...)
+
+Re-observe a sky through an existing file's uv coverage, and write the result as a copy of that
+file with new data in it.
+
+The alternative to `simulate`, and a different question: `simulate` computes an observation from
+an array, a combiner and a night, while this one asks "what would THIS dataset have looked like
+if the source were that instead?" — the uv points, the wavelengths, the flags and every header
+come from the input, so the answer is comparable to the original point by point.
+
+`mode` decides the error bars:
+  * `"copy_errors"` — the input's, unchanged. The absolute noise level is preserved.
+  * `"copy_snr"`    — the input's SIGNAL-TO-NOISE, rescaled to the new observables. This is the
+    right one when the new source is much brighter or fainter than the original, where copied
+    absolute errors would claim a precision the geometry never had.
+  * `"noise_model"` — `errors.v2_multit`/`v2_addit` and the T3 equivalents.
+
+The sky is either `image` (a 2-D grey image, or a 3-D cube with one plane per channel of the
+input, ordered by increasing wavelength) with its `pixsize` in mas, or `flat_model` with
+`flat_params`. Each channel of a cube is normalised by its own flux, which is what V², T3amp
+and T3φ measure — the spectrum cannot be expressed in those observables and is not written.
+
+`noise = false` writes the noiseless observables with the error bars still filled in. That is
+the honest form of a truth file: what the instrument would measure with no realisation of the
+noise, alongside the noise it would have had.
+"""
 function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[],
         image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64,3}, Array{Float64,4}}="",
-        pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[])
+        pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[],
+        noise::Bool=true, rng::Union{Nothing,AbstractRNG}=nothing, seed::Union{Nothing,Integer}=nothing)
+
+    # NEVER over the input. Every read here happens before the write, so writing back would not
+    # corrupt anything mid-flight — it would simply replace an observer's real data with a
+    # simulation of a different source, which is worse for being silent and complete.
+    _same_file(out_file, in_oifits) && error(
+        "simulate_from_oifits would overwrite its own input, $(basename(String(in_oifits)))" *
+        " — choose a different output file")
+    mode in ("copy_errors", "copy_snr", "noise_model") || error(
+        "unknown mode $(repr(mode)); it is one of copy_errors, copy_snr, noise_model")
+    _rng = rng !== nothing ? rng : (seed !== nothing ? MersenneTwister(seed) : Random.default_rng())
 
     # Read input OIFITS data for UV coordinates and errors
     data = readoifits(in_oifits, filter_bad_data=false)[1]
@@ -1383,9 +1465,27 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
     if (((typeof(image) == String) && (image != "")) || ((typeof(image) != String) && (image != "")))
         x = image isa AbstractString ? readfits(image) : Float64.(image)
         nx = size(x, 1)
-        x = vec(x) / sum(x)
-        ft = setup_nfft(data, nx, pixsize)
-        cvis_model = image_to_vis(to_ft_precision(x, ft), ft)
+        if ndims(x) == 3
+            # One plane per channel of the INPUT file, matched by increasing wavelength, each
+            # normalised by its own flux inside `image_to_vis`. A channel gets its own plan
+            # because its uv points are its own: the same baseline at a different wavelength is
+            # a different spatial frequency, which is the whole reason a cube is worth
+            # simulating.
+            lams = sort(unique(data.uv_lam))
+            size(x, 3) == length(lams) || throw(DimensionMismatch(
+                "the cube has $(size(x,3)) planes but $(basename(String(in_oifits))) has " *
+                "$(length(lams)) wavelength channels"))
+            cvis_model = zeros(ComplexF64, size(data.uv, 2))
+            for (c, λ) in enumerate(lams)
+                idx = findall(==(λ), data.uv_lam)
+                plan = setup_nfft_uv(data.uv[:, idx], nx, pixsize)
+                cvis_model[idx] = image_to_vis(to_ft_precision(x[:, :, c], plan), plan)
+            end
+        else
+            x = vec(x) / sum(x)
+            ft = setup_nfft(data, nx, pixsize)
+            cvis_model = image_to_vis(to_ft_precision(x, ft), ft)
+        end
     elseif flat_model !== nothing
         # Per-uv wavelength and MJD, so a chromatic model simulates its own spectrum rather
         # than a file of NaN: the resolver returns NaN for every `$WL` expression when it is
@@ -1407,26 +1507,40 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         t3amp_model_err = copy(data.t3amp_err)
         t3phi_model_err = copy(data.t3phi_err)
     elseif mode == "copy_snr"
+        # The point's SNR, carried over to the new observable. Dividing by the ORIGINAL value
+        # is what copies the ratio, and it is also what breaks on a point that has no ratio to
+        # copy: a zero V², a zero error bar or a flagged row gives Inf or NaN here, and
+        # `v2 += Inf * randn()` then writes NaN into the file. `_copy_snr_fallback!` below puts
+        # the input's own absolute error on those points, which is the only other thing known
+        # about them.
         v2_model_err = abs.(v2_model ./ data.v2 .* data.v2_err)
         gooddata = readoifits(in_oifits, filter_bad_data=true)[1]
         t3amp_model_err = abs.(t3amp_model ./ (data.t3amp ./ data.t3amp_err))
-        t3phi_model_err = max.(abs.(t3phi_model ./ (data.t3phi ./ data.t3phi_err)), minimum(gooddata.t3phi_err))
+        # A phase error has a floor: the best phase in the file. Without it a point where the
+        # model phase is near zero gets an error near zero and dominates every fit that reads
+        # the result. An empty or entirely flagged T3 table has no such floor to offer.
+        phi_floor = isempty(gooddata.t3phi_err) ? 0.0 : minimum(gooddata.t3phi_err)
+        t3phi_model_err = max.(abs.(t3phi_model ./ (data.t3phi ./ data.t3phi_err)), phi_floor)
     elseif mode == "noise_model"
         v2_model_err = errors.v2_multit * v2_model .+ errors.v2_addit
         t3amp_model_err = errors.t3amp_multit * t3amp_model .+ errors.t3amp_addit
         t3phi_model_err = zeros(length(t3phi_model)) .+ errors.t3phi_addit
     end
 
-    # Fix NaN errors
-    isbad = findall(isnan.(t3amp_model_err))
-    t3amp_model_err[isbad] .= abs.(t3amp_model[isbad]) / 10
-    isbad = findall(isnan.(t3phi_model_err))
-    t3phi_model_err[isbad] .= abs.(t3phi_model[isbad]) / 10 .+ 1.0
+    # Points the error model could not speak for. NaN AND Inf: the old check caught only NaN,
+    # so a zero-valued original point (Inf, not NaN) passed through and noised the file into
+    # NaN — measured on HD140573, where every V² came out NaN.
+    _copy_snr_fallback!(v2_model_err, data.v2_err, v2_model, 10.0, 0.0)
+    _copy_snr_fallback!(t3amp_model_err, data.t3amp_err, t3amp_model, 10.0, 0.0)
+    _copy_snr_fallback!(t3phi_model_err, data.t3phi_err, t3phi_model, 10.0, 1.0)
 
-    # Add noise
-    v2_model .+= v2_model_err .* randn(length(v2_model))
-    t3amp_model .+= t3amp_model_err .* randn(length(t3amp_model))
-    t3phi_model .+= t3phi_model_err .* randn(length(t3phi_model))
+    # Add noise. Skipped on request, which leaves the truth observables in the file with the
+    # error bars they would have had -- what a reconstruction should be scored against.
+    if noise
+        v2_model .+= v2_model_err .* randn(_rng, length(v2_model))
+        t3amp_model .+= t3amp_model_err .* randn(_rng, length(t3amp_model))
+        t3phi_model .+= t3phi_model_err .* randn(_rng, length(t3phi_model))
+    end
 
     # Read input OIFITS as OIDataSet, modify data fields, write out
     ds = OIFITS.OIDataSet(in_oifits)

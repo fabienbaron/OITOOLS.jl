@@ -20,7 +20,7 @@ using PythonPlot
 PythonPlot.matplotlib          # force the import NOW, while conda's harfbuzz can still win
 
 # GLMakie, QMLMakie and QML are what activate OITOOLSGUIExt, where the whole GUI lives.
-using OITOOLS, GLMakie, QMLMakie, QML, Test, Dates
+using OITOOLS, GLMakie, QMLMakie, QML, Test, Dates, TOML
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
 GUI === nothing && error("OITOOLSGUIExt did not load; the GUI tests cannot run")
 using .GUI
@@ -832,6 +832,101 @@ end
     include(joinpath(@__DIR__, "test_observing.jl")) # Observe perspective data layer
     include(joinpath(@__DIR__, "test_gantt.jl"))     # the Gantt port vs its oiplot original
 
+    # ═════════════════════════════════════════════════════════════════════
+    # Save PNG must rebuild the panel that is on SCREEN
+    # ═════════════════════════════════════════════════════════════════════
+    #
+    # The snapshot cannot read the framebuffer (src/gui/snapshot.jl says why), so it re-runs
+    # the builders — and every piece of view state the canvas carries has to be handed to them
+    # again. Each one that is not is a file that quietly disagrees with the panel it was taken
+    # from: residuals and the model/image overplot were both absent, the figure was rebuilt at
+    # twice the scene's size (which re-lays out ticks, legend and labels rather than enlarging
+    # them), and a zoomed view saved the whole dataset.
+    @testset "a saved figure is the picture on the canvas" begin
+        G = GUI
+        sess = Session()
+        load_dataset!(sess, MONO; warn = false, verbose = false)
+        sfig = Makie.Figure(); sax = Makie.Axis(sfig[1, 1])
+        sh = G.ShellState(sess, sfig, sax, nothing, String[], Any[], 1,
+                          :v2, :baseline, false, :none, :none, false, "", String[],
+                          G.build_canvas(sfig, sax), "", nothing, nothing, nothing, nothing,
+                          nothing, nothing, nothing, Any[], nothing, nothing, nothing,
+                          nothing, "", "", nothing)
+
+        # A stand-in reconstruction, so the image residuals and the image overplot both have a
+        # producer. What it looks like does not matter; that both paths reach the file does.
+        nx, px = 32, 0.5
+        img = [exp(-((i - nx / 2)^2 + (j - nx / 2)^2) / (2 * 4.0^2)) for i in 1:nx, j in 1:nx]
+        img ./= sum(img)
+        sh.imaging = G.ImagingResult(img, 0.0, 0.0, 1, 1.0, 0, 0.0,
+                                     G.ImagingSetup(; nx = nx, pixsize = px),
+                                     [1.0, 1.0, 1.0], NamedTuple[])
+
+        function snap(sh, which = "explore")
+            f = G._snapshot_figure(sh, which, (900, 650), false)
+            @test f isa Makie.Figure
+            a = f.content[findfirst(b -> b isa Makie.Axis, f.content)]
+            return (fig = f, axis = a,
+                    scatters = [p for p in a.scene.plots if p isa Makie.Scatter])
+        end
+
+        for (kind, res, ov) in ((:v2, :none, :none), (:v2, :image, :none),
+                                (:v2, :none, :image), (:t3phi, :image, :none),
+                                (:uv, :none, :image))
+            @testset "$kind residual=$res overlay=$ov" begin
+                sh.kind, sh.residual, sh.overlay = kind, res, ov
+                G.refresh_plot!(sh)
+                s = snap(sh)
+                # The data scatter first, the overplot second: `build_canvas` creates them in
+                # that order and the snapshot goes through the same builder.
+                @test s.scatters[1][1][] == sh.canvas.points[]
+                @test s.scatters[2][1][] == sh.canvas.overpoints[]
+                @test s.axis.title[]  == sh.canvas.axis.title[]
+                @test s.axis.ylabel[] == sh.canvas.axis.ylabel[]
+                @test s.axis.yscale[] === sh.canvas.axis.yscale[]
+                # Framed like the scene, not like the size QML asked for.
+                @test Makie.size(s.fig.scene) == Makie.size(sh.canvas.figure.scene)
+            end
+        end
+
+        @testset "a log scale is saved as a log scale" begin
+            sh.kind, sh.residual, sh.overlay, sh.logy = :v2, :none, :none, true
+            G.refresh_plot!(sh)
+            s = snap(sh)
+            @test s.axis.yscale[] === log10
+            @test s.scatters[1][1][] == sh.canvas.points[]
+            sh.logy = false
+        end
+
+        @testset "the file follows the zoom" begin
+            sh.kind, sh.residual, sh.overlay = :v2, :none, :none
+            G.refresh_plot!(sh)
+            @test G.zoom_step!(sh.canvas, 3.0)
+            fl = sh.canvas.axis.finallimits[]
+            lim = snap(sh).axis.limits[]
+            @test lim[1] !== nothing && lim[2] !== nothing
+            @test minimum(lim[1]) ≈ Float64(fl.origin[1])
+            @test maximum(lim[1]) ≈ Float64(fl.origin[1] + fl.widths[1])
+            @test minimum(lim[2]) ≈ Float64(fl.origin[2])
+            @test maximum(lim[2]) ≈ Float64(fl.origin[2] + fl.widths[2])
+        end
+
+        @testset "an image panel keeps its colorbar label and its field of view" begin
+            ifig = Makie.Figure(); iax = Makie.Axis(ifig[1, 1]; title = "reconstruction")
+            sh.imcanvas = G.build_canvas(ifig, iax)
+            G.show_image!(sh.imcanvas, img, px; label = "mean flux / pixel")
+            s = snap(sh, "image")
+            @test s.axis.title[] == "reconstruction"
+            cb = s.fig.content[findfirst(b -> b isa Makie.Colorbar, s.fig.content)]
+            @test cb.label[] == "mean flux / pixel"
+            # East still on the left, and the same field of view: `show_image!` reverses x.
+            @test s.axis.xreversed[] == sh.imcanvas.axis.xreversed[]
+            lim = s.axis.limits[]
+            @test maximum(lim[1]) ≈ nx * px / 2
+            @test minimum(lim[1]) ≈ -nx * px / 2
+        end
+    end
+
     @testset "the shell path and the figure builders agree" begin
         # Same implementation, so the harness result for uvplot_makie applies to the shell too.
         fig = Makie.Figure(); ax = Makie.Axis(fig[1, 1]); extras = Any[]
@@ -843,5 +938,68 @@ end
         shell_pts = sort([(Float64(q[1]), Float64(q[2])) for q in p_shell[1][]])
         fig_pts   = sort([(Float64(q[1]), Float64(q[2])) for q in pd.points[1][]])
         @test shell_pts == fig_pts
+    end
+    @testset "the appearance config, saved and reset" begin
+        # The settings file is per-user and read at startup, so the reset has to remove the
+        # FILE: a window restored to its built-in look while the file still says otherwise
+        # comes back tweaked at the next launch, which is the confusion the button ends.
+        # Point the config at a scratch directory rather than writing the developer's own.
+        mktempdir() do dir
+            withenv("XDG_CONFIG_HOME" => dir, "APPDATA" => dir) do
+                path = GUI.gui_settings_file()
+                @test startswith(path, dir)
+                @test !isfile(path)
+                @test GUI.shell_reset_settings() == ""          # nothing saved yet
+
+                saved = GUI.shell_save_settings(join(["ui_scale\t1.5",
+                                                      "controls_style\tFusion",
+                                                      "ui_font_pt\t13"], "\n"))
+                @test saved == path
+                @test isfile(path)
+                d = TOML.parsefile(path)
+                @test d["ui_scale"] == 1.5
+                @test d["controls_style"] == "Fusion"
+
+                @test GUI.shell_reset_settings() == path
+                @test !isfile(path)
+                @test GUI.shell_reset_settings() == ""          # and again is harmless
+            end
+        end
+    end
+
+    @testset "the controls styles offered" begin
+        # Line 1 is the style in force, the rest are the choices. QML slices it exactly there,
+        # so an extra header line would silently offer the current style as a choice.
+        lines = split(GUI.shell_controls_styles(), '\n')
+        @test length(lines) == length(GUI.CONTROLS_STYLES) + 1
+        @test lines[2:end] == collect(GUI.CONTROLS_STYLES)
+        @test "Basic" in lines[2:end]
+        @test !isempty(lines[1])
+    end
+
+    @testset "the file picker's places and volumes" begin
+        # Every other place is somewhere INSIDE one tree. On Windows that is not enough: `D:`
+        # cannot be reached by walking up from `C:`, so without volumes a file on another drive
+        # is only openable by typing its path — confirmed missing on Windows before this.
+        vols = GUI.picker_volumes()
+        @test !isempty(vols)
+        @test all(isdir(last(v)) for v in vols)
+        @test all(!isempty(first(v)) for v in vols)
+
+        if Sys.iswindows()
+            @test any(v -> occursin(r"^[A-Z]:$", first(v)), vols)      # at least one drive
+            @test any(v -> uppercase(last(v)) == "C:\\", vols)
+        else
+            @test any(v -> last(v) == "/", vols)                        # the root is reachable
+        end
+
+        rows = [split(r, '\t') for r in split(GUI.picker_places(), '\n') if !isempty(r)]
+        @test all(length(r) == 2 for r in rows)
+        @test all(isdir(r[2]) for r in rows)
+        @test any(r -> r[1] == "Home", rows)
+        # the volumes are carried through into the places listing
+        for (label, path) in vols
+            @test any(r -> r[1] == label && r[2] == path, rows)
+        end
     end
 end

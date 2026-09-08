@@ -16,6 +16,7 @@ using PrecompileTools
 
 version() = println("OITOOLS v$(pkgversion(OITOOLS))")
 
+include("resources.jl")          # where shipped QML, configs and demo data are found
 include("graphics.jl")           # GL driver environment; must be callable before GLMakie
 include("gui_launcher.jl")       # oitoolsgui(): loads the GUI stack in the required order
 include("readoifits.jl")
@@ -167,12 +168,13 @@ function empty_night end
 function prefer_native_wayland! end
 
 export configure_graphics!, configure_qt_platform!, prefer_native_wayland!, is_wsl
+export resource_dir
 export oitoolsgui
 
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
 export readoifits, readoifits_multiepochs, list_oifits_targets
-export readfits, writefits
+export readfits, writefits, fits_pixsize
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
 
@@ -218,7 +220,7 @@ export perturb_data
 export resample_data          # deprecated alias for perturb_data
 
 # ── Image reconstruction ─────────────────────────────────────────────────────
-export setup_ft, setup_dft, setup_nfft, ft_info, OIft, NFFTCell, DFTCell
+export setup_ft, setup_dft, setup_nfft, setup_nfft_uv, ft_info, OIft, NFFTCell, DFTCell
 export image_to_vis,
        image_to_v2, image_to_t3phi, image_to_t3amp, image_to_obs,
        image_to_residuals, image_to_chi2, image_to_chi2_fg

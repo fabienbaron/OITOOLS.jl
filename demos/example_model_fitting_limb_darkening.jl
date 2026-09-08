@@ -273,7 +273,7 @@ function run_all_fitters(md, free, dat, lb, ub; run_nested=true)
     # asks rather than assumes -- and running both is the point: two independent samplers on
     # one χ² surface either agree, or one of them has not converged.
     if run_nested
-        for backend in (:nestedsamplers, :ultranest)
+        for backend in (:nautilus, :ultranest)
             backend in OITOOLS.NESTED_BACKENDS_LOADED || continue
             r = fit_model_nested(md, free, dat; backend, lb, ub, weights=V2ONLY,
                                  verb=false, cornerplot=false)

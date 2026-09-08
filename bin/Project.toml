@@ -33,10 +33,16 @@ PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
 QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
 QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+VarInf = "cd771066-68b7-4d72-889c-da7b55f139d5"
 
 [sources]
 Nautilus = {url = "https://github.com/fabienbaron/Nautilus.jl.git"}
 OITOOLS = {path = ".."}
+# VarInf is the generic VI core and is UNREGISTERED with no remote, so it can only be reached
+# by path. A sibling clone is the layout OIVI assumed and the one the docs describe; keep it
+# elsewhere and `Pkg.develop(path = …)` into this environment once instead.
+VarInf = {path = "../../VarInf.jl"}
 
 # The Conda environment every project in this repo shares, at
 # <depot>/conda_environments/oitools.

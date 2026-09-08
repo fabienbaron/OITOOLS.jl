@@ -12,7 +12,7 @@
 | `fit_model_lsqfit(model, x0, data)` | Fit a `FlatModel` via Levenberg-Marquardt |
 | `fit_model_nested(model, data; lb, ub)` | Fit by nested sampling — posterior **and** log-evidence; needs finite bounds |
 | `fit_model_ultranest(model, data; lb, ub)` | `fit_model_nested` pinned to the UltraNest backend |
-| `nested_backend()`, `set_nested_backend!(b)` | Which nested sampler is in force: `:nestedsamplers` or `:ultranest` |
+| `nested_backend()`, `set_nested_backend!(b)` | Which nested sampler is in force: `:nautilus` or `:ultranest` |
 
 Which package each fitter needs is tabulated under
 [What each optimiser needs](@ref) — `fit_model`, `fit_model_lsqfit`, `chi2_map` and

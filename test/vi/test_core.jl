@@ -325,7 +325,7 @@ end
 const oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/BC2004/2004-data1.oifits"
 
 function _make_obs_and_image()
-    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false)
+    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)
     ft = setup_ft(data, 32, 0.3)
     obs = ObservationConfig(ft, data)
     npix = 32; pixsize = 0.3
@@ -394,7 +394,7 @@ end
 using .OIVI: _split_latent, _combined_cvis
 
 function _make_hybrid_obs_and_image()
-    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false)
+    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)
     ft = setup_ft(data, 32, 0.3)
 
     # Simple uniform disk model with free flux and diameter
@@ -486,7 +486,7 @@ end
 
 @testset "Extended latent energy_fg (finite difference)" begin
     obs, image, p, xi, params = _make_hybrid_obs_and_image()
-    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false)
+    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)
     ft = setup_ft(data, 32, 0.3)
 
     z = vcat(xi, params)
@@ -504,7 +504,7 @@ end
 
 @testset "Hybrid backward compatibility (model=nothing)" begin
     # When model=nothing, hybrid code path should give same results as image-only
-    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false)
+    data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)
     ft = setup_ft(data, 32, 0.3)
     obs_plain = ObservationConfig(ft, data)
     obs_hybrid = ObservationConfig(ft, data; model=nothing)
@@ -530,6 +530,57 @@ end
     @test g1 ≈ g2
 
     println("  Backward compatibility test passed.")
+end
+
+# The support map is a prior about where the source is, and the panel can now load one from a
+# FITS file in place of the limb-darkened disc. It is the same object either way — `D` in
+# `SkyModelParams`, which multiplies `exp(field)` — so what has to hold is that an arbitrary
+# non-negative map is accepted, rescaled like `limb_weight`'s, and honoured as a hard support.
+@testset "a caller-supplied support map" begin
+    npix = 16
+    freq = [1.5e14]
+    priors = (; slope_prior = (-4.0, 0.5), fluct_prior = (1.0, 0.5))
+
+    # A square patch, deliberately not a disc and deliberately not normalised.
+    w = zeros(npix, npix)
+    w[4:9, 5:11] .= 7.0
+    p = SkyModelParams(npix, test_pixsize, freq; weight = w, priors...)
+
+    @test maximum(p.D) == 1.0                  # rescaled, as limb_weight returns
+    @test p.D[4, 5] == 1.0 && p.D[1, 1] == 0.0
+    @test p.D_sum ≈ sum(w) / 7 + 1e-12
+
+    # The image is D · exp(field), so the map is a HARD support: every pixel outside it is zero
+    # for any latent vector, not merely faint.
+    for _ in 1:3
+        img = sky_forward(randn(_latent_size(p)), p)[:, :, 1]
+        @test all(img[p.D .== 0] .== 0)
+        @test maximum(img) > 0
+        @test all(isfinite, img)
+    end
+
+    # R_mas is not needed when a map is given, and is refused when neither is.
+    @test_throws ArgumentError SkyModelParams(npix, test_pixsize, freq; priors...)
+
+    # Everything the model cannot survive is refused at construction, where the message can
+    # still name the file's problem.
+    @test_throws ArgumentError SkyModelParams(npix, test_pixsize, freq;
+                                              weight = zeros(npix, npix), priors...)
+    @test_throws ArgumentError SkyModelParams(npix, test_pixsize, freq;
+                                              weight = fill(-1.0, npix, npix), priors...)
+    @test_throws ArgumentError SkyModelParams(npix, test_pixsize, freq;
+                                              weight = ones(npix + 1, npix), priors...)
+    bad = ones(npix, npix); bad[3, 3] = NaN
+    @test_throws ArgumentError SkyModelParams(npix, test_pixsize, freq;
+                                              weight = bad, priors...)
+
+    # The disc path is unchanged by any of this. The radius is set in PIXELS through the pixel
+    # size, so the disc is smaller than the grid and there are pixels outside it to test.
+    pd = SkyModelParams(npix, test_pixsize, freq; R_mas = 3 * test_pixsize, u = 0.0, priors...)
+    @test maximum(pd.D) == 1.0
+    @test any(pd.D .== 0)
+
+    println("  Support-map tests passed.")
 end
 
 println("\nAll tests passed!")
