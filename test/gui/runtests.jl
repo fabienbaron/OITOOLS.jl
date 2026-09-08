@@ -939,6 +939,20 @@ end
         fig_pts   = sort([(Float64(q[1]), Float64(q[2])) for q in pd.points[1][]])
         @test shell_pts == fig_pts
     end
+    @testset "file:// URLs survive the round trip" begin
+        # QML speaks URLs and Julia speaks paths, and every crossing used to hand-roll the
+        # conversion — `"file://" * path` out, seven characters off on the way back. That pair
+        # is wrong on Windows, where the URL needs three slashes and the drive inside the path,
+        # so a round trip is the assertion that matters rather than either half alone.
+        for p in ("/home/user/data", "/tmp/a b/c#d.oifits", "/tmp/100%/x?y", "/plain/path")
+            @test GUI.strip_file_url(GUI.file_url(p)) == p
+        end
+        @test GUI.strip_file_url("/not/a/url")   == "/not/a/url"    # a typed path is left alone
+        @test GUI.strip_file_url("file:///a/b")  == "/a/b"
+        @test startswith(GUI.file_url("/a b"), "file://")
+        @test !occursin(" ", GUI.file_url("/a b"))                  # escaped, not raw
+    end
+
     @testset "the appearance config, saved and reset" begin
         # The settings file is per-user and read at startup, so the reset has to remove the
         # FILE: a window restored to its built-in look while the file still says otherwise

@@ -77,9 +77,16 @@ ApplicationWindow {
     // one machine and be far too large on the other.
     readonly property real physicalDpi: Screen.pixelDensity * 25.4
 
-    // Anchored on two points judged by eye, not derived: 0.875 on this 92.6 dpi desktop and
-    // 1.25 on a laptop panel of roughly 189 dpi. `refDpi`/`refScale`/`dpiExponent` ARE that
-    // fit -- move them if a screen reads wrong, rather than trying to re-derive a rule.
+    // Anchored on points judged by eye, not derived: 0.73 on this 92.6 dpi 1920x1080 desktop
+    // and, earlier, 1.25 on a laptop panel of roughly 189 dpi. `refDpi`/`refScale`/
+    // `dpiExponent` ARE that fit -- move them if a screen reads wrong, rather than trying to
+    // re-derive a rule.
+    //
+    // The desktop anchor was 0.875 and is now 0.73, which moves the whole curve down by the
+    // same 17%: the laptop point it predicts is 1.04 rather than the 1.25 once judged there.
+    // That is deliberate -- one judgement, applied uniformly -- but if 1.25 still reads right
+    // on that panel, the two anchors want an exponent of 0.75 instead of 0.5, not a different
+    // refScale.
     //
     // The exponent falls out as 0.5. Matching physical SIZE would be 1.0 and give 0.61 here,
     // too small: a desktop monitor sits further away than a laptop screen and wants larger
@@ -94,7 +101,7 @@ ApplicationWindow {
     // 189 is an estimate for the laptop, not a reading. The startup line below prints the
     // physical dpi, so it can be replaced with the real one and the exponent refitted.
     readonly property real refDpi:      92.6
-    readonly property real refScale:    0.875
+    readonly property real refScale:    0.73
     readonly property real dpiExponent: 0.5
     readonly property real autoScale:
         Math.max(0.5, Math.min(4.0,
@@ -112,6 +119,26 @@ ApplicationWindow {
     // computed from the screen. So the reset sends zero rather than a number, and the boxes are
     // filled from what Julia then reports — repeating 1.25 here would pin today's constant as a
     // user override and survive a change to it.
+    // ── the window's own font ─────────────────────────────────────────────────
+    //
+    // Qt resolves a family name through the SYSTEM font database, so naming one only works
+    // where the machine has it -- stock Windows has no Noto. These two faces come out of the
+    // MakieAssets artifact, which the bundle already carries for the plots, and a FontLoader
+    // puts them in Qt's database at startup: the same UI font on every platform, nothing extra
+    // shipped. Empty when the assets cannot be found, and then the platform's font is used.
+    readonly property var shippedFontFiles: {
+        var t = Julia.shell_ui_font_files()
+        return t.length > 0 ? t.split("\n") : []
+    }
+    FontLoader { id: shippedFontRegular
+                 source: win.shippedFontFiles.length > 0 ? win.shippedFontFiles[0] : "" }
+    FontLoader { id: shippedFontBold
+                 source: win.shippedFontFiles.length > 1 ? win.shippedFontFiles[1] : "" }
+    // Bold is loaded into the same family, so `font.bold` picks the real face rather than
+    // having Qt smear the regular one.
+    readonly property string shippedFontFamily:
+        shippedFontRegular.status === FontLoader.Ready ? shippedFontRegular.name : ""
+
     readonly property var appearanceDefaults: ({
         uiScaleUser: 0, uiFontFamily: "", baseFontPt: 11, plotScaleUser: 0, markerSizeUser: 0,
         // The shipped style is Julia's to name (`DEFAULT_CONTROLS_STYLE`), so it is asked for
@@ -151,8 +178,11 @@ ApplicationWindow {
     // multiplies it along with the spacing.
     property real baseFontPt: appearanceDefaults.baseFontPt
     font.pointSize: pt(baseFontPt)
-    // Empty means whatever the platform theme chose, which is the sane default.
-    font.family: uiFontFamily.length > 0 ? uiFontFamily : Qt.application.font.family
+    // Empty means the window's own default: the shipped Noto face, or the platform's font if
+    // the assets could not be found.
+    font.family: uiFontFamily.length > 0     ? uiFontFamily
+               : shippedFontFamily.length > 0 ? shippedFontFamily
+                                              : Qt.application.font.family
 
     // Sized from the SCREEN, not through `dp()`.
     //
@@ -580,11 +610,11 @@ ApplicationWindow {
         // is also a stack of labelled rows in a light panel -- close enough in appearance that
         // it was not obvious which one had focus. The middle of the window belongs to nothing
         // else, so a panel there reads as a dialog.
-        // Centred, but never outside the window, and never larger than it. With no height set
-        // a Popup takes its content's, which grows with the font and the UI scale: at a large
-        // enough setting the panel outgrew the window and the buttons at the bottom went off
-        // the screen -- the settings panel being exactly where one goes to undo a setting like
-        // that. So both axes are capped, the position is clamped, and the content scrolls.
+        //
+        // Capped, and clamped, because it can outgrow the window. With no height set a Popup
+        // takes its content's, and the content is font-sized: at a large enough UI font the
+        // panel ran off the bottom and took the buttons with it -- the settings panel being
+        // exactly where one goes to undo a setting like that. The content scrolls instead.
         //
         // Against `parent`, NOT `win`: a Popup is positioned inside the window's CONTENT item,
         // which is the window less its header. Measured against `win.height` the panel sat a
@@ -693,10 +723,21 @@ ApplicationWindow {
                     Label { text: "UI font"; color: "#666" }
                     ComboBox {
                         id: uiFontBox
-                        model: ["(system default)", "DejaVu Sans", "Noto Sans", "Liberation Sans",
-                                "JuliaMono"]
+                        // Index 0 is "whatever the window would use if you had never set this",
+                        // and it NAMES that font rather than saying "default": which one it is
+                        // depends on whether the shipped face loaded. When it did, the separate
+                        // "Noto Sans" entry would be the same font twice, so the list carries
+                        // the platform's own font at the end instead.
+                        model: win.shippedFontFamily.length > 0
+                             ? ["Noto Sans", "DejaVu Sans", "Liberation Sans", "JuliaMono",
+                                "(system font)"]
+                             : ["(system default)", "DejaVu Sans", "Noto Sans",
+                                "Liberation Sans", "JuliaMono"]
                         Layout.fillWidth: true
-                        onActivated: win.uiFontFamily = currentIndex === 0 ? "" : currentText
+                        onActivated: win.uiFontFamily =
+                            currentIndex === 0             ? ""
+                          : currentText === "(system font)" ? Qt.application.font.family
+                                                            : currentText
                     }
                     SpinBox {
                         id: uiFontSizeSpin
@@ -804,7 +845,7 @@ ApplicationWindow {
                                   "plot_scale\t"  + win.plotScaleUser,
                                   "marker_size\t" + win.markerSizeUser,
                                   "zoom_step\t"   + win.zoomStepUser ].join("\n"))
-                            savedLabel.text = path.length > 0 ? "saved to " + path
+                            savedLabel.text = path.length > 0 ? "saved · " + path
                                                               : "could not save — see the console"
                         }
                     }
@@ -833,22 +874,28 @@ ApplicationWindow {
                             readPlotSettings()
                             win.redrawPlot()
                             var removed = Julia.shell_reset_settings()
-                            savedLabel.text = removed.length > 0 ? "reset — removed " + removed
-                                                                 : "reset — nothing had been saved"
+                            savedLabel.text = removed.length > 0 ? "reset · removed " + removed
+                                                                 : "reset · nothing had been saved"
                         }
                     }
                     Button { text: "Close"; onClicked: settingsPanel.close() }
                 }
 
-                // Empty until a button has been pressed, and it takes no room until then. Wrapped
-                // rather than elided: the whole point of the line is the path it names.
+                // Always exactly one line. Empty until a button was pressed, it made the panel
+                // grow the first time anything was saved; wrapped, it grew again on a long
+                // path. And it says what it IS, because a truncated path on its own reads as a
+                // stray fragment rather than as the answer to what the button just did.
                 Label {
                     id: savedLabel
                     Layout.fillWidth: true
-                    visible: text.length > 0
-                    wrapMode: Text.Wrap
+                    elide: Text.ElideMiddle
+                    maximumLineCount: 1
+                    text: "config: " + Julia.shell_settings_path()
                     color: "#888"
                     font.pointSize: pt(baseFontPt - 2)
+                    HoverHandler { id: savedHover }
+                    ToolTip.visible: savedHover.hovered && savedLabel.truncated
+                    ToolTip.text: savedLabel.text
                 }
 
                 // Which code is actually running. The first thing to establish about any bug

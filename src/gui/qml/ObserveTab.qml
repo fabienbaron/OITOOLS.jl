@@ -64,7 +64,10 @@ Item {
     property real magAO:  2.0
 
     // ── time ──────────────────────────────────────────────────────────────────
-    property string dateISO: "2026-08-19"
+    // Tonight, computed rather than written down: a literal date was the day this line was
+    // typed, so the panel opened on a night in the past and everything derived from it -- the
+    // window, the POP search, the "now" marker -- described a night nobody was planning.
+    property string dateISO: Qt.formatDate(new Date(), "yyyy-MM-dd")
     property real   haMin: -4.0
     property real   haMax:  4.0
     property int    stepMinutes: 10
@@ -76,10 +79,9 @@ Item {
     property real   altMax:     85.0
     property real   moonMinSep: 30.0
     property real   darkOffset:  0.0
-    // Dark-window readout. The two hours are decimal local time and are properties rather than
-    // text because the Gantt axis does arithmetic on them.
-    property real   darkStartHour: 20.0
-    property real   darkEndHour:    5.0
+    // Dark-window readout, as Julia formatted it: "HH:MM – HH:MM LST", or a note when there is
+    // no astronomical night at all. Text, because nothing here does arithmetic on it -- the
+    // chart's own axis is the one thing that measures time.
     property string darkWindowText: "—"
 
     // ── views ─────────────────────────────────────────────────────────────────
@@ -440,18 +442,11 @@ Item {
 
     Component.onCompleted: { selectFacility(root.facility); refreshTargets(); magForBand() }
 
-    // ── Gantt time axis arithmetic ────────────────────────────────────────────
-    //
-    // The night wraps past midnight, so the span is a modular difference and not a subtraction.
-    readonly property real ganttSpanHours: {
-        var s = darkEndHour - darkStartHour
-        while (s <= 0) s += 24
-        return s
-    }
-    readonly property int ganttTickCount:
-        Math.max(2, Math.floor(darkStartHour + ganttSpanHours) - Math.ceil(darkStartHour) + 1)
-    function ganttTickHour(k) { return (Math.ceil(darkStartHour) + k) % 24 }
-    function ganttTickFrac(k) { return (Math.ceil(darkStartHour) + k - darkStartHour) / ganttSpanHours }
+    // What one POP cell needs: a two-character telescope label, a gap, and a dropdown holding a
+    // single digit. Named here because the grid's column count is decided from them and the
+    // dropdown is sized by them, and the two must agree or the row that "fits" would not.
+    readonly property real popBoxWidth:  dp(44)
+    readonly property real popCellWidth: dp(20) + dp(3) + popBoxWidth
 
     // ── layout ────────────────────────────────────────────────────────────────
     ColumnLayout {
@@ -475,8 +470,12 @@ Item {
                 // blank strip: the panels sized to the ScrollView while the row below sized to
                 // its own content, so the column ended up wider than the panels it held and the
                 // difference showed as dead space against the night panel.
-                Layout.preferredWidth: dp(440)
-                Layout.maximumWidth: dp(440)
+                //
+                // 470 rather than 440 because two rows want it: six telescopes with room for the
+                // reference star, and six POP dropdowns side by side. It is taken from the chart,
+                // which has the rest of the window and loses proportionally little.
+                Layout.preferredWidth: dp(470)
+                Layout.maximumWidth: dp(470)
                 Layout.fillHeight: true
                 spacing: dp(6)
 
@@ -754,16 +753,36 @@ Item {
                                 Label { text: "Telescopes"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                 Flow {
                                     Layout.fillWidth: true
-                                    spacing: dp(8)
+                                    spacing: dp(6)
                                     Repeater {
                                         id: telescopeRepeater
                                         model: root.telescopeNames
-                                        CheckBox {
+                                        // The star is its own label, always present, and merely
+                                        // invisible when this telescope is not the reference.
+                                        // Appended to the checkbox's text it widened that one box
+                                        // the moment a reference was picked, which pushed the last
+                                        // telescope onto a second row -- the layout changing shape
+                                        // as a side effect of an unrelated choice.
+                                        delegate: RowLayout {
                                             required property int index
                                             required property string modelData
-                                            text: modelData + (root.telescopeConfig[index] === 2 ? " ★" : "")
-                                            checked: root.telescopeConfig[index] > 0
-                                            onToggled: root.setTelescopeUsed(index, checked)
+                                            spacing: 0
+                                            CheckBox {
+                                                text: parent.modelData
+                                                // Tight: six of these plus their stars have to
+                                                // sit on one row, and a Controls checkbox spends
+                                                // most of its default width on padding.
+                                                padding: 0
+                                                spacing: dp(3)
+                                                checked: root.telescopeConfig[parent.index] > 0
+                                                onToggled: root.setTelescopeUsed(parent.index, checked)
+                                            }
+                                            Label {
+                                                text: "★"
+                                                color: "#666"
+                                                font.pointSize: pt(baseFontPt - 3)
+                                                opacity: root.telescopeConfig[parent.index] === 2 ? 1 : 0
+                                            }
                                         }
                                     }
                                 }
@@ -818,14 +837,33 @@ Item {
 
                                 // One dropdown per telescope, labelled with the telescope. CHARA has five
                                 // POPs; the number IS the beam path, so a free text box invites 0 and 9.
-                                Flow {
+                                //
+                                // A grid of three rather than a Flow. A Flow fits as many as the width
+                                // allows and then starts a new row wherever it ran out, so CHARA's six
+                                // wrapped into two rows whose columns did not line up with each other.
+                                // Three to a row is two even rows, and a GridLayout column is as wide as
+                                // its widest cell, so they stay lined up at any font or scale.
+                                GridLayout {
                                     Layout.fillWidth: true
-                                    spacing: dp(8)
+                                    // Six across when the panel is wide enough for them, three
+                                    // otherwise -- which is what a large UI font makes it. Both
+                                    // are grids rather than a Flow, so the columns line up
+                                    // either way; a Flow broke wherever it ran out of room and
+                                    // the second row lined up with nothing.
+                                    //
+                                    // Measured against the PANEL's width, which is fixed by its
+                                    // parent, rather than against this layout's own: asking a
+                                    // layout how wide it is in order to decide how wide it
+                                    // should be is a binding loop.
+                                    columns: popCol.width >= 6 * root.popCellWidth + 5 * dp(6) ? 6 : 3
+                                    columnSpacing: dp(6)
+                                    rowSpacing: dp(4)
                                     Repeater {
                                         model: root.telescopeNames
                                         delegate: RowLayout {
                                             required property int index
                                             required property string modelData
+                                            Layout.fillWidth: true
                                             spacing: dp(3)
                                             Label {
                                                 text: modelData
@@ -833,7 +871,10 @@ Item {
                                                 color: root.telescopeConfig[index] > 0 ? "#222" : "#aaa"
                                             }
                                             ComboBox {
-                                                implicitWidth: dp(58)
+                                                // Wide enough for one digit and the indicator,
+                                                // and no wider: six of these have to fit beside
+                                                // their labels on one row.
+                                                implicitWidth: root.popBoxWidth
                                                 implicitHeight: Math.max(dp(26), implicitContentHeight + topPadding + bottomPadding)
                                                 model: ["1", "2", "3", "4", "5"]
                                                 // Output, not input, while AutoPOPs is on: the
@@ -842,6 +883,9 @@ Item {
                                                 currentIndex: Math.max(0, root.popAt(index) - 1)
                                                 onActivated: root.setPop(index, currentIndex + 1)
                                             }
+                                            // Takes up the slack, so the label and its dropdown sit at the
+                                            // left of every cell and the six line up in columns.
+                                            Item { Layout.fillWidth: true }
                                         }
                                     }
                                 }
@@ -1269,38 +1313,14 @@ Item {
                             }
                         }
 
-                        // Time axis, running the full width of the mount below it.
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 0
-                            Item {
-                                id: ganttAxis
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: dp(20)
-                                Repeater {
-                                    model: root.ganttTickCount
-                                    Item {
-                                        required property int index
-                                        x: ganttAxis.width * root.ganttTickFrac(index)
-                                        y: 0
-                                        width: 0
-                                        height: ganttAxis.height
-                                        Label {
-                                            anchors.horizontalCenter: parent.left
-                                            anchors.top: parent.top
-                                            text: root.ganttTickHour(index) + "h"
-                                            color: "#666"; font.pointSize: pt(baseFontPt - 3)
-                                        }
-                                        Rectangle {
-                                            anchors.bottom: parent.bottom
-                                            anchors.horizontalCenter: parent.left
-                                            width: dp(1); height: dp(4)
-                                            color: "#bbb"
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // No time ruler here: the chart below draws its own, labelled "LST (h)",
+                        // and a second one in this component could only ever disagree with it.
+                        // It spanned the full width while Makie's axis spans the plot area
+                        // inside its own margins, so the two never lined up -- and it was drawn
+                        // from a fixed 20h-to-5h window that nothing ever updated, so it did not
+                        // describe the night on the chart either. The red "now" line is placed
+                        // in LST on the chart's own axis, and reading it against this ruler is
+                        // what made it look wrong.
 
                         RowLayout {
                             Layout.fillWidth: true

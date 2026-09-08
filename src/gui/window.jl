@@ -21,7 +21,9 @@ function __init__()
                      shell_reset_image_zoom,
                      shell_set_plot_scale, shell_set_marker_size,
                      shell_save_settings, shell_load_settings, shell_reset_settings,
-                     shell_controls_styles, shell_default_controls_style, shell_plot_scale,
+                     shell_settings_path,
+                     shell_controls_styles, shell_default_controls_style,
+                     shell_ui_font_files, shell_plot_scale,
                      shell_version,
                      shell_set_zoom_step,
                      shell_model_rows, shell_model_components, shell_model_inspection,
@@ -72,15 +74,15 @@ and it makes automated clicking guesswork.
 function _initial_folder(session::Session)
     if !isempty(session.datasets)
         d = dirname(abspath(session.datasets[end].path))
-        isdir(d) && return "file://" * d
+        isdir(d) && return file_url(d)
     end
     forced = get(ENV, "OITOOLSGUI_DATA_DIR", "")
-    isempty(forced) || (isdir(forced) && return "file://" * abspath(forced))
+    isempty(forced) || (isdir(forced) && return file_url(abspath(forced)))
     for sub in (joinpath("demos", "data"), joinpath("test", "gui", "data"))
         p = OITOOLS.resource(sub)
-        p === nothing || return "file://" * p
+        p === nothing || return file_url(p)
     end
-    return "file://" * pwd()
+    return file_url(pwd())
 end
 
 "Tab names, in the order Main.qml lists them."
@@ -159,6 +161,35 @@ Asked for rather than repeated in QML: the reset has to restore what an unconfig
 would run, and a literal in the panel would go on claiming the old answer after this changed.
 """
 shell_default_controls_style() = DEFAULT_CONTROLS_STYLE
+
+"""
+    shell_ui_font_files() -> String
+
+The font files the window hands to Qt itself, one `file://` URL per line, regular then bold.
+
+**Qt reads families from the SYSTEM font database, which is not where our fonts live.** A
+family named in the settings panel resolves only if the machine happens to have it installed --
+stock Windows has no Noto at all -- so an unconfigured window looks different on every
+platform. These two faces ride in the MakieAssets artifact, which is already bundled for
+`PLOT_FONT`, so a `FontLoader` on them costs nothing to ship and gives the same UI font
+everywhere.
+
+Empty when the assets are not where Makie says they are, in which case QML falls back to the
+platform's own font rather than to a family name that would not resolve.
+"""
+function shell_ui_font_files()
+    urls = String[]
+    for f in ("NotoSans-Regular.ttf", "NotoSans-Bold.ttf")
+        path = try
+            Makie.assetpath("fonts", f)
+        catch err
+            @debug "Makie assets are not where they were expected" err file = f
+            ""
+        end
+        isempty(path) || !isfile(path) || push!(urls, file_url(path))
+    end
+    return join(urls, '\n')
+end
 
 """
     apply_controls_style!() -> String

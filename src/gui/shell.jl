@@ -312,8 +312,7 @@ end
 """Load an OIFITS chosen in the file dialog. Returns a status string for the UI."""
 function shell_open(path::AbstractString)
     sh = _shell()
-    p = String(path)
-    startswith(p, "file://") && (p = p[8:end])
+    p = strip_file_url(path)
     console!(sh, "load_dataset!(session, \"$p\")"; kind = :cmd)
     try
         load_dataset!(sh.session, p; warn = false, verbose = false)
@@ -400,7 +399,7 @@ end
 
 """Write the exported script to `path`."""
 function shell_export(path::AbstractString)
-    p = String(path); startswith(p, "file://") && (p = p[8:end])
+    p = strip_file_url(path)
     export_script(_shell().session, p)
     return "exported to " * basename(p)
 end
@@ -1678,6 +1677,17 @@ function shell_save_settings(payload)
         return ""
     end
 end
+
+"""
+    shell_settings_path() -> String
+
+Where the appearance config is kept, whether or not anything has been saved there.
+
+The panel shows it on a line of its own. That line is always present, and says what it is:
+empty until a button was pressed, it grew the panel when a message appeared in it, and a bare
+truncated path beside the buttons reads as a stray fragment rather than as an answer.
+"""
+shell_settings_path() = gui_settings_file()
 
 """
     shell_reset_settings() -> String
@@ -3098,7 +3108,7 @@ function shell_save_image(path::AbstractString)
     sh = _shell()
     r = sh.imaging
     r === nothing && return "! nothing reconstructed yet"
-    p = String(path); startswith(p, "file://") && (p = p[8:end])
+    p = strip_file_url(path)
     try
         writefits(r.image, p; pixsize = r.setup.pixsize)
     catch err

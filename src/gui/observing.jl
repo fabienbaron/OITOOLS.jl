@@ -110,6 +110,11 @@ struct NightPlan
     ra            :: Float64        # degrees
     dec           :: Float64        # degrees
     date          :: DateTime
+    # Minutes between samples on the time grid. Carried because every duration on this plan is
+    # a COUNT of samples, so the count means nothing without it -- and a caller that had to
+    # remember to supply it did not: the panel samples every 10 minutes and the summary line
+    # divided by 1, reporting a tenth of the observable time and reading as "not observable".
+    step_minutes  :: Float64
     lst           :: Vector{Float32}
     lst_midnight  :: Float64
     # Local sidereal time at the facility at the moment this plan was computed -- the wall
@@ -118,6 +123,11 @@ struct NightPlan
     # chart is redrawn on every zoom and pan, and a line that crept rightwards each time would
     # be telling you something the rest of the figure does not know.
     lst_now       :: Float64
+    # Whether the clock above belongs on THIS chart. LST repeats every day, so the current LST
+    # falls inside almost any night's span -- including one planned for next month, where a
+    # line saying "you are here" is simply false. Decided once, when the plan is made, against
+    # the noon-to-noon bracket that defines the night beginning on `date`.
+    is_tonight    :: Bool
     ha            :: Vector{Float32}
     alt           :: Vector{Float32}
     az            :: Vector{Float32}
@@ -145,9 +155,8 @@ end
 observable_indices(p::NightPlan) =
     intersect(p.good_alt, p.good_delay, p.good_twilight, p.good_moon)
 
-"Hours per night that survive every constraint, given the grid step in minutes."
-observable_hours(p::NightPlan, step_minutes::Integer = 1) =
-    length(observable_indices(p)) * step_minutes / 60
+"Hours per night that survive every constraint."
+observable_hours(p::NightPlan) = length(observable_indices(p)) * p.step_minutes / 60
 
 """
     night_plan(facility, name, ra, dec, date; kwargs...) -> NightPlan
@@ -209,10 +218,19 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
 
     # `now(UTC)`, not `date`: this is the clock, not the night being planned. `ra` only
     # affects the hour angle the call also returns, which is discarded here.
-    lst_now, _ = OITOOLS.hour_angle_calc(Dates.now(Dates.UTC), f.lon, Float64(ra) / 15)
+    utc_now = Dates.now(Dates.UTC)
+    lst_now, _ = OITOOLS.hour_angle_calc(utc_now, f.lon, Float64(ra) / 15)
 
-    return NightPlan(String(name), Float64(ra), Float64(dec), date,
-                     obs.lst, obs.lst_midnight, Float64(first(lst_now)),
+    # Is the clock on this night? The night that BEGINS on `date` runs from that afternoon to
+    # the next morning, so the noon-to-noon bracket is the test -- a plan made at 01:00 for
+    # "yesterday" is still the night in progress. Local time is UTC shifted by the longitude,
+    # four minutes per degree, which is as exact as this decision needs.
+    local_now = utc_now + Dates.Minute(round(Int, 4 * f.lon))
+    noon = Dates.DateTime(Dates.Date(date), Dates.Time(12))
+    is_tonight = noon <= local_now < noon + Dates.Day(1)
+
+    return NightPlan(String(name), Float64(ra), Float64(dec), date, Float64(step_minutes),
+                     obs.lst, obs.lst_midnight, Float64(first(lst_now)), is_tonight,
                      obs.ha, obs.alt, obs.az,
                      Int.(obs.good_alt), good_delay,
                      Int.(obs.good_twilight), Int.(obs.good_moon),
@@ -228,14 +246,14 @@ function Base.show(io::IO, p::NightPlan)
 end
 
 """
-    plan_rows(plans; step_minutes = 1) -> String
+    plan_rows(plans) -> String
 
 One `name\\tha\\thb\\thours\\tminsep` row per target, for the panel's summary table.
 
 `ha`/`hb` are the first and last observable LST in hours, so a table can show the window
 without the caller re-deriving it from the index vectors.
 """
-function plan_rows(plans, step_minutes::Integer = 1)
+function plan_rows(plans)
     rows = String[]
     for p in plans
         idx = observable_indices(p)
@@ -246,7 +264,7 @@ function plan_rows(plans, step_minutes::Integer = 1)
             push!(rows, join((p.name,
                               string(round(p.lst[first(idx)]; digits = 2)),
                               string(round(p.lst[last(idx)];  digits = 2)),
-                              string(round(observable_hours(p, step_minutes); digits = 2)),
+                              string(round(observable_hours(p); digits = 2)),
                               string(round(minimum(p.moon_sep[idx]); digits = 1))), "\t"))
         end
     end
@@ -409,7 +427,7 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     # on the chart that says "now" while meaning "not now, and off to one side".
     nowlst = Float64(p.lst_now)
     !isempty(lst) && nowlst < lst[1] && (nowlst += 24.0)
-    inside = !isempty(lst) && lst[1] <= nowlst <= lst[end]
+    inside = p.is_tonight && !isempty(lst) && lst[1] <= nowlst <= lst[end]
     nowlst = inside ? nowlst : NaN
 
     bars = GanttBar[]

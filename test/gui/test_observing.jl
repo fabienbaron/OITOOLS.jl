@@ -109,6 +109,31 @@
         @test occursin("\t", pop_rows(pops))
     end
 
+    @testset "observable hours do not depend on how finely the night was sampled" begin
+        # Every duration on a plan is a COUNT of grid samples, so it means nothing without the
+        # step. When the step had to be supplied by the caller, three of the four callers did
+        # not: the panel samples every ten minutes and the summary divided by one, so Vega came
+        # back at 0.43 h instead of 4.33 and read as a target that cannot be observed.
+        fine   = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE; step_minutes = 1)
+        coarse = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE; step_minutes = 10)
+        @test observable_hours(coarse) > 3
+        @test observable_hours(fine) ≈ observable_hours(coarse) rtol = 0.05
+        # and the table agrees with the plan it was built from
+        row = split(split(plan_rows([coarse]), "\n")[1], "\t")
+        @test parse(Float64, row[4]) ≈ observable_hours(coarse) atol = 0.01
+    end
+
+    @testset "the now marker belongs to the night in progress" begin
+        # LST repeats every day, so the current LST lands inside almost any night's span. A red
+        # line saying "you are here" on a chart of a night months away is simply false.
+        # A year out, rather than a fixed past date: run the suite on the day that date names
+        # and a fixed one would be the night in progress, once a year.
+        next_june = DateTime(Dates.year(Dates.now()) + 1, 6, 21)
+        far = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, next_june)
+        @test !far.is_tonight
+        @test !isfinite(gantt_geometry(far).now)
+    end
+
     @testset "the summary table reports a window, not just a total" begin
         rows = split(plan_rows([night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE),
                                 night_plan("CHARA", "Canopus", CANOPUS_RA, CANOPUS_DEC, JUNE)]), "\n")

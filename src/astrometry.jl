@@ -44,13 +44,19 @@ SEC= second.(dates)+millisecond.(dates)/1000
 
 h_ad = alpha*longitude/15 #longitude in degrees, Measures the hours offset due to longitude
 
-#Below: the code calculates first the Julian Date given the input time and then determines the GMST based
-#on this JD.  This is then converted to LST and finally to Local Hour Angle (LHA or HA).  The final result
-#is in terms of hours for both LST and HA.
-jdn = floor.((1461*(Y .+4800 .+(M.-14)/12))/4+(367*(M .-2-12*((M.-14)/12)))/12-(3*((Y .+4900 +(M.-14)/12)/100))/4 .+D.-32075)
-jdn = jdn + ((H.-12)/24)+(MIN/1440)+(SEC/86400)
-jd0 = jdn .-2451545.0
-t = jd0/36525.0
+# GMST from the Julian date, then LST, then the local hour angle. Both results are in hours.
+#
+# The Julian day comes from Dates rather than from the classic integer formula. Written with
+# FLOAT division, as it was here, that formula lands a whole day out for January, February and
+# 1 March -- and one day of GMST is 3.94 minutes of LST, so the error was a few minutes and
+# changed sign with the month. Measured against the IAU low-precision series: -2.96 min on
+# 15 January, +4.93 min on 21 June, +0.99 min where the day was right.
+#
+# `t` is centuries to 0h UT of the DATE, not to the instant: the series gives GMST at 0h and
+# the last term carries the day forward at the sidereal rate. Measuring t to the instant adds
+# part of that rotation a second time.
+jd0h = Dates.datetime2julian.(DateTime.(Y, M, D))
+t = (jd0h .- 2451545.0) / 36525.0
 gmst = 24110.54841 .+ 8640184.812866*t + 0.093104*t.^2 - 6.2E-6*t.^3 + (1.00273790935 .+ 5.9e-11*t).*(H*3600 + MIN*60 + SEC) #seconds
 gmst = gmst/3600 #hours
 

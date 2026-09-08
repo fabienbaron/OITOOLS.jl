@@ -139,6 +139,42 @@ function picker_volumes()
 end
 
 """
+    file_url(path) -> String
+
+A `file://` URL naming `path`, in the form Qt parses on this platform.
+
+Windows is the reason this is a function. A Windows path is `C:\\dir\\file`, which is neither a
+URL path (backslashes are not separators) nor rooted the way a URL expects — `file://C:/dir`
+reads `C:` as the HOST. The form Qt accepts is `file:///C:/dir`, with the drive inside the
+path and three slashes. And a path may hold characters a URL reads as syntax rather than as
+text, so those are escaped; [`strip_file_url`](@ref) puts them back.
+"""
+function file_url(path::AbstractString)
+    p = replace(String(path), '\\' => '/')
+    p = replace(p, "%" => "%25", " " => "%20", "#" => "%23", "?" => "%3F")
+    return Sys.iswindows() ? "file:///" * p : "file://" * p
+end
+
+"""
+    strip_file_url(s) -> String
+
+The filesystem path inside a `file://` URL, or `s` unchanged when it is already a path.
+
+The inverse of [`file_url`](@ref), and it has to accept BOTH shapes: QML hands back whatever
+Qt's file dialog produced, which is the three-slash form on Windows and the two-slash form
+elsewhere, and a hint typed by hand is a bare path. Stripping a fixed seven characters — which
+is what every call site did — turns `file:///C:/x` into `/C:/x`.
+"""
+function strip_file_url(s::AbstractString)
+    p = String(s)
+    startswith(p, "file://") || return p
+    p = p[8:end]
+    # file:///C:/x -> C:/x, but file:///home/x keeps its root slash.
+    Sys.iswindows() && startswith(p, "/") && occursin(r"^/[A-Za-z]:", p) && (p = p[2:end])
+    return replace(p, r"%([0-9A-Fa-f]{2})" => m -> string(Char(parse(UInt8, m[2:3]; base = 16))))
+end
+
+"""
     picker_places() -> String
 
 Shortcut folders, as `label\\tpath` rows.
@@ -193,7 +229,7 @@ opens somewhere with something in it.
 function picker_start(hint::AbstractString = "")
     h = String(hint)
     if !isempty(h)
-        p = abspath(expanduser(replace(h, r"^file://" => "")))
+        p = abspath(expanduser(strip_file_url(h)))
         isdir(p) && return p
         isfile(p) && return dirname(p)
         isdir(dirname(p)) && return dirname(p)

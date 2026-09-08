@@ -110,6 +110,39 @@ using OITOOLS, Test, Dates
         @test !(obs_h.ha ≈ obs.ha)
     end
 
+    @testset "local sidereal time, against an independent series" begin
+        # The Julian day used to come from the classic integer formula written with FLOAT
+        # division, which lands a whole day out for January, February and 1 March. One day of
+        # GMST is 3.94 minutes of LST, so the clock was a few minutes wrong and the error
+        # changed sign with the month -- invisible on a chart, and carried into every hour
+        # angle `simulate` computes.
+        #
+        # The reference is the IAU low-precision series, GMST(h) = 18.697374558 +
+        # 24.06570982441908 * D, which is good to well under a second over these decades and is
+        # independent of everything in this package.
+        gmst_ref(utc) = mod(18.697374558 + 24.06570982441908 *
+            (2440587.5 + Dates.value(Dates.Millisecond(utc - DateTime(1970,1,1))) / 86400e3
+             - 2451545.0), 24)
+        lst_ref(utc, lon) = mod(gmst_ref(utc) + lon / 15, 24)
+
+        worst = 0.0
+        for (y, m, d) in ((2026,1,15), (2026,2,28), (2026,3,1), (2026,6,21),
+                          (2026,9,8), (2026,12,21), (2000,1,1), (2040,7,4)),
+            hh in (0, 6, 14, 23)
+            utc = DateTime(y, m, d, hh)
+            lst = first(OITOOLS.hour_angle_calc(utc, CHARA_LON, 0.0)[1])
+            # signed difference through the 0/24 wrap, in minutes
+            worst = max(worst, abs(mod(lst - lst_ref(utc, CHARA_LON) + 12, 24) - 12) * 60)
+        end
+        @test worst < 0.1                       # seconds, not the minutes it used to be
+
+        # The hour angle is LST - RA, in hours, and wraps into (-12, 12].
+        utc = DateTime(2026, 9, 8, 6)
+        lst, ha = OITOOLS.hour_angle_calc(utc, CHARA_LON, 279.234735 / 15)
+        @test first(ha) ≈ first(lst) - 279.234735 / 15 atol = 24
+        @test -12 < first(ha) <= 12
+    end
+
     @testset "supporting astrometry" begin
         @test airmass(90.0) ≈ 1.0 rtol = 1e-6
         @test airmass(30.0) ≈ 2.0 rtol = 1e-2
