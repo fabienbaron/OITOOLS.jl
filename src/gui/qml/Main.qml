@@ -591,13 +591,14 @@ ApplicationWindow {
         // toolbar's height too low and ran off the bottom even when it would otherwise fit --
         // photographed under Xvfb at 26 pt before this line was written.
         //
-        // The width follows the content up to what the window can show, because the content is
-        // font-sized: at a large UI font a fixed 430 leaves the spin boxes to be reached by
-        // horizontal scrolling, which is a poor way to find a control you did not know was there.
+        // The width grows with the FONT, not with the content: 430 was chosen at 11 pt, and the
+        // rows are text, so a larger font needs proportionally more room or the spin boxes get
+        // squeezed. Deriving it from the content's implicit width instead is what Qt reports as
+        // a binding loop -- the content's width comes back from the panel's, so asking the
+        // content how wide the panel should be closes the circle.
         x: Math.max(dp(12), Math.round((parent.width  - width)  / 2))
         y: Math.max(dp(12), Math.round((parent.height - height) / 2))
-        width:  Math.min(Math.max(dp(430), settingsColumn.implicitWidth + dp(30)),
-                         parent.width - dp(24))
+        width:  Math.min(dp(430) * Math.max(1, baseFontPt / 11), parent.width - dp(24))
         height: Math.min(implicitHeight, parent.height - dp(24))
         // Dimmed behind, for the same reason: it separates the panel from whatever it covers.
         modal: true
@@ -606,22 +607,22 @@ ApplicationWindow {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         padding: dp(12)
 
-        // A big font also widens the grid past the panel, so the view scrolls both ways and
-        // clips: a control drawn outside the panel is worse than one behind a scrollbar.
+        // The panel is capped at the window's height, so its content has to be able to scroll --
+        // and to clip, since a control drawn outside the panel is worse than one below the fold.
         ScrollView {
             id: settingsScroll
             anchors.fill: parent
             clip: true
-            // Derived from the POPUP's width, never from this view's availableWidth: that one
-            // shrinks when a scrollbar appears, and whether a scrollbar appears depends on
-            // contentWidth — which Qt reports, correctly, as a binding loop. The gutter is the
-            // vertical scrollbar's room, reserved whether or not it is showing.
-            contentWidth: Math.max(settingsPanel.availableWidth - dp(14),
-                                   settingsColumn.implicitWidth)
+            rightPadding: dp(12)                   // room for the vertical scrollbar
+            // The content is exactly as wide as the view: the rows are a label/control grid that
+            // stretches, so there is nothing to scroll to sideways, and any binding that lets
+            // the content decide the width closes a loop back through the panel's own width.
+            contentWidth: availableWidth
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
             ColumnLayout {
                 id: settingsColumn
-                width: settingsScroll.contentWidth
+                width: settingsScroll.availableWidth
                 spacing: dp(10)
 
                 RowLayout {
