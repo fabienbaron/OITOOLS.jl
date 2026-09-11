@@ -17,6 +17,8 @@ function __init__()
                      shell_image_colormaps, shell_image_colormap, shell_recenter_image,
                      shell_show_start_image, shell_vi_prior_sample,
                      shell_save_image, shell_engine_output,
+                     shell_channels, shell_show_channel,
+                     shell_tempering_diagnostics,
                      shell_job_poll, shell_job_stop, shell_job_running,
                      shell_reset_image_zoom,
                      shell_set_plot_scale, shell_set_marker_size,

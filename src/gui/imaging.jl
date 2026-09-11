@@ -44,12 +44,10 @@ Every engine here is genuinely dispatched to. A name that appears in the panel b
 through to `reconstruct` would be worse than an absent one: the run succeeds, the image looks
 plausible, and the label on it is wrong.
 
-`:tempering` is deliberately absent: it needs Pigeons, which is not a dependency, so the panel
-blocks it with that reason rather than offering it here.
-
-`:vi` IS here, but it only dispatches when `VarInf` is loaded — the VI code lives in
-`src/vi/`, behind the `OITOOLSVarInfExt` extension. `vi_available()` is what the panel greys
-the entry on.
+`:tempering` and `:vi` are both here but neither dispatches unconditionally: tempering needs
+`Pigeons` and VI needs `VarInf`, each a weak dependency behind its own extension. Their
+branches check for the extension and say what to install, and `shell_optional_engines` is what
+the panel greys the entries on before a user can pick one.
 """
 const IMAGING_ENGINES = Dict{Symbol,String}(
     :vi             => "reconstruct_hybrid",
@@ -58,6 +56,7 @@ const IMAGING_ENGINES = Dict{Symbol,String}(
     :bsdmm          => "reconstruct_bsdmm",
     :sparco         => "reconstruct_sparco",
     :squeeze        => "reconstruct_squeeze",
+    :tempering      => "reconstruct_squeeze_tempered",
     :squeeze_sparco => "reconstruct_squeeze (model = SqueezeSparco)")
 
 """
@@ -160,17 +159,85 @@ function start_image(setup::ImagingSetup, ft)
     elseif setup.startkind === :fits
         isfile(setup.startpath) || error("No starting image at '$(setup.startpath)'")
         m = Float64.(readfits(setup.startpath))
-        size(m) == (nx, nx) ||
+        size(m, 1) == nx && size(m, 2) == nx ||
             error("The starting image is $(size(m,1))×$(size(m,2)) but nx is $nx")
-        s = sum(m)
-        s > 0 || error("The starting image sums to $s; it must carry positive flux")
-        m ./ s
+        nwav = size(ft, 1)
+        # A cube start has to match the binning, and its channels are checked ONE BY ONE: a
+        # cube with positive total flux can still hold an empty plane, and that plane is a NaN
+        # the moment the criterion normalises it.
+        if ndims(m) >= 3
+            size(m, 3) == nwav ||
+                error("The starting cube has $(size(m,3)) channels but the data has $nwav bins")
+            for w in 1:size(m, 3)
+                sw = sum(@view m[:, :, w])
+                sw > 0 || error("Channel $w of the starting cube sums to $sw; " *
+                                "every channel must carry positive flux")
+                m[:, :, w] ./= sw
+            end
+            m
+        else
+            s = sum(m)
+            s > 0 || error("The starting image sums to $s; it must carry positive flux")
+            m ./ s
+        end
     else
         error("Unknown starting image '$(setup.startkind)'; " *
               "expected :dirac, :gaussian, :random or :fits")
     end
-    return to_ft_precision(x, ft)
+    return to_ft_precision(_as_cube(x, ft), ft)
 end
+
+"""
+    _as_cube(x, ft) -> (nx, nx, nwav, nepoch)
+
+One shape for every image the engines see, whatever the dataset.
+
+A 2-D plane is REPLICATED across the bins, not reshaped to `(nx, nx, 1, 1)`: the 4-D criterion
+loops `w in 1:nwav` and indexes `x[:, :, w, t]`, so a one-channel cube against several bins is
+a `BoundsError`. Replication is also the right starting guess — a grey image is the statement
+that every channel looks the same until the data says otherwise.
+
+**Every channel must carry positive flux.** `crit_fg` normalises per cell, so a plane summing
+to zero divides by zero and the whole run returns NaN with nothing saying which channel did it.
+Replication inherits the plane's own flux, which `start_image` has already checked.
+
+A 3-D array is taken as `(nx, nx, nwav)` and given the single epoch axis this panel supports.
+"""
+function _as_cube(x, ft)
+    nwav, nepoch = size(ft, 1), size(ft, 2)
+    ndims(x) == 4 && return x
+    ndims(x) == 3 && return reshape(x, size(x, 1), size(x, 2), size(x, 3), 1)
+    return nwav * nepoch == 1 ? reshape(x, size(x, 1), size(x, 2), 1, 1) :
+                                repeat(x, 1, 1, nwav, nepoch)
+end
+
+"Channels in a cube, however it is shaped."
+_nchannels(x) = ndims(x) >= 3 ? size(x, 3) : 1
+
+"""
+    _plane(x, w = 1) -> the `w`th channel as a matrix
+
+Every engine but VMLMB reconstructs one image, and `start_image` now hands out a cube. They are
+guarded to a single bin anyway (`_check_bins`, `_require_mono`), so the first channel IS their
+image -- but taking it explicitly is what keeps a 4-D array from reaching a reconstructor whose
+signature would accept it and mean something else by it.
+"""
+_plane(x, w::Integer = 1) = ndims(x) == 2 ? x :
+                            ndims(x) == 3 ? x[:, :, w] : x[:, :, w, 1]
+
+"""
+    _recenter_cube(cube, w) -> cube
+
+Shift a whole cube so that channel `w` is centred, moving every channel by the SAME amount.
+
+`recenter` finds its own centroid, so calling it per plane would align the channels to each
+other — and destroy exactly the differential astrometry a cube is reconstructed to show. Its
+`mask` argument is the way through: the shift is computed from the displayed channel and
+`circshift` then moves the array as a whole, which for a 4-D array with a two-element shift
+leaves the wavelength and epoch axes alone.
+"""
+_recenter_cube(cube, w::Integer = 1) =
+    recenter(cube; mask = _plane(cube, clamp(Int(w), 1, _nchannels(cube))))
 
 """
     imaging_weights(; v2, t3amp, t3phi) -> Vector{Float64}
@@ -283,7 +350,10 @@ under a global scaling, so a reconstruction from them alone is free to drift awa
 flux, and a user who does not know that reads the number as a bug.
 """
 struct ImagingResult
-    image       :: Matrix{Float64}
+    # ALWAYS `(nx, nx, nwav, nepoch)`, one channel for a grey run. One shape rather than two
+    # means no reader has to ask which it got; `result_plane` takes the channel out where a
+    # 2-D image is what is wanted, which is most places.
+    image       :: Array{Float64,4}
     chi2        :: Float64          # raw, as image_to_chi2 returns it
     chi2_start  :: Float64
     ndof        :: Int              # valid points in the observables actually fitted
@@ -300,12 +370,47 @@ struct ImagingResult
     # `nothing`, or `(; mean, sigma, samples, source)`. Shaped to match `ImageEntry.posterior`
     # so a result can become a session entry unchanged.
     ensemble    :: Any
+    # Centre wavelength of each channel, in METRES, or empty for a grey run. Carried because
+    # the cube cannot say what its third axis means: the panel labels a channel in µm from
+    # this, and the saved FITS gets its spectral WCS from it. Derived from the data at the
+    # time of the run, since a later rebin would otherwise relabel an old result.
+    wavelengths :: Vector{Float64}
 end
 
 # The engine is on `setup`, so a result always says which reconstructor made it.
 ImagingResult(image, chi2, chi2_start, ndof, flux, maxiter, seconds, setup, weights, breakdown) =
     ImagingResult(image, chi2, chi2_start, ndof, flux, maxiter, seconds, setup, weights,
-                  breakdown, nothing, nothing)
+                  breakdown, nothing, nothing, Float64[])
+
+"""
+    bin_wavelengths(data) -> Vector{Float64}
+
+The centre wavelength of each spectral bin, in metres; empty for an unbinned dataset.
+
+The MIDPOINT of each bin's own points rather than the mean: a bin gathers whatever channels
+fall inside its edges, and an unevenly populated bin's mean sits where the points are rather
+than where the bin is.
+"""
+function bin_wavelengths(data)
+    (data isa AbstractArray && size(data, 1) > 1) || return Float64[]
+    return [(lo + hi) / 2 for (lo, hi) in
+            (extrema(Float64.(data[w, 1].uv_lam)) for w in axes(data, 1))]
+end
+
+"""
+    result_plane(r, w = 1) -> Matrix{Float64}
+    result_channels(r)     -> Int
+
+One channel of a result, and how many there are.
+
+Every reader that draws, saves, subtracts or restarts from an image wants a plane; the result
+stores a cube. Clamped rather than bounds-checked, because the channel index arrives from a
+slider whose range is set asynchronously — a stale index should show the last channel, not
+throw into the Qt event loop where the stack trace goes nowhere.
+"""
+result_plane(r::ImagingResult, w::Integer = 1) =
+    r.image[:, :, clamp(Int(w), 1, size(r.image, 3)), 1]
+result_channels(r::ImagingResult) = size(r.image, 3)
 
 """
     result_ensemble(extra) -> nothing or (; mean, sigma, samples, source)
@@ -422,7 +527,7 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
                            x_start      = nothing,
                            options      ::AbstractDict = Dict{String,String}(),
                            verb         ::Bool = false)
-    regularizers = parse_regularizers(regularizers)
+    regularizers, transspectral = split_regularizers(parse_regularizers(regularizers))
     all(iszero, weights) &&
         error("Every observable is switched off; there is nothing to fit")
 
@@ -436,20 +541,29 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
     x0 = if x_start === nothing
         start_image(setup, ft)
     else
-        size(x_start) == (setup.nx, setup.nx) ||
+        size(x_start, 1) == setup.nx && size(x_start, 2) == setup.nx ||
             error("The previous image is $(size(x_start,1))×$(size(x_start,2)) but nx is " *
                   "$(setup.nx); change nx back or start fresh")
-        to_ft_precision(Float64.(x_start), ft)
+        # The binning can change between runs as well as nx, and a cube from a 4-bin read is
+        # not a start for a 12-bin one. Named here rather than left to the BoundsError the
+        # criterion would raise several frames down.
+        _nchannels(x_start) == size(ft, 1) ||
+            error("The previous image has $(_nchannels(x_start)) channels but the data now " *
+                  "has $(size(ft,1)) bins; re-read the file or start fresh")
+        to_ft_precision(_as_cube(Float64.(x_start), ft), ft)
     end
 
     chi2_start = image_to_chi2(x0, ft, data; weights, verb = false)
     t = @elapsed (xraw, extra, own_chi2) = run_engine(setup.engine, x0, data, ft;
-                                                     weights, regularizers, maxiter, verb, options)
+                                                     weights, regularizers, transspectral,
+                                                     maxiter, verb, options)
     # The engines hand back different shapes and precisions -- a Float32 matrix from VMLMB, a
     # Float64 one from SQUEEZE and BSDMM, an (nx, nx, 1) slice from BSMEM. The shared χ² path
     # takes one shape, so normalise once here; comparing two engines on the same number is the
     # reason they share a panel at all.
-    x = to_ft_precision(Float64.(xraw), ft)
+    # ...and back to the cube shape, so everything downstream -- the χ², the breakdown, the
+    # result, the canvas -- sees one shape whether the run was grey or polychromatic.
+    x = to_ft_precision(_as_cube(Float64.(xraw), ft), ft)
 
     # `reconstruct_sparco` hands back the fitted `model` and `params` alongside the image, and
     # with those the SPARCO criterion scores the same thing the engine scored -- so the panel's
@@ -479,10 +593,10 @@ function reconstruct_image(data::AbstractArray, setup::ImagingSetup;
     # split that would not sum to it.
     (own_chi2 === nothing || sparco !== nothing) || (bd = NamedTuple[])
 
-    img = Float64.(x)
+    img = Float64.(_as_cube(x, ft))
     return ImagingResult(img, chi2, Float64(chi2_start), ndof, sum(img),
                          Int(maxiter), t, setup, Float64.(weights), bd, extra,
-                         result_ensemble(extra))
+                         result_ensemble(extra), bin_wavelengths(data))
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -537,12 +651,14 @@ end
 
 Refuse a multi-bin dataset for an engine that cannot reconstruct a cube.
 
-Every engine needs this, INCLUDING the ones that can: until the cube is threaded all the way
-through, `run_engine` still hands them a 2-D `x0`. VMLMB is the case that matters, because it
-is the one engine `_require_mono` never guarded: `reconstruct(::Matrix, ::Matrix{OIdata}, …)`
-reshapes the image to one channel but forwards every bin, and `crit_fg` then indexes
-`x4[:,:,w,t]` for `w in 1:nwav` and throws a `BoundsError` from inside OITOOLS with nothing to
-say which control caused it.
+VMLMB no longer needs it: it takes the 4-D start and fits every bin. BSDMM still does --
+`POLYCHROMATIC_ENGINES` says it CAN reconstruct a cube, and the 4-D `reconstruct_bsdmm` exists,
+but the panel does not yet send it one, so it is handed `_plane(x0)` and must be told the truth
+about what it is about to fit.
+
+Without the guard the failure is a `BoundsError` thrown from inside OITOOLS, from `crit_fg`
+indexing `x4[:,:,w,t]` for `w in 1:nwav` on an image reshaped to one channel, with nothing
+anywhere naming the control that caused it.
 """
 function _check_bins(data, engine)
     size(data) == (1, 1) && return data
@@ -563,16 +679,29 @@ from the image. Only the engines with a parametric component need to supply it: 
 image is half the model, and χ² of the image alone is not a number about anything.
 """
 function run_engine(engine::Symbol, x0, data, ft;
-                    weights, regularizers, maxiter::Integer, verb::Bool,
+                    weights, regularizers, transspectral = Any[],
+                    maxiter::Integer, verb::Bool,
                     options::AbstractDict = Dict{String,String}())
     o = options
+    # Refused, not dropped. A cross-channel regulariser the engine cannot apply would otherwise
+    # be accepted by the panel, absent from the run, and invisible in the result -- the user
+    # believing they had constrained the spectrum when nothing did.
+    isempty(transspectral) || engine === :vmlmb || error(
+        "$(get(IMAGING_ENGINES, engine, engine)) cannot apply a cross-channel regulariser; " *
+        join((r isa AbstractString ? r : string(first(r)) for r in transspectral), ", ") *
+        " needs VMLMB.")
 
     if engine === :vmlmb
-        _check_bins(data, engine)
-        return (reconstruct(x0, data, ft; weights, regularizers, maxiter, verb), nothing, nothing)
+        # No `_check_bins`: VMLMB is the cube engine. `x0` arrives 4-D from `start_image`, so
+        # the 4-D `reconstruct` is selected and every bin is fitted rather than forwarded into
+        # a one-channel image.
+        return (reconstruct(x0, data, ft; weights, regularizers,
+                            transspectral_regularizers = transspectral, maxiter, verb),
+                nothing, nothing)
 
     elseif engine === :bsmem
         d = _require_mono(data, engine)
+        x0 = _plane(x0)
         # BSMEM ignores the spec list except for a `["mem", prior]` entry, and takes its
         # entropy mode as the four-integer `method` vector instead. Passing the panel's
         # regularisers here would silently do nothing, so only the prior is forwarded.
@@ -596,6 +725,7 @@ function run_engine(engine::Symbol, x0, data, ft;
 
     elseif engine === :bsdmm
         _check_bins(data, engine)
+        x0 = _plane(x0)
         # Not string specs at all: ADMM takes μ weights and two mode symbols.
         mu_reg, mu_cen = _optreal(o, "mu_reg", 0.0), _optreal(o, "mu_cen", 0.0)
         # Centering specifically, not just any block. ADMM splits the problem across proximal
@@ -619,7 +749,7 @@ function run_engine(engine::Symbol, x0, data, ft;
 
     elseif engine === :sparco
         d = _require_chromatic(data, engine)
-        r = reconstruct_sparco(x0, d, ft[1, 1];
+        r = reconstruct_sparco(_plane(x0), d, ft[1, 1];
                                lambda_ref = _optreal(o, "lambda0", 1.65e-6),
                                star_flux  = _optreal(o, "f_star", 0.5),
                                bg_flux    = _optreal(o, "f_bg", 0.0),
@@ -649,7 +779,7 @@ function run_engine(engine::Symbol, x0, data, ft;
                             bg_indx  = _optreal(o, "bg_indx", 0.0),
                             free     = _sparco_free(o)) : nothing
         prior = _optstr(o, "prior")
-        img, diag = reconstruct_squeeze(x0, d, ft[1, 1];      # the bin's cell, as BSMEM takes
+        img, diag = reconstruct_squeeze(_plane(x0), d, ft[1, 1];      # the bin's cell, as BSMEM takes
             weights, regularizers,
             nelements  = _optint(o, "nelements", 0),
             niter      = _optint(o, "niter", maxiter),
@@ -673,6 +803,42 @@ function run_engine(engine::Symbol, x0, data, ft;
         # component it is not, and the sampler's own reduced χ² is the honest number.
         own = engine === :squeeze_sparco ? _squeeze_chi2(diag) : nothing
         return (img, diag, own)
+
+    elseif engine === :tempering
+        ext = Base.get_extension(OITOOLS, :OITOOLSPigeonsExt)
+        ext === nothing && error("Parallel tempering needs Pigeons. Add it to this " *
+                                 "environment (`Pkg.add(\"Pigeons\")`) and restart.")
+        d = _require_mono(data, engine)
+        prior = _optstr(o, "prior")
+        # The SAME sampler as annealing, with a Pigeons ladder around it instead of a fixed
+        # temperature schedule -- which is why the panel shares one regulariser page between
+        # them and why the move probabilities are read from the same option names. What
+        # replaces `niter`/`nchains` is `n_rounds`/`n_chains`: Pigeons doubles the scan count
+        # each round, so rounds are a budget in powers of two rather than a step count.
+        img, diag = reconstruct_squeeze_tempered(_plane(x0), d, ft[1, 1];
+            weights, regularizers,
+            nelements  = _optint(o, "nelements", 0),
+            n_rounds   = _optint(o, "n_rounds", 10),
+            n_chains   = _optint(o, "n_chains", 10),
+            # `n_passes` is the tempered explorer's own budget: sweeps of `nelements`
+            # proposals per Pigeons step.
+            n_passes   = _optint(o, "n_passes", 1),
+            # `f_anywhere` and `f_copycat` are NOT forwarded, and that is not an omission. The
+            # tempered explorer's move mixture is fixed by construction, and `SqueezeExplorer`
+            # leaves copycat out deliberately: it lands on a random donor element's pixel, so
+            # `P(propose o→p) ∝ count(p)`, which is asymmetric and irreversible when
+            # `count(o) == 1` -- a useful optimiser heuristic for annealing and an INVALID
+            # sampler move. The panel shares the annealing options page with tempering, so both
+            # controls are on screen; sending them here would ask for a move the sampler is
+            # right to refuse, and Pigeons rejects them outright as unknown `Inputs` keywords.
+            cent_mult  = _optreal(o, "cent_mult", 1.0),
+            auto_centering = _optbool(o, "auto_centering", true),
+            prior_image = isempty(prior) ? nothing : prior_image(prior, size(x0, 1)),
+            # Same reason as annealing: the in-package monitor draws with matplotlib, and
+            # matplotlib off the main thread segfaults inside PythonCall.
+            monitor = 0, verb,
+            seed = _optint(o, "seed", 12345))
+        return (img, diag, nothing)
 
     elseif engine === :vi
         ext = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)
@@ -899,6 +1065,28 @@ end
 observable_flags_string(data) =
     join(("$k=$(Int(v))" for (k, v) in pairs(observable_availability(data))), ",")
 
+
+"""
+    split_regularizers(list) -> (spatial, transspectral)
+
+Partition a parsed regulariser list on the `transspectral_` prefix.
+
+They go to different arguments of `reconstruct` and cannot be mixed: `_spatial_reg!` looks each
+name up in the spatial table and REJECTS one it does not know, so a `transspectral_tv` left in
+the spatial list errors — which is what the panel did, since it offers all six transspectral
+names in the same picker as the spatial ones.
+
+Returned as two lists rather than filtered at the call site so that every caller partitions the
+same way, and so the console can report what was actually sent to each argument.
+"""
+function split_regularizers(list)
+    spatial, trans = Any[], Any[]
+    for r in list
+        name = r isa AbstractString ? r : (isempty(r) ? "" : string(first(r)))
+        push!(startswith(name, "transspectral_") ? trans : spatial, r)
+    end
+    return (spatial, trans)
+end
 
 """
     parse_regularizers(spec) -> Vector

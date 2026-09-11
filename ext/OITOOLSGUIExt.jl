@@ -77,7 +77,10 @@ export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        start_image, reconstruct_image, observable_availability, observable_flags_string,
        parse_regularizers, ft_summary, ensure_ft!, AUTO_FWHM, chi2_breakdown, chi2r, chi2r_start,
        IMAGING_ENGINES, POLYCHROMATIC_ENGINES, engine_call_name, run_engine, prior_image,
-       result_ensemble, vi_sky_params, vi_prior_draw
+       result_ensemble, result_plane, result_channels, split_regularizers,
+       parse_regularizers, bin_wavelengths,
+       shell_optional_engines, shell_tempering_diagnostics, IMAGING_ENGINES, SHELL,
+       vi_sky_params, vi_prior_draw
 export NightPlan, config_catalog, facility_telescopes, telescope_config,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,

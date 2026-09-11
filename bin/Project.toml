@@ -29,6 +29,7 @@ Nautilus = "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73"
 OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
+Pigeons = "0eb8d820-af6a-4919-95ae-11206f830c31"
 PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
 QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
@@ -39,10 +40,14 @@ VarInf = "cd771066-68b7-4d72-889c-da7b55f139d5"
 [sources]
 Nautilus = {url = "https://github.com/fabienbaron/Nautilus.jl.git"}
 OITOOLS = {path = ".."}
-# VarInf is the generic VI core and is UNREGISTERED with no remote, so it can only be reached
-# by path. A sibling clone is the layout OIVI assumed and the one the docs describe; keep it
-# elsewhere and `Pkg.develop(path = …)` into this environment once instead.
-VarInf = {path = "../../VarInf.jl"}
+# VarInf is the generic VI core: unregistered, so it is named by URL rather than resolved from
+# a registry. A URL and not a path, because `bin` is a workspace member of the root project and
+# a workspace shares one manifest -- so a relative path here is resolved when the ROOT project
+# is instantiated, on a CI runner that has no sibling checkout, and the whole resolve fails.
+#
+# To WORK ON VarInf, `Pkg.develop(path = "…/VarInf.jl")` into this environment: that writes to
+# the manifest, which is gitignored, so the override stays local and CI still sees the URL.
+VarInf = {url = "https://github.com/fabienbaron/VarInf.jl.git"}
 
 # The Conda environment every project in this repo shares, at
 # <depot>/conda_environments/oitools.

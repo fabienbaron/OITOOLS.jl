@@ -387,6 +387,13 @@ Item {
     property string resultMode: "result"       // result | mean | sigma | sample
     property int    sampleCount: 0             // ensemble members; 0 = a point estimate
     property int    sampleIndex: 0
+    // The cube's channels. Separate from the ensemble above, and deliberately not sharing its
+    // row: a channel exists for any engine that reconstructed a cube, while the mean/spread/
+    // member controls exist only for a sampler. One control gated on both conditions would be
+    // disabled for most of the cases each is for.
+    property int    channelCount: 0            // 0 or 1 = a grey run, nothing to scrub
+    property int    channelIndex: 0
+    property var    channelLabels: []
     property string ensembleSource: ""         // e.g. "4 chains", from the engine
 
     // Read after every run. An engine that returns one image reports nothing, which is what
@@ -402,6 +409,68 @@ Item {
         if (f.length !== 2) return
         root.sampleCount = parseInt(f[0])
         root.ensembleSource = f[1]
+    }
+
+    // Read after a tempered run. Julia sends raw numbers as `name=value` pairs; every threshold
+    // that turns one into red/amber/green lives in this file, once, beside the tooltip that
+    // explains it. NaN arrives as NaN and the rows show "—", which is not the same as zero:
+    // a swap acceptance of 0 is a dead rung, and showing that for "not measured" would invent
+    // a fault the sampler does not have.
+    function refreshTemperingDiagnostics() {
+        root.hasDiagnostics = false
+        var t = Julia.shell_tempering_diagnostics()
+        if (t.length === 0) return
+        var got = {}
+        var parts = t.split(",")
+        for (var i = 0; i < parts.length; ++i) {
+            var kv = parts[i].split("=")
+            if (kv.length === 2) got[kv[0]] = kv[1]
+        }
+        var num = function (k) { var v = parseFloat(got[k]); return isNaN(v) ? NaN : v }
+        root.diagRestarts     = parseInt(got["restarts"])
+        root.diagLambda       = num("barrier")
+        root.diagSwapMin      = num("swap_min")
+        root.diagSwapMean     = num("swap_mean")
+        root.diagRhoMax       = num("rho_max")
+        root.diagRhoMean      = num("rho_mean")
+        root.diagExplorerMin  = num("explorer_min")
+        root.diagExplorerMean = num("explorer_mean")
+        root.diagLogZ         = num("logz")
+        root.diagLogZDelta    = num("logz_delta")
+        root.diagSwapPerRung  = (got["rungs"] || "").length > 0
+                              ? got["rungs"].split("|").map(parseFloat) : []
+        // A delta needs two rounds; one round is not a trend, and an arrow drawn from a single
+        // value would be a claim about convergence that nothing supports.
+        root.diagRhoTrend = isNaN(root.diagLogZDelta) ? ""
+                          : (root.diagLogZDelta > 0 ? "↑" : (root.diagLogZDelta < 0 ? "↓" : "→"))
+        root.hasDiagnostics = true
+    }
+
+    // Read after every run, like the ensemble above. Empty means one image and no scrubbing.
+    function refreshChannels() {
+        root.channelCount = 0
+        root.channelIndex = 0
+        root.channelLabels = []
+        var t = Julia.shell_channels()
+        if (t.length === 0) return
+        var f = t.split("\t")
+        if (f.length !== 3) return
+        root.channelCount  = parseInt(f[0])
+        root.channelIndex  = Math.max(0, parseInt(f[1]) - 1)   // Julia counts from 1
+        root.channelLabels = f[2].split("|")
+    }
+
+    // Julia owns which channel is current, because the canvas is not the only thing that reads
+    // it: the residual overlay and the model observables answer for the same channel, and a
+    // panel whose picture and residuals disagreed about that would be worse than no control.
+    function showChannel(w) {
+        var line = Julia.shell_show_channel(w + 1)
+        if (line.length > 0 && line.charAt(0) === "!") { root.statusText = line; return }
+        root.channelIndex = w
+        root.statusText = line
+        root.showingStart = false
+        imageArea.update()
+        root.consoleChanged()
     }
 
     // Every view goes through Julia, which owns the ensemble; QML holds only the mode and the
@@ -795,6 +864,8 @@ Item {
                 root.refreshBreakdown()
                 root.refreshSparcoConverged()
                 root.refreshEnsemble()
+                root.refreshChannels()
+                root.refreshTemperingDiagnostics()
                 // Makie draws on demand; without this the new image is not painted until
                 // something else invalidates the area.
                 imageArea.update()
@@ -2348,6 +2419,40 @@ Item {
                     enabled: root.hasResult
                     onClicked: saveImageDialog.openAt("")
                 }
+            }
+
+            // ── the wavelength channel ────────────────────────────────────────
+            //
+            // Hidden entirely for a grey reconstruction rather than shown disabled: a slider
+            // over one channel is not a control that happens to be unavailable, it is a
+            // control that does not apply. The row appears when a cube exists.
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: dp(8)
+                visible: root.channelCount > 1
+
+                Label { text: "Channel"; color: "#666" }
+                Slider {
+                    id: channelSlider
+                    Layout.preferredWidth: dp(180)
+                    from: 0
+                    to: Math.max(1, root.channelCount - 1)
+                    stepSize: 1
+                    snapMode: Slider.SnapAlways
+                    value: root.channelIndex
+                    onMoved: root.showChannel(Math.round(value))
+                }
+                Label {
+                    // The wavelength, because that is what an observer identifies a channel by;
+                    // the index is beside it because two bins can round to the same µm string.
+                    text: root.channelCount > 1
+                          ? (root.channelIndex + 1) + " / " + root.channelCount + "   " +
+                            (root.channelIndex < root.channelLabels.length
+                             ? root.channelLabels[root.channelIndex] : "")
+                          : ""
+                    color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                }
+                Item { Layout.fillWidth: true }
             }
 
             // ── canvas (§5.7) ─────────────────────────────────────────────────

@@ -1851,7 +1851,7 @@ function fits_pixsize(fitsfile)
     return 1e-4 <= deg <= 1e4 ? deg : nothing
 end
 
-function writefits(data, fitsfile; pixsize=-1)
+function writefits(data, fitsfile; pixsize=-1, wavelengths=Float64[])
     f = FITS(fitsfile, "w")
     if pixsize != -1
         # CUNIT is written because CDELT here is in RADIANS and the FITS standard's default for
@@ -1866,6 +1866,31 @@ function writefits(data, fitsfile; pixsize=-1)
              "unit of CDELT1","unit of CDELT2",
              "X-coordinate of reference pixel","Y-coordinate of reference pixel",
              "reference pixel in X","reference pixel in Y"])
+        # The spectral axis, when the array has one and the caller can say what it means. A
+        # cube written without it has a third axis that no reader can interpret -- the channels
+        # are there and nothing says which wavelength each one is.
+        #
+        # CDELT3 is a LINEAR step, which a set of bin centres need not be. It is written as the
+        # mean spacing and the header says so, because FITS cannot express an irregular axis
+        # without the -TAB convention and a lookup table; a reader that assumes linear is then
+        # wrong by the amount the comment names rather than by an unknown amount.
+        if ndims(data) >= 3 && length(wavelengths) == size(data, 3) && length(wavelengths) > 1
+            lam = Float64.(wavelengths)
+            step = (lam[end] - lam[1]) / (length(lam) - 1)
+            dev = maximum(abs.(diff(lam) .- step)) / abs(step)
+            header["CTYPE3"] = "WAVE"
+            header["CUNIT3"] = "m"
+            header["CRPIX3"] = 1.0
+            header["CRVAL3"] = lam[1]
+            header["CDELT3"] = step
+            set_comment!(header, "CTYPE3", "wavelength axis")
+            set_comment!(header, "CUNIT3", "unit of CRVAL3 and CDELT3")
+            set_comment!(header, "CRPIX3", "reference pixel in wavelength")
+            set_comment!(header, "CRVAL3", "centre wavelength of channel 1")
+            set_comment!(header, "CDELT3",
+                         dev > 0.01 ? "mean step; channels differ from linear by $(round(100*dev))%" :
+                                      "metres per channel")
+        end
         write(f, data, header=header)
     else
         write(f, data)

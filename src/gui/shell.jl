@@ -60,7 +60,28 @@ mutable struct ShellState
     enginelog :: String         # everything the last reconstruction printed
     fitlog    :: String          # ...and everything the last model fit printed
     job       :: Any             # the running GuiJob, or nothing
+    # Which channel of `imaging` the panel is showing. A cube reconstruction has one image per
+    # wavelength bin and the canvas draws one at a time, so this is the answer to "one of
+    # what?" for everything that reads the result: the canvas, the residual overlay, the model
+    # observables, the saved PNG. Always 1 for a grey run.
+    #
+    # Last in the struct, and with a default below, because the field was added after three
+    # places were already building a state positionally.
+    imchannel :: Int
 end
+
+"""
+    ShellState(fields...)   # every field but `imchannel`
+
+Build a shell without naming the view state, which defaults to the first channel.
+
+Written as a `Vararg` on the field count rather than by listing the fields: three places build
+a state positionally, and a constructor that spelled out thirty-odd names would be one rename
+away from being silently wrong about which argument is which.
+"""
+ShellState(args::Vararg{Any,N}) where {N} =
+    N == fieldcount(ShellState) - 1 ? ShellState(args..., 1) :
+                                      throw(MethodError(ShellState, args))
 
 # Cap the console so a long session cannot grow the buffer without bound. The oldest lines go
 # first; the command log itself (session.log) is never trimmed, so script export is unaffected.
@@ -179,7 +200,11 @@ function residual_set(sh::ShellState)
         # `ImagingResult.image` is always Float64, and the panel's plans follow `readoifits`,
         # which is Float32 by default. Without the cast this is a MethodError inside
         # `image_to_vis` — which is exactly why the image overlay drew nothing.
-        image_to_residuals(to_ft_precision(im.image, ft), ft, e.data)
+        #
+        # The channel the panel is SHOWING, and only that one. `image_to_obs(::Matrix, ::Matrix
+        # {OIdata}, …)` reduces to `ft[1], data[1]`, so handing it a plane against a binned
+        # dataset silently answers for bin 1 whatever the user is looking at.
+        image_to_residuals(to_ft_precision(result_plane(im, sh.imchannel), ft), ft, e.data)
     catch err
         "! image residuals not available: " * _cause(err)
     end
@@ -217,7 +242,7 @@ function overlay_set(sh::ShellState)
         # `ImagingResult.image` is always Float64, and the panel's plans follow `readoifits`,
         # which is Float32 by default. Without the cast this is a MethodError inside
         # `image_to_vis` — which is exactly why the image overlay drew nothing.
-        image_to_obs(to_ft_precision(im.image, ft), ft, e.data)
+        image_to_obs(to_ft_precision(result_plane(im, sh.imchannel), ft), ft, e.data)
     catch err
         "! image observables not available: " * _cause(err)
     end
@@ -3110,7 +3135,10 @@ function shell_save_image(path::AbstractString)
     r === nothing && return "! nothing reconstructed yet"
     p = strip_file_url(path)
     try
-        writefits(r.image, p; pixsize = r.setup.pixsize)
+        # The cube and its wavelengths together: a saved cube whose third axis carries no WCS
+        # is a set of channels nothing can identify, and the result is the only thing that
+        # knows which bin each plane came from.
+        writefits(r.image, p; pixsize = r.setup.pixsize, wavelengths = r.wavelengths)
     catch err
         msg = "! could not write the image: " * _cause(err)
         console!(sh, msg; kind = :err); return msg
@@ -3147,13 +3175,22 @@ function shell_recenter_image()
     sh === nothing && return ""
     r = sh.imaging
     r === nothing && return "nothing reconstructed yet"
-    img = recenter(r.image)
+    # Channel by channel, with the SAME shift for all of them: `recenter` finds its own
+    # centroid, so recentring each plane independently would align the channels to each other
+    # and destroy exactly the differential astrometry a cube is reconstructed to show.
+    img = _recenter_cube(r.image, sh.imchannel)
     # ImagingResult is immutable, so rebuild it. Every other field survives the shift: the
     # χ², the point count and the timings all describe the run that produced the pixels, and
     # moving them does not change what that run did.
+    #
+    # Rebuilt with EVERY field, not through the short constructor: that one fills `extra` and
+    # `ensemble` with `nothing`, so recentring a SQUEEZE or VI result silently threw away its
+    # diagnostics and its posterior — the run's most expensive output, discarded by a shift.
     sh.imaging = ImagingResult(img, r.chi2, r.chi2_start, r.ndof, r.flux, r.maxiter,
-                               r.seconds, r.setup, r.weights, r.breakdown)
-    sh.imcanvas === nothing || show_image!(sh.imcanvas, img, r.setup.pixsize)
+                               r.seconds, r.setup, r.weights, r.breakdown, r.extra,
+                               r.ensemble, r.wavelengths)
+    sh.imcanvas === nothing ||
+        show_image!(sh.imcanvas, result_plane(sh.imaging, sh.imchannel), r.setup.pixsize)
     console!(sh, "> image = recenter(image)")
     return "recentred on the centroid"
 end
@@ -3580,7 +3617,8 @@ function finish_reconstruct!(sh::ShellState, res)
         console!(sh, msg)
         return msg
     end
-    sh.imcanvas === nothing || show_image!(sh.imcanvas, r.image, r.setup.pixsize)
+    sh.imcanvas === nothing || show_image!(sh.imcanvas, result_plane(r, sh.imchannel),
+                                          r.setup.pixsize)
     sh.imaging = r
 
     # Total flux is reported because nothing constrains it: V² and closure phase are both
@@ -3626,6 +3664,76 @@ function shell_image_defaults()
 end
 
 """
+    shell_tempering_diagnostics() -> String
+
+The tempered sampler's health, as `name=value` pairs, or `""` when the last run was not one.
+
+Plain numbers, not a verdict: the panel owns the thresholds, because they are what a user reads
+and argues with, and `demos/pigeons_diagnostics.md` is where they are written down. `NaN` for a
+quantity Pigeons could not supply, which the panel shows as "—" rather than as a zero — a swap
+acceptance of 0 means a dead rung, and printing that for "not measured" would invent a fault.
+
+`restarts` is the field that decides whether the run means anything at all: zero round trips
+means the chains never communicated, and no other number rescues that.
+"""
+function shell_tempering_diagnostics()
+    r = _shell().imaging
+    (r === nothing || !(r.extra isa NamedTuple) || !haskey(r.extra, :pt_health)) && return ""
+    h = r.extra.pt_health
+    fields = (:restarts, :barrier, :swap_min, :swap_mean, :rho_max, :rho_mean,
+              :explorer_min, :explorer_mean, :logz, :logz_delta)
+    parts = [string(f, "=", getfield(h, f)) for f in fields]
+    # The ladder, one acceptance per adjacent pair, so a single bad rung can be located rather
+    # than merely reported as "min(α) = 0".
+    push!(parts, "rungs=" * join(h.swap_per_rung, "|"))
+    return join(parts, ",")
+end
+
+"""
+    shell_channels() -> String
+
+The cube's channels, as `count<TAB>current<TAB>label1|label2|...`, or `""` for a grey run.
+
+`""` is the answer the panel needs for "there is nothing to scrub": a grey reconstruction has
+one image and a slider over it would be a control that cannot do anything.
+
+The labels are wavelengths in µm because that is what an observer identifies a channel by; the
+INDEX is what every other call takes, since two bins can round to the same µm string.
+"""
+function shell_channels()
+    r = _shell().imaging
+    r === nothing && return ""
+    n = result_channels(r)
+    n > 1 || return ""
+    labels = isempty(r.wavelengths) ? ["channel $w" for w in 1:n] :
+             [string(round(l * 1e6; digits = 4), " µm") for l in r.wavelengths]
+    return string(n, '\t', _shell().imchannel, '\t', join(labels, '|'))
+end
+
+"""
+    shell_show_channel(w) -> String
+
+Draw channel `w` of the cube, and remember it.
+
+Remembered rather than passed through, because the channel is not only a drawing choice: the
+residual overlay, the model observables and the saved PNG all answer "one of what?" with it,
+and a panel where the picture showed one channel while the residuals showed another would be
+worse than no channel control at all.
+"""
+function shell_show_channel(w::Integer)
+    sh = _shell()
+    r  = sh.imaging
+    r === nothing && return "! nothing reconstructed yet"
+    n = result_channels(r)
+    sh.imchannel = clamp(Int(w), 1, n)
+    sh.imcanvas === nothing ||
+        show_image!(sh.imcanvas, result_plane(r, sh.imchannel), r.setup.pixsize)
+    lab = isempty(r.wavelengths) ? "channel $(sh.imchannel)" :
+          string(round(r.wavelengths[sh.imchannel] * 1e6; digits = 4), " µm")
+    return "channel $(sh.imchannel) of $n — $lab"
+end
+
+"""
     shell_result_ensemble() -> String
 
 What the last reconstruction offers beyond one image, as `nsamples<TAB>source`, or `""`.
@@ -3665,7 +3773,7 @@ function shell_show_result(mode::AbstractString, index::Integer = 1)
     px = r.setup.pixsize
 
     if m == "result"
-        show_image!(sh.imcanvas, r.image, px)
+        show_image!(sh.imcanvas, result_plane(r, sh.imchannel), px)
         return "showing the reconstruction"
     end
 

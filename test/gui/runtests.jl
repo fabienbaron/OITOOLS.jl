@@ -858,7 +858,8 @@ end
         nx, px = 32, 0.5
         img = [exp(-((i - nx / 2)^2 + (j - nx / 2)^2) / (2 * 4.0^2)) for i in 1:nx, j in 1:nx]
         img ./= sum(img)
-        sh.imaging = G.ImagingResult(img, 0.0, 0.0, 1, 1.0, 0, 0.0,
+        # Reshaped: a result holds `(nx, nx, nwav, nepoch)`, one channel for a grey run.
+        sh.imaging = G.ImagingResult(reshape(img, nx, nx, 1, 1), 0.0, 0.0, 1, 1.0, 0, 0.0,
                                      G.ImagingSetup(; nx = nx, pixsize = px),
                                      [1.0, 1.0, 1.0], NamedTuple[])
 

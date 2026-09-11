@@ -10,6 +10,10 @@
 
     IMGFILE = joinpath(@__DIR__, "data", "2004-data1.oifits")
     data = readoifits(IMGFILE; warn = false, verbose = false)
+    # Five H-band channels, which is enough to be a cube and small enough to reconstruct in a
+    # test. `POLY` in the harness is BC2026's 119-channel N-band file, far too slow for this.
+    POLYFILE = joinpath(@__DIR__, "..", "..", "demos", "data",
+                        "2019_v1295Aql.WL_SMOOTH.A.oifits")
 
     @testset "geometry comes from the data, not from a constant" begin
         s = imaging_defaults(data; nx = 32)
@@ -28,7 +32,9 @@
         for kind in (:dirac, :gaussian)
             x = start_image(ImagingSetup(; nx = 32, pixsize = 0.3, startkind = kind), ft)
             @test eltype(x) === Float32
-            @test size(x) == (32, 32)
+            # `(nx, nx, nwav, nepoch)`, one channel here: the engines see one shape whether the
+            # dataset has bins or not, so no reader has to ask which it was handed.
+            @test size(x) == (32, 32, 1, 1)
             @test sum(x) ≈ 1.0 rtol = 1e-5      # unit flux, both kinds
             @test all(x .>= 0)
         end
@@ -55,7 +61,9 @@
         r = reconstruct_image(data, s; maxiter = 120)
 
         @test r isa ImagingResult
-        @test size(r.image) == (48, 48)
+        @test size(r.image) == (48, 48, 1, 1)
+        @test result_channels(r) == 1
+        @test size(result_plane(r)) == (48, 48)
         # positivity is VMLMB's lower bound, in force with no regulariser asking for it
         @test all(r.image .>= 0)
         # and the fit actually descended, by a lot
@@ -176,5 +184,107 @@
         @test engine_call_name(:vi, Dict("vi_engine" => "nonsense")) == "reconstruct_hybrid"
         # Options belonging to another engine change nothing.
         @test engine_call_name(:squeeze, Dict("vi_engine" => "map")) == "reconstruct_squeeze"
+    end
+
+    @testset "tempering is offered, and says what it needs" begin
+        # The engine is nameable whether or not Pigeons is installed: the panel greys it with a
+        # reason, which it can only do if the entry exists.
+        @test haskey(IMAGING_ENGINES, :tempering)
+        @test engine_call_name(:tempering) == "reconstruct_squeeze_tempered"
+        # `shell_optional_engines` is what the panel binds that greying to.
+        @test occursin("tempering=", shell_optional_engines())
+
+        # No run, nothing to report — and specifically "" rather than a row of zeros, because
+        # a swap acceptance of 0 means a dead rung and printing that for "no data" would
+        # invent a fault.
+        sh = SHELL[]
+        if sh !== nothing
+            keep = sh.imaging
+            sh.imaging = nothing
+            @test shell_tempering_diagnostics() == ""
+            sh.imaging = keep
+        end
+    end
+
+    # ── the wavelength cube ──────────────────────────────────────────────────
+    #
+    # VMLMB is the one engine that reconstructs one image per spectral bin. These assert the
+    # SHAPE and the BOOKKEEPING of that path; whether the pictures are any good is a question
+    # for a ground-truth test, and the identity below is the cheap half of one.
+    @testset "a cube goes in and a cube comes out" begin
+        poly = readoifits(POLYFILE; warn = false, verbose = false, polychromatic = true,
+                          merge_oi_wavelength = true, use_vis = false)
+        nwav = size(poly, 1)
+        @test nwav > 1
+        s  = ImagingSetup(; engine = :vmlmb, nx = 24, pixsize = 0.5, startkind = :gaussian)
+        ft = setup_ft(poly, s.nx, s.pixsize)
+
+        x0 = start_image(s, ft)
+        @test size(x0) == (24, 24, nwav, 1)
+        # EVERY channel, not the total: the criterion normalises per cell, so one empty plane
+        # divides by zero and the whole run comes back NaN with nothing saying which channel.
+        @test all(sum(x0[:, :, w, 1]) ≈ 1 for w in 1:nwav)
+
+        r = reconstruct_image(poly, s; maxiter = 20)
+        @test size(r.image) == (24, 24, nwav, 1)
+        @test result_channels(r) == nwav
+        @test size(result_plane(r, 2)) == (24, 24)
+        @test result_plane(r, 99) == result_plane(r, nwav)      # clamped, not thrown
+        @test length(r.wavelengths) == nwav
+        @test issorted(r.wavelengths)
+
+        # The regression for a χ² that was wrong by roughly the bin count: the reduced χ²
+        # must not scale with how the SAME data was split.
+        mono = readoifits(POLYFILE; warn = false, verbose = false, use_vis = false)
+        rm = reconstruct_image(mono, ImagingSetup(; engine = :vmlmb, nx = 24, pixsize = 0.5,
+                                                    startkind = :gaussian); maxiter = 20)
+        @test r.ndof == rm.ndof                       # the same points, however they are binned
+        @test all(isfinite(b.chi2r) for b in r.breakdown)
+    end
+
+    @testset "cross-channel regularisers reach the engine, or are refused" begin
+        spatial, trans = split_regularizers(parse_regularizers(
+            "l1l2,1e-3,1e-6;transspectral_tv,1e-2;tv,1e-3"))
+        @test length(spatial) == 2 && length(trans) == 1
+        @test first(trans[1]) == "transspectral_tv"
+
+        poly = readoifits(POLYFILE; warn = false, verbose = false, polychromatic = true,
+                          merge_oi_wavelength = true, use_vis = false)
+        s = ImagingSetup(; engine = :vmlmb, nx = 24, pixsize = 0.5, startkind = :gaussian)
+        a = reconstruct_image(poly, s; maxiter = 30, regularizers = "l1l2,1e-1,1e-6")
+        b = reconstruct_image(poly, s; maxiter = 30,
+                              regularizers = "l1l2,1e-1,1e-6;transspectral_tv,1e2")
+        @test !(a.image ≈ b.image)                    # the cross-channel term did something
+
+        # Refused rather than dropped: an engine that cannot apply one must say so, or the user
+        # believes they constrained the spectrum and nothing did.
+        @test_throws ErrorException reconstruct_image(
+            poly[1:1, :], ImagingSetup(; engine = :bsmem, nx = 24, pixsize = 0.5);
+            maxiter = 2, regularizers = "transspectral_tv,1e-2")
+    end
+
+    @testset "a saved cube says what its third axis means" begin
+        poly = readoifits(POLYFILE; warn = false, verbose = false, polychromatic = true,
+                          merge_oi_wavelength = true, use_vis = false)
+        lams = bin_wavelengths(poly)
+        @test length(lams) == size(poly, 1)
+        @test all(1e-7 .< lams .< 1e-4)               # metres, not µm and not m⁻¹
+
+        cube = rand(8, 8, length(lams), 1) .+ 0.1
+        path = joinpath(mktempdir(), "cube.fits")
+        writefits(cube, path; pixsize = 0.5, wavelengths = lams)
+        h = OITOOLS.FITSIO.read_header(OITOOLS.FITSIO.FITS(path)[1])
+        @test h["NAXIS3"] == length(lams)
+        @test h["CTYPE3"] == "WAVE"
+        @test h["CUNIT3"] == "m"
+        # the axis reconstructs the centres it was given
+        got = h["CRVAL3"] .+ (0:length(lams)-1) .* h["CDELT3"]
+        @test all(isapprox.(got, lams; rtol = 1e-6))
+
+        # A grey image gains no spectral axis: a third axis nothing can interpret is worse
+        # than none.
+        grey = joinpath(mktempdir(), "grey.fits")
+        writefits(rand(8, 8), grey; pixsize = 0.5)
+        @test !haskey(OITOOLS.FITSIO.read_header(OITOOLS.FITSIO.FITS(grey)[1]), "CTYPE3")
     end
 end

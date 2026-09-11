@@ -133,6 +133,51 @@ Pigeons.explorer_recorder_builders(::SqueezeExplorer) = []
 _beta_of(lp) = lp.beta
 _target_of(lp) = lp.path.target
 
+"""
+    _pt_health(pt) -> NamedTuple
+
+Sampler diagnostics, in the quantities Pigeons' own round table reports.
+
+Every field can be `NaN` (or an empty vector). These come from Pigeons INTERNALS -- `swap_prs`,
+`energy_ac1s` and `explorer_mh_prs` are not exported, and the expressions are taken from
+`Pigeons/src/pt/report.jl`, which is the definition of the table the library prints. The compat
+bound is pinned to 0.4, which bounds the risk; each is guarded anyway, because a diagnostic
+that throws would take a finished reconstruction down with it.
+
+`restarts` is the one that decides whether the run means anything: round trips between the
+coldest and hottest chain. Zero means the chains never communicated and the samples are not
+from the target distribution, however healthy everything else looks.
+"""
+function _pt_health(pt, explorer_acceptance = Float64[])
+    g(f, default) = try
+        v = f()
+        v === nothing ? default : v
+    catch
+        default
+    end
+    swaps     = g(() -> collect(Float64, Pigeons.swap_prs(pt)), Float64[])
+    rhos      = g(() -> abs.(collect(Float64, Pigeons.energy_ac1s(pt, true))), Float64[])
+    # NOT `Pigeons.explorer_mh_prs(pt)`: that reads a recorder this explorer does not build
+    # (`explorer_recorder_builders(::SqueezeExplorer)` is empty), so it is always missing. The
+    # element-move kernel counts its own proposals, and the caller passes those in.
+    explorers = collect(Float64, explorer_acceptance)
+    # The per-round table, which is where a DELTA can come from: a log(Z) that is still moving
+    # between rounds has not converged, and that is invisible in the final value alone.
+    lz_hist = g(() -> collect(skipmissing(pt.shared.reports.summary.stepping_stone)), Float64[])
+    ext(v, f) = isempty(v) ? NaN : f(v)
+    return (restarts      = g(() -> Int(Pigeons.n_tempered_restarts(pt)), -1),
+            barrier       = g(() -> Float64(Pigeons.global_barrier(pt.shared.tempering)), NaN),
+            swap_min      = ext(swaps, minimum),
+            swap_mean     = ext(swaps, sum) / max(length(swaps), 1),
+            swap_per_rung = swaps,
+            rho_max       = ext(rhos, maximum),
+            rho_mean      = ext(rhos, sum) / max(length(rhos), 1),
+            explorer_min  = ext(explorers, minimum),
+            explorer_mean = ext(explorers, sum) / max(length(explorers), 1),
+            logz          = isempty(lz_hist) ? NaN : last(lz_hist),
+            logz_delta    = length(lz_hist) < 2 ? NaN : last(lz_hist) - lz_hist[end-1])
+end
+
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 function OITOOLS.reconstruct_squeeze_tempered(
@@ -242,6 +287,23 @@ function OITOOLS.reconstruct_squeeze_tempered(
                    multithreaded = multithreaded,
                    seed = Int(seed),
                    show_report = verb,
+                   # Pigeons' default is `[log_sum_ratio, timing_extrema, allocation_extrema]`
+                   # and records neither ROUND TRIPS nor the energy autocorrelation. Round trips
+                   # are the metric that decides whether a tempered run means anything at all --
+                   # zero of them means the chains never communicated and the samples are not
+                   # from the target, however good the chi2 looks -- so they are added here.
+                   #
+                   # The default set PLUS those two, rather than `record_online()`: that helper
+                   # also adds `online`, which keeps running moments of the STATE and therefore
+                   # calls `copy(state)` -- and `SqueezePTState` has no `copy` method, so the
+                   # whole run dies in a task with a `MethodError`. Taking only what the panel
+                   # displays avoids asking the state for an interface it does not have.
+                   #
+                   # Overridable: a caller who passes its own `record` in `pigeons_kwargs` wins,
+                   # because the keyword appears before the splat.
+                   record = [Pigeons.log_sum_ratio, Pigeons.timing_extrema,
+                             Pigeons.allocation_extrema, Pigeons.round_trip,
+                             Pigeons.energy_ac1],
                    pigeons_kwargs...)
 
     states = [r.state for r in pt.replicas]
@@ -292,6 +354,13 @@ function OITOOLS.reconstruct_squeeze_tempered(
     diagnostics = (chi2r_mean = chi2r_mean,
                    logZ = lz,
                    global_barrier = Pigeons.global_barrier(pt),
+                   # The sampler's own health, in the same quantities Pigeons prints in its
+                   # round table -- see `demos/pigeons_diagnostics.md` for what each means and
+                   # when to worry. Computed here rather than in the GUI because this is where
+                   # Pigeons is a dependency, and returned as plain numbers so the panel needs
+                   # nothing from Pigeons to display them.
+                   pt_health = _pt_health(pt,
+                       [st.s.naccepted / max(st.s.nproposed, 1) for st in states]),
                    nsamples = nsamples,
                    ndf = ndf,
                    nelements = nelem,
