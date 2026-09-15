@@ -242,6 +242,46 @@
         @test all(isfinite(b.chi2r) for b in r.breakdown)
     end
 
+    @testset "BSDMM and BSMEM reconstruct a cube too" begin
+        poly = readoifits(POLYFILE; warn = false, verbose = false, polychromatic = true,
+                          merge_oi_wavelength = true, use_vis = false)
+        mono = readoifits(IMGFILE; warn = false, verbose = false)
+        nwav = size(poly, 1)
+        channels_differ(r) = !all(result_plane(r, 1) ./ sum(result_plane(r, 1)) ≈
+                                  result_plane(r, w) ./ sum(result_plane(r, w))
+                                  for w in 2:result_channels(r))
+
+        # The panel offers BSDMM for binned data, so it must accept it: it used to be listed
+        # as a cube engine and then refused by the engine itself.
+        admm = ImagingSetup(; engine = :bsdmm, nx = 24, pixsize = 0.4, startkind = :gaussian)
+        o = Dict("mu_reg" => "1e-3", "mu_cen" => "1e-3", "maxiter" => "10")
+        r = reconstruct_image(poly, admm; maxiter = 10, options = o)
+        @test size(r.image) == (24, 24, nwav, 1)
+        @test channels_differ(r)
+        rg = reconstruct_image(poly, admm; maxiter = 10,
+                               options = merge(o, Dict("mu_group" => "1e-2")))
+        @test !(rg.image ≈ r.image)                   # the group weight reaches the engine
+        # ...and a group weight on one bin is refused, not silently ignored.
+        @test_throws ErrorException reconstruct_image(mono, admm; maxiter = 2,
+                                         options = merge(o, Dict("mu_group" => "1e-2")))
+
+        mem = ImagingSetup(; engine = :bsmem, nx = 24, pixsize = 0.4, startkind = :gaussian)
+        rm = reconstruct_image(poly, mem; maxiter = 20, options = Dict("maxiter" => "20"))
+        @test size(rm.image) == (24, 24, nwav, 1)
+        @test channels_differ(rm)
+
+        # A GREY prior on binned data. BSMEM's cube method flattens its prior and asserts
+        # nx²×nwav elements, so a 2-D prior has to be spread across the channels before it
+        # gets there; without that this is an assertion failure rather than a reconstruction.
+        c = 12.5
+        pg = [exp(-((i - c)^2 + (j - c)^2) / (2 * 4.0^2)) for i in 1:24, j in 1:24]
+        pf = joinpath(mktempdir(), "prior.fits")
+        writefits(pg ./ sum(pg), pf; pixsize = 0.4)
+        rp = reconstruct_image(poly, mem; maxiter = 20,
+                               options = Dict("maxiter" => "20", "prior" => pf))
+        @test size(rp.image) == (24, 24, nwav, 1)
+    end
+
     @testset "cross-channel regularisers reach the engine, or are refused" begin
         spatial, trans = split_regularizers(parse_regularizers(
             "l1l2,1e-3,1e-6;transspectral_tv,1e-2;tv,1e-3"))

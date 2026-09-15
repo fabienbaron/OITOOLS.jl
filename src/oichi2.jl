@@ -1320,9 +1320,11 @@ end
 Compute the weighted chi-squared of a 4-D image cube `x[px, py, wav, epoch]`
 against a `Matrix{OIdata}` of size `(nwav, nepoch)`.
 
-Returns the **raw** chi-squared (not divided by ndof).  For `nwav > 1`,
-cross-channel observables (differential phases, visibility amplitudes,
-OI_FLUX) are included automatically based on data metadata.
+Returns the **raw** chi-squared (not divided by ndof).  For `nwav > 1`, the
+cross-channel differential phases and amplitudes are included automatically based on
+data metadata. Absolute VISAMP and OI_FLUX are not cross-channel terms: each channel's
+kernel fits them, under `weights[4]` and `weights[6]`, so with the default weights a
+cube's chi2 is the sum of its channels' V2, T3amp and T3phi.
 
 See also: [`image_to_chi2_fg`](@ref), `image_to_obs`.
 """
@@ -1374,9 +1376,9 @@ function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
             ws = caches === nothing ? ImageChi2Cache(ft[w,t], data[w,t]) : caches[w,t]
             chi2_total += T(image_chi2_f((@view x[:,:,w,t]), ft[w,t], data[w,t], ws;
                 cvis=(need_cvis ? cvis[w] : []), verb=verb, weights=weights, vonmises=vonmises))
-            # Absolute VISAMP arrives through weights[4], which the kernel fits directly.
-            # Adding it here as well would count it twice, and would put chi2 that `_ndof`
-            # does not count into a reduced chi2.
+            # Absolute VISAMP and OI_FLUX arrive through weights[4] and weights[6], which the
+            # kernel fits directly. Adding either below as well would count it twice, and would
+            # put chi2 that `_ndof` does not count, and no weight can switch off, into the total.
             verb && print("\n")
         end
 
@@ -1386,7 +1388,7 @@ function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
             vis_flux = _polychromatic_vis_flux_chi2(
                 (@view x[:,:,:,t]), data_epoch, cvis, nwav_t;
                 use_diffphases=udp, use_diffvisamp=udva,
-                use_abs_visamp=false, verb=verb)
+                use_abs_visamp=false, use_flux=false, verb=verb)
             chi2_total += vis_flux.chi2
         end
     end
@@ -1484,7 +1486,7 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
             chi2_total += _polychromatic_vis_gradient!(
                 (@view x[:,:,:,t]), g_epoch, data_epoch, cvis, nwav_t, npix, vis_adjoint;
                 use_diffphases=udp, use_diffvisamp=udva,
-                use_abs_visamp=false, verb=verb)
+                use_abs_visamp=false, use_flux=false, verb=verb)
         end
 
         # Apply per-cell flux correction
@@ -1588,7 +1590,7 @@ end
 # needed for gradient computation.
 # ---------------------------------------------------------------------------
 function _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
-        use_diffphases, use_diffvisamp, use_abs_visamp, verb)
+        use_diffphases, use_diffvisamp, use_abs_visamp, use_flux, verb)
     T = oi_eltype(data)
     chi2 = zero(T); ndof = 0
     diffphi_model = nothing; diffphi = nothing; diffphi_err = nothing
@@ -1660,7 +1662,7 @@ function _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
     end
     # OI_FLUX
     C_flux = one(T); flux_residual = T[]; flux_chan_idx = Int[]
-    use_flux = any(data[i].nflux > 0 for i in 1:nwavs)
+    use_flux = use_flux && any(data[i].nflux > 0 for i in 1:nwavs)
     if use_flux
         fm = T[]; fd = T[]; fe = T[]
         for i in 1:nwavs
@@ -1752,7 +1754,7 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
     # Cross-channel differential observables + OI_FLUX
     vis_flux = _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=false, verb=verb)
+        use_abs_visamp=false, use_flux=false, verb=verb)
     chi2f += vis_flux.chi2
     ndof  += vis_flux.ndof
 
@@ -1820,7 +1822,7 @@ function chi2_polychromatic_f(x::AbstractArray{<:AbstractFloat,3}, ft::AbstractV
     # Cross-channel differential observables + OI_FLUX
     vis_flux = _polychromatic_vis_flux_chi2(x, data, cvis, nwavs;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=false, verb=verb)
+        use_abs_visamp=false, use_flux=false, verb=verb)
     chi2f += vis_flux.chi2
     ndof  += vis_flux.ndof
 
@@ -2200,7 +2202,7 @@ end
 #   DFT:   vis_adjoint_fn(rhs, i) = vec(transpose(ft[i][data[i].indx_vis,:]) * conj(rhs))
 # ===========================================================================
 function _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint_fn;
-        use_diffphases, use_diffvisamp, use_abs_visamp, verb)
+        use_diffphases, use_diffvisamp, use_abs_visamp, use_flux, verb)
     T = oi_eltype(data)
     f = zero(T)
 
@@ -2276,7 +2278,7 @@ function _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint
     end
 
     # OI_FLUX chi2 + gradient
-    use_flux = any(data[i].nflux > 0 for i in 1:nwavs)
+    use_flux = use_flux && any(data[i].nflux > 0 for i in 1:nwavs)
     if use_flux
         flux_model_vec = T[]; flux_data_vec = T[]
         flux_err_vec = T[]; flux_chan_idx = Int[]
@@ -2408,7 +2410,7 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
     vis_adjoint_nfft = (rhs, i) -> vec(adjoint(ft[i][2]) * rhs)
     f += _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint_nfft;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=false, verb=verb)   # weights[4] carries it, via crit_fg's kernel
+        use_abs_visamp=false, use_flux=false, verb=verb)   # weights[4] and weights[6] carry these, via crit_fg's kernel
 
     f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb, data=data)
     g[:] = g[:]/ndof
@@ -2450,7 +2452,7 @@ function crit_polychromatic_fg(x::AbstractArray{<:AbstractFloat,3}, g::AbstractA
     vis_adjoint_dft = (rhs, i) -> vec(conj.(transpose(ft[i][data[i].indx_vis, :]) * conj.(rhs)))
     f += _polychromatic_vis_gradient!(x, g, data, cvis, nwavs, npix, vis_adjoint_dft;
         use_diffphases=use_diffphases, use_diffvisamp=use_diffvisamp,
-        use_abs_visamp=false, verb=verb)   # weights[4] carries it, via crit_fg's kernel
+        use_abs_visamp=false, use_flux=false, verb=verb)   # weights[4] and weights[6] carry these, via crit_fg's kernel
 
     f = _polychromatic_transspectral_reg!(x, g, f, ndof, npix, nwavs, regularizers; verb=verb, data=data)
     g[:] = g[:]/ndof

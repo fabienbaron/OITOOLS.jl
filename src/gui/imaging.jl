@@ -80,13 +80,15 @@ end
 The engines that reconstruct a WAVELENGTH CUBE rather than one grey image.
 
 `reconstruct` takes a 4-D `(nx, nx, nwav, nepoch)` image with `transspectral_regularizers`;
-`reconstruct_bsdmm` takes the same shape with `mu_group` coupling the channels. Every other
-engine here takes one `OIdata` and one plan cell.
+`reconstruct_bsdmm` takes the same shape with `mu_group` coupling the channels; and
+`reconstruct_bsmem` takes it too, but as independent maximum-entropy problems per channel solved
+together with one shared weight — nothing ties neighbouring channels, so a cube from BSMEM is
+spectrally unregularised. Every other engine here takes one `OIdata` and one plan cell.
 
 A set rather than a check on the function: whether an engine can do this is a property of the
 engine, and `_require_mono` needs to answer it for engines it is not otherwise dispatching.
 """
-const POLYCHROMATIC_ENGINES = Set([:vmlmb, :bsdmm])
+const POLYCHROMATIC_ENGINES = Set([:vmlmb, :bsdmm, :bsmem])
 
 """
 Sentinel for "work the starting width out from the field of view".
@@ -218,7 +220,7 @@ _nchannels(x) = ndims(x) >= 3 ? size(x, 3) : 1
     _plane(x, w = 1) -> the `w`th channel as a matrix
 
 Every engine but VMLMB reconstructs one image, and `start_image` now hands out a cube. They are
-guarded to a single bin anyway (`_check_bins`, `_require_mono`), so the first channel IS their
+guarded to a single bin anyway (`_require_mono`), so the first channel IS their
 image -- but taking it explicitly is what keeps a 4-D array from reaching a reconstructor whose
 signature would accept it and mean something else by it.
 """
@@ -647,27 +649,6 @@ function _require_mono(data, engine)
 end
 
 """
-    _check_bins(data, engine)
-
-Refuse a multi-bin dataset for an engine that cannot reconstruct a cube.
-
-VMLMB no longer needs it: it takes the 4-D start and fits every bin. BSDMM still does --
-`POLYCHROMATIC_ENGINES` says it CAN reconstruct a cube, and the 4-D `reconstruct_bsdmm` exists,
-but the panel does not yet send it one, so it is handed `_plane(x0)` and must be told the truth
-about what it is about to fit.
-
-Without the guard the failure is a `BoundsError` thrown from inside OITOOLS, from `crit_fg`
-indexing `x4[:,:,w,t]` for `w in 1:nwav` on an image reshaped to one channel, with nothing
-anywhere naming the control that caused it.
-"""
-function _check_bins(data, engine)
-    size(data) == (1, 1) && return data
-    error("$(get(IMAGING_ENGINES, engine, engine)) cannot yet reconstruct a wavelength cube; " *
-          "this dataset has $(size(data, 1)) bins × $(size(data, 2)) epochs. " *
-          "Read the file with a single bin.")
-end
-
-"""
     run_engine(engine, x0, data, ft; weights, regularizers, maxiter, verb, options)
       -> (image, extra, chi2)
 
@@ -692,7 +673,7 @@ function run_engine(engine::Symbol, x0, data, ft;
         " needs VMLMB.")
 
     if engine === :vmlmb
-        # No `_check_bins`: VMLMB is the cube engine. `x0` arrives 4-D from `start_image`, so
+        # VMLMB is the cube engine. `x0` arrives 4-D from `start_image`, so
         # the 4-D `reconstruct` is selected and every bin is fitted rather than forwarded into
         # a one-channel image.
         return (reconstruct(x0, data, ft; weights, regularizers,
@@ -700,14 +681,23 @@ function run_engine(engine::Symbol, x0, data, ft;
                 nothing, nothing)
 
     elseif engine === :bsmem
-        d = _require_mono(data, engine)
-        x0 = _plane(x0)
+        size(data, 2) == 1 || error(
+            "BSMEM reconstructs one epoch; this dataset has $(size(data, 2)).")
+        cube = size(data, 1) > 1
+        nwav = size(data, 1)
         # BSMEM ignores the spec list except for a `["mem", prior]` entry, and takes its
         # entropy mode as the four-integer `method` vector instead. Passing the panel's
         # regularisers here would silently do nothing, so only the prior is forwarded.
         regs = Any[]
         prior = _optstr(o, "prior")
-        isempty(prior) || push!(regs, ["mem", prior_image(prior, size(x0, 1))])
+        if !isempty(prior)
+            p2 = prior_image(prior, size(x0, 1))
+            # Replicated HERE for a cube. The cube method flattens whatever prior it is given
+            # with `vec` and then asserts nx²×nwav elements, so the setup's own branch for
+            # spreading a grey prior across channels is unreachable through it: a 2-D prior
+            # on binned data fails an assertion instead of meaning "the same in every channel".
+            push!(regs, ["mem", cube ? repeat(p2, 1, 1, nwav) : p2])
+        end
         method = [_optint(o, "method1", 4), _optint(o, "method2", 1),
                   _optint(o, "method3", 1), _optint(o, "method4", 2)]
         # `ft[1, 1]`, not `ft`: BSMEM reads the geometry off `ft[1].N`, so it wants the CELL
@@ -717,17 +707,27 @@ function run_engine(engine::Symbol, x0, data, ft;
         # callback API, but the ones that keep a history will fill a vector you pass in, and
         # that is structured data rather than scraped text.
         hist = NamedTuple[]
-        img = reconstruct_bsmem(x0, d, ft[1, 1]; regularizers = regs, method,
+        if cube
+            # The whole `ft` matrix and the 4-D start: the cube method takes one cell per bin
+            # out of it itself, and hands back `(nx, nx, nwav, 1)` at unit flux per channel.
+            img = reconstruct_bsmem(x0, data, ft; regularizers = regs, method,
+                                    maxiter = _optint(o, "maxiter", maxiter), verbose = verb,
+                                    history = hist)
+            return (img, (; history = hist), nothing)
+        end
+        img = reconstruct_bsmem(_plane(x0), data[1, 1], ft[1, 1]; regularizers = regs, method,
                                 maxiter = _optint(o, "maxiter", maxiter), verbose = verb,
                                 history = hist)
         # (nx, nx, nwav) even for one channel.
         return (img[:, :, 1], (; history = hist), nothing)
 
     elseif engine === :bsdmm
-        _check_bins(data, engine)
-        x0 = _plane(x0)
-        # Not string specs at all: ADMM takes μ weights and two mode symbols.
+        # Not string specs at all: ADMM takes μ weights and mode symbols. `mu_reg` is the
+        # panel's name for the spatial weight; the cube method calls the same weight `mu_tv`.
         mu_reg, mu_cen = _optreal(o, "mu_reg", 0.0), _optreal(o, "mu_cen", 0.0)
+        mu_group   = _optreal(o, "mu_group", 0.0)
+        group_type = Symbol(_optstr(o, "group_type", "sparsity"))
+        cube = size(data, 1) > 1
         # Centering specifically, not just any block. ADMM splits the problem across proximal
         # blocks and a weight of zero creates none, so all-zero weights leave nothing to solve
         # -- but beyond that, the centering block is what pins the image against the translation
@@ -737,11 +737,23 @@ function run_engine(engine::Symbol, x0, data, ft;
             "BSDMM needs a non-zero mu_cen: the centering block is what holds the image " *
             "against the translation degeneracy of the bispectrum, and with every weight at " *
             "zero there are no ADMM blocks to solve at all.")
-        img = reconstruct_bsdmm(x0, data, ft;
-                                mu_reg, mu_cen,
-                                reg_type = Symbol(_optstr(o, "reg_type", "tv")),
-                                maxit    = _optint(o, "maxiter", maxiter),
-                                verb, history = true)
+        # The group block couples CHANNELS, so on one bin there is nothing for it to couple --
+        # and the monochromatic method has no such keyword. Refused rather than dropped: a
+        # weight the user set that silently does nothing reads as a regulariser in force.
+        !cube && mu_group > 0 && error(
+            "BSDMM's mu_group couples wavelength channels, and this dataset has one bin; set " *
+            "it to 0, or bin the data into channels first.")
+        size(data, 2) == 1 || error(
+            "BSDMM reconstructs one epoch; this dataset has $(size(data, 2)).")
+        reg_type = Symbol(_optstr(o, "reg_type", "tv"))
+        maxit    = _optint(o, "maxiter", maxiter)
+        img = cube ?
+            # The cube engine: every bin fitted, channels tied by the group block when its
+            # weight is non-zero. `x0` arrives 4-D from `start_image`.
+            reconstruct_bsdmm(x0, data, ft; mu_tv = mu_reg, mu_group, group_type, mu_cen,
+                              reg_type, maxit, verb, history = true) :
+            reconstruct_bsdmm(_plane(x0), data, ft; mu_reg, mu_cen, reg_type, maxit,
+                              verb, history = true)
         # With `history = true` ADMM returns `(image, trace)`; the trace carries the primal and
         # dual residuals and ρ, which are what actually say whether it is converging.
         img isa Tuple && return (img[1], (; history = img[2]), nothing)

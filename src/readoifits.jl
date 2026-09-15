@@ -1851,6 +1851,28 @@ function fits_pixsize(fitsfile)
     return 1e-4 <= deg <= 1e4 ? deg : nothing
 end
 
+"""
+    writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[])
+
+Write an image or a cube to a FITS file, with a WCS when there is enough information for one.
+
+`data` may be a matrix or an N-D array; a reconstruction is `(nx, nx, nwav, nepoch)`.
+
+`pixsize` is in MILLIARCSECONDS and is what turns the file from an array into an image: without
+it no WCS is written at all. `CDELT1`/`CDELT2` are written in RADIANS with an explicit `CUNIT`,
+because the FITS default for a celestial axis is degrees and the two differ by 5.7e4 — a reader
+with no unit to go on has to guess.
+
+`wavelengths` are the centre wavelength of each channel, in METRES, and are what make a cube
+readable: given them, `CTYPE3 = 'WAVE'`, `CRVAL3` and `CDELT3` are written, and without them a
+cube has a third axis that nothing can interpret. `CDELT3` is a LINEAR step, so for bins that
+are not evenly spaced it is the mean and the header comment says by how much they depart — FITS
+cannot express an irregular axis without the `-TAB` convention and a lookup table.
+
+See also [`fits_pixsize`](@ref), which reads the pixel scale back out of a file written
+here. `readfits` and `updatefits_aspro` are the other half of this pair but carry no
+docstrings, so they cannot be cross-referenced yet.
+"""
 function writefits(data, fitsfile; pixsize=-1, wavelengths=Float64[])
     f = FITS(fitsfile, "w")
     if pixsize != -1

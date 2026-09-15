@@ -154,7 +154,7 @@ Item {
     // Which engines can reconstruct a wavelength cube. Mirrors POLYCHROMATIC_ENGINES in
     // src/gui/imaging.jl; the Julia side refuses regardless, so this is the panel saying why
     // before the run rather than a second source of truth.
-    readonly property var cubeEngines: ["vmlmb", "bsdmm"]
+    readonly property var cubeEngines: ["vmlmb", "bsdmm", "bsmem"]
 
     function engineReasonFor(key) {
         if (key === "tempering" && !pigeonsAvailable) return "needs Pigeons"
@@ -647,6 +647,9 @@ Item {
         } else if (engine === "bsdmm") {
             put("mu_reg", bsdmmMuTv); put("mu_cen", bsdmmMuCen)
             put("reg_type", bsdmmRegType); put("maxiter", bsdmmMaxiter)
+            // The cross-channel block. Sent whatever the binning: Julia refuses a non-zero
+            // weight on a single bin, which is the one place that can say why.
+            put("mu_group", bsdmmMuGroup); put("group_type", bsdmmGroupType)
 
         } else if (engine === "vi") {
             // The algorithm is an OPTION, not an engine: all four share one geometry, one
