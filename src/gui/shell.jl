@@ -2937,17 +2937,22 @@ end
 """
     shell_reset_image_zoom() -> String
 
-Return the imaging display to the whole image.
+Return the imaging display to the whole image, framed exactly as `show_image!` framed it.
 
 Separate from [`shell_reset_zoom`](@ref), which resets the Exploring canvas: the two are
 different axes on different figures, and a right click on one must not move the other.
+
+`reset_view!`, not `autolimits!`. The right click on this canvas arrives through the QML
+`MouseArea` laid over it, so this function decides the view the click returns to, and
+`autolimits!` pads the heatmap's cell edges by the axis's 5% autolimit margin: 1.117x the field
+of view at 64 pixels, measured, which reads as the reset not quite working.
 """
 function shell_reset_image_zoom()
     sh = _shell()
     cv = sh.imcanvas
     cv === nothing && return ""
     try
-        Makie.autolimits!(cv.axis)
+        reset_view!(cv)
     catch err
         console!(sh, "could not reset the view: " * _cause(err); kind = :err)
     end
@@ -2972,15 +2977,20 @@ function shell_show_start_image(nx::Integer, pixsize::Real, mode::AbstractString
     setup = ImagingSetup(; nx = Int(nx), pixsize = Float64(pixsize), mode = Symbol(mode),
                            startkind = Symbol(startkind), startfwhm = Float64(startfwhm),
                            startseed = Int(startseed), startpath = String(startpath))
-    img = try
+    cube = try
         ft, _, _ = ensure_ft!(sh.ftcache, e.data, setup)
         Float64.(start_image(setup, ft))
     catch err
         msg = "! could not build the starting image: " * _cause(err)
         console!(sh, msg; kind = :err); return msg
     end
-    sh.imcanvas === nothing || show_image!(sh.imcanvas, img, setup.pixsize;
-                                           label = "starting image")
+    # A start is a cube, one plane per channel, and the canvas draws a plane: the channel the
+    # slider is on, clamped, since the slider may still be set for a result with more channels.
+    nw = _nchannels(cube)
+    w  = clamp(sh.imchannel, 1, nw)
+    sh.imcanvas === nothing || show_image!(sh.imcanvas, _plane(cube, w), setup.pixsize;
+                                           label = nw > 1 ? "starting image, channel $w of $nw" :
+                                                            "starting image")
     console!(sh, "> start_image(setup, ft)   # $(startkind), $(Int(nx))×$(Int(nx))")
     return "showing the starting image"
 end

@@ -120,9 +120,12 @@ end
 fov(s::ImagingSetup) = s.nx * s.pixsize
 
 """
-    start_image(setup, ft) -> Matrix
+    start_image(setup, ft) -> Array{T,4}
 
 The image the optimiser starts from, in the precision of `ft`.
+
+Always a cube, `(nx, nx, nwav, nepoch)`, even for one bin: the engines take one shape whatever
+the dataset (`_as_cube`). A caller that draws or saves a single plane takes it with `_plane`.
 
 That last part is not a detail. The plans are `Float32` by default, and `image_to_vis`
 dispatches on the element type matching the plan's — so a `Float64` starting image gives a

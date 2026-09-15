@@ -926,6 +926,54 @@ end
             @test maximum(lim[1]) ≈ nx * px / 2
             @test minimum(lim[1]) ≈ -nx * px / 2
         end
+
+        @testset "the starting image is drawn as one plane" begin
+            # `start_image` hands out a cube and the canvas draws a plane. Without a live
+            # canvas `show_image!` is never reached, which is how a cube got to it unnoticed.
+            ifig = Makie.Figure(); iax = Makie.Axis(ifig[1, 1])
+            sh.imcanvas = G.build_canvas(ifig, iax)
+            mode = String(G.ImagingSetup(; nx = nx, pixsize = px).mode)
+            prev = G.SHELL[]
+            G.SHELL[] = sh
+            try
+                @test G.shell_show_start_image(nx, px, mode, "gaussian") ==
+                      "showing the starting image"
+                im = G._canvas_image(sh.imcanvas)
+                @test im !== nothing && size(im.image) == (nx, nx)
+                @test sh.imcanvas.cbarlabel[] == "starting image"
+                # A slider left on a channel a grey start does not have.
+                sh.imchannel = 7
+                @test G.shell_show_start_image(nx, px, mode, "dirac") ==
+                      "showing the starting image"
+                @test size(G._canvas_image(sh.imcanvas).image) == (nx, nx)
+            finally
+                G.SHELL[] = prev
+                sh.imchannel = 1
+            end
+        end
+
+        @testset "right click returns the image to exactly its field of view" begin
+            ifig = Makie.Figure(); iax = Makie.Axis(ifig[1, 1])
+            sh.imcanvas = G.build_canvas(ifig, iax)
+            G.show_image!(sh.imcanvas, img, px)
+            view() = (fl = sh.imcanvas.axis.finallimits[];
+                      (Float64(fl.widths[1]), Float64(fl.widths[2])))
+            field = (nx * px, nx * px)
+            rev = sh.imcanvas.axis.xreversed[]
+            @test all(isapprox.(view(), field; rtol = 1e-5))
+            @test G.zoom_step!(sh.imcanvas, -2.0)
+            @test view()[1] > 1.2 * field[1]
+            prev = G.SHELL[]
+            G.SHELL[] = sh
+            try
+                G.shell_reset_image_zoom()
+                # The field itself, not the field padded by the axis's 5% autolimit margin.
+                @test all(isapprox.(view(), field; rtol = 1e-5))
+                @test sh.imcanvas.axis.xreversed[] == rev      # East still on the left
+            finally
+                G.SHELL[] = prev
+            end
+        end
     end
 
     @testset "the shell path and the figure builders agree" begin
