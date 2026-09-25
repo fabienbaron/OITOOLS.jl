@@ -4,12 +4,12 @@
 # parameterization on a float type T) can be shown to be behaviour-preserving.
 #
 # Each case drives a distinct path through the solver:
-#   - method 4 is the default: no RNG, and it bypasses evidence_estimate!/Ritz entirely,
+#   - method 4 is the default: no RNG, and it bypasses evidence_estimate! entirely,
 #     so these runs are bit-for-bit deterministic.
 #   - methods 1-3 drive trace_estimate_init!/evidence_estimate!/lanczos_bidiag!, and
 #     consume the Xoshiro(iseed) stream.
-#   - mackay_alpha / ritz_alpha select alternative alpha-update strategies. ritz_alpha
-#     needs Ritz pairs from evidence_estimate!, so it only makes sense with method 1-3.
+#   - mackay_alpha selects the MacKay fixed-point alpha update, which reads omega rather
+#     than the Good estimate and so works with any method.
 #
 # A case that errors is recorded as such rather than skipped: preserving an existing
 # failure is still a regression signal.
@@ -55,8 +55,8 @@ const BSMEM_CASES = (
      kw = (; method = [3, 1, 1, 2], maxiter = 20, nrand = 10, iseed = 0)),
     (name = "mono_mackay", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
      kw = (; method = [4, 1, 1, 2], maxiter = 30, mackay_alpha = true)),
-    (name = "mono_ritz", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
-     kw = (; method = [2, 1, 1, 2], maxiter = 20, nrand = 10, iseed = 0, ritz_alpha = true)),
+    (name = "mono_method2_nrand10", file = joinpath("BC2004", "2004-data1.oifits"), nx = 64, pixsize = 0.2, nwav = 1,
+     kw = (; method = [2, 1, 1, 2], maxiter = 20, nrand = 10, iseed = 0)),
     (name = "poly_object1n", file = joinpath("BC2026", "OBJECT1_N.oifits"), nx = 32, pixsize = 0.5, nwav = 4,
      kw = (; method = [4, 1, 1, 2], maxiter = 15)),
 )

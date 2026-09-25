@@ -26,11 +26,8 @@ const _MEM = OITOOLS
             @test length(getfield(s, f)) == 11
             @test eltype(getfield(s, f)) === T
         end
-        # ritz_* stay Float64: they belong to the evidence/Ritz island.
-        @test eltype(s.ritz_λ) === Float64
-        @test eltype(s.ritz_w) === Float64
         # Fails if a field is added without updating the groups above or the constructor.
-        @test length(_MEM._MES_HID_FIELDS) + length(_MEM._MES_DAT_FIELDS) + 2 ==
+        @test length(_MEM._MES_HID_FIELDS) + length(_MEM._MES_DAT_FIELDS) ==
               fieldcount(_MEM.MaximENTState)
     end
     @test eltype(_MEM.MaximENTState(7, 11).h) === Float64  # back-compat default

@@ -97,7 +97,6 @@ mutable struct MaximENTParams
     methd2 ::Int    # Likelihood type
     mackay_alpha ::Bool    # Use MacKay fixed-point alpha update when true
     mackay_damp  ::Float64  # Damping exponent for MacKay update (0 < damp ≤ 1)
-    ritz_alpha   ::Bool     # Use Ritz-value-based alpha update when true
     # Counters
     nrand  ::Int    # Random vectors for evidence
     iseed  ::Int    # RNG seed
@@ -130,13 +129,12 @@ function MaximENTParams(;
         utol  ::Float64      = 0.1,
         alpha        ::Float64      = 1.0,
         mackay_alpha ::Bool         = false,
-        mackay_damp  ::Float64      = 0.5,
-        ritz_alpha   ::Bool         = false)
+        mackay_damp  ::Float64      = 0.5)
     tol = _tol()   # Float64 by design — see `_tol`
     rng = Xoshiro(iseed)
     MaximENTParams(
         methd[1], methd[2], methd[3],
-        mackay_alpha, mackay_damp, ritz_alpha,
+        mackay_alpha, mackay_damp,
         nrand, iseed, 0, 0, 0,
         aim, rate, utol, tol, alpha, 1.0, 1.0e20,
         zeros(NSIZE), zeros(NSIZE), fill(EPS, NSIZE),
@@ -163,8 +161,7 @@ Areas correspond to the internal numbering convention:
 `nhid = nx²·nwav` runs to millions of elements, so `Float32` halves the memory traffic
 of the BLAS-1-heavy CG. Note that **reductions over these arrays still accumulate in
 Float64** (see `_dot64`/`_sum64`): at poly scale a Float32-accumulated `dot` carries ~23×
-more error than the CG breakdown threshold. `ritz_λ`/`ritz_w` stay Float64 — they are
-part of the Float64 evidence/Ritz island and are at most `nrand × LMAX` elements.
+more error than the CG breakdown threshold.
 """
 mutable struct MaximENTState{T<:AbstractFloat}
     sqrt_metric ::Vector{T}  # <1>  √[metric]
@@ -183,8 +180,6 @@ mutable struct MaximENTState{T<:AbstractFloat}
     d_w4        ::Vector{T}  # <27>
     d_w5        ::Vector{T}  # <28>
     d_w6        ::Vector{T}  #      scratch for _apply_adj! / _compute_gradient! ([acc]·in_d)
-    ritz_λ      ::Vector{Float64}  # Ritz eigenvalues (lower bidiagonal SVD²) — Float64 island
-    ritz_w      ::Vector{Float64}  # Ritz weights (projection × x0sq × trial wt) — Float64 island
 end
 
 # Field groups, also used by the constructor shape test. Keep in sync with the struct;
@@ -197,8 +192,7 @@ function MaximENTState{T}(nhid::Int, ndat::Int) where {T<:AbstractFloat}
     D() = zeros(T, ndat)   # data, acc_vec, d_w1, residuals, d_w2, d_w3, d_w4, d_w5, d_w6
     MaximENTState{T}(
         H(), H(), H(), H(), H(), H(), H(),
-        D(), D(), D(), D(), D(), D(), D(), D(), D(),
-        Float64[], Float64[]
+        D(), D(), D(), D(), D(), D(), D(), D(), D()
     )
 end
 
@@ -1058,9 +1052,6 @@ function evidence_estimate!(s::MaximENTState, p::MaximENTParams, alpha::Float64,
     # Workspace for lower-bound trace accumulation only
     tol2 = sqrt(p.tol)
 
-    ritz_λ_all = Float64[]
-    ritz_w_all = Float64[]
-
     for i in 1:p.nrand
         # Generate random sign vector in area <26>
         random_vector!(s, p, w26, 0)
@@ -1091,9 +1082,6 @@ function evidence_estimate!(s::MaximENTState, p::MaximENTParams, alpha::Float64,
             goodlo *= x0sq;  detllo *= x0sq
             goodev  = 2x0sq * goodev
             detdev  = 2x0sq * detdev
-            # Accumulate Ritz pairs now that x0sq and w are both known
-            append!(ritz_λ_all, λlo[1:M])
-            append!(ritz_w_all, x0sq .* Ulo[1, 1:M] .^ 2 .* w)
         end
 
         # ── Upper bound: augmented bidiagonal with trace-cap tail ──
@@ -1125,9 +1113,8 @@ function evidence_estimate!(s::MaximENTState, p::MaximENTParams, alpha::Float64,
     if weight > 0
         glow  /= weight; ghigh /= weight; gdev = sqrt(gdev) / weight
         dlow  /= weight; dhigh /= weight; ddev = sqrt(ddev) / weight
-        ritz_w_all ./= weight
     end
-    return glow, ghigh, gdev, dlow, dhigh, ddev, lcodeg, ritz_λ_all, ritz_w_all
+    return glow, ghigh, gdev, dlow, dhigh, ddev, lcodeg
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1201,10 +1188,8 @@ function maxent_scalars!(s::MaximENTState, p::MaximENTParams, memrun::Int,
         if memrun == 1
             alfgd = trace_estimate_init!(s, p, linfwd!, linadj!)
         else
-            glow, ghigh, gdev, dlow, dhigh, ddev, lcodeg, rλ, rw =
+            glow, ghigh, gdev, dlow, dhigh, ddev, lcodeg =
                 evidence_estimate!(s, p, p.alpha, p.utol, linfwd!, linadj!)
-            s.ritz_λ = rλ
-            s.ritz_w = rw
             lcodeh = p.hhigh / (p.scale^2) <= p.utol * glow
         end
 
@@ -1250,51 +1235,6 @@ function maxent_scalars!(s::MaximENTState, p::MaximENTParams, memrun::Int,
             lcodeh=lcodeh, lcodeo=lcodeo, lcodet=lcodet, lcodeg=lcodeg,
             plow=plow, phigh=phigh, pdev=pdev,
             glow=glow, ghigh=ghigh, gdev=gdev, alhood=alhood)
-end
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Ritz-value-based MacKay alpha update  (ritz_alpha path)
-#
-# Uses cached Ritz pairs (s.ritz_λ, s.ritz_w) from the last evidence_estimate! call to
-# solve the MacKay fixed-point equation
-#
-#   Good(α) = −2αS / (scale²·aim)
-#
-# via bisection, without any new operator calls.  The lower-bound Good estimate
-# is  Good(α) ≈ Σⱼ ritz_w[j] / (α + ritz_λ[j]).
-#
-# Returns true when |log α_new − log α_old| ≤ utol.
-# ─────────────────────────────────────────────────────────────────────────────
-function ritz_alpha_update!(p::MaximENTParams, s::MaximENTState, S::Float64)
-    isempty(s.ritz_λ) && return true   # no Ritz data yet
-    abs(S) < EPS      && return true   # entropy ≈ 0, can't solve
-
-    # Lower-bound Good as function of α
-    good(α) = sum(w / (α + λ) for (w, λ) in zip(s.ritz_w, s.ritz_λ))
-    rhs(α)  = -2.0 * α * S / (p.scale^2 * p.aim)
-    f(α)    = good(α) - rhs(α)
-
-    # Bisect: f decreases monotonically (Good↓, rhs↑), unique root
-    α_lo = EPS
-    α_hi = maximum(s.ritz_λ) * 1.0e8
-    # Extend upper bracket if needed
-    f_hi = f(α_hi)
-    while f_hi >= 0.0
-        α_hi *= 1.0e4
-        f_hi  = f(α_hi)
-        α_hi > 1.0e40 && break
-    end
-    f(α_lo) <= 0.0 && return true   # degenerate: Good ≤ rhs even at α ≈ 0
-
-    for _ in 1:64
-        α_mid = sqrt(α_lo * α_hi)
-        f(α_mid) > 0.0 ? (α_lo = α_mid) : (α_hi = α_mid)
-        (α_hi / max(α_lo, EPS) - 1.0) < 1.0e-6 && break
-    end
-
-    α_old   = p.alpha
-    p.alpha = sqrt(α_lo * α_hi)
-    return abs(log(p.alpha) - log(α_old)) <= p.utol
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1352,8 +1292,6 @@ function maxent_step!(s::MaximENTState, p::MaximENTParams, memrun::Int,
         # ── Alpha control ──
         if memrun == 1
             lcode3 = alpha_init!(p, st.summet, st.gradl, omega, st.var)
-        elseif p.ritz_alpha
-            lcode3 = ritz_alpha_update!(p, s, st.S)
         elseif p.mackay_alpha
             lcode3 = mackay_alpha_update!(p, st.omega; damp=p.mackay_damp)
         elseif memrun == 2

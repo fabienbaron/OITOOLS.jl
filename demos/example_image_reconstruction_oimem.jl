@@ -20,7 +20,6 @@ x = reconstruct_bsmem(prior, data[1], ft[1];
                        flux_err     = flux_err,
                        nrand        = 10,
                        #mackay_alpha = true,  # MacKay fixed-point α update
-                       #ritz_alpha   = true,  # Ritz-value bisection α update
                        )
 imdisp(x; pixsize)
 outfile = replace(oifitsfile, r"\.oifits?$"i => "_oimem.fits")

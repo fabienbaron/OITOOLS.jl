@@ -480,7 +480,7 @@ end
                 aim=1.0, rate=1.0, utol=0.1, alpha=1.0,
                 biserrtype=:full,
                 force_extrapolate=false,
-                mackay_alpha=false, ritz_alpha=false)
+                mackay_alpha=false)
     → (ctx::ImagingContext, s::MaximENTState, p::MaximENTParams)
 
 Build everything needed for `maxent_reconstruct!` in a single call.
@@ -508,7 +508,6 @@ function maxent_setup(data,
                      force_extrapolate :: Bool   = false,
                      flux_err          :: Float64 = 0.01,
                      mackay_alpha      :: Bool    = false,
-                     ritz_alpha        :: Bool    = false,
                      verbose     :: Bool        = true,
                      T           :: Type{<:AbstractFloat} = Float64,
                      fftflags    = FFT_FLAGS)
@@ -518,7 +517,7 @@ function maxent_setup(data,
     ndat = ctx.npow + 2 * ctx.nbis
 
     s = MaximENTState{T}(npix, ndat)
-    p = MaximENTParams(; methd, nrand, iseed, aim, rate, utol, alpha, mackay_alpha, ritz_alpha)
+    p = MaximENTParams(; methd, nrand, iseed, aim, rate, utol, alpha, mackay_alpha)
 
     model = if isnothing(prior_image)
         fill(1.0 / npix, npix)
@@ -612,7 +611,7 @@ Maximum Entropy image reconstruction using power spectra (V²) and closure
 phases (T3φ), with the same calling convention as `reconstruct`.
 
 The MaximENT solver itself always runs in `Float64` — it builds its own NFFT plan,
-and its entropy, Ritz-value and trust-region steps are precision-sensitive — but the
+and its entropy and trust-region steps are precision-sensitive — but the
 image is returned at the precision of `ft`, so it composes with the rest of the
 pipeline (`Float32` by default).
 
@@ -656,7 +655,6 @@ are inferred from the OITOOLS NFFT plan `ft`; you do not need to call
 - `nrand` — number of random probe vectors for evidence estimation. Default: `10`.
 - `aim`, `rate`, `utol`, `alpha` — MaximENT convergence parameters.
 - `mackay_alpha` — use MacKay fixed-point α update. Default: `false`.
-- `ritz_alpha` — use Ritz-value bisection α update. Default: `false`.
 
 # Example
 
@@ -691,7 +689,6 @@ function reconstruct_bsmem(x_start, data::OIdata, ft;
                             utol   :: Float64 = 0.1,
                             alpha        :: Float64 = 1.0,
                             mackay_alpha :: Bool    = false,
-                            ritz_alpha   :: Bool    = false,
                             fftflags               = FFT_FLAGS,
                             history :: Union{Nothing,Vector} = nothing)
 
@@ -720,7 +717,7 @@ function reconstruct_bsmem(x_start, data::OIdata, ft;
     # readoifits does); the MaximENT solver itself stays Float64 either way.
     ctx, s, p = maxent_setup(data, nx, pixsize, prior_image;
                              methd=methd_vec, nrand, iseed, aim, rate, utol, alpha,
-                             biserrtype, force_extrapolate, flux_err, mackay_alpha, ritz_alpha,
+                             biserrtype, force_extrapolate, flux_err, mackay_alpha,
                              verbose, T = ft_eltype(ft), fftflags)
 
     # The solver is Float64 throughout; hand the image back at the caller's precision.
@@ -868,7 +865,6 @@ function maxent_setup_poly(data_channels::AbstractVector,
                            force_extrapolate :: Bool   = false,
                            flux_err          :: Float64 = 0.01,
                            mackay_alpha      :: Bool    = false,
-                           ritz_alpha        :: Bool    = false,
                            T           :: Type{<:AbstractFloat} = Float64,
                            fftflags    = FFT_FLAGS)
     nwav = length(data_channels)
@@ -880,7 +876,7 @@ function maxent_setup_poly(data_channels::AbstractVector,
 
     s = MaximENTState{T}(nhid, ndat)
     p = MaximENTParams(; methd, nrand, iseed, aim, rate, utol, alpha,
-                         mackay_alpha, ritz_alpha)
+                         mackay_alpha)
 
     # Build prior model: per-channel unit-flux normalisation
     model = if isnothing(prior_cube)
@@ -968,7 +964,6 @@ function reconstruct_bsmem(x_start::AbstractArray{<:AbstractFloat,3},
                            utol   :: Float64 = 0.1,
                            alpha        :: Float64 = 1.0,
                            mackay_alpha :: Bool    = false,
-                           ritz_alpha   :: Bool    = false,
                            fftflags               = FFT_FLAGS,
                            history :: Union{Nothing,Vector} = nothing)
 
@@ -997,7 +992,7 @@ function reconstruct_bsmem(x_start::AbstractArray{<:AbstractFloat,3},
     pctx, s, p = maxent_setup_poly(data_channels, nx, pixsize, prior_cube;
                                    methd=methd_vec, nrand, iseed, aim, rate, utol, alpha,
                                    biserrtype, force_extrapolate, flux_err,
-                                   mackay_alpha, ritz_alpha,
+                                   mackay_alpha,
                                    T = ft_eltype(ft_channels), fftflags)
 
     # The solver is Float64 throughout; hand the cube back at the caller's precision.

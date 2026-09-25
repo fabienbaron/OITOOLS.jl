@@ -40,13 +40,16 @@ The `method` keyword maps to the MaximENT `methd` parameter:
 
 ## α-update strategies
 
-By default the Skilling evidence maximisation sets α automatically.  Two
-alternatives are available:
+By default the Skilling evidence maximisation sets α automatically.  One
+alternative is available:
 
 ```julia
 reconstruct_bsmem(...; mackay_alpha=true)   # MacKay fixed-point update
-reconstruct_bsmem(...; ritz_alpha=true)     # Ritz-value bisection
 ```
+
+MacKay's update reads ω directly, so the `Good` estimate cancels between its
+numerator and denominator — which matters because that estimate is poor: against
+the exact trace it is ~500x too small at the α these runs choose.
 
 ## Pixel size helper
 
