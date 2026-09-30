@@ -2,9 +2,14 @@
 # Transcribed from ASPRO 2's aspro-conf CHARA.xml, instrument SPICA, setup SPICA_SETUP.
 name = "SPICA"
 
-# ASPRO: tinst * toa = ( 0.017*(0.95^4)*0.8*0.6 ) * 0.8. The 0.6 is the detector QE, which is
-# why quantum_efficiency below is 1.0 (ASPRO leaves <quantumEfficiency> unset, default 1.0).
-transmission = 0.00531710
+# aspro-conf gives 0.00531710 = tinst * toa = ( 0.017*(0.95^4)*0.8*0.6 ) * 0.8. The 0.6 is the
+# detector QE, which is why quantum_efficiency below is 1.0 (ASPRO leaves <quantumEfficiency>
+# unset, default 1.0).
+#
+# That figure also carries the band-mean atmospheric transmission, which `ConfigurationManager`
+# divides out by 0.9333 before the noise model sees it; the corrected value is what ASPRO runs
+# on and what is written here. See MIRCX.toml for the mechanism.
+transmission = 0.00569739
 instrument_visibility = 0.8
 
 dit = 0.02                # 20 ms
@@ -21,12 +26,33 @@ flux_frac_photometry = 0.20
 vis_cal_err = 0.01
 phase_cal_err = 1.0
 
-# NOTE: ASPRO marks SPICA as requiring the FT_SPICA fringe tracker, which lets it integrate
-# far longer than `dit`. That is not modelled here, so faint-end SPICA predictions are
-# pessimistic relative to ASPRO.
+# ASPRO marks SPICA as REQUIRING its fringe tracker
+# (<fringeTrackerRequired>true</fringeTrackerRequired>) and its GUI does not offer "None" for
+# such an instrument, so a SPICA prediction without one describes a configuration no observer
+# can select. `predict_errors` and `simulate` engage it by default; pass
+# `fringe_tracker=false` for the untracked case.
+#
+# With it engaged, our sigma(V2) over ASPRO 2 26.09's is 1.00 at R = 4, 1.02 at R = 6, 1.06 at
+# R = 8 and 1.16 at R = 10, the residual being the telluric and zero-point differences recorded
+# in TODO.md. Without it the same comparison reads 1.79 and 7.15 at R = 8 and 10, which is the
+# size of the effect. MIRC-X and MYSTIC declare no tracker at all, so they are unaffected.
 
 # ASPRO's NoiseService ignores the AO model for SPICA and hardcodes the Strehl at
 # 0.25 (seeing <= 0.7"), 0.15 (<= 1.0"), 0.10 otherwise. Set strehl_model = "ao" to use the
 # physical AO model instead, which gives ~0.28 at 1" and matches ASPRO's own published
 # Strehl plots — ASPRO is internally inconsistent here.
 strehl_model = "fixed_spica"
+
+# FT_SPICA, transcribed from aspro-conf CHARA.xml. Co-phasing lets SPICA integrate to 0.2 s
+# against the 20 ms `dit` above, which is worth a factor 4.9 in sigma(V2) at R = 10; the 0.8 is
+# the tracker's own visibility loss, and it applies whether or not the longer integration does.
+# The limit is an H magnitude for an instrument working at 0.6-0.9 um, so a SPICA prediction
+# needs an H magnitude in `mag` -- without one the tracker cannot be shown to be within its
+# limit and stays disengaged.
+[fringe_tracker]
+name = "FT_SPICA"
+band = "H"
+mag_limit = 10.0
+max_integration = 0.2
+instrument_visibility = 0.8
+mode = "FringeTrack"

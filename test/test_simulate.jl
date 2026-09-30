@@ -148,6 +148,91 @@ _ud(d) = dict_to_model(Dict{String,Any}("star,ud"=>d, "star,f"=>1.0), String[])
         @test 0.75 < std(zc) < 1.25
     end
 
+    @testset "the generating model scores chi2r = 1 against the data it generated" begin
+        # Part 12.1's identity, and the strongest cheap statement available: simulate from a
+        # known model, then score THAT model against the data it produced. It exercises the
+        # photon budget, the error bars, the noise draw and the observable bookkeeping at
+        # once, needs no optimiser, and no threshold below is a golden number.
+        #
+        # The regimes differ in what sets the spread, so the tolerance has to:
+        #
+        #   faint  — statistical noise dominates, every point is an independent draw, so
+        #            ndof is the point count and chi2r sits within a few sqrt(2/npoints).
+        #   bright — the calibration systematic dominates, and it is drawn ONCE per baseline
+        #            per night. The independent draws are then the 15 baselines and the 20
+        #            triangles, not the 990 and 1320 points, so the band is ~8x wider. A test
+        #            that used the point count here would flake immediately.
+        f, t, c, w, dates = _setup(nep=5)
+        m = _ud(2.5)
+        nseed = 6
+        for (mag, statistical) in ((8.0, true), (2.0, false))
+            truth = joinpath(_TMP, "id_truth_$(mag).oifits")
+            simulate(f, t, c, w, dates, truth; flat_model=m, flat_params=Float64[],
+                     mag=mag, noise=false)
+            d0 = readoifits(truth; T=Float64, filter_bad_data=false)[1,1]
+            cv, cc = Float64[], Float64[]
+            for seed in 1:nseed
+                o = joinpath(_TMP, "id_$(mag)_$(seed).oifits")
+                simulate(f, t, c, w, dates, o; flat_model=m, flat_params=Float64[],
+                         mag=mag, seed=seed)
+                d1 = readoifits(o; T=Float64, filter_bad_data=false)[1,1]
+                zv = (d1.v2 .- d0.v2) ./ d1.v2_err
+                zc = d1.t3phi .- d0.t3phi
+                zc .= zc .- 360 .* round.(zc ./ 360)      # the branch cut
+                zc ./= d1.t3phi_err
+                push!(cv, mean(abs2, zv)); push!(cc, mean(abs2, zc))
+            end
+            # independent draws behind each observable, hence the width of the band
+            nv2_eff = statistical ? length(d0.v2)    : 15
+            nt3_eff = statistical ? length(d0.t3phi) : 20
+            @test abs(mean(cv) - 1) < 4 * sqrt(2 / nv2_eff) / sqrt(nseed)
+            @test abs(mean(cc) - 1) < 4 * sqrt(2 / nt3_eff) / sqrt(nseed)
+            # and the identity must hold per observable, not only in the total: a global 1
+            # hides V2 at 0.5 against T3phi at 1.5.
+            @test 0.3 < mean(cv) < 3.0
+            @test 0.3 < mean(cc) < 3.0
+        end
+    end
+
+    @testset "the calibration systematic is drawn, and drawn correlated" begin
+        # `vis_cal_err` in the error bar and not in the data is what makes a bright target's
+        # chi2r come out at 0.003. Switching the draw off must restore exactly that, which is
+        # what pins the systematic as the cause rather than something else in the budget.
+        f, t, c, w, dates = _setup(nep=5)
+        m = _ud(2.5)
+        truth = joinpath(_TMP, "sys_truth.oifits")
+        simulate(f, t, c, w, dates, truth; flat_model=m, flat_params=Float64[], mag=2.0, noise=false)
+        d0 = readoifits(truth; T=Float64, filter_bad_data=false)[1,1]
+        chi2r(path) = (d1 = readoifits(path; T=Float64, filter_bad_data=false)[1,1];
+                       mean(abs2, (d1.v2 .- d0.v2) ./ d1.v2_err))
+        on  = joinpath(_TMP, "sys_on.oifits");  off = joinpath(_TMP, "sys_off.oifits")
+        simulate(f, t, c, w, dates, on;  flat_model=m, flat_params=Float64[], mag=2.0, seed=5)
+        simulate(f, t, c, w, dates, off; flat_model=m, flat_params=Float64[], mag=2.0, seed=5,
+                 systematics=false)
+        @test chi2r(off) < 0.5            # error bar carries a floor the data does not
+        @test chi2r(on) > 2 * chi2r(off)
+
+        # Correlated, not per point: every point of one baseline shares one draw, so the ratio
+        # to the truth varies far less within a baseline than between baselines. Measured on a
+        # BARELY RESOLVED source at mag 0, where the gain is nearly the whole residual — on a
+        # resolved disc photon noise is comparable to the gain and the ratio means nothing.
+        # Measured there over 5 seeds: 0.014 to 0.032, against 0.16 to 0.34 on the 2.5 mas
+        # disc above, so the threshold separates the two regimes with room to spare.
+        pt  = _ud(0.5)
+        ptt = joinpath(_TMP, "sys_pt_truth.oifits"); pto = joinpath(_TMP, "sys_pt.oifits")
+        simulate(f, t, c, w, dates, ptt; flat_model=pt, flat_params=Float64[], mag=0.0, noise=false)
+        simulate(f, t, c, w, dates, pto; flat_model=pt, flat_params=Float64[], mag=0.0, seed=5)
+        p0 = readoifits(ptt; T=Float64, filter_bad_data=false)[1,1]
+        p1 = readoifits(pto; T=Float64, filter_bad_data=false)[1,1]
+        ok  = abs.(p0.v2) .> 0.05
+        r   = p1.v2[ok] ./ p0.v2[ok]
+        key = [Tuple(sort(p1.v2_sta_index[:, i])) for i in findall(ok)]
+        within = maximum(maximum(r[key .== [k]]) - minimum(r[key .== [k]])
+                         for k in unique(key))
+        @test length(unique(key)) == 15            # all baselines represented
+        @test within < 0.15 * (maximum(r) - minimum(r))
+    end
+
     @testset "reproducibility" begin
         f, t, c, w, dates = _setup(nep=3)
         m = _ud(2.0)

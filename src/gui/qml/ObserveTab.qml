@@ -112,6 +112,13 @@ Item {
     property real   simMagAO:    2.0
     property bool   simNoise:    true
     property bool   simDebias:   true
+    // The calibration error drawn correlated per baseline per night. Untick it and the written
+    // error bars still carry the calibration floor while the data does not, so a fit to a
+    // bright simulated target reports a chi2r far below 1.
+    property bool   simSystematics: true
+    // Engages a fringe tracker on an instrument that declares one. Only SPICA does at CHARA,
+    // and ASPRO requires it there, so this is on by default and inert elsewhere.
+    property bool   simFringeTracker: true
     property int    simNSamples: 100
     // Seeded by default. An unseeded run cannot be reproduced by the exported script, which is
     // the one guarantee the command log makes.
@@ -309,6 +316,8 @@ Item {
         } else {
             put("mag", simMag); put("mag_ao", simMagAO)
             put("debias", simDebias ? 1 : 0)
+            put("systematics", simSystematics ? 1 : 0)
+            put("fringe_tracker", simFringeTracker ? 1 : 0)
             put("n_samples", simNSamples)
             put("observability", simObservability ? 1 : 0)
             put("alt_limit", altLimit); put("alt_max", altMax)
@@ -1683,6 +1692,32 @@ Item {
                         // ignores debias without noise anyway (`if noise && debias`).
                         checked: root.simDebias
                         onToggled: root.simDebias = checked
+                    }
+                    CheckBox {
+                        id: systematicsBox
+                        text: "systematics"
+                        // Like debias, this only means something once there is noise to draw.
+                        enabled: root.simNoise
+                        checked: root.simSystematics
+                        onToggled: root.simSystematics = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Draw the calibration error correlated per baseline per " +
+                                      "night, rather than leaving it in the error bars only. " +
+                                      "Without it a bright target's data has far less scatter " +
+                                      "than its own error bars claim."
+                    }
+                    CheckBox {
+                        id: ftBox
+                        text: "fringe tracker"
+                        // NOT gated on noise: a tracker changes the integration time, so it
+                        // moves the written error bars whether or not a realisation is drawn.
+                        checked: root.simFringeTracker
+                        onToggled: root.simFringeTracker = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Co-phase with the instrument's fringe tracker, which " +
+                                      "integrates longer at the cost of the tracker's own " +
+                                      "visibility loss. Only SPICA declares one at CHARA, and " +
+                                      "ASPRO requires it there; inert for other combiners."
                     }
                     Label { text: "n_samples"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                     SpinBox {

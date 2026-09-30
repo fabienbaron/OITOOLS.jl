@@ -98,6 +98,18 @@ Base.@kwdef mutable struct CombinerConfig
     #               published Strehl plots use the AO model, so the two disagree; this exists
     #               to reproduce ASPRO's *noise*.
     strehl_model::String            = "ao"
+    # Fringe tracker. An instrument that has one co-phases the array and can then integrate far
+    # longer than `dit`, at the cost of the tracker's own visibility loss. `ft_band` empty means
+    # no tracker; it is the band the TRACKER guides in, which need not be the science band --
+    # FT_SPICA guides in H for an instrument working at 0.6-0.9 um, so a SPICA prediction needs
+    # an H magnitude. `ft_mode` is "FringeTrack" (co-phasing, extends the integration) or
+    # "GroupTrack" (holds the fringe envelope only: the visibility loss applies, the longer
+    # integration does not).
+    ft_band::String                 = ""
+    ft_mag_limit::Float64           = Inf
+    ft_max_dit::Float64             = 0.0
+    ft_visibility::Float64          = 1.0
+    ft_mode::String                 = "FringeTrack"
 end
 
 Base.@kwdef mutable struct WaveConfig
@@ -241,6 +253,11 @@ function _read_combiner_toml(path)
         vis_cal_err          = vis_cal,
         phase_cal_err        = Float64(get(d, "phase_cal_err", 1.0)),
         strehl_model         = String(get(d, "strehl_model", "ao")),
+        ft_band       = String(get(get(d, "fringe_tracker", Dict{String,Any}()), "band", "")),
+        ft_mag_limit  = Float64(get(get(d, "fringe_tracker", Dict{String,Any}()), "mag_limit", Inf)),
+        ft_max_dit    = Float64(get(get(d, "fringe_tracker", Dict{String,Any}()), "max_integration", 0.0)),
+        ft_visibility = Float64(get(get(d, "fringe_tracker", Dict{String,Any}()), "instrument_visibility", 1.0)),
+        ft_mode       = String(get(get(d, "fringe_tracker", Dict{String,Any}()), "mode", "FringeTrack")),
     )
 end
 
@@ -418,9 +435,23 @@ function list_configs(dir::AbstractString = _configs_dir())
 end
 
 
+# The magnitude in the fringe tracker's own band. `resolve_magnitudes` is the general path and
+# handles a Dict, a per-channel vector or a scalar; evaluating it at the band centre is what the
+# tracker's magnitude limit is quoted against.
+function _ft_magnitude(mag, combiner::CombinerConfig)
+    isempty(combiner.ft_band) && return nothing
+    b = band_by_name(combiner.ft_band)
+    b === nothing && return nothing
+    try
+        return resolve_magnitudes(mag, [b.lambda])[1]
+    catch
+        return nothing          # a per-channel vector cannot be evaluated off its own grid
+    end
+end
+
 """
     predict_errors(facility, combiner, wavelength; mag, visamp=1.0, elevation_deg=90.0,
-                   mag_ao=nothing, channel=nothing) -> NamedTuple
+                   mag_ao=nothing, fringe_tracker=true) -> NamedTuple
 
 Predicted per-channel uncertainties for one setup, **without running a simulation or writing
 a file**.
@@ -435,7 +466,7 @@ Returns, one entry per spectral channel of `wavelength`:
 |---|---|
 | `λ`, `δλ` | channel centre and width, m |
 | `strehl` | coupling efficiency actually used |
-| `dit` | integration time per frame, s (possibly shortened for saturation) |
+| `dit` | integration time per frame, s — shortened for saturation, or LENGTHENED to the fringe tracker's coherent limit when one is engaged |
 | `nframes` | frames coadded |
 | `nphot` | photons per telescope per DIT, fringe channel |
 | `sigma_v2` | σ(V²), including the `vis_cal_err` systematic |
@@ -447,13 +478,19 @@ Returns, one entry per spectral channel of `wavelength`:
 value per channel. `visamp` is the visibility amplitude at which to evaluate the errors —
 errors depend on it, so the default of 1.0 gives the unresolved (best) case.
 
+`fringe_tracker` engages the combiner's tracker if it declares one, which is what ASPRO does
+for an instrument that requires one. The tracker guides in its OWN band, so `mag` has to carry
+that band for the limit to be testable: SPICA works at 0.6-0.9 µm and FT_SPICA guides in H, so
+a `Dict` with only an R magnitude leaves the tracker disengaged. See
+[`fringe_tracker_state`](@ref).
+
 Mirrors `simulate`'s internals exactly; see `demos/validate_noise_model.jl`, which checks
 this model against ASPRO 2's published curves.
 """
 function predict_errors(facility::FacilityConfig, combiner::CombinerConfig,
                         wavelength::WaveConfig;
                         mag = 2.0, visamp::Real = 1.0, elevation_deg::Real = 90.0,
-                        mag_ao::Union{Nothing,Real} = nothing)
+                        mag_ao::Union{Nothing,Real} = nothing, fringe_tracker::Bool = true)
     λ, δλ = wavelength.λ, wavelength.δλ
     nw    = length(λ)
     nw > 0 || throw(ArgumentError("wavelength config has no channels"))
@@ -461,14 +498,19 @@ function predict_errors(facility::FacilityConfig, combiner::CombinerConfig,
     m_ao  = mag_ao === nothing ? _default_mag_ao(mags, λ, facility) : Float64(mag_ao)
     elev  = [Float64(elevation_deg)]
 
-    N,  dit, nframes = photons_per_telescope(mags, λ, δλ, facility, combiner, elev, m_ao;
-                                             channel = :fringes)
-    Np, _,   _       = photons_per_telescope(mags, λ, δλ, facility, combiner, elev, m_ao;
-                                             channel = :photometry)
+    # The tracker guides in its own band, so it needs that band's magnitude out of `mag`.
+    ftm = _ft_magnitude(mag, combiner)
+    N,  dit, nframes, ft = photons_per_telescope(mags, λ, δλ, facility, combiner, elev, m_ao;
+                                                 channel = :fringes, ft_mag = ftm,
+                                                 use_ft = fringe_tracker)
+    Np, _,   _,       _  = photons_per_telescope(mags, λ, δλ, facility, combiner, elev, m_ao;
+                                                 channel = :photometry, ft_mag = ftm,
+                                                 use_ft = fringe_tracker)
 
     ntel  = facility.ntel
     v2st  = hcat([[i, j] for i in 1:ntel for j in (i+1):ntel]...)
-    sq, vc, vk, vp = correlated_flux_coefficients(N, Np, combiner, ntel, v2st)
+    sq, vc, vk, vp = correlated_flux_coefficients(N, Np, combiner, ntel, v2st;
+                                                  vis_factor = ft.vis_factor)
 
     strehl   = Vector{Float64}(undef, nw)
     nphot    = Vector{Float64}(undef, nw)
@@ -664,7 +706,8 @@ injection is the Strehl now, so a facility that has AO must carry an `[ao]` bloc
 be modelled as an uncorrected aperture.
 """
 function photons_per_telescope(mags, λ, δλ, facility, combiner, elevation_deg, mag_ao;
-                               channel::Symbol=:fringes, spec_weight=nothing)
+                               channel::Symbol=:fringes, spec_weight=nothing,
+                               ft_mag=nothing, use_ft::Bool=true)
     ntel   = facility.ntel
     nwavs  = length(λ)
     nhours = length(elevation_deg)
@@ -696,19 +739,57 @@ function photons_per_telescope(mags, λ, δλ, facility, combiner, elevation_deg
         end
     end
 
-    # DIT is a fixed instrument property, shortened only to avoid saturating the detector.
-    # The worst case is the peak pixel of the interferometric channel, which sees the flux of
-    # every telescope spread over nbPixInterferometry pixels.
+    # The longest exposure the detector tolerates. The worst case is the peak pixel of the
+    # interferometric channel, which sees the flux of every telescope spread over
+    # nbPixInterferometry pixels.
     peak_per_sec = combiner.flux_frac_fringes * ntel *
                    maximum(rate) / max(combiner.n_pix_fringe, 1)
     max_dit = peak_per_sec > 0 ? combiner.detector_saturation / peak_per_sec : Inf
-    DIT = min(combiner.dit, max_dit, t_total)
-    if DIT < combiner.dit
+
+    # Without a fringe tracker DIT is a fixed instrument property, shortened only to avoid
+    # saturation. With one co-phasing the array it becomes the opposite: integrate as long as
+    # the detector and the tracker's coherent limit allow. Both branches cap at `max_dit`, so
+    # saturation still wins.
+    ft = fringe_tracker_state(combiner, ft_mag, max_dit; enabled = use_ft)
+    DIT = ft.extends ? min(max_dit, t_total, combiner.ft_max_dit) :
+                       min(combiner.dit, max_dit, t_total)
+    if !ft.extends && DIT < combiner.dit
         @info "DIT shortened from $(combiner.dit) s to $(round(DIT, sigdigits=3)) s to avoid detector saturation" maxlog=1
     end
     N_frames = max(1.0, t_total / DIT)
 
-    return rate .* (DIT * flux_frac), DIT, N_frames
+    return rate .* (DIT * flux_frac), DIT, N_frames, ft
+end
+
+"""
+    fringe_tracker_state(combiner, ft_mag, max_dit; enabled=true) -> NamedTuple
+
+Whether `combiner`'s fringe tracker engages, and what it does when it does.
+
+Returns `(; engaged, extends, vis_factor)`. `engaged` means the tracker is present, permitted
+and within its magnitude limit, and it always costs `vis_factor` -- the tracker's own
+visibility loss. `extends` is the separate question of whether the integration lengthens, which
+only co-phasing ("FringeTrack") buys; "GroupTrack" pays the visibility loss without it.
+
+`ft_mag` is the target's magnitude in the TRACKER's band (`combiner.ft_band`), not the science
+band, and `nothing` means it was not supplied, in which case the tracker cannot be shown to be
+within its limit and does not engage.
+
+The three conditions are ASPRO 2's (`NoiseService.prepareParameters`): a valid tracker, a target
+brighter than its limit, and at least one frame before saturation -- a target that saturates
+inside one `dit` has nothing to gain from integrating longer.
+"""
+function fringe_tracker_state(combiner::CombinerConfig, ft_mag, max_dit; enabled::Bool = true)
+    none = (; engaged = false, extends = false, vis_factor = 1.0)
+    enabled || return none
+    isempty(combiner.ft_band) && return none
+    combiner.ft_max_dit > 0   || return none
+    ft_mag === nothing        && return none
+    Float64(ft_mag) <= combiner.ft_mag_limit || return none
+    max_dit >= combiner.dit   || return none        # nbFrameToSaturation >= 1
+    return (; engaged = true,
+              extends = !startswith(combiner.ft_mode, "GroupTrack"),
+              vis_factor = combiner.ft_visibility)
 end
 
 # ASPRO's hardcoded SPICA Strehl (NoiseService.initParameters), pending CHARA AO
@@ -738,13 +819,15 @@ The photon-noise term counts **all** telescopes feeding the interferometric chan
 the two forming the baseline — an all-in-one combiner overlaps every beam, so every beam
 contributes photon noise to every baseline.
 """
-function correlated_flux_coefficients(N_interf, N_phot, combiner, ntel, v2_stations)
+function correlated_flux_coefficients(N_interf, N_phot, combiner, ntel, v2_stations;
+                                      vis_factor::Real = 1.0)
     nv2 = size(v2_stations, 2)
     _, nhours, nwavs = size(N_interf)
     σ_ron  = combiner.read_noise
     n_pix  = combiner.n_pix_fringe
     n_pixp = combiner.n_pix_photometry
-    vinst  = combiner.instrument_visibility
+    # A fringe tracker costs its own visibility loss whenever it is engaged, co-phasing or not.
+    vinst  = combiner.instrument_visibility * vis_factor
 
     sq_coef   = zeros(nv2, nhours, nwavs)
     var_coef  = zeros(nv2, nhours, nwavs)
@@ -960,6 +1043,7 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
 
 function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,
                   noise::Bool=true, nonoise::Union{Nothing,Bool}=nothing, debias::Bool=true,
+                  systematics::Bool=true, fringe_tracker::Bool=true,
                   mag=2.0, mag_ao::Union{Nothing,Real}=nothing,
                   n_samples::Int=100, rng::Union{Nothing,AbstractRNG}=nothing, seed::Union{Nothing,Integer}=nothing,
                   observability=nothing)
@@ -1093,17 +1177,21 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         mags[1]
     end
 
-    N_interf, DIT, N_frames = photons_per_telescope(mags, λ, δλ, facility, combiner,
+    _ftm = _ft_magnitude(mag, combiner)
+    N_interf, DIT, N_frames, _ft = photons_per_telescope(mags, λ, δλ, facility, combiner,
                                                     elevation_deg, _ao_mag;
-                                                    channel=:fringes, spec_weight=spec_weight)
-    N_phot, _, _            = photons_per_telescope(mags, λ, δλ, facility, combiner,
+                                                    channel=:fringes, spec_weight=spec_weight,
+                                                    ft_mag=_ftm, use_ft=fringe_tracker)
+    N_phot, _, _, _         = photons_per_telescope(mags, λ, δλ, facility, combiner,
                                                     elevation_deg, _ao_mag;
-                                                    channel=:photometry, spec_weight=spec_weight)
+                                                    channel=:photometry, spec_weight=spec_weight,
+                                                    ft_mag=_ftm, use_ft=fringe_tracker)
 
     # Error model coefficients per (baseline, epoch, channel). Flatten to the ordering
     # simulate uses everywhere: baseline fastest, then epoch, then wavelength.
     sq_coef3, var_coef3, var_const3, v2phot3 =
-        correlated_flux_coefficients(N_interf, N_phot, combiner, ntel, v2_stations)
+        correlated_flux_coefficients(N_interf, N_phot, combiner, ntel, v2_stations;
+                                     vis_factor = _ft.vis_factor)
     sq_coef   = vec(sq_coef3)
     var_coef  = vec(var_coef3)
     var_const = vec(var_const3)
@@ -1137,8 +1225,11 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     rel_t3 = sqrt.(rel1.^2 .+ rel2.^2 .+ rel3.^2)
 
     _, t3amp_true, _ = vis_to_t3_closure(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
+    # sqrt(3), not 3: T3AMP is a product of three independently calibrated baselines, so
+    # their relative gain errors add in quadrature. Measured on ASPRO 2 26.09, whose bright
+    # T3AMPERR/T3AMP is 0.01745 against sqrt(3)*vis_cal_err = 0.01732 and 3*vis_cal_err = 0.03.
     t3amp_model_err = _with_systematics.(abs.(t3amp_true) .* rel_t3,
-                                         3 * combiner.vis_cal_err .* abs.(t3amp_true))
+                                         sqrt(3) * combiner.vis_cal_err .* abs.(t3amp_true))
     t3phi_model_err = _with_systematics.(min.((180.0/π) .* rel_t3, 180.0), combiner.phase_cal_err)
 
     # OI_FLUX: per-telescope spectrophotometry, normalised so the mean channel is 1.
@@ -1159,6 +1250,57 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         cvis_noisy = cvis_model .+ σ_cvis_full .* (randn(_rng, length(cvis_model)) .+
                                             im .* randn(_rng, length(cvis_model)))
         flux_model .+= flux_model_err .* randn(_rng, length(flux_model))
+    end
+
+    # ── The calibration systematic, drawn correlated ─────────────────────────
+    # `vis_cal_err` and `phase_cal_err` are SYSTEMATICS: they do not average down over a
+    # night and they are not independent point to point. Both failure modes are real. Put
+    # them only in the written error bar and the data does not have the scatter that error
+    # bar claims -- on a bright target the calibration floor is 100% of sigma(V2) while the
+    # scatter is 27x smaller, so a chi2 of the generating model against the data it generated
+    # reads 0.003 rather than 1. Draw them per point and a fit beats them by averaging, which
+    # is precisely what a systematic does not allow. So they are drawn, and correlated.
+    #
+    # One draw per baseline per night is what an amplitude transfer function derived from
+    # calibrator observations is, so `gain` is shared by every epoch and every channel of a
+    # baseline within one night. The two phase terms are NOT per baseline, for reasons that
+    # are properties of the observables rather than choices:
+    #
+    #   * the closure-phase bias is per TRIANGLE. A per-telescope phase cancels in a closure
+    #     by construction, so the term `phase_cal_err` describes is the non-closing one, and
+    #     that belongs to the triangle. It follows that T3PHI is no longer exactly the sum of
+    #     the three baseline phases -- which is what a non-closing bias means.
+    #   * the differential-phase bias is per CHANNEL as well, because `dphi_model` subtracts
+    #     the mean over the other channels: a bias constant in wavelength cancels identically
+    #     there, so only a chromatic one survives to be measured.
+    #
+    # A night runs local noon to local noon, so epochs either side of midnight share a draw.
+    # Note the consequence for any test: once systematics dominate, chi2r scatters by
+    # sqrt(2/nv2) and not sqrt(2/npoints), because nv2 draws set it. That IS the correlation.
+    #
+    # These draws come after the statistical noise above, so `systematics=false` leaves the
+    # random stream untouched and reproduces the uncorrelated dataset for the same seed.
+    cpbias_t3 = nothing
+    dpbias_v2 = nothing
+    if noise && systematics
+        _night(mjd) = floor(Int, mjd + facility.lon / 360 - 0.5)
+        nights   = _night.(datetime_to_mjd.(dates))
+        nid      = unique(nights)
+        night_of = [findfirst(==(n), nid) for n in nights]          # epoch -> night
+        nnights  = length(nid)
+
+        gain_bn    = 1 .+ combiner.vis_cal_err   .* randn(_rng, nuv, nnights)
+        cpbias_tn  =      combiner.phase_cal_err .* randn(_rng, nt3, nnights)
+        dpbias_bnw =      combiner.phase_cal_err .* randn(_rng, nv2, nnights, nwavs)
+
+        # uv, V2 and T3 all order their points element-fastest, then epoch, then wavelength.
+        _epoch(i, n1) = mod1(cld(i, n1), nhours)
+        gain_uv   = [gain_bn[mod1(j, nuv), night_of[_epoch(j, nuv)]] for j in eachindex(cvis_noisy)]
+        cpbias_t3 = [cpbias_tn[mod1(i, nt3), night_of[_epoch(i, nt3)]]
+                     for i in eachindex(t3_indx_1_w)]
+        dpbias_v2 = [dpbias_bnw[mod1(i, nv2), night_of[_epoch(i, nv2)],
+                                cld(i, nv2 * nhours)] for i in eachindex(v2_indx_w)]
+        cvis_noisy = cvis_noisy .* gain_uv
     end
 
     v2_model = vis_to_v2(cvis_noisy, v2_indx_w)
@@ -1186,8 +1328,10 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         zeros(length(visphi_abs))
     end
 
-    # Wrap phases into (-180, 180].
+    # Wrap phases into (-180, 180], after the calibration bias each one carries.
     _wrap180(x) = x - 360.0 * floor((x + 180.0) / 360.0)
+    cpbias_t3 === nothing || (t3phi_model = t3phi_model .+ cpbias_t3)
+    dpbias_v2 === nothing || (dphi_model  = dphi_model  .+ dpbias_v2)
     t3phi_model = _wrap180.(t3phi_model)
     dphi_model  = _wrap180.(dphi_model)
 
@@ -1220,7 +1364,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         end
         t3amp_model_err = sqrt.(t3amp_s2 ./ n_samples)
         t3phi_model_err = sqrt.(t3phi_s2 ./ n_samples)
-        t3amp_model_err = _with_systematics.(t3amp_model_err, 3 * combiner.vis_cal_err .* abs.(t3amp_true))
+        t3amp_model_err = _with_systematics.(t3amp_model_err, sqrt(3) * combiner.vis_cal_err .* abs.(t3amp_true))
         t3phi_model_err = _with_systematics.(min.(t3phi_model_err, 180.0), combiner.phase_cal_err)
     end
 

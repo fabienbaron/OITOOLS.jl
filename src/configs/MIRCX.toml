@@ -2,9 +2,22 @@
 # Transcribed from ASPRO 2's aspro-conf CHARA.xml, instrument MIRCX-MYSTIC, setup MIRCX_SETUP.
 name = "MIRCX"
 
-# End-to-end transmission: CHARA beam train + instrument, EXCLUDING quantum efficiency,
-# Strehl and atmosphere (those are applied separately). ASPRO <transmission>.
-transmission = 0.01
+# End-to-end transmission: CHARA beam train + instrument, excluding quantum efficiency,
+# Strehl and atmosphere.
+#
+# aspro-conf states <transmission>0.01</transmission>, but that number INCLUDES the band-mean
+# atmospheric transmission and ASPRO divides it out before use -- `ConfigurationManager`
+# corrects every setup whose `includeAtmosphereCorrection` is unset, and the attribute
+# defaults to TRUE, so 0.01 / 0.8219 = 0.0121671 is the figure its noise model actually runs
+# on. The 0.8219 is the mean over the whole J-to-K range, because ASPRO treats MIRCX-MYSTIC
+# as one instrument; it is the same divisor for MYSTIC.
+#
+# The value below is therefore ASPRO's corrected one, which pairs with `atm_transmission`
+# supplying the per-channel atmosphere. That hook returns 1.0 today, so the model is
+# transparent-atmosphere: right in the clean part of a band and optimistic inside a telluric
+# feature. Taking the uncorrected 0.01 instead is band-average-correct but ~20% low
+# everywhere the atmosphere is clean, which inflates sigma(V2) by 1.44x at H = 8.
+transmission = 0.0121671
 instrument_visibility = 0.9
 
 dit = 0.0028              # 2.8 ms, i.e. 350 Hz

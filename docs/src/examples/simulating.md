@@ -172,6 +172,8 @@ first and used to weight the photon count per channel and to fill `OI_FLUX`.
 | `mag_ao` | from `mag` | guide-star magnitude in the AO wavefront-sensor band |
 | `noise` | `true` | add noise; `false` writes the model with its computed error bars |
 | `debias` | `true` | subtract the `2σ²` bias from `V²`, as a real pipeline does |
+| `systematics` | `true` | draw the calibration error, correlated per baseline per night (see below) |
+| `fringe_tracker` | `true` | engage the instrument's fringe tracker, if it declares one |
 | `n_samples` | `100` | Monte-Carlo samples for the T3 error bars; `0` uses the analytic form |
 | `seed` / `rng` | `nothing` | make the realisation reproducible |
 | `observability` | `nothing` | opt-in observability filtering, see below |
@@ -188,6 +190,7 @@ N = F0(λ) · 10^(-m(λ)/2.5) · A_tel · δλ · DIT
     · T_atm(λ)             atmospheric transmission (`atm_transmission`, 1.0 by default)
     · facility.throughput  telescopes and beam train only
     · combiner.transmission   end-to-end: array + instrument, excluding QE/Strehl/atmosphere
+                              (note the atmosphere caveat under "Matching ASPRO")
     · flux_frac            split between interferometric and photometric channels
     · QE
     · S(λ, elevation, m_ao)   Strehl ratio
@@ -201,7 +204,7 @@ for field from ASPRO 2's `aspro-conf/…/CHARA.xml`, and `CombinerConfig` mirror
 
 | ASPRO XML | `CombinerConfig` | note |
 |---|---|---|
-| `transmission` | `transmission` | array **and** instrument, excluding QE/Strehl/atmosphere |
+| `transmission` | `transmission` | array **and** instrument — but **not** the XML number, see below |
 | `instrumentVisibility` | `instrument_visibility` | |
 | `dit` | `dit` | fixed; shortened only to avoid saturation |
 | `defaultTotalIntegrationTime` | `total_int_time` | |
@@ -214,14 +217,53 @@ for field from ASPRO 2's `aspro-conf/…/CHARA.xml`, and `CombinerConfig` mirror
 
 Because `transmission` is end-to-end, `FacilityConfig.throughput` is 1.0 for CHARA.
 
-Two places where ASPRO cannot be reproduced exactly:
+!!! warning "aspro-conf's `<transmission>` is not the number ASPRO uses"
+    `ConfigurationManager` divides every instrument setup's transmission by the **band-mean
+    atmospheric transmission** before the noise model sees it, because the configured figure
+    already includes the atmosphere and ASPRO applies a per-channel atmosphere separately. The
+    flag controlling this, `includeAtmosphereCorrection`, **defaults to true** and no CHARA
+    setup overrides it. So MIRC-X's `<transmission>0.01</transmission>` becomes
+    `0.01 / 0.8219 = 0.0121671`, and that corrected value is what the configs here store. The
+    divisor is the mean over MIRCX-MYSTIC's whole J-to-K range, since ASPRO treats the two as
+    one instrument, so MYSTIC in K carries a divisor set partly by J; SPICA's is 0.9333.
+
+    Transcribing the literal XML value instead leaves the throughput ~20% low wherever the sky
+    is clean, which is invisible on a bright target and inflates σ(V²) by 1.44× at H = 8.
+
+Where the two still differ:
 
 - **SPICA's Strehl.** ASPRO's `NoiseService` ignores the AO model for SPICA and hardcodes
   0.25 / 0.15 / 0.10 by seeing, even though its own published Strehl plots use the AO model —
   ASPRO is internally inconsistent here. `SPICA.toml` sets `strehl_model = "fixed_spica"` to
   match ASPRO's noise; set `strehl_model = "ao"` for the physical model (~0.28 at 1″).
-- **SPICA's fringe tracker.** ASPRO marks `FT_SPICA` as required, which permits much longer
-  integrations than `dit`. Not modelled, so faint-end SPICA is pessimistic here.
+- **Telluric absorption.** `atm_transmission` returns 1.0 at every wavelength where ASPRO
+  convolves an ESO SkyCalc table, so per-channel σ is optimistic inside a telluric window: at
+  H = 8 MIRC-X agrees to 0.99 on the median but reads 0.44 in the H₂O channel at 1.4152 µm.
+  The hook exists to be replaced; ASPRO's own table is computed for Paranal, not Mt Wilson.
+- **The photometric zero point.** `zero_point_flux` interpolates per wavelength between band
+  centres; ASPRO takes one zero point per photometric band and holds it flat across the band.
+  Ours is the more physical of the two — a star with Vega colours follows Vega's SED within a
+  band — so this is a recorded difference rather than something to fix. It means a
+  channel-by-channel comparison should not be driven to 1.00 above R ≈ 150.
+
+**Fringe trackers are modelled.** An instrument that declares one in its combiner config
+co-phases the array and integrates up to the tracker's coherent limit instead of `dit`, at the
+cost of the tracker's own visibility loss:
+
+```toml
+[fringe_tracker]      # SPICA.toml; must come LAST, a TOML table swallows every key after it
+band = "H"            # the band the TRACKER guides in, not the science band
+mag_limit = 10.0
+max_integration = 0.2 # seconds, against SPICA's 20 ms `dit`
+instrument_visibility = 0.8
+mode = "FringeTrack"  # or "GroupTrack": the visibility loss, without the longer integration
+```
+
+It engages on ASPRO's three conditions — a tracker exists, the target is within its magnitude
+limit **in the tracker's own band**, and at least one frame fits before saturation — and
+`fringe_tracker=false` turns it off. SPICA is the only shipped combiner with one, and ASPRO
+marks it *required*, so a SPICA prediction without a tracker describes a configuration no
+observer can select.
 
 `S` comes from [`strehl_ratio`](@ref), a port of JMMC's `Band.strehl`, and reproduces ASPRO 2's
 published CHARA Strehl curves to a median 0.7%. It needs an `[ao]` block in the facility
@@ -229,8 +271,31 @@ config; without one the code falls back to the seeing-limited coupling `min(1,(r
 which underestimates an AO-equipped array by roughly 5× in H and 20× in R.
 
 Noise is drawn **once**, on the complex visibility, and every observable is derived from that
-one perturbation. `VISAMP² == VIS2` exactly and the closure phase is exactly the sum of the
-three baseline phases — which is not true if each observable is noised independently.
+one perturbation, so `VISAMP² == VIS2` exactly — which is not true if each observable is noised
+independently.
+
+### The calibration error is drawn, and drawn correlated
+
+`vis_cal_err` and `phase_cal_err` are systematics: they do not average down over a night and
+they are not independent point to point. Putting them only in the written error bar leaves the
+data without the scatter that error bar claims — on a bright target the calibration floor is
+100% of σ(V²) while the scatter is 27× smaller, so a χ² of the generating model against the
+data it generated reads 0.003 rather than 1. Drawing them per point is equally wrong the other
+way: a fit then beats them by averaging, which is precisely what a systematic does not allow.
+
+So `simulate` draws them, correlated, in three terms:
+
+| term | drawn once per | why that grouping |
+|---|---|---|
+| amplitude gain | **baseline × night** | what an amplitude transfer function from calibrator observations is; applied to the complex visibility, so V², VISAMP and T3AMP inherit it consistently |
+| closure-phase bias | **triangle × night** | a per-telescope phase cancels in a closure by construction, so the term `phase_cal_err` describes is the non-closing one |
+| differential-phase bias | **baseline × night × channel** | a differential phase subtracts the mean over the other channels, so a bias constant in wavelength cancels identically and only a chromatic one survives |
+
+A night runs local noon to local noon, so epochs either side of midnight share a draw. Two
+consequences worth knowing: the closure phase is therefore **not** exactly the sum of the three
+baseline phases — that is what a non-closing bias means — and once systematics dominate, χ²ᵣ
+scatters by `√(2/n_baselines)` rather than `√(2/n_points)`, because the baselines are the
+independent draws. Pass `systematics=false` for uncorrelated behaviour.
 
 T3AMP and T3PHI error bars are estimated by sampling (`n_samples`, default 100). The analytic
 closure errors are a small-error expansion and are only adequate while every baseline is well
@@ -246,8 +311,26 @@ detected; measured reduced chi² against the true model, on a resolved disc:
 Sampling costs no measurable time, so it is the default; set `n_samples=0` for the analytic
 form.
 
+### Checking it
+
 Run `demos/validate_noise_model.jl` to print the Strehl comparison against ASPRO and the
 predicted σ(V²)/σ(CP) against magnitude for MIRC-X, MYSTIC and SPICA.
+
+`test/test_aspro_noise.jl` pins the model against ASPRO 2's own error bars, stored per channel
+in `test/references/aspro_noise.csv` and regenerated with `tools/AsproNoise.java` (which drives
+ASPRO headlessly under Xvfb) and `tools/compare_errors.jl`. Current agreement on σ(V²), at the
+best elevation of a night:
+
+| photons/tel/DIT | MIRC-X Low_H | MYSTIC Low_K | SPICA LR |
+|---|---|---|---|
+| ≥ 60 (mag 0–4) | 1.00 | 1.00 | 1.00 |
+| ~10 (mag 6) | 1.00 | 1.00 | 1.02 |
+| ~1.5 (mag 8) | 0.99 | 1.02 | 1.06 |
+| ≲ 1 (mag 10) | — | 1.04 | 1.16 |
+
+Agreement on a **bright** target proves very little: there σ saturates at the calibration floor
+and the photon budget cancels out entirely. Only the faint rows exercise the model, which is
+also the only regime a noise model is needed for — deciding whether a target is reachable.
 
 ## Observability filtering (opt-in)
 

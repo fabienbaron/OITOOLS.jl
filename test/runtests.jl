@@ -27,6 +27,7 @@ BLAS.set_num_threads(1)
     include("test_constraints.jl")       # fit constraints + TOML model files
     include("test_oifits_tdim.jl")       # OIFITS writing interoperability
     include("test_simulate.jl")          # simulate(): geometry, noise model, observability
+    include("test_aspro_noise.jl")       # the noise model against ASPRO 2's own error bars
     include("test_planning.jl")          # astrometry, twilight, observability conventions
     include("test_simbad.jl")            # SIMBAD over TAP: parsing, offline fixture
     include("test_nested.jl")            # nested sampling: both backends, compared

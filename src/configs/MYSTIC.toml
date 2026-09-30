@@ -2,7 +2,10 @@
 # Transcribed from ASPRO 2's aspro-conf CHARA.xml, instrument MIRCX-MYSTIC, setup MYSTIC_SETUP.
 name = "MYSTIC"
 
-transmission = 0.01
+# ASPRO's corrected transmission: aspro-conf says 0.01, which includes the band-mean
+# atmosphere, and `ConfigurationManager` divides it out by 0.8219 -- the mean over MIRCX-MYSTIC's
+# whole J-to-K range, since ASPRO treats the two as one instrument. See MIRCX.toml.
+transmission = 0.0121671
 instrument_visibility = 0.9
 
 dit = 0.025               # 25 ms

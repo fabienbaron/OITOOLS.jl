@@ -30,6 +30,64 @@
         @test !isempty(c.wave_combiner)
     end
 
+    @testset "the noise switches reach simulate, and the command log says so" begin
+        # `shell_simulate` had no coverage at all, so nothing checked that a control on the
+        # panel reaches the core call. These two are worth pinning in particular: both default
+        # ON and both change the data, so a silent failure to forward them looks like a working
+        # simulation with the wrong uncertainties.
+        model = joinpath(@__DIR__, "..", "..", "demos", "models", "Uniform_Disk.toml")
+        isfile(model) || (model = joinpath(@__DIR__, "..", "..", "demos", "models",
+                                           "Limb_Darkened_Disk_Linear.toml"))
+        @test isfile(model)
+        tmp = mktempdir()
+        # `shell_simulate` reaches the session through the global SHELL, so the test has to
+        # install one. ShellState takes every field positionally, exactly as the console-pane
+        # testset builds it; if a field is added there, this call has to follow.
+        prev = GUI.SHELL[]
+        GUI.SHELL[] = GUI.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing, "",
+                          nothing, nothing, nothing, nothing, nothing, nothing, nothing, Any[],
+                          nothing, nothing, nothing, nothing, "", "", nothing)
+        opts(extra) = join(vcat(["source\tmodel", "path\t" * model, "mag\t8", "mag_ao\t8",
+                                 "seed\t1", "n_samples\t20"], extra), "\n")
+        function run_sim(tag, extra, comb, wave)
+            out = joinpath(tmp, tag * ".oifits")
+            r = GUI.shell_simulate(out, "CHARA", "", comb, wave, "T", VEGA_RA, VEGA_DEC,
+                                   "2026-06-21", -1.0, 1.0, 30.0, opts(extra))
+            (r, out)
+        end
+
+        # SPICA is the only shipped combiner with a fringe tracker, so it is the only one where
+        # the switch can be observed at all.
+        r1, o1 = run_sim("ft_on",  ["fringe_tracker\t1"], "SPICA", "SPICA_LR")
+        r2, o2 = run_sim("ft_off", ["fringe_tracker\t0"], "SPICA", "SPICA_LR")
+        @test startswith(r1, "ok\t") && startswith(r2, "ok\t")
+        e1 = readoifits(o1; T = Float64, filter_bad_data = false)[1, 1]
+        e2 = readoifits(o2; T = Float64, filter_bad_data = false)[1, 1]
+        # Tracking integrates longer, so the error bars must come out SMALLER at this magnitude.
+        mean_err(d) = sum(Float64.(d.v2_err)) / length(d.v2_err)
+        @test mean_err(e1) < mean_err(e2)
+
+        # The systematic is drawn per baseline per night, so switching it off leaves the data
+        # with less scatter about the same truth while the error bars are unchanged.
+        r3, o3 = run_sim("sys_on",  ["systematics\t1"], "MIRCX", "MIRCX_LOWH")
+        r4, o4 = run_sim("sys_off", ["systematics\t0"], "MIRCX", "MIRCX_LOWH")
+        @test startswith(r3, "ok\t") && startswith(r4, "ok\t")
+        e3 = readoifits(o3; T = Float64, filter_bad_data = false)[1, 1]
+        e4 = readoifits(o4; T = Float64, filter_bad_data = false)[1, 1]
+        @test e3.v2 != e4.v2                       # the draw reaches the data
+        @test e3.v2_err ≈ e4.v2_err                # and not the error bars
+
+        # The command log has to be runnable: a non-default switch that does not appear in it
+        # produces a script that does not reproduce the run it claims to.
+        sh  = GUI._shell()
+        log = join([string(l) for l in sh.console], "\n")
+        @test occursin("systematics = false", log)
+        @test occursin("fringe_tracker = false", log)
+        GUI.SHELL[] = prev
+        rm(tmp; recursive = true, force = true)
+    end
+
     @testset "telescope order is the facility's own" begin
         tels = facility_telescopes("CHARA")
         @test tels == ["S1", "S2", "E1", "E2", "W1", "W2"]

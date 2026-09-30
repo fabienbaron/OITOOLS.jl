@@ -17,6 +17,7 @@
 // The signatures this file depends on, which are what a newer release would move:
 //
 //   Bootstrapper.launchApp(App)
+//   Target.setConfiguration(TargetConfiguration), TargetConfiguration.setFringeTrackerMode
 //   ObservationManager: setInterferometerConfigurationName / setInstrumentConfigurationName /
 //                       setInstrumentConfigurationStations / setInstrumentMode / setWhen /
 //                       setInstrumentSamplingPeriod / setInstrumentAcquisitionTime /
@@ -33,6 +34,7 @@ import fr.jmmc.aspro.model.ConfigurationManager;
 import fr.jmmc.aspro.model.ObservationManager;
 import fr.jmmc.aspro.model.oi.ObservationSetting;
 import fr.jmmc.aspro.model.oi.Target;
+import fr.jmmc.aspro.model.oi.TargetConfiguration;
 import fr.jmmc.aspro.model.observability.ObservabilityData;
 import fr.jmmc.aspro.model.uvcoverage.UVCoverageData;
 import fr.jmmc.aspro.service.ObservabilityService;
@@ -140,6 +142,18 @@ public class AsproNoise {
         if (dObj("magJ") != null) t.setFLUXJ(dObj("magJ"));
         if (dObj("magH") != null) t.setFLUXH(dObj("magH"));
         if (dObj("magK") != null) t.setFLUXK(dObj("magK"));
+
+        // A fringe tracker is engaged by the TARGET's configuration, never by the instrument
+        // declaring one: NoiseService sets fringeTrackerPresent only when
+        // targetConf.getFringeTrackerMode() is non-null. An instrument with
+        // <fringeTrackerRequired>true</fringeTrackerRequired> -- SPICA -- is therefore computed
+        // WITHOUT its fringe tracker here unless --ft is passed, which is a state the GUI does
+        // not offer, since getFringeTrackerModes() drops "None" for such an instrument.
+        if (ARGS.containsKey("ft")) {
+            TargetConfiguration tc = new TargetConfiguration();
+            tc.setFringeTrackerMode(s("ft", "FringeTrack"));
+            t.setConfiguration(tc);
+        }
 
         ObservationSetting obs = om.getMainObservation();
         obs.getTargets().add(t);

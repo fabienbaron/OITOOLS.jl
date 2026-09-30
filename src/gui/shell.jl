@@ -1449,6 +1449,12 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
     sky isa String && (console!(sh, sky; kind = :err); return sky)
 
     noise = _optbool(o, "noise", true)
+    # `systematics` draws the calibration error correlated per baseline per night, and
+    # `fringe_tracker` engages one on an instrument that declares it. Both default ON, matching
+    # `simulate`; both reach only the observing path, since the copy path takes its error bars
+    # from the file it copies rather than from the noise model.
+    systematics = _optbool(o, "systematics", true)
+    ftrack      = _optbool(o, "fringe_tracker", true)
     seed  = _optint(o, "seed", 1)
     t0 = time()
 
@@ -1501,14 +1507,20 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
                      dates, out;
                      mag = _optreal(o, "mag", 2.0), mag_ao = _optreal(o, "mag_ao", 2.0),
                      noise = noise, debias = _optbool(o, "debias", true),
+                     systematics = systematics, fringe_tracker = ftrack,
                      n_samples = _optint(o, "n_samples", 100), seed = seed,
                      observability = obs, sky...)
         catch err
             msg = "! simulation failed: " * _cause(err)
             console!(sh, msg; kind = :err); return msg
         end
+        # The command log has to be runnable, so every NON-DEFAULT switch has to appear in it.
+        kw = String[]
+        noise       || push!(kw, "noise = false")
+        systematics || push!(kw, "systematics = false")
+        ftrack      || push!(kw, "fringe_tracker = false")
         console!(sh, "simulate(facility, target, combiner, wavelength, dates, \"$(out)\"" *
-                     (noise ? "" : "; noise = false") * ")   # $(length(dates)) epochs, " *
+                     (isempty(kw) ? "" : "; " * join(kw, ", ")) * ")   # $(length(dates)) epochs, " *
                      "$(f.ntel) telescopes"; kind = :cmd)
     end
 
