@@ -420,6 +420,30 @@ _ud(d) = dict_to_model(Dict{String,Any}("star,ud"=>d, "star,f"=>1.0), String[])
         @test image_to_vis(x, only) ≈ image_to_vis(x, full)
     end
 
+    @testset "predict_errors sits on the calibration floor, once" begin
+        # ASPRO 2 26.09, CHARA 2026A, MIRC-X Low_H on Vega (V=0.03, H=0.0), 6 telescopes:
+        # every channel comes back at sigma(V2) = 0.0200 and sigma(CP) = 1.00 deg, because at
+        # that brightness the statistical part vanishes and both land on the calibration bias
+        # (instrumentVisibilityBias 1% -> 2% on V2; instrumentPhaseBias 1 deg).
+        fac  = read_facility_file("CHARA")
+        comb = read_comb_file("MIRCX")
+        wav  = read_wave_file("MIRCX_LOWH")
+        pe = predict_errors(fac, comb, wav; mag = Dict("V" => 0.03, "H" => 0.0),
+                            visamp = 1.0, elevation_deg = 85.0)
+        @test all(isapprox.(pe.sigma_v2, 2 * comb.vis_cal_err; rtol = 0.05))
+        # The closure phase must NOT inherit sigma_v2's systematic. Deriving it from sigma_v2
+        # counts the calibration bias twice and lands on 1.41 deg -- sqrt(2) times ASPRO.
+        @test all(isapprox.(pe.sigma_cp, comb.phase_cal_err; rtol = 0.05))
+        @test all(pe.sigma_cp .< 1.2 * comb.phase_cal_err)
+
+        # A resolved source has a larger phase error: sigma(phi) = sigma_c/|V| grows as |V|
+        # falls. The old expression, built from sigma(V2) alone, missed the 1/|V| entirely.
+        faint_full = predict_errors(fac, comb, wav; mag = 7.0, visamp = 1.0, elevation_deg = 85.0)
+        faint_res  = predict_errors(fac, comb, wav; mag = 7.0, visamp = 0.3, elevation_deg = 85.0)
+        stat(p) = sqrt.(max.(p.sigma_cp .^ 2 .- comb.phase_cal_err^2, 0.0))
+        @test all(stat(faint_res) .> stat(faint_full))
+    end
+
     @testset "deprecated nonoise" begin
         f, t, c, w, dates = _setup(nep=2)
         out = joinpath(_TMP, "dep.oifits")

@@ -27,6 +27,26 @@ using OITOOLS, Test, LinearAlgebra
         @test size(c.t3_3.k, 2) == length(d.indx_t3_3)
     end
 
+    @testset "a table the filter empties leaves no index behind" begin
+        # A filter that rejects EVERY point of one table must empty that table's uv index too.
+        # Left stale, the index still addresses the uncompacted uv plane, and the next uv
+        # operation dereferences it: `remove_redundant_uv!` threw a BoundsError on an ASPRO 2
+        # MIRC-X High_H observation at H = 6, where all 6900 V2 points come back flagged.
+        # `cutoff_maxv2` reaches the same path from a shipped file.
+        for f in ("BC2004/2004-data1.oifits", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+            e = readoifits(joinpath(@__DIR__, "..", "demos", "data", f);
+                           warn = false, verbose = false, cutoff_maxv2 = -1.0)[1, 1]
+            @test e.nv2 == 0
+            @test isempty(e.indx_v2)
+            # Every surviving index must address the pruned uv plane, not the original one.
+            for ix in (e.indx_vis, e.indx_v2, e.indx_t3_1, e.indx_t3_2, e.indx_t3_3)
+                isempty(ix) || @test maximum(ix) <= e.nuv
+            end
+            @test e.nt3phi > 0                       # the cut is on V2 alone
+            @test size(setup_nfft(e, 32, 0.4).v2.k, 2) == 0
+        end
+    end
+
     @testset "positional access is the same object as named" begin
         c = setup_nfft(d, 64, 0.2)
         for (i, f) in enumerate((:uv, :vis, :v2, :t3_1, :t3_2, :t3_3))

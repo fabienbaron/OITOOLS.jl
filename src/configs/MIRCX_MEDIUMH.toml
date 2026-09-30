@@ -1,0 +1,31 @@
+# MIRC-X Medium_H at CHARA, 42 spectral channels.
+#
+# aspro-conf dd79c85 (2026-09-24) CHARA.xml declares this mode as MIRCX_SETUP, resolution
+# 190, 1.40 - 1.75 um; the channel centres and widths below are ASPRO 2 26.09's own expansion
+# of that, read out of the OI_WAVELENGTH table it writes. Delivered resolution across the
+# band is 169 - 209.
+#
+# Cross-checked against ASPRO's error bars through `tools/compare_errors.jl`: at H = 0 every
+# channel agrees to 1.00 on sigma(V2), sigma(CP), sigma|V| and sigma(phi). Above H ~ 5 expect
+# a drift to ~1.5 at the red band edge and outliers around 1.40 um; both causes are recorded
+# in TODO.md and neither is in the noise algebra.
+combiner = "MIRCX"
+mode = "Medium_H"
+lambda = [
+    1.404167e-06, 1.4125e-06, 1.420833e-06, 1.429167e-06, 1.4375e-06, 1.445833e-06,
+    1.454167e-06, 1.4625e-06, 1.470833e-06, 1.479167e-06, 1.4875e-06, 1.495833e-06,
+    1.504167e-06, 1.5125e-06, 1.520833e-06, 1.529167e-06, 1.5375e-06, 1.545833e-06,
+    1.554167e-06, 1.5625e-06, 1.570833e-06, 1.579167e-06, 1.5875e-06, 1.595833e-06,
+    1.604167e-06, 1.6125e-06, 1.620833e-06, 1.629167e-06, 1.6375e-06, 1.645833e-06,
+    1.654167e-06, 1.6625e-06, 1.670833e-06, 1.679167e-06, 1.6875e-06, 1.695833e-06,
+    1.704167e-06, 1.7125e-06, 1.720833e-06, 1.729167e-06, 1.7375e-06, 1.745833e-06
+]
+delta_lambda = [
+    8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09,
+    8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09,
+    8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09,
+    8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09,
+    8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09,
+    8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09,
+    8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09, 8.333333e-09
+]

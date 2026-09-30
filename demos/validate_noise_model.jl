@@ -87,9 +87,12 @@ for (label, combname, wavename) in cases
         v2st = hcat([[i,j] for i in 1:facility.ntel for j in i+1:facility.ntel]...)
         sq, vc, vk, vp = OITOOLS.correlated_flux_coefficients(N, Np, comb, facility.ntel, v2st)
         σc = OITOOLS.complex_vis_error(1.0, sq[1,1,iw], vc[1,1,iw], vk[1,1,iw], vp[1,1,iw], nfr)
-        σ2 = OITOOLS.vis2_error_from_sigma(1.0, σc)
-        σ2 = sqrt(σ2^2 + (2*comb.vis_cal_err)^2)
-        σcp = sqrt((180/π)^2 * 3 * (σ2/2)^2 + comb.phase_cal_err^2)
+        σ2_stat = OITOOLS.vis2_error_from_sigma(1.0, σc)
+        σ2  = sqrt(σ2_stat^2 + (2*comb.vis_cal_err)^2)
+        # From the STATISTICAL error alone: σ2 above carries the calibration bias, and adding
+        # phase_cal_err on top of a bias-laden σ2 counts that bias twice. ASPRO gives 1.00 deg
+        # on a bright star, where the doubled form gives 1.41.
+        σcp = sqrt((180/π)^2 * 3 * (σ2_stat/2)^2 + comb.phase_cal_err^2)
         S = comb.strehl_model == "fixed_spica" ? OITOOLS._spica_fixed_strehl(facility.seeing) :
             coupling_efficiency(λ, 1.0, facility.seeing, facility.t0, mag, facility.ao)
         @printf("%-10s %8.1f %8.3f %8.2f %10.1f %10.4f %10.2f\n",

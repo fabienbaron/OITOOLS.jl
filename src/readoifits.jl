@@ -1402,11 +1402,17 @@ function filter_bad_observables!(bd::BinData{T};
     bd.uv_dlam     = bd.uv_dlam[sel];    bd.uv_mjd      = bd.uv_mjd[sel]
     bd.uv_baseline = bd.uv_baseline[sel]; bd.nuv        = size(bd.uv, 2)
 
-    isempty(good_uv_vis)  || (bd.indx_vis   = iconv[good_uv_vis])
-    isempty(good_uv_v2)   || (bd.indx_v2    = iconv[good_uv_v2])
-    isempty(good_uv_t3_1) || (bd.indx_t3_1  = iconv[good_uv_t3_1])
-    isempty(good_uv_t3_2) || (bd.indx_t3_2  = iconv[good_uv_t3_2])
-    isempty(good_uv_t3_3) || (bd.indx_t3_3  = iconv[good_uv_t3_3])
+    # Remap whenever the block above ran, INCLUDING when it kept nothing: a table whose every
+    # point was rejected still holds indices into the pre-prune uv plane, and the next uv
+    # operation indexes iconv with them. ASPRO flags all 6900 V2 points of a MIRC-X High_H
+    # observation at H = 6, which is exactly that case.
+    use_vis && (bd.indx_vis   = iconv[good_uv_vis])
+    use_v2  && (bd.indx_v2    = iconv[good_uv_v2])
+    if use_t3
+        bd.indx_t3_1 = iconv[good_uv_t3_1]
+        bd.indx_t3_2 = iconv[good_uv_t3_2]
+        bd.indx_t3_3 = iconv[good_uv_t3_3]
+    end
     # averaged over the Float64 per-table MJDs, not over uv_mjd, which is stored in T
     mjd_f64 = vcat(bd.vis_mjd, bd.v2_mjd, bd.t3_mjd)
     bd.mean_mjd = isempty(mjd_f64) ? 0.0 : mean(mjd_f64)

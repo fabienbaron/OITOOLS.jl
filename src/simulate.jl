@@ -484,12 +484,16 @@ function predict_errors(facility::FacilityConfig, combiner::CombinerConfig,
         s2 = vis2_error_from_sigma(v2, σc)
         sigma_v2[w] = _with_systematics(s2, 2 * combiner.vis_cal_err * abs(v2))
         sigma_va[w] = _with_systematics(σc, combiner.vis_cal_err * abs(visamp))
-        sigma_vp[w] = _with_systematics(min(180 / π * σc / max(abs(visamp), eps()), 180.0),
-                                        combiner.phase_cal_err)
+        # Per-baseline statistical phase error in degrees: σ(φ) = σ_c/|V| in radians. It comes
+        # from the complex-visibility error, NOT from `sigma_v2`: that one already carries the
+        # calibration systematic, so feeding it back here counts the bias twice — √2 too large
+        # on a bright target, measured against ASPRO 2 — and drops the 1/|V|² that a resolved
+        # source needs.
+        σφ_stat     = min(180 / π * σc / max(abs(visamp), eps()), 180.0)
+        sigma_vp[w] = _with_systematics(σφ_stat, combiner.phase_cal_err)
         # Closure phase: three baselines' statistical phase errors in quadrature, then the
-        # calibration systematic added ONCE (not once per baseline). Same expression as
-        # demos/validate_noise_model.jl, which is the form checked against ASPRO 2.
-        σφ_stat     = 180 / π * sigma_v2[w] / 2
+        # calibration systematic added ONCE (not once per baseline) — the same expression
+        # `simulate` reaches through `rel_t3`.
         sigma_cp[w] = _with_systematics(sqrt(3) * σφ_stat, combiner.phase_cal_err)
         strehl[w]   = combiner.strehl_model == "fixed_spica" ?
                       _spica_fixed_strehl(facility.seeing) :
@@ -783,25 +787,27 @@ This, and not `σ(V²)`, is the primitive quantity of the noise model. Every obs
 derived from one perturbed complex visibility, so every error bar has to be derived from the
 same `σ_c` or the written uncertainties will not describe the scatter actually present.
 
-`σ_c` is fixed by matching the two limits of ASPRO's correlated-flux variance. For a circular
-complex Gaussian, `Var(|V+n|²) = 4V²σ_c² + 4σ_c⁴`, so
+`σ(V²)` is built first, from ASPRO's per-frame variance of the squared correlated flux averaged
+over `N_frames` — ONE expression covering every regime, so the photon term, the read-noise term
+and the photometric term all scale as `1/sqrt(N_frames)`. Then `σ_c` is recovered by inverting
+`σ(V²) = 2σ_c·sqrt(V² + σ_c²)` exactly:
 
-- as `V → 0`, `σ(V²) → 2σ_c²`, which must equal the additive floor
-  `sqrt(var_const)/(sq_coef·sqrt(N_frames))`
-- for large `V`, `σ(V²) → 2Vσ_c`, which must equal `V·sqrt(var_coef/(sq_coef·N_frames))`
+    σ_c² = ( sqrt(V⁴ + σ(V²)²) − V² ) / 2
 
-giving the two terms below, plus a photometric-normalisation term that scales with `|V|`
-because a photometric error is multiplicative on `V²`.
-
-Deriving `σ_c` the other way round — as `σ(V²)/(2|V|)` — diverges on a resolved baseline and
-injects noise far larger than the error bars claim.
+which is finite at `V = 0` (where it gives `σ(V²)/2`, i.e. `σ(V²) = 2σ_c²`) and tends to
+`σ(V²)/(2|V|)` for a bright fringe. Matching those two LIMITS separately instead — fixing the
+additive term from the `V → 0` limit and then evaluating it at `V ≈ 1` — takes a square root of
+the per-frame additive variance and leaves that term scaling as `N^(-1/4)`: measured against
+ASPRO 2, 13x too large at H = 6 with 214 286 frames, and worse the longer the integration.
 """
 function complex_vis_error(visamp, sq_coef, var_coef, var_const, v2phot, N_frames)
     sq_coef <= 0 && return 10.0
-    σ2  = 0.25 * var_coef / (sq_coef * N_frames)                    # multiplicative / photon
-    σ2 += 0.5 * sqrt(max(var_const, 0.0)) / (sq_coef * sqrt(N_frames))  # additive floor
-    σ2 += 0.25 * v2phot * visamp^2 / N_frames                       # photometric channels
-    return min(sqrt(max(σ2, 0.0)), 10.0)
+    v2 = visamp^2
+    σ_v2sq  = var_coef * v2 / (sq_coef * N_frames)            # photon / multiplicative
+    σ_v2sq += max(var_const, 0.0) / (sq_coef^2 * N_frames)    # read noise / additive
+    σ_v2sq += v2phot * v2^2 / N_frames                        # photometric channels
+    σc2 = 0.5 * (sqrt(v2^2 + σ_v2sq) - v2)
+    return min(sqrt(max(σc2, 0.0)), 10.0)
 end
 
 """
