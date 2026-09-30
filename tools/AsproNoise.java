@@ -6,9 +6,9 @@
 //   xvfb-run -a java -cp .:Aspro2-26.09.jar AsproNoise --list
 //   xvfb-run -a java -cp .:Aspro2-26.09.jar AsproNoise --out obs.oifits [options]
 //
-// PINNED AGAINST Aspro2 26.09 — nothing in CI checks this, so it will break silently:
+// I used Aspro2 26.09, but since nothing in CI checks this, it may break silently:
 //
-//   jar   : https://www.jmmc.fr/apps/public/Aspro2/Aspro2-26.09.jar   (19 MB)
+//   jar   : https://www.jmmc.fr/apps/public/Aspro2/Aspro2-26.09.jar 
 //           manifest Built-Date 2026/09/10, reports "Aspro2 v26.09" at startup
 //   config: CHARA 2026A, bundled in that jar and byte-identical to aspro-conf dd79c85
 //           (2026-09-24), src/main/resources/fr/jmmc/aspro/model/CHARA.xml
@@ -26,9 +26,6 @@
 //                     doDataNoise, OIFitsProducerOptions).compute()
 //   UVCoverageData.getOiFitsCreator().createOIFits(), OIFitsWriter.writeOIFits(String, OIFitsFile)
 //   OIFitsProducerOptions(boolean, boolean, int, UserModelService.MathMode, double)
-//
-// To move to another release: download that jar, recompile, and run `--list` first — it
-// exercises the boot path and the configuration without computing anything.
 
 import fr.jmmc.jmcs.Bootstrapper;
 import fr.jmmc.aspro.Aspro2;

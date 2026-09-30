@@ -50,3 +50,6 @@ test/figures/
 # are personal to whoever is working in this clone.
 memory/
 plans/
+
+# Java classes from tools/, built on demand against the Aspro2 jar and never committed.
+*.class

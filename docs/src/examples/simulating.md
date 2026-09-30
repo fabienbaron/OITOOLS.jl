@@ -107,8 +107,10 @@ wave = read_wave_file("MIRCX_LOWH")
 | `GRAVITY_LOWK` | GRAVITY | Low spectral resolution | K |
 | `MATISSE_LOWL` | MATISSE_LM | Low spectral resolution | L |
 | `MATISSE_LOWN` | MATISSE_N | Low spectral resolution | N |
+| `MIRCX_HIGHH` | MIRCX | High spectral resolution (R ≈ 1035, 230 channels) | H |
 | `MIRCX_LOWH` | MIRCX | Low spectral resolution | H |
 | `MIRCX_LOWJ` | MIRCX | Low spectral resolution | J |
+| `MIRCX_MEDIUMH` | MIRCX | Medium spectral resolution (R ≈ 190, 42 channels) | H |
 | `MYSTIC_LOWK` | MYSTIC | Low spectral resolution | K |
 | `SPICA_LR` | SPICA | Low resolution | V |
 
