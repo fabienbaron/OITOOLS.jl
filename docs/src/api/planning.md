@@ -9,6 +9,9 @@
 | `chara_plan(target, facility, ra, dec, date, pop, config)` | CHARA-plan style delay plot |
 | `compute_delays(facility, dec, ha, config, pop)` | Compute OPD delays for a given config/POP. `config`: 0=unused, 1=use, 2=reference cart; `pop`: one entry per telescope in 1:5 |
 | `in_delay(facility, dec, ha, config, pop)` | Check which baselines are within delay limits (same argument order as `compute_delays`) |
+| `delay_ha_intervals(facility, dec, config, pop)` | The hour angles where every baseline is within its delay limits, solved for rather than sampled |
+| `horizon_limit(facility, az; config)` | Lowest elevation the telescopes in use can see at that azimuth, from the facility's horizon profiles |
+| `night_window(date, lat, lon; zenith)` | The dark window bracketing local midnight. `zenith` picks the twilight: 96 civil, 102 nautical, 108 astronomical |
 | `observable_epochs(facility, target, dates)` | Filter epochs on elevation and (optionally) delay lines — opt-in, used by `simulate` |
 | `moon_illumination(jd)` | Fractional lunar illumination for a Julian Date |
 | `moon_radec(jd)` | Approximate lunar RA/Dec for a Julian Date |
@@ -22,6 +25,9 @@ obs_plan
 chara_plan
 compute_delays
 in_delay
+delay_ha_intervals
+horizon_limit
+night_window
 moon_illumination
 moon_radec
 angular_separation

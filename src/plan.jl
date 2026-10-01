@@ -316,30 +316,6 @@ function _delay_spans(facility::FacilityConfig, delay_length::Union{Nothing,Floa
     return fill(45.7, facility.ntel)
 end
 
-"""
-    delay_ha_intervals(facility, dec, config, pop; kwargs...) -> Vector{Tuple{Float64,Float64}}
-
-Hour-angle intervals, in HOURS, where every baseline is within its delay limits. Exact.
-
-Sampling cannot place a window edge better than its own step, which is why a one-minute grid
-reports a boundary up to a minute out and why finer steps cost linearly. This solves for the
-edges instead, so they are exact and the step size becomes a display choice.
-
-The delay of a baseline is a sinusoid in hour angle,
-
-    w(h) = A cos h + B sin h + C,    A = cosδ (cos l b₃ − sin l b₁)
-                                     B = −cosδ b₂
-                                     C = sinδ (cos l b₁ + sin l b₃)
-
-so `w(h) = W` inverts in closed form: with `R = √(A²+B²)` and `φ = atan(B, A)` it is
-`R cos(h − φ) = W − C`, giving no root, one, or two. The extrema are `C ± R`, which settles the
-two cases that need no work at all — a window containing them means the baseline never leaves
-its limits, and one disjoint from them means it never enters.
-
-Each baseline contributes at most four critical hour angles; between consecutive ones `w` cannot
-cross a limit, so testing the MIDPOINT of each sub-interval decides it. The same method ASPRO 2
-uses in `DelayLineService.findHAIntervalsForBaseLine`, which is where this was read from.
-"""
 # w(h) = A cos h + B sin h + C, the delay of one baseline as a function of hour angle.
 # `l` and `dec` in radians; the baseline vector is local (East, North, Up).
 @inline function _w_coeffs(l::Float64, δ::Float64, bx::Float64, by::Float64, bz::Float64)
@@ -398,6 +374,30 @@ function _isect(a::Vector{Tuple{Float64,Float64}}, b::Vector{Tuple{Float64,Float
 end
 _ilen(v::Vector{Tuple{Float64,Float64}}) = isempty(v) ? 0.0 : sum(x -> x[2] - x[1], v)
 
+"""
+    delay_ha_intervals(facility, dec, config, pop; kwargs...) -> Vector{Tuple{Float64,Float64}}
+
+Hour-angle intervals, in HOURS, where every baseline is within its delay limits. Exact.
+
+Sampling cannot place a window edge better than its own step, which is why a one-minute grid
+reports a boundary up to a minute out and why finer steps cost linearly. This solves for the
+edges instead, so they are exact and the step size becomes a display choice.
+
+The delay of a baseline is a sinusoid in hour angle,
+
+    w(h) = A cos h + B sin h + C,    A = cosδ (cos l b₃ − sin l b₁)
+                                     B = −cosδ b₂
+                                     C = sinδ (cos l b₁ + sin l b₃)
+
+so `w(h) = W` inverts in closed form: with `R = √(A²+B²)` and `φ = atan(B, A)` it is
+`R cos(h − φ) = W − C`, giving no root, one, or two. The extrema are `C ± R`, which settles the
+two cases that need no work at all — a window containing them means the baseline never leaves
+its limits, and one disjoint from them means it never enters.
+
+Each baseline contributes at most four critical hour angles; between consecutive ones `w` cannot
+cross a limit, so testing the MIDPOINT of each sub-interval decides it. The same method ASPRO 2
+uses in `DelayLineService.findHAIntervalsForBaseLine`, which is where this was read from.
+"""
 function delay_ha_intervals(facility::FacilityConfig, dec::Float64,
                             config::Vector{Int}, pop::Vector{Int};
                             delay_length::Union{Nothing,Float64}=nothing,
