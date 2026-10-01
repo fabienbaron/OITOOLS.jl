@@ -213,7 +213,12 @@ using PrecompileTools
             # that had never been compiled anywhere else in the package.
             dfig = Makie.Figure()
             dax  = Makie.Axis(dfig[1, 1])
-            build_delay_plot(dfig, dax)
+            dp   = build_delay_plot(dfig, dax)
+            # Drawing into it as well, for the reason spelled out for the chi2 map below:
+            # `update_delay_plot!` is where the cart curves, the limit lines and the altitude
+            # overlay get their data, and `shell_gantt` runs it on EVERY compute -- so without
+            # this line its compilation lands on the first Gantt of a session.
+            update_delay_plot!(dp, plan)
 
             ofig = Makie.Figure()
             oax  = Makie.Axis(ofig[1, 1])

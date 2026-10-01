@@ -14,7 +14,7 @@
     VEGA_RA, VEGA_DEC = 279.2347, 38.7837
     NIGHT = DateTime(2026, 6, 21)
     CFG   = [1, 1, 1, 1, 0, 0]        # S1 S2 E1 E2
-    POP   = [1, 3, 3, 4, 1, 1]        # what best_pop finds for this night
+    POP   = [1, 3, 3, 4, 1, 1]        # a configuration this night admits
 
     facility = read_facility_file("CHARA")
     obs = night_observability(facility, VEGA_RA, VEGA_DEC, NIGHT)

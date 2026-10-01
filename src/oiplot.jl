@@ -1637,19 +1637,20 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
     grid()
     pyplot.axvline(x=hours_to_date(obsdate, lst_mid), color="red")
 
-    # Twilight bands
-    start_date = hours_to_date(obsdate, lst[1]+1.5)
-    end_date   = hours_to_date(obsdate, lst[end]-1.5)
-    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
-            color="lightgray", alpha=0.75)
-    start_date = hours_to_date(obsdate, lst[1]+2)
-    end_date   = hours_to_date(obsdate, lst[end]-2)
-    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
-            color="lightgray", alpha=0.75)
-    start_date = hours_to_date(obsdate, lst[1]+3)
-    end_date   = hours_to_date(obsdate, lst[end]-3)
-    ax.barh(5, _mpl_days(end_date - start_date), left=start_date, height=10, align="center",
-            color="gray", alpha=0.75)
+    # Twilight bands, meaning the Sun's depression. The plotted window is the NAUTICAL one --
+    # `night_window`'s 102 degree default, which is what `night_observability` samples over --
+    # and `good_twilight` is the ASTRONOMICAL one at 108, so light grey is 12 to 18 degrees
+    # below the horizon and the darker inset is past 18.
+    function _band(h0, h1, colour)
+        a = hours_to_date(obsdate, h0); b = hours_to_date(obsdate, h1)
+        ax.barh(5, _mpl_days(b - a), left=a, height=10, align="center",
+                color=colour, alpha=0.75)
+    end
+    _band(lst[1], lst[end], "lightgray")
+    if good_twilight !== nothing && !isempty(good_twilight)
+        i0, i1 = extrema(good_twilight)
+        _band(lst[i0], lst[i1], "gray")
+    end
 
     # Draw one bar per contiguous run, so a window that is interrupted reads as interrupted.
     # matplotlib keeps only the first label out of the legend for the rest ("_nolegend_").
@@ -1688,17 +1689,23 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
         _bars(show_indices, 2, 1.2, "blue", bar_label)
         # Annotate every run, not just the outermost pair: each run is one observing block,
         # and its own start/end time and az/alt are what you would write on a schedule.
+        span = lst[end] - lst[1] + 0.5
         for (i0, i1) in index_runs(show_indices)
+            lst[i1] - lst[i0] >= GANTT_MIN_LABELLED_RUN || continue
             s_d = hours_to_date(obsdate, lst[i0])
             e_d = hours_to_date(obsdate, lst[i1])
-            text(s_d, 2, Dates.format(s_d, dateformat"H:M"),
+            text(s_d, 2, Dates.format(s_d, dateformat"H:MM"),
                  rotation=90, va="center", ha="right", color="black")
-            text(e_d, 2, Dates.format(e_d, dateformat"H:M"),
+            text(e_d, 2, Dates.format(e_d, dateformat"H:MM"),
                  rotation=90, va="center", ha="left", color="black")
-            text(s_d, 3.3, round(Int64, az[i0]),  va="top",    ha="center", color="black")
-            text(s_d, 0.7, round(Int64, alt[i0]), va="bottom", ha="center", color="black")
-            text(e_d, 3.3, round(Int64, az[i1]),  va="top",    ha="right",  color="black")
-            text(e_d, 0.7, round(Int64, alt[i1]), va="bottom", ha="right",  color="black")
+            # The numbers read INWARD from the bar's own edges -- the left pair starts at the
+            # left edge, the right pair ends at the right one -- so they stay over the bar they
+            # belong to and can never run into the next one's.
+            lst[i1] - lst[i0] >= GANTT_LABEL_ROOM_FRAC * span || continue
+            text(s_d, 3.3, round(Int64, az[i0]),  va="top",    ha="left",  color="black")
+            text(s_d, 0.7, round(Int64, alt[i0]), va="bottom", ha="left",  color="black")
+            text(e_d, 3.3, round(Int64, az[i1]),  va="top",    ha="right", color="black")
+            text(e_d, 0.7, round(Int64, alt[i1]), va="bottom", ha="right", color="black")
         end
     end
 

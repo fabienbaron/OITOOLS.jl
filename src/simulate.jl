@@ -12,6 +12,13 @@ Base.@kwdef mutable struct FacilityConfig
     lat::Float64                = 0.0
     lon::Float64                = 0.0
     alt::Float64                = 0.0
+    # IANA zone name, for charts drawn in civil local time. Empty means none is declared, and
+    # "local" then falls back to mean solar time from `lon`. Only the zones `local_utc_offset`
+    # writes out are understood; there is no time-zone database here.
+    timezone::String            = ""
+    # Human name of the place, for chart labels. "Mount Wilson", not "CHARA" and not the IANA
+    # zone id: it is what an observer calls where they are standing.
+    site::String                = ""
     # Extra transmission factor applied on top of CombinerConfig.transmission. Combiner
     # configs transcribed from ASPRO already carry the array transmission end-to-end, so this
     # is 1.0 for them; it exists for arrays whose combiners are specified instrument-only.
@@ -29,6 +36,27 @@ Base.@kwdef mutable struct FacilityConfig
     sta_index::Vector{Int}      = Int[]
     sta_xyz::Matrix{Float64}    = zeros(Float64, 0, 3)
     delay_lengths::Vector{Float64} = Float64[]   # per-telescope delay line length (m), empty if unknown
+    # Delay-line geometry, per telescope, empty when the facility file does not give it.
+    # `delay_front`/`delay_back` are the cart's limit switches in metres; the optical path
+    # changes by TWICE the cart motion, so the usable OPD span is 2*(back - front). POP optical
+    # paths are one row per telescope, referenced to that station's own zero POP.
+    # `fixed_offsets` is the fixed path ahead of the delay line.
+    delay_front::Vector{Float64}   = Float64[]
+    delay_back::Vector{Float64}    = Float64[]
+    pop_offsets::Matrix{Float64}   = zeros(Float64, 0, 0)
+    fixed_offsets::Vector{Float64} = Float64[]
+    # Beam Sampling Table: row per telescope, column per beam channel, metres of optical path
+    # that station contributes through that channel. Which channel a telescope feeds is set by
+    # its POSITION in the chosen configuration, not by the telescope.
+    bst::Matrix{Float64}           = zeros(Float64, 0, 0)
+    # Azimuth-dependent horizon, one polyline per telescope: the terrain it looks over. Empty
+    # when the facility declares none, in which case a flat elevation limit is all there is.
+    horizon_az::Vector{Vector{Float64}} = Vector{Float64}[]
+    horizon_el::Vector{Vector{Float64}} = Vector{Float64}[]
+    # Elevation at which the mount is still usable but complains -- CHARA's drives report a
+    # warning at 80 deg against a hard maximum of 85. Observing above it is possible and worth
+    # flagging rather than hiding, so it is kept apart from `alt_max`. NaN means none declared.
+    alt_soft_max::Float64          = NaN
 end
 
 Base.@kwdef mutable struct TargetConfig
@@ -185,6 +213,8 @@ function _read_facility_toml(path)
         lat        = Float64(get(d, "lat", 0.0)),
         lon        = Float64(get(d, "lon", 0.0)),
         alt        = Float64(get(d, "alt", 0.0)),
+        timezone   = String(get(d, "timezone", "")),
+        site       = String(get(d, "site", "")),
         throughput = Float64(get(d, "throughput", 1.0)),
         wind_speed = wind_speed,
         r0         = r0,
@@ -199,6 +229,27 @@ function _read_facility_toml(path)
         sta_index  = [Int(get(t, "index", i))            for (i,t) in enumerate(tels)],
         sta_xyz    = xyz,
         delay_lengths = [Float64(get(t, "delay_length", 0.0)) for t in tels],
+        delay_front   = [Float64(get(t, "delay_front", NaN))  for t in tels],
+        delay_back    = [Float64(get(t, "delay_back",  NaN))  for t in tels],
+        fixed_offsets = [Float64(get(t, "fixed_offset", NaN)) for t in tels],
+        horizon_az = [Float64.(get(t, "horizon_az", Float64[])) for t in tels],
+        horizon_el = [Float64.(get(t, "horizon_el", Float64[])) for t in tels],
+        alt_soft_max = Float64(get(d, "alt_soft_max", NaN)),
+        bst = let rows = [Float64.(get(t, "bst", Float64[])) for t in tels]
+            n = isempty(rows) ? 0 : maximum(length, rows)
+            (n == 0 || any(r -> length(r) != n, rows)) ? zeros(Float64, 0, 0) :
+                reduce(vcat, (reshape(r, 1, n) for r in rows))
+        end,
+        # One row per telescope. A ragged table would mean a station with a different number of
+        # POPs than its neighbours, which is a configuration error rather than something to pad.
+        pop_offsets = let rows = [Float64.(get(t, "pop_offsets", Float64[])) for t in tels]
+            n = isempty(rows) ? 0 : maximum(length, rows)
+            if n == 0 || any(r -> length(r) != n, rows)
+                zeros(Float64, 0, 0)
+            else
+                reduce(vcat, (reshape(r, 1, n) for r in rows))
+            end
+        end,
     )
 end
 

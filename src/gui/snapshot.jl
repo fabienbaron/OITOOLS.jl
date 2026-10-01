@@ -229,7 +229,8 @@ function _snapshot_figure(sh::ShellState, which::AbstractString, size, detailed:
         ax = Makie.Axis(fig[1, 1])
         style_axis!(ax)
         if which == "gantt"
-            update_gantt!(build_gantt(fig, ax), sh.plan; detailed)
+            update_gantt!(build_gantt(fig, ax), sh.plan; detailed,
+                          time_system = GANTT_TIME_SYSTEM[])
         else
             isempty(sh.plan.baselines) && return nothing
             update_delay_plot!(build_delay_plot(fig, ax), sh.plan)

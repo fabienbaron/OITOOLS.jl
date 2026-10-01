@@ -64,7 +64,7 @@ Small on purpose. These numbers belong to the bar and should read as attached to
 vertical times sit right against the ends already, and a horizontal number floating a third of
 a row away looks like it belongs to the row above.
 """
-const LABEL_PAD = 0.05
+const LABEL_PAD = 0.02
 
 "Row centre of a target bar, and the two label heights that follow from its height."
 const TARGET_ROW = 2.0
@@ -74,11 +74,23 @@ alt_label_y() = TARGET_ROW - TARGET_BAR_HEIGHT / 2 - LABEL_PAD
 """
 Shortest run that gets start/end annotations, in hours.
 
-A sliver is a few minutes wide and its six labels land on top of each other and on those of the
-next run -- the pile of overlapping digits that reads as broken glyph rendering rather than as
-crowding. The bar itself is still drawn; only its numbers are dropped.
+A sliver is a few minutes wide and its six labels land on top of each other -- the pile of
+overlapping digits that reads as broken glyph rendering rather than as crowding. The bar
+itself is still drawn; only its numbers are dropped.
+
+Defined in the core beside `gantt_onenight`, which obeys the same rule: `test_gantt.jl`
+compares the two renderers' labels string for string.
 """
-const MIN_LABELLED_RUN = 0.4
+const MIN_LABELLED_RUN = OITOOLS.GANTT_MIN_LABELLED_RUN
+
+"""
+Width a run needs before its az and elev numbers are printed, as a fraction of the plotted span.
+
+The numbers read inward from the bar's own edges, so what has to be wide enough is the BAR, not
+the gap to its neighbour. A fraction rather than a number of hours because the numbers are a
+fixed width in pixels: what they cost in hours depends on how many hours the axis is showing.
+"""
+const LABEL_ROOM_FRAC = OITOOLS.GANTT_LABEL_ROOM_FRAC
 
 """
 Lowest elevation worth observing at, in degrees.
@@ -115,7 +127,19 @@ struct NightPlan
     # remember to supply it did not: the panel samples every 10 minutes and the summary line
     # divided by 1, reporting a tenth of the observable time and reading as "not observable".
     step_minutes  :: Float64
+    # The facility's longitude and IANA zone, carried so a chart can be drawn in civil local
+    # time without the renderer having to re-read the configuration. `local_utc_offset` takes
+    # either this or a FacilityConfig, since it reads exactly these two names.
+    lon           :: Float64
+    timezone      :: String
+    site          :: String
     lst           :: Vector{Float32}
+    # The UTC grid the LST above was sampled on, in decimal hours from `date` at 00:00 UT, so
+    # it runs past 24 for the morning half of a night. Carried because LST and solar time do
+    # NOT differ by a constant -- sidereal runs fast by 1/365.25 -- so an axis drawn in UTC or
+    # local time cannot be relabelled from LST by an offset; it has to be mapped through the
+    # pair, which is what `lst_to_utc` does.
+    utc           :: Vector{Float64}
     lst_midnight  :: Float64
     # Local sidereal time at the facility at the moment this plan was computed -- the wall
     # clock in the control room, in the units the chart's x axis is drawn in. Recorded here
@@ -132,6 +156,10 @@ struct NightPlan
     alt           :: Vector{Float32}
     az            :: Vector{Float32}
     good_alt      :: Vector{Int}
+    # The same window under the mount's SOFT elevation ceiling, where the facility declares one.
+    # Time between the two is observable and worth flagging, not lost; `gantt_geometry` draws it
+    # as a separate bar and the chart dashes it.
+    good_alt_soft :: Vector{Int}
     good_delay    :: Vector{Int}
     good_twilight :: Vector{Int}
     good_moon     :: Vector{Int}
@@ -174,8 +202,9 @@ is really available — or none at all. Measured on Vega from CHARA, 2026-06-21:
 | array | POPs | minutes inside the delay limits |
 |---|---|---|
 | all six | 1,1,1,1,1,1 | 0 |
-| S1 S2 E1 E2 | 1,1,1,1,1,1 | 119 |
-| S1 S2 E1 E2 | `best_pop` → 1,3,3,4,1,1 | 380 |
+| S1 S2 E1 E2 | 1,1,1,1,1,1 | 266 |
+| S1 S2 E1 E2 | `best_pop` → 1,2,2,3,1,1 | 388 |
+| all six | `best_pop` → 1,1,2,3,1,5 | 185 |
 
 A panel that applied it by default would report every target as unobservable and read as
 broken. So `use_delay = false` leaves `good_delay` covering the whole night and records
@@ -194,8 +223,12 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
                     delay_length  = nothing)
     f = facility isa AbstractString ? read_facility_file(String(facility)) : facility
 
+    # The horizon is the max over the telescopes IN USE, so the selection has to reach the
+    # observability rather than only the delay check.
+    cfg0 = config === nothing ? ones(Int, f.ntel) : Int.(config)
     obs = night_observability(f, Float64(ra), Float64(dec), date;
                               alt_limit = Float64(alt_limit), alt_max = Float64(alt_max),
+                              config = cfg0,
                               moon_min_sep = Float64(moon_min_sep),
                               dark_offset = Float64(dark_offset),
                               step_minutes = Int(step_minutes))
@@ -230,9 +263,11 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
     is_tonight = noon <= local_now < noon + Dates.Day(1)
 
     return NightPlan(String(name), Float64(ra), Float64(dec), date, Float64(step_minutes),
-                     obs.lst, obs.lst_midnight, Float64(first(lst_now)), is_tonight,
+                     Float64(f.lon), String(f.timezone), String(f.site),
+                     obs.lst, Float64.(obs.utc), obs.lst_midnight,
+                     Float64(first(lst_now)), is_tonight,
                      obs.ha, obs.alt, obs.az,
-                     Int.(obs.good_alt), good_delay,
+                     Int.(obs.good_alt), Int.(obs.good_alt_soft), good_delay,
                      Int.(obs.good_twilight), Int.(obs.good_moon),
                      obs.moon_sep, obs.moon_fli, applied,
                      Float64(alt_limit), Float64(alt_max),
@@ -403,7 +438,101 @@ function pop_label(p::NightPlan)
 end
 
 """
-    gantt_geometry(plan; detailed = false) -> (; bars, labels, bands, rows, midnight, now, xlim, ymax)
+    lst_to_utc(p::NightPlan, x) -> Float64
+
+Decimal UTC hours from `p.date` at 00:00 UT for a point `x` on the chart's LST axis.
+
+LST and solar time run at different rates -- sidereal gains about four minutes a day -- so this
+is an interpolation through the night's own (LST, UTC) pairs rather than an offset. Outside the
+sampled window it extrapolates from the end segment, which is what keeps a tick just past
+sunrise from folding back into the evening.
+"""
+function lst_to_utc(p::NightPlan, x::Real)
+    lst = unwrap_lst(p.lst)
+    n = length(lst)
+    (n == 0 || length(p.utc) != n) && return NaN
+    n == 1 && return p.utc[1]
+    x <= lst[1]   && return p.utc[1]   + (x - lst[1])   * (p.utc[2] - p.utc[1])   / (lst[2] - lst[1])
+    x >= lst[end] && return p.utc[end] + (x - lst[end]) * (p.utc[end] - p.utc[end-1]) /
+                                                          (lst[end] - lst[end-1])
+    i = searchsortedlast(lst, x)
+    i = clamp(i, 1, n - 1)
+    d = lst[i+1] - lst[i]
+    return d == 0 ? p.utc[i] : p.utc[i] + (x - lst[i]) * (p.utc[i+1] - p.utc[i]) / d
+end
+
+"""
+    utc_to_lst(p::NightPlan, u) -> Float64
+
+The inverse of [`lst_to_utc`](@ref): where a UTC hour falls on the chart's LST axis.
+"""
+function utc_to_lst(p::NightPlan, u::Real)
+    lst = unwrap_lst(p.lst)
+    n = length(lst)
+    (n == 0 || length(p.utc) != n) && return NaN
+    n == 1 && return lst[1]
+    u <= p.utc[1]   && return lst[1]   + (u - p.utc[1])   * (lst[2] - lst[1]) / (p.utc[2] - p.utc[1])
+    u >= p.utc[end] && return lst[end] + (u - p.utc[end]) * (lst[end] - lst[end-1]) /
+                                                            (p.utc[end] - p.utc[end-1])
+    i = searchsortedlast(p.utc, u)
+    i = clamp(i, 1, n - 1)
+    d = p.utc[i+1] - p.utc[i]
+    return d == 0 ? lst[i] : lst[i] + (u - p.utc[i]) * (lst[i+1] - lst[i]) / d
+end
+
+"""
+    local_utc_offset(facility, when::DateTime) -> Float64
+
+Hours to add to UTC to get civil local time at `facility`.
+
+There is no time-zone database here -- TimeZones.jl is not a dependency, and pulling one in for
+one observatory would be a poor trade -- so the rule is written out for the zone CHARA sits in
+and everything else falls back to MEAN SOLAR time from the longitude. That fallback is honest
+rather than wrong: it is local time in the original sense, and it is what a facility without a
+declared zone can support. `FacilityConfig` declares one through `timezone`.
+
+The implemented zone is America/Los_Angeles under the post-2007 US rule: UTC-8, and UTC-7 from
+02:00 local on the second Sunday in March to 02:00 local on the first Sunday in November.
+"""
+function local_utc_offset(facility, when::DateTime)
+    tz = hasproperty(facility, :timezone) ? String(getproperty(facility, :timezone)) : ""
+    if tz == "America/Los_Angeles"
+        y = Dates.year(when)
+        # Dates.tonext is inclusive-from-the-next-day, so start the search a day early to let
+        # the 1st itself be the answer when it is already the right weekday.
+        dst_on  = Dates.tonext(Dates.Date(y, 3, 1)  - Dates.Day(1), Dates.Sunday) + Dates.Day(7)
+        dst_off = Dates.tonext(Dates.Date(y, 11, 1) - Dates.Day(1), Dates.Sunday)
+        # The switch times are quoted in LOCAL clock, so compare in the offset in force either
+        # side of them: -8 going in, -7 coming out.
+        on_utc  = DateTime(dst_on)  + Dates.Hour(2 + 8)
+        off_utc = DateTime(dst_off) + Dates.Hour(2 + 7)
+        return (on_utc <= when < off_utc) ? -7.0 : -8.0
+    end
+    return hasproperty(facility, :lon) ? Float64(getproperty(facility, :lon)) / 15 : 0.0
+end
+
+"""
+    gantt_time_label(system, facility) -> String
+
+The x-axis label for a Gantt drawn in `system`, one of `:lst`, `:utc` or `:local`.
+"""
+function gantt_time_label(system::Symbol, facility = nothing)
+    system === :utc && return "UTC"
+    if system === :local
+        # The SITE, not the IANA zone: "Mount Wilson" is what an observer calls the place, and
+        # "America/Los_Angeles" is a database key that happens to contain it.
+        site = facility !== nothing && hasproperty(facility, :site) ?
+               String(getproperty(facility, :site)) : ""
+        tz   = facility !== nothing && hasproperty(facility, :timezone) ?
+               String(getproperty(facility, :timezone)) : ""
+        isempty(site) || return "Local (" * site * ")"
+        return isempty(tz) ? "Local mean solar time" : "Local (" * tz * ")"
+    end
+    return "LST (h)"
+end
+
+"""
+    gantt_geometry(plan; detailed = false) -> (; bars, labels, bands, softbars, rows, midnight, now, transit, xlim, ymax)
 
 The whole chart as data: background bands, one bar per contiguous run, and the annotations.
 
@@ -414,7 +543,8 @@ Detailed is ASPRO's, and it is about DELAYS: one row per baseline, plus altitude
 is the view worth having when the answer is "you can't", because the summary cannot say why —
 a single baseline out of fifteen closes the whole night, and only a per-baseline row names it.
 """
-function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing)
+function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing,
+                        time_system::Symbol = :lst)
     # `show_alt` was the old name for this switch, and it defaulted the other way.
     detailed = show_alt === nothing ? detailed : Bool(show_alt)
     lst = unwrap_lst(p.lst)
@@ -433,11 +563,22 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     bars = GanttBar[]
     labels = GanttLabel[]
 
-    # Background twilight bands: nested, darkening inward, spanning the full height.
+    # Background twilight bands, darkening inward -- and they mean the Sun's depression, not a
+    # decoration. The axis spans the NAUTICAL window (`night_window`'s 102 degree default, which
+    # is what `night_observability` samples over), and `good_twilight` is the ASTRONOMICAL one
+    # at 108, so the two together are the chart's whole dark-time story: light grey where the
+    # Sun is between 12 and 18 degrees down, darker where it is past 18.
+    #
+    # They used to be rectangles inset 1.5, 2.0 and 3.0 HOURS from the ends of the night,
+    # nested so they darkened inward. Nothing astronomical was consulted, and nested darkening
+    # bands on an observing chart are read as twilight -- so the plot asserted a boundary that
+    # was never computed, and moved it with the length of the night rather than with the Sun.
     bands = GanttBar[]
     if !isempty(lst)
-        for (pad, colour) in ((1.5, "lightgray"), (2.0, "lightgray"), (3.0, "gray"))
-            push!(bands, GanttBar(lst[1] + pad, lst[end] - pad, 5.0, 10.0, colour, ""))
+        push!(bands, GanttBar(lst[1], lst[end], 5.0, 10.0, "lightgray", ""))
+        if !isempty(p.good_twilight)
+            i0, i1 = extrema(p.good_twilight)
+            push!(bands, GanttBar(lst[i0], lst[i1], 5.0, 10.0, "gray", ""))
         end
     end
 
@@ -493,24 +634,49 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
         add!(show_idx, 2.0, TARGET_BAR_HEIGHT, detailed ? "green" : "blue", lbl)
         # Every run is annotated, not just the outermost pair: each is one observing block, and
         # its own start and end times with their az/alt are what goes on a schedule.
+        # The az and alt numbers read INWARD from the bar's own edges -- the left pair starts
+        # at the left edge, the right pair ends at the right one -- so they stay over the bar
+        # they describe. Growing outward, as they did, they met in the gap between two runs and
+        # were written over each other there.
+        span = lst[end] - lst[1] + 0.5
         for (i0, i1) in index_runs(show_idx)
             # Slivers are drawn but not annotated: six labels inside a few minutes overprint
             # each other and the next run's, which looks like broken text rather than crowding.
             if lst[i1] - lst[i0] >= MIN_LABELLED_RUN
                 azy, alty = az_label_y(), alt_label_y()
-                push!(labels, GanttLabel(lst[i0], TARGET_ROW, _hhmm(lst[i0]), :time, :start))
-                push!(labels, GanttLabel(lst[i1], TARGET_ROW, _hhmm(lst[i1]), :time, :end))
-                push!(labels, GanttLabel(lst[i0], azy,  string(round(Int, p.az[i0])),  :az,  :start))
-                push!(labels, GanttLabel(lst[i0], alty, string(round(Int, p.alt[i0])), :alt, :start))
-                push!(labels, GanttLabel(lst[i1], azy,  string(round(Int, p.az[i1])),  :az,  :end))
-                push!(labels, GanttLabel(lst[i1], alty, string(round(Int, p.alt[i1])), :alt, :end))
+                # The clock the AXIS is in, so a bar that starts at 22:00 on the axis says
+                # 22:00 at its end. Positions stay in LST either way -- only the text changes.
+                push!(labels, GanttLabel(lst[i0], TARGET_ROW,
+                                         _hhmm(_gantt_clock(p, lst[i0], time_system)), :time, :start))
+                push!(labels, GanttLabel(lst[i1], TARGET_ROW,
+                                         _hhmm(_gantt_clock(p, lst[i1], time_system)), :time, :end))
+                # Both pairs are over the same bar now, so what has to be wide enough is the
+                # bar. The times are drawn on their side and cost their height in x, so they
+                # are printed whatever the width.
+                if lst[i1] - lst[i0] >= LABEL_ROOM_FRAC * span
+                    push!(labels, GanttLabel(lst[i0], azy,  string(round(Int, p.az[i0])),  :az,  :start))
+                    push!(labels, GanttLabel(lst[i0], alty, string(round(Int, p.alt[i0])), :alt, :start))
+                    push!(labels, GanttLabel(lst[i1], azy,  string(round(Int, p.az[i1])),  :az,  :end))
+                    push!(labels, GanttLabel(lst[i1], alty, string(round(Int, p.alt[i1])), :alt, :end))
+                end
             end
         end
     end
 
-    # The window matplotlib uses: midnight ± 8 h, which centres the night regardless of season.
-    offset = 4.0
-    xlim = (mid - 12 + offset, mid + 12 - offset)
+    # The axis IS the night -- sunset to sunrise -- which is what ASPRO draws in "Night only"
+    # and what makes a short summer night read as short. The samples already span the dark
+    # window, so the range is the grid's own, padded so a bar ending at sunrise is not drawn
+    # on the frame. A fixed window centred on midnight would be the alternative and it hides
+    # exactly the seasonal difference an observer is looking for.
+    pad = 0.25
+    xlim = isempty(lst) ? (mid - 8.0, mid + 8.0) : (first(lst) - pad, last(lst) + pad)
+
+    # Transit is HA = 0, i.e. LST = RA. This axis is unwrapped and can run past 24 h, so bring
+    # the target's RA onto the branch the night occupies; NaN when transit is not in the night,
+    # which is the honest drawing of "it does not culminate while it is dark".
+    ra_h    = p.ra / 15
+    tr      = ra_h + 24 * round(((xlim[1] + xlim[2]) / 2 - ra_h) / 24)
+    transit = (xlim[1] <= tr <= xlim[2]) ? tr : NaN
 
     # Bands span whatever height the rows ended up needing.
     bands = [GanttBar(b.x0, b.x1, ymax/2, ymax, b.color, b.label) for b in bands]
@@ -519,19 +685,47 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     # the chart would be worse than quoting none.
     subtitle = p.delay_applied ? pop_label(p) : ""
 
-    return (; bars, labels, bands, midnight = mid, now = nowlst, xlim, target = p.name,
-              rows, ymax, detailed, subtitle, delay_applied = p.delay_applied)
+    # Time the target spends above the mount's SOFT ceiling: observable, and flagged rather
+    # than hidden, which is what ASPRO's dashed extension says. Empty when the facility
+    # declares no soft limit, since then there is nothing to distinguish.
+    soft_only = setdiff(observable_indices(p), intersect(p.good_alt_soft, p.good_delay,
+                                                         p.good_twilight, p.good_moon))
+    softbars = GanttBar[]
+    if !isempty(soft_only)
+        for (i0, i1) in index_runs(sort(collect(soft_only)))
+            # The bar's own height, so the dashed edge lands ON the bar's top and bottom:
+            # the band is a property of the hours it covers, and drawn shorter it read as a
+            # separate, smaller thing floating inside the window rather than as part of it.
+            push!(softbars, GanttBar(lst[i0], lst[i1], TARGET_ROW, TARGET_BAR_HEIGHT, "orange", ""))
+        end
+    end
+
+    return (; bars, labels, bands, softbars, midnight = mid, now = nowlst, transit, xlim,
+              target = p.name, rows, ymax, detailed, subtitle,
+              delay_applied = p.delay_applied)
 end
 
 "LST hours as `H:M`, matching the annotation format of the matplotlib original."
+# An LST position expressed on whichever clock the chart is labelled in.
+function _gantt_clock(p::NightPlan, x::Real, system::Symbol)
+    system === :lst && return x
+    u = lst_to_utc(p, x)
+    isfinite(u) || return x
+    system === :utc && return u
+    return u + local_utc_offset(p, Dates.DateTime(Dates.Date(p.date)) +
+                                   Dates.Millisecond(round(Int, u * 3.6e6)))
+end
+
 function _hhmm(h::Real)
-    t = mod(Float64(h), 24.0)
-    hh = floor(Int, t)
     # Truncated, not rounded: `gantt_onenight` formats a DateTime, and that drops the seconds
     # rather than rounding them up. Rounding here puts the two renderers a minute apart on any
-    # block whose end falls past the half-minute.
-    mm = floor(Int, (t - hh) * 60)
-    return string(mod(hh, 24), ":", mm)
+    # block whose end falls past the half-minute. Reached through milliseconds for the same
+    # reason -- that is the resolution `hours_to_date` hands the other renderer, and flooring
+    # the raw hours instead loses a minute wherever the float lands just below one (19:05
+    # printed as 19:4).
+    ms = round(Int, mod(Float64(h), 24.0) * 3_600_000)
+    mm = div(ms, 60_000)
+    return string(div(mm, 60) % 24, ":", lpad(mod(mm, 60), 2, '0'))
 end
 
 

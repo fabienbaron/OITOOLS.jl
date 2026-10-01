@@ -35,13 +35,6 @@ if dates isa DateTime # transform a single timestamp into an Array
 end
 ra = ra_hours
 
-Y= year.(dates)
-M= month.(dates)
-D = day.(dates)
-H= hour.(dates) # CHARA UTC offset
-MIN= minute.(dates)
-SEC= second.(dates)+millisecond.(dates)/1000
-
 h_ad = alpha*longitude/15 #longitude in degrees, Measures the hours offset due to longitude
 
 # GMST from the Julian date, then LST, then the local hour angle. Both results are in hours.
@@ -55,20 +48,29 @@ h_ad = alpha*longitude/15 #longitude in degrees, Measures the hours offset due t
 # `t` is centuries to 0h UT of the DATE, not to the instant: the series gives GMST at 0h and
 # the last term carries the day forward at the sidereal rate. Measuring t to the instant adds
 # part of that rotation a second time.
-jd0h = Dates.datetime2julian.(DateTime.(Y, M, D))
-t = (jd0h .- 2451545.0) / 36525.0
-gmst = 24110.54841 .+ 8640184.812866*t + 0.093104*t.^2 - 6.2E-6*t.^3 + (1.00273790935 .+ 5.9e-11*t).*(H*3600 + MIN*60 + SEC) #seconds
-gmst = gmst/3600 #hours
-
-gmst_over = findall(gmst.>24)
-gmst[gmst_over] -= (24*floor.(gmst[gmst_over]/24))
-lst = gmst .+ h_ad
-lst_under = findall(lst.<0)
-lst_over = findall(lst.>24)
-lst[lst_under] .+= 24
-lst[lst_over] -= (24*floor.(lst[lst_over]/24))
-hour_angle = lst .-ra
-hour_angle[findall(hour_angle.<-12)] .+= 24; # had to add this, normal ???? FB
+#
+# One pass, one element at a time. The broadcast form of the same arithmetic built seven
+# temporary arrays for the calendar fields alone and ten more for the series, which on a
+# night's grid cost more than the series itself. The expression below is grouped exactly as the
+# broadcast was, so it returns the same bits: `simulate` writes these hour angles into OIFITS.
+n = length(dates)
+lst = Vector{Float64}(undef, n)
+hour_angle = Vector{Float64}(undef, n)
+for (i, d) in enumerate(dates)
+    jd0h = Dates.datetime2julian(DateTime(Dates.Date(d)))
+    t = (jd0h - 2451545.0) / 36525.0
+    sec = second(d) + millisecond(d)/1000
+    g = (24110.54841 + 8640184.812866*t + 0.093104*t^2 - 6.2E-6*t^3 +
+         (1.00273790935 + 5.9e-11*t)*(hour(d)*3600 + minute(d)*60 + sec)) / 3600 #hours
+    g > 24 && (g -= (24*floor(g/24)))
+    l = g + h_ad
+    l < 0 && (l += 24)
+    l > 24 && (l -= (24*floor(l/24)))
+    h = l - (ra isa Float64 ? ra : ra[i])
+    h < -12 && (h += 24)   # had to add this, normal ???? FB
+    lst[i] = l
+    hour_angle[i] = h
+end
 return lst,hour_angle
 end
 
@@ -112,7 +114,10 @@ function alt_az(dec_deg,lat_deg, ha_hours) #returns alt, az in degrees
     dec = dec_deg*pi/180;
     ha = ha_hours*pi/12
     lat = lat_deg*pi/180
-    # Simple version
+    # Simple version. Broadcast rather than a loop over the elements, and measured: a fused
+    # scalar pass over the same arithmetic runs at the same 9.9 us on a night's grid, because
+    # the trigonometry is not vectorised either way. All it buys is the 60 kB of temporaries,
+    # which is not worth regrouping arithmetic that `simulate` writes into OIFITS.
     alt = asin.(sin(dec)*sin(lat).+cos(dec)*cos(lat)*cos.(ha))
     az = atan.((-cos(dec)*sin.(ha))./(sin(dec)*cos(lat).-cos(dec)*cos.(ha)*sin(lat)))
     return alt*180/pi, mod.(az*180/pi.+360, 360)
@@ -137,9 +142,13 @@ end
 Convert a Julia `DateTime` to Julian Date.
 """
 function datetime_to_jd(dt::DateTime)
-    Y = Dates.year(dt)
-    M = Dates.month(dt)
-    D = Dates.day(dt) + (Dates.hour(dt) + Dates.minute(dt)/60.0 + Dates.second(dt)/3600.0) / 24.0
+    # One calendar decomposition rather than six. `year`, `month`, `day`, `hour`, `minute` and
+    # `second` each redo the division chain from the instant's millisecond count, and on a
+    # night's grid that cost more than the Moon ephemeris this feeds. Same value to the bit,
+    # milliseconds dropped as they always were.
+    Y, M, day = Dates.yearmonthday(dt)
+    ms = mod(Dates.value(dt), 86_400_000)
+    D = day + ((ms ÷ 3_600_000) + ((ms ÷ 60_000) % 60)/60.0 + ((ms ÷ 1000) % 60)/3600.0) / 24.0
     if M <= 2
         Y -= 1
         M += 12

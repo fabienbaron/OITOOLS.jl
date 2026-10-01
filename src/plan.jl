@@ -159,22 +159,32 @@ Arguments:
 function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64,
                              obsdate::DateTime;
                              alt_limit::Float64=30.0, alt_max::Float64=90.0,
+                             config::AbstractVector{<:Integer}=Int[],
                              moon_min_sep::Float64=30.0,
                              dark_offset::Float64=0.0,
                              step_minutes::Int=1)
     lat, lon = facility.lat, facility.lon
 
-    # LST at local midnight (next day, 7h UT ≈ midnight at CHARA longitude)
+    # LST at the local midnight closing `obsdate`'s evening -- the same night the grid below
+    # covers. From the longitude rather than a fixed hour, which was CHARA's offset and wrong
+    # anywhere else.
+    #
     # `ra` is in degrees (see the docstring and TargetConfig.raep0); hour_angle_calc wants
     # hours. Before 0.11 `ra` was passed through unconverted, so callers had to supply hours
     # -- which then made the angular_separation() call below, which needs degrees, wrong.
-    lst_midnight, _ = hour_angle_calc(obsdate + Dates.Day(1) + Dates.Hour(7), lon, ra/15)
+    midnight_utc = Dates.DateTime(Dates.Date(obsdate)) +
+                   Dates.Millisecond(round(Int, (24.0 - lon / 15) * 3.6e6))
+    lst_midnight, _ = hour_angle_calc(midnight_utc, lon, ra/15)
     lst_midnight = lst_midnight[1]
 
-    # Dark window
-    _, UTC_set  = sunrise_sunset(obsdate, lat, lon)
-    UTC_rise, _ = sunrise_sunset(obsdate + Dates.Day(1), lat, lon)
-    utc = collect(range(UTC_set + dark_offset, UTC_rise - dark_offset, step=1.0/60*step_minutes))
+    # Dark window of the night BEGINNING on `obsdate`, which is the night an observer means
+    # when they name a date. Hours are measured from `obsdate` at 00:00 UT and run past 24 for
+    # the morning half, which `hours_to_date` rolls over.
+    t_set, t_rise = night_window(obsdate, lat, lon)
+    base  = Dates.DateTime(Dates.Date(obsdate))
+    hrs(t) = Dates.value(t - base) / 3.6e6
+    utc = collect(range(hrs(t_set) + dark_offset, hrs(t_rise) - dark_offset,
+                        step = 1.0/60*step_minutes))
 
     # LST and hour angle — compute in Float64 then convert
     dates = hours_to_date(obsdate, utc)
@@ -187,7 +197,14 @@ function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64
     alt_vec = Float32.(alt64)
     az_vec  = Float32.(az64)
 
-    good_alt = findall((alt_vec .> alt_limit) .& (alt_vec .< alt_max))
+    # The horizon the telescopes actually look over, where the facility gives one, floored by
+    # whatever the caller asked for: `alt_limit` is a preference and the terrain is not.
+    horizon = max.(Float64(alt_limit), horizon_limit(facility, az_vec; config = config))
+    good_alt = findall(i -> alt_vec[i] > horizon[i] && alt_vec[i] < alt_max, eachindex(alt_vec))
+    # The same window under the SOFT ceiling, when the facility declares one. Time between the
+    # two is observable and flagged, not lost, which is how ASPRO draws it.
+    soft = isfinite(facility.alt_soft_max) ? min(alt_max, facility.alt_soft_max) : alt_max
+    good_alt_soft = findall(i -> alt_vec[i] > horizon[i] && alt_vec[i] < soft, eachindex(alt_vec))
 
     # Moon separation and illumination
     jd_mid = datetime_to_jd(dates[length(dates) ÷ 2 + 1])
@@ -202,20 +219,15 @@ function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64
 
     good_moon = findall(moon_sep .> moon_min_sep)
 
-    # Twilight filter: indices within 1.5h of sunset/sunrise (outermost light-gray band)
-    # Use unwrapped LST to handle 24→0 crossing
-    lst_unwrap = Float64.(lst)
-    for i in 2:length(lst_unwrap)
-        while lst_unwrap[i] < lst_unwrap[i-1]
-            lst_unwrap[i] += 24.0
-        end
-    end
-    tw_start = lst_unwrap[1] + 1.5
-    tw_end   = lst_unwrap[end] - 1.5
-    good_twilight = findall((lst_unwrap .>= tw_start) .& (lst_unwrap .<= tw_end))
+    # Astronomical night: the Sun 18° below the horizon, which is what "dark" means for an
+    # observing window. A fixed pad off the ends of the grid is not that — it is unrelated to
+    # the Sun, varies with season, latitude and the grid's own extent, and at CHARA in April
+    # discarded nearly two hours of genuinely dark sky every night.
+    a_set, a_rise = night_window(obsdate, lat, lon; zenith = 108.0)
+    good_twilight = findall(d -> a_set <= d <= a_rise, dates)
 
-    return (utc=utc, lst=lst, ha=ha, alt=alt_vec, az=az_vec,
-            lst_midnight=lst_midnight, good_alt=good_alt,
+    return (utc=utc, lst=lst, ha=ha, alt=alt_vec, az=az_vec, horizon=horizon,
+            lst_midnight=lst_midnight, good_alt=good_alt, good_alt_soft=good_alt_soft,
             moon_sep=moon_sep, moon_fli=moon_fli, good_moon=good_moon,
             good_twilight=good_twilight)
 end
@@ -239,19 +251,176 @@ Arguments:
 """
 function compute_delays(facility::FacilityConfig, dec::Float64, ha::Vector{Float32},
                         config::Vector{Int}, pop::Vector{Int};
-                        pop_array::Matrix{Float32}=CHARA_POP_ARRAY,
-                        airpath::Vector{Float32}=CHARA_AIRPATH)
+                        pop_array::Union{Nothing,Matrix{Float32}}=nothing,
+                        airpath::Union{Nothing,Vector{Float32}}=nothing,
+                        beam_order::Union{Nothing,AbstractVector{<:Integer}}=nothing)
     nbaselines, baseline_xyz, baseline_stations, baseline_names = get_baselines(facility; config=config)
     delay_geo = Float32.(geometric_delay(facility.lat, Float64.(ha), dec, baseline_xyz))
+    off = _delay_offsets(facility, config, pop; pop_array, airpath, beam_order)
 
-    delay_airpath = Float32[airpath[baseline_stations[2, i]] - airpath[baseline_stations[1, i]]
-                            for i in 1:nbaselines]
-    delay_pop = Float32[pop_array[baseline_stations[2, i], pop[baseline_stations[2, i]]] -
-                        pop_array[baseline_stations[1, i], pop[baseline_stations[1, i]]]
-                        for i in 1:nbaselines]
-
-    delay_carts = 0.5f0 .* (delay_geo .- delay_airpath .- delay_pop)
+    delay_carts = 0.5f0 .* (delay_geo .- Float32.(off))
     return delay_carts, nbaselines, baseline_names, baseline_stations
+end
+
+# The fixed optical path difference of each baseline: the air path ahead of the delay line,
+# the beam sampling table for the channel that telescope feeds, and the POPs. Factored out
+# because the sampled path and the analytic one must not be able to disagree about it.
+#
+# The facility's own tables win -- these belong in the configuration, beside the station
+# coordinates they are measured against. The CHARA_* constants remain for a facility file that
+# predates them, and an explicit argument still overrides both.
+function _delay_offsets(facility::FacilityConfig, config::Vector{Int}, pop::Vector{Int};
+                        pop_array=nothing, airpath=nothing, beam_order=nothing)
+    pops = _pop_table(facility; pop_array)
+    path = _fixed_path(facility, config; airpath, beam_order)
+    nbl, _, sts, _ = get_baselines(facility; config = config)
+    return Float64[(path[sts[2, i]] - path[sts[1, i]]) +
+                   (pops[sts[2, i], pop[sts[2, i]]] - pops[sts[1, i], pop[sts[1, i]]])
+                   for i in 1:nbl]
+end
+
+# The per-telescope halves of the offset above, which `best_pop` needs separately: it varies
+# the POPs over a fixed path rather than evaluating one assignment.
+_pop_table(facility::FacilityConfig; pop_array=nothing) =
+    pop_array !== nothing ? pop_array :
+    isempty(facility.pop_offsets) ? CHARA_POP_ARRAY : Float32.(facility.pop_offsets)
+
+# A telescope's channel is its POSITION among the telescopes in use, so the same six in a
+# different order feed different channels and get different paths -- which is why the BST is
+# added per configuration rather than folded into `fixed_offset`. `beam_order` names that
+# order; without one it is the facility's own, and no BST means no change.
+function _fixed_path(facility::FacilityConfig, config::Vector{Int};
+                     airpath=nothing, beam_order=nothing)
+    path = airpath !== nothing ? airpath :
+           (isempty(facility.fixed_offsets) || any(isnan, facility.fixed_offsets)) ?
+           CHARA_AIRPATH : Float32.(facility.fixed_offsets)
+    isempty(facility.bst) && return path
+    used = beam_order === nothing ? findall(!iszero, config) : collect(beam_order)
+    path = copy(path)
+    for (chan, t) in enumerate(used)
+        chan <= size(facility.bst, 2) || break
+        path[t] += Float32(facility.bst[t, chan])
+    end
+    return path
+end
+
+# Per-telescope cart span, in metres of CART travel. The limit switches are the measurement;
+# `delay_lengths` is their difference, for a facility file that gives no switches.
+function _delay_spans(facility::FacilityConfig, delay_length::Union{Nothing,Float64})
+    delay_length !== nothing && return fill(Float64(delay_length), facility.ntel)
+    if length(facility.delay_front) == facility.ntel &&
+       !any(isnan, facility.delay_front) && !any(isnan, facility.delay_back)
+        return Float64.(facility.delay_back .- facility.delay_front)
+    end
+    isempty(facility.delay_lengths) || return Float64.(facility.delay_lengths)
+    return fill(45.7, facility.ntel)
+end
+
+"""
+    delay_ha_intervals(facility, dec, config, pop; kwargs...) -> Vector{Tuple{Float64,Float64}}
+
+Hour-angle intervals, in HOURS, where every baseline is within its delay limits. Exact.
+
+Sampling cannot place a window edge better than its own step, which is why a one-minute grid
+reports a boundary up to a minute out and why finer steps cost linearly. This solves for the
+edges instead, so they are exact and the step size becomes a display choice.
+
+The delay of a baseline is a sinusoid in hour angle,
+
+    w(h) = A cos h + B sin h + C,    A = cosδ (cos l b₃ − sin l b₁)
+                                     B = −cosδ b₂
+                                     C = sinδ (cos l b₁ + sin l b₃)
+
+so `w(h) = W` inverts in closed form: with `R = √(A²+B²)` and `φ = atan(B, A)` it is
+`R cos(h − φ) = W − C`, giving no root, one, or two. The extrema are `C ± R`, which settles the
+two cases that need no work at all — a window containing them means the baseline never leaves
+its limits, and one disjoint from them means it never enters.
+
+Each baseline contributes at most four critical hour angles; between consecutive ones `w` cannot
+cross a limit, so testing the MIDPOINT of each sub-interval decides it. The same method ASPRO 2
+uses in `DelayLineService.findHAIntervalsForBaseLine`, which is where this was read from.
+"""
+# w(h) = A cos h + B sin h + C, the delay of one baseline as a function of hour angle.
+# `l` and `dec` in radians; the baseline vector is local (East, North, Up).
+@inline function _w_coeffs(l::Float64, δ::Float64, bx::Float64, by::Float64, bz::Float64)
+    cd, sd = cos(δ), sin(δ)
+    return (cd * (cos(l) * bz - sin(l) * bx), -cd * by, sd * (cos(l) * bx + sin(l) * bz))
+end
+
+@inline _w_at(A, B, C, h) = A * cos(h * π / 12) + B * sin(h * π / 12) + C
+
+# Hour angles, in hours, where `wlo <= w(h) <= whi`, restricted to `ha_range`. Exact: the
+# crossings are the roots of R cos(h - φ) = W - C, and between consecutive roots w cannot
+# cross a limit, so each sub-interval is settled by its midpoint.
+function _w_intervals(A::Float64, B::Float64, C::Float64, wlo::Float64, whi::Float64,
+                      ha_range::Tuple{Float64,Float64})
+    R = hypot(A, B)
+    (whi < C - R || wlo > C + R) && return Tuple{Float64,Float64}[]   # never within limits
+    (wlo <= C - R && whi >= C + R) && return [ha_range]               # never outside them
+    φ = atan(B, A)
+    cuts = Float64[ha_range[1], ha_range[2]]
+    for W in (wlo, whi)
+        R == 0 && break
+        k = (W - C) / R
+        abs(k) > 1 && continue
+        a = acos(clamp(k, -1.0, 1.0))
+        for h in (φ + a, φ - a)
+            x = (mod(h + π, 2π) - π) * 12 / π
+            ha_range[1] < x < ha_range[2] && push!(cuts, x)
+        end
+    end
+    sort!(cuts)
+    out = Tuple{Float64,Float64}[]
+    for i in 1:length(cuts)-1
+        lo, hi = cuts[i], cuts[i+1]
+        hi - lo < 1e-12 && continue
+        if wlo <= _w_at(A, B, C, 0.5 * (lo + hi)) <= whi
+            if !isempty(out) && lo - out[end][2] < 1e-12
+                out[end] = (out[end][1], hi)          # the cut was not a crossing
+            else
+                push!(out, (lo, hi))
+            end
+        end
+    end
+    return out
+end
+
+# Intersection of two sorted, disjoint interval lists, and the total length of one.
+function _isect(a::Vector{Tuple{Float64,Float64}}, b::Vector{Tuple{Float64,Float64}})
+    out = Tuple{Float64,Float64}[]
+    i = j = 1
+    while i <= length(a) && j <= length(b)
+        lo = max(a[i][1], b[j][1]); hi = min(a[i][2], b[j][2])
+        hi > lo && push!(out, (lo, hi))
+        a[i][2] < b[j][2] ? (i += 1) : (j += 1)
+    end
+    return out
+end
+_ilen(v::Vector{Tuple{Float64,Float64}}) = isempty(v) ? 0.0 : sum(x -> x[2] - x[1], v)
+
+function delay_ha_intervals(facility::FacilityConfig, dec::Float64,
+                            config::Vector{Int}, pop::Vector{Int};
+                            delay_length::Union{Nothing,Float64}=nothing,
+                            pop_array::Union{Nothing,Matrix{Float32}}=nothing,
+                            airpath::Union{Nothing,Vector{Float32}}=nothing,
+                            beam_order::Union{Nothing,AbstractVector{<:Integer}}=nothing,
+                            ha_range::Tuple{Float64,Float64}=(-12.0, 12.0))
+    nbl, bxyz, bst_idx, _ = get_baselines(facility; config = config)
+    nbl == 0 && return Tuple{Float64,Float64}[]
+
+    # The same fixed offsets and limits `in_delay` uses, so the two cannot disagree.
+    off  = _delay_offsets(facility, config, pop; pop_array, airpath, beam_order)
+    dlen = _delay_spans(facility, delay_length)
+
+    l, δ = facility.lat * π / 180, dec * π / 180
+    acc = [ha_range]
+    for b in 1:nbl
+        A, B, C = _w_coeffs(l, δ, bxyz[1, b], bxyz[2, b], bxyz[3, b])
+        dmax = min(dlen[bst_idx[1, b]], dlen[bst_idx[2, b]])
+        acc = _isect(acc, _w_intervals(A, B, C, off[b] - 2dmax, off[b] + 2dmax, ha_range))
+        isempty(acc) && return Tuple{Float64,Float64}[]
+    end
+    return acc
 end
 
 """
@@ -271,20 +440,18 @@ Pass `delay_length=43.0` to override with a uniform (conservative) value.
 function in_delay(facility::FacilityConfig, dec::Float64, ha::Vector{Float32},
                   config::Vector{Int}, pop::Vector{Int};
                   delay_length::Union{Nothing,Float64}=nothing,
-                  pop_array::Matrix{Float32}=CHARA_POP_ARRAY,
-                  airpath::Vector{Float32}=CHARA_AIRPATH)
+                  pop_array::Union{Nothing,Matrix{Float32}}=nothing,
+                  airpath::Union{Nothing,Vector{Float32}}=nothing,
+                  beam_order::Union{Nothing,AbstractVector{<:Integer}}=nothing)
 
     delay_carts, nbaselines, baseline_names, baseline_stations =
-        compute_delays(facility, dec, ha, config, pop; pop_array=pop_array, airpath=airpath)
+        compute_delays(facility, dec, ha, config, pop; pop_array=pop_array, airpath=airpath,
+                       beam_order=beam_order)
 
-    # Per-baseline delay limit = min of the two telescopes' delay lengths
-    if !isnothing(delay_length)
-        dlens = fill(Float32(delay_length), facility.ntel)
-    elseif !isempty(facility.delay_lengths)
-        dlens = Float32.(facility.delay_lengths)
-    else
-        dlens = fill(45.7f0, facility.ntel)
-    end
+    # Per-baseline delay limit = min of the two telescopes' cart spans. The limit switches are
+    # the measurement; `delay_lengths` is their difference and is what a facility file that
+    # gives no switches carries instead.
+    dlens = Float32.(_delay_spans(facility, delay_length))
 
     has_delay = trues(size(delay_carts, 2))
     for b in 1:nbaselines
@@ -297,12 +464,109 @@ function in_delay(facility::FacilityConfig, dec::Float64, ha::Vector{Float32},
     end
 
     good_delay = findall(has_delay)
+    # The EXACT hour-angle edges, beside the sampled indices. `good_delay` can only resolve a
+    # boundary to the sampling step; `intervals` is where it actually falls, so a caller that
+    # wants to draw or quote an edge need not inherit the grid's resolution.
+    intervals = delay_ha_intervals(facility, dec, config, pop;
+                                   delay_length, pop_array, airpath, beam_order)
     return (delay_carts=delay_carts, has_delay=has_delay, good_delay=good_delay,
+            intervals=intervals,
             nbaselines=nbaselines, baseline_names=baseline_names,
             baseline_stations=baseline_stations)
 end
 
 # ─── Observability filter for simulate() ─────────────────────────────────────
+
+"""
+    night_window(obsdate, lat, lon; zenith = 102.0) -> (t_set, t_rise)
+
+The dark window of the night that **begins** on `obsdate`, as UTC `DateTime`s.
+
+`sunrise_sunset` reports the events falling inside one UTC DAY, and which UTC day an evening
+event belongs to depends on the longitude: west of Greenwich a 19:40 local sunset is on the
+NEXT UTC date, east of it on the same one. So the pair is chosen by bracketing the local
+midnight that closes `obsdate`'s evening, which is right at either sign of longitude — adding
+a day is right only for the western half of the world.
+
+`zenith` is the Sun's zenith angle defining the boundary: 90°50′ for geometric sunrise/sunset,
+96 civil, 102 nautical, 108 astronomical.
+"""
+function night_window(obsdate, lat, lon; zenith::Float64 = 102.0)
+    # Local midnight closing the evening of `obsdate`, in UTC. Mean solar time from the
+    # longitude is ample for picking WHICH night; nothing here needs civil time or a zone.
+    mid = Dates.DateTime(Dates.Date(obsdate)) +
+          Dates.Millisecond(round(Int, (24.0 - lon / 15) * 3.6e6))
+    at(d, h) = Dates.DateTime(d) + Dates.Millisecond(round(Int, h * 3.6e6))
+    sets = Dates.DateTime[]; rises = Dates.DateTime[]
+    for k in -1:1
+        d = Dates.Date(mid) + Dates.Day(k)
+        r, st = sunrise_sunset(Dates.DateTime(d), lat, lon; zenith = zenith)
+        push!(sets, at(d, st)); push!(rises, at(d, r))
+    end
+    before = filter(t -> t <= mid, sets)
+    after  = filter(t -> t >= mid, rises)
+    # Polar day or night: no boundary brackets the midnight, so fall back to the nearest
+    # events rather than throwing. The caller sees a window; whether it is dark is `good_alt`'s
+    # business and the Sun's, not this function's.
+    isempty(before) && (before = sets)
+    isempty(after)  && (after  = rises)
+    return (maximum(before), minimum(after))
+end
+
+"""
+    horizon_limit(facility, az; config = Int[]) -> Float64
+
+Minimum elevation, degrees, at azimuth `az`, for the telescopes `config` selects.
+
+A target has to clear the terrain in front of EVERY telescope in use, so this is the maximum
+over their profiles -- which means the limit depends on which telescopes are selected, and a
+single number for the array cannot express it. Returns `-Inf` when the facility declares no
+horizon, leaving a flat `alt_limit` as the only constraint.
+
+At Mount Wilson the profiles run from 18° over the south to 48° towards the north-west, so a
+flat 30° is both too permissive (it promises sky a telescope cannot see) and too restrictive
+(it discards 12° of clear southern sky).
+"""
+function horizon_limit(facility::FacilityConfig, az::Real; config::AbstractVector{<:Integer} = Int[])
+    isempty(facility.horizon_az) && return -Inf
+    return _horizon_at(facility, _horizon_used(facility, config), Float64(az))
+end
+
+# The same limit over a whole azimuth grid. The telescopes in use are derived ONCE: deriving
+# them per sample allocated a fresh index vector for every minute of the night, which was more
+# than half the cost of this check and 44% of `night_observability`.
+function horizon_limit(facility::FacilityConfig, az::AbstractVector;
+                       config::AbstractVector{<:Integer} = Int[])
+    isempty(facility.horizon_az) && return fill(-Inf, length(az))
+    used = _horizon_used(facility, config)
+    return [_horizon_at(facility, used, Float64(a)) for a in az]
+end
+
+_horizon_used(facility::FacilityConfig, config::AbstractVector{<:Integer}) =
+    isempty(config) ? collect(eachindex(facility.horizon_az)) : findall(!iszero, config)
+
+function _horizon_at(facility::FacilityConfig, used::Vector{Int}, az::Float64)
+    a = mod(az, 360.0)
+    lim = -Inf
+    for t in used
+        t <= length(facility.horizon_az) || continue
+        xs, ys = facility.horizon_az[t], facility.horizon_el[t]
+        (isempty(xs) || length(xs) != length(ys)) && continue
+        # The profiles are given in increasing azimuth and close at 360, so a plain scan is
+        # enough; interpolating keeps a 2° sampling from quantising the limit.
+        if a <= xs[1]
+            lim = max(lim, ys[1])
+        elseif a >= xs[end]
+            lim = max(lim, ys[end])
+        else
+            i = searchsortedlast(xs, a)
+            i = clamp(i, 1, length(xs) - 1)
+            d = xs[i+1] - xs[i]
+            lim = max(lim, d == 0 ? ys[i] : ys[i] + (a - xs[i]) * (ys[i+1] - ys[i]) / d)
+        end
+    end
+    return lim
+end
 
 """
     observable_epochs(facility, target, dates; min_elevation=nothing, max_elevation=nothing,
@@ -387,54 +651,74 @@ function observable_epochs(facility::FacilityConfig, target::TargetConfig,
     return (dates=dates[keep], mask=keep, report=report)
 end
 
+# How a Gantt annotates one observing run. Here, in the core, because BOTH renderers obey it --
+# `gantt_onenight` in the matplotlib extension and `gantt_geometry` in the GUI one -- and
+# sibling extensions cannot import from each other, so neither could own it. `test_gantt.jl`
+# compares the labels they produce string for string, and a rule applied on one side only shows
+# up there as a chart that disagrees with itself.
+#
+# The shortest run, in hours, that gets annotated at all:
+const GANTT_MIN_LABELLED_RUN = 0.4
+# and the width a run needs to hold its az and elev numbers, as a fraction of the plotted span.
+# A fraction rather than a number of hours because the numbers are a fixed width in PIXELS, so
+# what they cost in hours depends on how many hours the axis is showing.
+const GANTT_LABEL_ROOM_FRAC = 0.07
+
 # ─── Best POP search ─────────────────────────────────────────────────────────
 
 """
     best_pop(facility, dec, ha, config; n_best=5, min_minutes=10, delay_length=nothing)
 
-Brute-force search over all POP combinations.
+Search over all POP combinations.
 
 Returns a vector of NamedTuples `(pop, score)` sorted by score (minutes observable),
-keeping up to `n_best` results with score ≥ `min_minutes`.
+keeping up to `n_best` results with score ≥ `min_minutes`. The score is the length of the
+hour-angle interval over which every baseline is within its delay limits, intersected with the
+span of `ha` — it is solved for, not counted off a grid, so it does not depend on how finely
+the caller sampled the night.
 
 Arguments:
 - `config`: telescope configuration (0/1/2); only telescopes with config>0 are used
 - `n_best`: number of top solutions to return
 - `min_minutes`: discard solutions below this threshold
 - `delay_length`: override per-telescope delay limits with a uniform value (m)
+- `beam_order`: the order the telescopes feed the combiner's channels, which selects each
+  one's beam sampling table entry; without one the facility's own order is used
 """
 function best_pop(facility::FacilityConfig, dec::Float64, ha::Vector{Float32},
                   config::Vector{Int};
                   n_best::Int=5, min_minutes::Int=10,
                   delay_length::Union{Nothing,Float64}=nothing,
-                  pop_array::Matrix{Float32}=CHARA_POP_ARRAY,
-                  airpath::Vector{Float32}=CHARA_AIRPATH)
+                  pop_array::Union{Nothing,Matrix{Float32}}=nothing,
+                  airpath::Union{Nothing,Vector{Float32}}=nothing,
+                  beam_order::Union{Nothing,AbstractVector{<:Integer}}=nothing)
 
     nbaselines, baseline_xyz, baseline_stations, baseline_names = get_baselines(facility; config=config)
-    delay_geo = Float32.(geometric_delay(facility.lat, Float64.(ha), dec, baseline_xyz))
 
-    delay_airpath = Float32[airpath[baseline_stations[2, i]] - airpath[baseline_stations[1, i]]
-                            for i in 1:nbaselines]
-
-    if !isnothing(delay_length)
-        dlens = fill(Float32(delay_length), facility.ntel)
-    elseif !isempty(facility.delay_lengths)
-        dlens = Float32.(facility.delay_lengths)
-    else
-        dlens = fill(45.7f0, facility.ntel)
-    end
+    # The same tables `in_delay` resolves, so a POP this search recommends is scored against
+    # the delays the plan will then compute from it.
+    pops = _pop_table(facility; pop_array)
+    path = _fixed_path(facility, config; airpath, beam_order)
+    delay_fixed = Float64[path[baseline_stations[2, i]] - path[baseline_stations[1, i]]
+                          for i in 1:nbaselines]
+    dlens = _delay_spans(facility, delay_length)
 
     # Active telescope indices
     active = findall(config .> 0)
-    npops = 5
+    npops = size(pops, 2)
     nactive = length(active)
 
-    # Build all POP combos for active telescopes
-    results = Tuple{Vector{Int}, Int}[]
+    # The score is observable time within THIS night, so the search is restricted to the hour
+    # angles the caller sampled rather than the whole ±12 h: a combination that is wonderful at
+    # noon is worth nothing.
+    ha_range = isempty(ha) ? (-12.0, 12.0) :
+               (Float64(minimum(ha)), Float64(maximum(ha)))
+    l, δ = facility.lat * π / 180, dec * π / 180
 
-    # Iterate over all POP combinations
-    _pop_search!(results, facility, active, nbaselines, baseline_stations,
-                 delay_geo, delay_airpath, dlens, pop_array, npops, nactive, min_minutes)
+    results = Tuple{Vector{Int}, Int}[]
+    _pop_search!(results, active, nbaselines, baseline_stations,
+                 delay_fixed, dlens, pops, npops, nactive, min_minutes,
+                 ha_range, l, δ, baseline_xyz)
 
     sort!(results, by=x -> x[2], rev=true)
 
@@ -451,55 +735,79 @@ function best_pop(facility::FacilityConfig, dec::Float64, ha::Vector{Float32},
     return out
 end
 
-function _pop_search!(results, facility, active, nbaselines, baseline_stations,
-                      delay_geo, delay_airpath, dlens, pop_array, npops, nactive, min_minutes)
-    ntimes = size(delay_geo, 2)
-    pop_active = ones(Int, nactive)
-
-    # Full pop vector (all telescopes)
-    pop_full = ones(Int, facility.ntel)
-
-    function recurse(depth)
-        if depth > nactive
-            # Evaluate this POP combination
-            for (k, tel_idx) in enumerate(active)
-                pop_full[tel_idx] = pop_active[k]
-            end
-
-            score = 0
-            for t in 1:ntimes
-                all_ok = true
-                for b in 1:nbaselines
-                    i1 = baseline_stations[1, b]
-                    i2 = baseline_stations[2, b]
-                    dp = pop_array[i2, pop_full[i2]] - pop_array[i1, pop_full[i1]]
-                    da = delay_airpath[b]
-                    dc = 0.5f0 * (delay_geo[b, t] - da - dp)
-                    dmax = min(dlens[i1], dlens[i2])
-                    if dc < -dmax || dc > dmax
-                        all_ok = false
-                        break
-                    end
-                end
-                score += all_ok
-            end
-
-            if score >= min_minutes
-                push!(results, (copy(pop_active), score))
-            end
-            return
+# The POP search, as interval arithmetic rather than a scan.
+#
+# The POP choice enters a baseline's condition ONLY as a shift of its delay window:
+#
+#     off_ij + (pop_j - pop_i) - 2d  <=  w(h)  <=  off_ij + (pop_j - pop_i) + 2d
+#
+# so a baseline's feasible hour angles depend on the whole combination through the single pair
+# (pop_i, pop_j). There are 25 such pairs, not 5^6, which is what makes the precompute below
+# worth far more than making the inner loop faster: 15 baselines x 25 pairs of CLOSED-FORM
+# solves replaces a scan of every combination against every time sample.
+#
+# What remains is then a depth-first assignment with pruning. Once telescopes 1..k are fixed
+# every baseline among them is determined, so the running intersection can be tested at once
+# and a subtree abandoned the moment it cannot reach `min_minutes` -- the same early exit
+# ASPRO 2 makes when a baseline is incompatible with a W range.
+function _pop_search!(results, active, nbaselines, baseline_stations,
+                      delay_fixed, dlens, pop_array, npops, nactive, min_minutes,
+                      ha_range, l, δ, bxyz)
+    # tbl[b][pi, pj] -- feasible hour angles for baseline b with that POP pair.
+    tbl = Vector{Matrix{Vector{Tuple{Float64,Float64}}}}(undef, nbaselines)
+    for b in 1:nbaselines
+        i1, i2 = baseline_stations[1, b], baseline_stations[2, b]
+        A, B, C = _w_coeffs(l, δ, bxyz[1, b], bxyz[2, b], bxyz[3, b])
+        dmax = min(dlens[i1], dlens[i2])
+        m = Matrix{Vector{Tuple{Float64,Float64}}}(undef, npops, npops)
+        for pi in 1:npops, pj in 1:npops
+            off = delay_fixed[b] +
+                  Float64(pop_array[i2, pj]) - Float64(pop_array[i1, pi])
+            m[pi, pj] = _w_intervals(A, B, C, off - 2dmax, off + 2dmax, ha_range)
         end
-
-        for p in 1:npops
-            pop_active[depth] = p
-            recurse(depth + 1)
-        end
+        tbl[b] = m
     end
 
-    recurse(1)
-end
+    # Baselines whose two telescopes are both among the first k assigned, grouped by the k at
+    # which that becomes true -- so each baseline is intersected exactly once, as late as
+    # possible and as early as it can be.
+    pos = Dict(t => k for (k, t) in enumerate(active))
+    at_depth = [Int[] for _ in 1:nactive]
+    for b in 1:nbaselines
+        i1, i2 = baseline_stations[1, b], baseline_stations[2, b]
+        (haskey(pos, i1) && haskey(pos, i2)) || continue
+        push!(at_depth[max(pos[i1], pos[i2])], b)
+    end
 
-# ─── Gantt-style observing plan plot ──────────────────────────────────────────
+    min_hours = min_minutes / 60
+    pop_active = ones(Int, nactive)
+
+    function recurse(depth, acc)
+        if depth > nactive
+            score = round(Int, _ilen(acc) * 60)
+            score >= min_minutes && push!(results, (copy(pop_active), score))
+            return
+        end
+        for p in 1:npops
+            pop_active[depth] = p
+            cur = acc
+            ok = true
+            for b in at_depth[depth]
+                i1, i2 = baseline_stations[1, b], baseline_stations[2, b]
+                cur = _isect(cur, tbl[b][pop_active[pos[i1]], pop_active[pos[i2]]])
+                # Pruning: an intersection only shrinks, so a subtree that is already too
+                # short cannot be rescued by the telescopes still to be assigned.
+                if _ilen(cur) < min_hours
+                    ok = false
+                    break
+                end
+            end
+            ok && recurse(depth + 1, cur)
+        end
+    end
+    recurse(1, [ha_range])
+    return results
+end
 
 """
     obs_plan(targetname, facility, ra, dec, obsdate, pop, config;

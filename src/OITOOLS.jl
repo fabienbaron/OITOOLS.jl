@@ -271,7 +271,8 @@ export ra_dec_from_simbad, magnitudes_from_simbad, sexagesimal_to_degrees
 export simbad_target, SIMBAD_BANDS, simbad_tap, SIMBAD_TAP_URL
 
 # ── Observation planning (CHARA) ──────────────────────────────────────────────
-export night_observability, compute_delays, in_delay, best_pop, observable_epochs
+export night_observability, compute_delays, in_delay, delay_ha_intervals, best_pop, observable_epochs
+export horizon_limit, night_window
 export index_runs
 export obs_plan, chara_plan, print_pop_results
 export moon_radec, moon_illumination, angular_separation

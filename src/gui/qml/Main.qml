@@ -314,6 +314,19 @@ ApplicationWindow {
         return ["v2", "t3amp", "t3phi", "visamp", "visphi"].indexOf(kindBox.currentText) >= 0
     }
 
+    // Why a compare box is disabled. BOTH reasons can hold at once -- a uv plot with no model
+    // built -- and a tooltip naming only the first sends the user to fix the wrong one, so this
+    // reports every reason it finds. `needModel` picks which of the two artefacts is wanted.
+    function compareWhy(needModel) {
+        var why = []
+        if (!comparableKind())
+            why.push("'" + kindBox.currentText + "' is not a comparable observable; " +
+                     "plot v2, t3amp, t3phi, visamp or visphi")
+        if (needModel  && !haveModelObs) why.push("no model defined")
+        if (!needModel && !haveImageObs) why.push("no image reconstructed")
+        return why.join(" — ")
+    }
+
     function setCompareView() {
         win.residualView = residModelBox.checked ? "model"
                          : residImageBox.checked ? "image" : ""
@@ -512,6 +525,16 @@ ApplicationWindow {
                 // rather than letting the bar clip its top and bottom.
                 implicitWidth: dp(38)
                 implicitHeight: dp(38)
+                // A ToolButton draws no frame until it is hovered, so the one symbol in the
+                // bar had nothing marking it as pressable. The outline says so standing
+                // still; the fill is what still answers the pointer.
+                background: Rectangle {
+                    radius: dp(3)
+                    border.color: "#000000"
+                    border.width: 1
+                    color: settingsButton.down ? "#d4d4d4"
+                           : settingsButton.hovered ? "#ececec" : "transparent"
+                }
                 ToolTip.visible: hovered
                 ToolTip.text: "Appearance settings"
                 onClicked: {
@@ -1008,8 +1031,7 @@ ApplicationWindow {
                         text: "Resid (model)"
                         enabled: win.comparableKind() && win.haveModelObs
                         ToolTip.visible: hovered && !enabled
-                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
-                                                            : "build a model first"
+                        ToolTip.text: win.compareWhy(true)
                         onToggled: { if (checked) { residImageBox.checked = false
                                                     overModelBox.checked = false
                                                     overImageBox.checked = false }
@@ -1020,8 +1042,7 @@ ApplicationWindow {
                         text: "Resid (image)"
                         enabled: win.comparableKind() && win.haveImageObs
                         ToolTip.visible: hovered && !enabled
-                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
-                                                            : "reconstruct an image first"
+                        ToolTip.text: win.compareWhy(false)
                         onToggled: { if (checked) { residModelBox.checked = false
                                                     overModelBox.checked = false
                                                     overImageBox.checked = false }
@@ -1032,8 +1053,7 @@ ApplicationWindow {
                         text: "Model obs"
                         enabled: win.comparableKind() && win.haveModelObs
                         ToolTip.visible: hovered && !enabled
-                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
-                                                            : "build a model first"
+                        ToolTip.text: win.compareWhy(true)
                         onToggled: { if (checked) { overImageBox.checked = false
                                                     residModelBox.checked = false
                                                     residImageBox.checked = false }
@@ -1044,8 +1064,7 @@ ApplicationWindow {
                         text: "Image obs"
                         enabled: win.comparableKind() && win.haveImageObs
                         ToolTip.visible: hovered && !enabled
-                        ToolTip.text: !win.comparableKind() ? "not an observable to compare"
-                                                            : "reconstruct an image first"
+                        ToolTip.text: win.compareWhy(false)
                         onToggled: { if (checked) { overModelBox.checked = false
                                                     residModelBox.checked = false
                                                     residImageBox.checked = false }

@@ -69,10 +69,36 @@ function build_gantt(fig, ax)
     legpos    = Makie.Observable(Makie.Point2f[]);  legtxt  = Makie.Observable(String[])
     legcols   = Makie.Observable(Makie.RGBAf[])
 
-    # Bands first, then bars on top, then text: the z-order of the original.
+    # Local midnight, the date it turns over, and the target's culmination. Separate from the
+    # red "now" line above: that one says where the clock is, these say where the NIGHT is.
+    softrects    = Makie.Observable(Makie.Rect2f[])
+    gridsegs     = Makie.Observable(Makie.Point2f[])
+    midnightline = Makie.Observable(Makie.Point2f[])
+    datepos      = Makie.Observable(Makie.Point2f[]); datetxt = Makie.Observable(String[])
+    transitpos   = Makie.Observable(Makie.Point2f[])
+
+    # Bands first, then the time rules, then bars, then text.
+    #
+    # The rules are drawn HERE rather than left to the axis grid, because Makie puts axis
+    # decorations under plot content and the bands are opaque: the axis grid is invisible
+    # exactly where the chart is darkest. Drawn between bands and bars they read over the
+    # twilight and stay behind the bar, which is the order ASPRO uses.
     Makie.poly!(ax, bandrects; color = bandcols, strokewidth = 0)
+    Makie.linesegments!(ax, gridsegs; color = Makie.RGBAf(1, 1, 1, 0.85),
+                        linestyle = :dot, linewidth = 0.9)
     Makie.poly!(ax, barrects;  color = barcols,  strokewidth = 0)
+    # Above the mount's soft ceiling: observable, but the drives complain. A WHITE wash over
+    # whatever the bar's own colour is, plus a dashed edge -- so it stays the same bar, paler,
+    # rather than becoming a differently coloured one. Washing rather than tinting is what lets
+    # it work for every baseline colour in the detailed view.
+    Makie.poly!(ax, softrects; color = (:white, 0.55), strokewidth = 1.1,
+                strokecolor = :black, linestyle = :dash)
     Makie.lines!(ax, midline; color = :red, linewidth = 1.5)
+    # Local midnight, under the bars rather than over them: it is a reference, not a datum.
+    Makie.lines!(ax, midnightline; color = :black, linewidth = 1.2)
+    # The culmination, which is the one instant on the row an observer aims for.
+    Makie.scatter!(ax, transitpos; color = :yellow, marker = :diamond, markersize = 11,
+                   strokewidth = 0.8, strokecolor = :black)
 
     sc = live_plot_scale()
     fs = Float32(9 * sc)                            # the legend
@@ -87,14 +113,22 @@ function build_gantt(fig, ax)
                 align = (:center, :center), offset = (-0.75afs, 0), fontsize = afs)
     Makie.text!(ax, tepos; text = tetxt, rotation = Float32(π/2),
                 align = (:center, :center), offset = (0.75afs, 0), fontsize = afs)
-    Makie.text!(ax, azspos;  text = azstxt,  align = (:right,  :bottom),
-                offset = (-0.4afs, 0), fontsize = afs)
-    Makie.text!(ax, azepos;  text = azetxt,  align = (:left,   :bottom),
-                offset = (0.4afs, 0),  fontsize = afs)
-    Makie.text!(ax, altspos; text = altstxt, align = (:right,  :top),
-                offset = (-0.4afs, 0), fontsize = afs)
-    Makie.text!(ax, altepos; text = altetxt, align = (:left,   :top),
-                offset = (0.4afs, 0),  fontsize = afs)
+    # The numbers read INWARD: the start pair begins at the bar's left edge and the end pair
+    # finishes at its right one, so each stays over the bar it describes. Outward, as they were,
+    # two runs a few minutes apart wrote their numbers over each other in the gap between them.
+    Makie.text!(ax, azspos;  text = azstxt,  align = (:left,  :bottom),
+                offset = (0.2afs, 0),  fontsize = afs)
+    Makie.text!(ax, azepos;  text = azetxt,  align = (:right, :bottom),
+                offset = (-0.2afs, 0), fontsize = afs)
+    Makie.text!(ax, altspos; text = altstxt, align = (:left,  :top),
+                offset = (0.2afs, 0),  fontsize = afs)
+    Makie.text!(ax, altepos; text = altetxt, align = (:right, :top),
+                offset = (-0.2afs, 0), fontsize = afs)
+
+    # The date the night turns over, set just above the axis at midnight: a Gantt that crosses
+    # into the next day otherwise gives no clue which day a morning hour belongs to.
+    Makie.text!(ax, datepos; text = datetxt, align = (:center, :bottom), fontsize = afs,
+                color = :black)
 
     # A hand-drawn legend, for the reason build_canvas has one: a Makie Legend fixes its entry
     # count at construction, and this chart's varies with which constraints apply.
@@ -106,6 +140,16 @@ function build_gantt(fig, ax)
     # and it leaves the title free. y = 2 is the row the observable bar is drawn on.
     ax.ylabel = ""
     ax.xlabel = "LST (h)"
+    # Dark enough that the white time rules read against it. The twilight bands sit on top and
+    # step darker from here, so this is the chart's "outside the night" tone rather than paper.
+    ax.backgroundcolor = Makie.RGBAf(0.88, 0.88, 0.88, 1.0)
+    # The axis text follows `live_plot_scale`, as the annotations do, so the settings panel's
+    # plot scale moves all of it together. Left at Makie's default the tick labels are more
+    # than twice the size of the numbers they sit under.
+    ax.xticklabelsize = Float32(8 * sc)
+    ax.yticklabelsize = Float32(9 * sc)
+    ax.xlabelsize     = Float32(9 * sc)
+    ax.titlesize      = Float32(9 * sc)
     ax.yticks = ([2.0], [""])
     # No horizontal gridline. The y axis is categorical -- one row per target -- so a line
     # through the row divides nothing, and it runs straight through the rotated start/end times
@@ -116,17 +160,108 @@ function build_gantt(fig, ax)
     Makie.ylims!(ax, 0, 10)
 
     return (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
+              softrects, gridsegs, midnightline, datepos, datetxt, transitpos,
               tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
               legpos, legtxt, legcols)
 end
 
 """
-    update_gantt!(g, plan; detailed = false)
+    gantt_time_axis!(g, p::NightPlan, geo; system = :lst)
+
+Label the x axis in `system` -- `:lst`, `:utc` or `:local` -- and rule it every 15 minutes.
+
+The DATA stays in LST: moving the bars would mean re-deriving the whole geometry per time
+system, and both renderers consume that geometry. Only the ticks move. LST and solar time run
+at different rates, so a tick at a round UTC minute does NOT sit at a round LST one; each
+label's position is mapped through the night's own (LST, UTC) pairs.
+
+Ticks are hourly and labelled `HH:MM`, with unlabelled minor ticks every 15 minutes and a
+dotted grid on both — the reading an observer does off this chart is "how long have I got",
+which is a measurement against the time axis rather than against the bars.
+"""
+function gantt_time_axis!(g, p::NightPlan, geo; system::Symbol = :lst)
+    ax = g.axis
+    x0, x1 = geo.xlim
+
+    # White dotted rules on a light background, which is how ASPRO draws them. A grey grid is
+    # invisible against the twilight bands -- they are grey too -- and the bands are the whole
+    # point of the chart, so it is the GRID that has to contrast with them rather than the
+    # other way round. The axis background below is what makes white read outside the bands.
+    # The rules themselves are `g.gridsegs`, drawn with the plots; the axis only carries the
+    # ticks. See `build_gantt` for why they cannot be the axis's own grid.
+    ax.xgridvisible       = false
+    ax.xminorgridvisible  = false
+    ax.xminorticksvisible = true
+    ax.xminorticks        = Makie.IntervalsBetween(4)
+    quarters = Float64[]
+
+    if system === :lst
+        h0 = ceil(x0); h1 = floor(x1)
+        majors = collect(h0:1.0:h1)
+        ax.xticks = (majors, [_gantt_hhmm(h) for h in majors])
+        ax.xlabel = gantt_time_label(:lst, p)
+        append!(quarters, (ceil(x0 * 4) / 4):0.25:x1)
+        _gantt_rules!(g, quarters, geo)
+        return g
+    end
+
+    u0 = lst_to_utc(p, x0); u1 = lst_to_utc(p, x1)
+    (isfinite(u0) && isfinite(u1) && u1 > u0) || return g
+
+    # Civil offset in hours at a given UTC hour of this night. Zero for UTC; for local it is
+    # evaluated AT THE TICK, so a night spanning a daylight-saving change is right either side.
+    off(u) = system === :utc ? 0.0 :
+             local_utc_offset(p, Dates.DateTime(Dates.Date(p.date)) +
+                                 Dates.Millisecond(round(Int, u * 3.6e6)))
+    # Displayed clock back to UTC. The offset is piecewise constant, so one refinement settles
+    # it everywhere except within an hour of the switch itself.
+    to_utc(q) = (u = q - off(q); q - off(u))
+
+    majors = Float64[]; labels = String[]
+    # Quarter hours of the DISPLAYED clock, each mapped back onto the LST axis. Stepping in LST
+    # instead would put the rules at ragged clock times, which is the opposite of the point.
+    q = ceil((u0 + off(u0)) * 4) / 4
+    while q <= u1 + off(u1)
+        x = utc_to_lst(p, to_utc(q))
+        if isfinite(x) && x0 <= x <= x1
+            push!(quarters, x)
+            if abs(q - round(q)) < 1e-9
+                push!(majors, x); push!(labels, _gantt_hhmm(q))
+            end
+        end
+        q += 0.25
+    end
+
+    isempty(majors) || (ax.xticks = (majors, labels))
+    ax.xlabel = gantt_time_label(system, p)
+    _gantt_rules!(g, quarters, geo)
+    return g
+end
+
+"Vertical rules at `xs`, spanning the chart."
+function _gantt_rules!(g, xs, geo)
+    segs = Makie.Point2f[]
+    for x in xs
+        push!(segs, Makie.Point2f(x, 0), Makie.Point2f(x, geo.ymax))
+    end
+    g.gridsegs[] = segs
+    return g
+end
+
+"Decimal hours as HH:MM, for a time axis."
+function _gantt_hhmm(h)
+    m = round(Int, mod(h, 24) * 60)
+    return string(lpad(div(m, 60) % 24, 2, '0'), ":", lpad(mod(m, 60), 2, '0'))
+end
+
+"""
+    update_gantt!(g, plan; detailed = false, time_system = :lst)
 
 Draw one night. Allocates only the vectors handed to the Observables.
 """
-function update_gantt!(g, p::NightPlan; detailed::Bool = false)
-    geo = gantt_geometry(p; detailed)
+function update_gantt!(g, p::NightPlan; detailed::Bool = false,
+                       time_system::Symbol = :lst)
+    geo = gantt_geometry(p; detailed, time_system)
 
     _rect(b) = Makie.Rect2f(b.x0, b.y - b.height/2, max(b.x1 - b.x0, 1e-6), b.height)
 
@@ -143,6 +278,7 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false)
 
     g.bandcols[]  = [_gantt_color(b.color) for b in geo.bands]
     g.barrects[]  = [_rect(b) for b in geo.bars]
+    g.softrects[] = [_rect(b) for b in geo.softbars]
     g.barcols[]   = [barcol(b) for b in geo.bars]
     # The clock at the facility as the night was worked out, not local midnight. Empty when
     # `gantt_geometry` reports it outside the plotted hours: no line is the honest drawing of
@@ -183,6 +319,26 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false)
                    "POPs   " * geo.subtitle
 
     g.axis.yticks = ([r[1] for r in geo.rows], [r[2] for r in geo.rows])
+
+    # Local midnight, and the date it turns over written just above the axis. `geo.midnight` is
+    # on the same LST axis as everything else, so nothing needs converting to place it.
+    g.midnightline[] = geo.xlim[1] <= geo.midnight <= geo.xlim[2] ?
+                       [Makie.Point2f(geo.midnight, 0), Makie.Point2f(geo.midnight, geo.ymax)] :
+                       Makie.Point2f[]
+    if geo.xlim[1] <= geo.midnight <= geo.xlim[2]
+        d0 = Dates.Date(p.date)
+        g.datepos[] = [Makie.Point2f(geo.midnight, 0.012 * geo.ymax)]
+        g.datetxt[] = [Dates.format(d0, "mm/dd") * " - " *
+                       Dates.format(d0 + Dates.Day(1), "mm/dd")]
+    else
+        g.datepos[] = Makie.Point2f[]; g.datetxt[] = String[]
+    end
+
+    # The culmination, on the row the target occupies. y = 2 is that row, as `build_gantt` says.
+    g.transitpos[] = isfinite(geo.transit) ?
+                     [Makie.Point2f(geo.transit, 2.0)] : Makie.Point2f[]
+
+    gantt_time_axis!(g, p, geo; system = time_system)
     Makie.xlims!(g.axis, geo.xlim[1], geo.xlim[2])
     Makie.ylims!(g.axis, 0, geo.ymax)
     return g

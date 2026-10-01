@@ -846,12 +846,15 @@ Item {
                 // The table has to show a single number per row, so it shows the value at one
                 // wavelength; naming it here is what stops that number being read as the
                 // parameter itself.
-                text: "Broadcasting is on: one chromatic expression makes every parameter a " +
-                      "per-uv-point vector, not just the chromatic one." +
+                text: "A parameter expression uses $WL or $MJD, so EVERY parameter is now " +
+                      "worked out separately at each data point instead of once — including " +
+                      "the ones that do not depend on wavelength or time." +
                       (isNaN(root.displayWl)
-                        ? "  Load a dataset to see them at a wavelength."
-                        : "  Values in the table are shown at λ = " +
-                          (root.displayWl * 1e6).toFixed(3) + " µm.")
+                        ? "  The table needs one number per row, so load a dataset and it will " +
+                          "show each parameter at one wavelength."
+                        : "  The table needs one number per row, so it shows each parameter at " +
+                          "λ = " + (root.displayWl * 1e6).toFixed(3) + " µm; on a dataset with " +
+                          "one wavelength that is the whole story.")
             }
         }
 

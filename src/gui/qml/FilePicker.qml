@@ -317,6 +317,13 @@ Popup {
                             id: rowItem
                             width: fileList.width
                             implicitHeight: root.dp(24)
+                            // A Control puts its contentItem inside the padding, so the
+                            // style's vertical padding came out of a row already fixed at
+                            // 24dp and the labels overflowed BELOW the band that highlights
+                            // them. The row is one line of text: it has no use for vertical
+                            // padding, and the labels centre themselves in the full height.
+                            topPadding: 0
+                            bottomPadding: 0
                             highlighted: ListView.isCurrentItem
                             // Captured, because `model` inside a nested Control means that
                             // control's own model rather than this row.
@@ -336,30 +343,42 @@ Popup {
                                 // all, which is worse than no icon.
                                 Label {
                                     text: rowItem.rKind === "dir" ? "▸" : "·"
-                                    color: rowItem.rKind === "dir" ? "#1a4d8f" : "#aaa"
+                                    // On the highlight the row's own colours have almost no
+                                    // contrast left -- grey on blue read as a smudge.
+                                    color: rowItem.highlighted ? "#ffffff"
+                                           : rowItem.rKind === "dir" ? "#1a4d8f" : "#aaa"
                                     Layout.preferredWidth: root.dp(10)
+                                    Layout.fillHeight: true
                                     horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
                                     font.pointSize: root.pt(root.baseFontPt - 1)
                                 }
                                 Label {
                                     text: rowItem.rName
                                     Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    verticalAlignment: Text.AlignVCenter
                                     elide: Text.ElideMiddle
-                                    color: rowItem.rKind === "dir" ? "#1a4d8f" : "#222"
+                                    color: rowItem.highlighted ? "#ffffff"
+                                           : rowItem.rKind === "dir" ? "#1a4d8f" : "#222"
                                     font.bold: rowItem.rKind === "dir"
                                 }
                                 Label {
                                     text: rowItem.rSize
                                     Layout.preferredWidth: root.dp(80)
+                                    Layout.fillHeight: true
                                     horizontalAlignment: Text.AlignRight
-                                    color: "#666"
+                                    verticalAlignment: Text.AlignVCenter
+                                    color: rowItem.highlighted ? "#e4ecf8" : "#666"
                                     font.pointSize: root.pt(root.baseFontPt - 2)
                                 }
                                 Label {
                                     text: rowItem.rMod
                                     Layout.preferredWidth: root.dp(120)
+                                    Layout.fillHeight: true
                                     horizontalAlignment: Text.AlignRight
-                                    color: "#666"
+                                    verticalAlignment: Text.AlignVCenter
+                                    color: rowItem.highlighted ? "#e4ecf8" : "#666"
                                     font.pointSize: root.pt(root.baseFontPt - 2)
                                 }
                             }

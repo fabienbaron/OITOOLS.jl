@@ -26,6 +26,7 @@ using OITOOLS: OIdata, FlatModel, SqueezeMonitor, FacilityConfig,
                hours_to_date, night_observability, in_delay, sunrise_sunset,
                alt_az, datetime_to_jd, moon_radec, moon_illumination, angular_separation,
                best_pop, cdg, recenter, hour_angle_calc, mod360, _is_obstype,
+               GANTT_MIN_LABELLED_RUN, GANTT_LABEL_ROOM_FRAC,
                SPARCO_PARAM_NAMES,
                # plot metadata, which stayed in core so non-matplotlib front-ends can use it
                ObsPlotSpec, OBS_PLOT_SPECS, canonical_color, as_datavec,

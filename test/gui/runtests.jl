@@ -1066,3 +1066,7 @@ end
         end
     end
 end
+
+# The QML itself, last: it opens a real window in a subprocess, and nothing may create a
+# Makie plot afterwards (see test_qml.jl for why it is a subprocess at all).
+include(joinpath(@__DIR__, "test_qml.jl"))

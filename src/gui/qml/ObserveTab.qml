@@ -40,6 +40,8 @@ Item {
     // goes to best_pop / in_delay / simulate untranslated.
     property var    telescopeConfig: []
     property string referenceTelescope: ""
+    // W2 is CHARA's usual reference cart. A facility that does not have it starts with none.
+    readonly property string defaultReference: "W2"
     property var    combiners: []
     property string combiner: ""
     property var    spectralSetups: []
@@ -234,7 +236,7 @@ Item {
         var cfg = []
         for (var i = 0; i < root.telescopeNames.length; ++i) cfg.push(1)
         root.telescopeConfig = cfg
-        root.referenceTelescope = ""
+        setReference(root.defaultReference)      // a no-op on a facility without that telescope
         root.combiners = combinersFor(f)
         selectCombiner(root.combiners.length > 0 ? root.combiners[0] : "")
     }
@@ -254,8 +256,10 @@ Item {
     }
 
     // A reference telescope reduces the baselines to reference-to-each instead of every pair
-    // (get_baselines, astrometry.jl). That is a real loss of uv coverage, so it is an explicit
-    // choice and defaults to none.
+    // (get_baselines, astrometry.jl): 5 rather than 15 for a six-telescope CHARA. That is a
+    // PLANNING notion -- best_pop and in_delay read it -- and it does not reach the simulator,
+    // because `facility_subset` keeps every telescope whose entry is non-zero and a reference
+    // is a 2. So a simulated dataset still carries all 15 baselines.
     function setReference(name) {
         var cfg = root.telescopeConfig.slice()
         var ok = false
@@ -1046,10 +1050,10 @@ Item {
                                     // "is it up yet this season" gets answered.
                                     Button {
                                         text: "◀◀"
-                                        // Sized to the glyph. A default-width button here is
-                                        // mostly padding, and five of them pushed the panel
-                                        // wider than the column that holds it.
-                                        implicitWidth: dp(30)
+                                        // Sized to the glyphs, of which this one has TWO: at the
+                                        // dp(30) the single arrows use, Qt elides the pair to an
+                                        // ellipsis and the button reads "...".
+                                        implicitWidth: dp(44)
                                         ToolTip.visible: hovered; ToolTip.text: "one month earlier"
                                         onClicked: root.shiftDate(0, -1)
                                     }
@@ -1076,10 +1080,10 @@ Item {
                                     }
                                     Button {
                                         text: "▶▶"
-                                        // Sized to the glyph. A default-width button here is
-                                        // mostly padding, and five of them pushed the panel
-                                        // wider than the column that holds it.
-                                        implicitWidth: dp(30)
+                                        // Sized to the glyphs, of which this one has TWO: at the
+                                        // dp(30) the single arrows use, Qt elides the pair to an
+                                        // ellipsis and the button reads "...".
+                                        implicitWidth: dp(44)
                                         ToolTip.visible: hovered; ToolTip.text: "one month later"
                                         onClicked: root.shiftDate(0, 1)
                                     }
@@ -1144,18 +1148,11 @@ Item {
                                         Layout.fillWidth: true
                                         from: 1; to: 120; value: root.stepMinutes
                                         onValueModified: root.stepMinutes = value
-                                    }
-                                    Label {
-                                        Layout.columnSpan: 2
-                                        Layout.fillWidth: true
-                                        // best_pop scores a count of steps, so it only reads as minutes
-                                        // at a 1-minute step. Saying so beside the control is cheaper
-                                        // than explaining a POP table whose units quietly changed.
-                                        text: root.stepMinutes === 1
-                                              ? "POP score is in minutes"
-                                              : "POP score counts steps of " + root.stepMinutes + " min"
-                                        color: "#888"; font.pointSize: pt(baseFontPt - 2)
-                                        elide: Text.ElideRight
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Spacing of the observation epochs between " +
+                                                      "HA min and HA max, so it sets how densely " +
+                                                      "the uv track is sampled: a smaller step " +
+                                                      "means more points along each baseline's arc."
                                     }
 
                                     Label { text: "Elev min (°)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
@@ -1234,6 +1231,27 @@ Item {
                                 ToolTip.text: "One row per BASELINE, so the baseline that closes " +
                                               "the night is the short bar. Off shows only the answer."
                             }
+                            Label { text: "Time"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                            ComboBox {
+                                id: timeSystemBox
+                                Layout.preferredWidth: dp(110)
+                                model: root.timeSystems
+                                currentIndex: root.timeSystems.indexOf(root.timeSystem)
+                                // `activated` does not reach a Julia handler through QML.jl, so
+                                // this follows currentIndexChanged with a range guard -- the same
+                                // shape every other dropdown in this panel uses.
+                                onCurrentIndexChanged: {
+                                    if (currentIndex < 0 || currentIndex >= root.timeSystems.length) return
+                                    if (root.timeSystem === root.timeSystems[currentIndex]) return
+                                    root.timeSystem = root.timeSystems[currentIndex]
+                                    if (root.hasPlan) root.computePlan()
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Clock the time axis is labelled in. Sidereal and " +
+                                              "solar time run at different rates, so these are " +
+                                              "not offsets of one another; the bars stay put and " +
+                                              "the ticks move."
+                            }
                             // Errors only. The summary that used to sit here was longer than the
                             // strip and elided to nothing useful; it is in the console, and the
                             // chart answers the question better than a sentence about it does.
@@ -1290,35 +1308,56 @@ Item {
                             }
                             Item { Layout.fillWidth: true }
 
-                            // Legend. The colours are the contract between this component and
-                            // whatever Makie draws into the mount below.
+                            // Legend. The colours are the contract between this component
+                            // and whatever Makie draws into the mount below, and it follows
+                            // the MODE: the summary chart draws one bar plus its soft-limit
+                            // inset, the detailed one draws a row per constraint and per
+                            // baseline. Listing all of them in both told the reader the chart
+                            // contained things that were not on it.
                             RowLayout {
                                 spacing: dp(4)
-                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#4c78a8"; border.color: "#999" }
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: root.detailed ? "#008000" : "#0000ff"; border.color: "#999" }
                                 Label { text: "observable"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
                             }
                             RowLayout {
                                 spacing: dp(4)
-                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#59a14f"; border.color: "#999" }
-                                Label { text: "in delay"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                                visible: !root.detailed
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#9999ff"; border.color: "#333" }
+                                Label { text: "above soft limit"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
                             }
                             RowLayout {
                                 spacing: dp(4)
-                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#f2c14e"; border.color: "#999" }
-                                Label { text: "twilight"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                                visible: root.detailed
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#ffa500"; border.color: "#999" }
+                                Label { text: "elevation"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
                             }
                             RowLayout {
                                 spacing: dp(4)
-                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#e15759"; border.color: "#999" }
-                                Label {
-                                    text: "moon < " + root.moonMinSep.toFixed(0) + "°"
-                                    color: "#666"; font.pointSize: pt(baseFontPt - 3)
-                                }
+                                visible: root.detailed
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#9370db"; border.color: "#999" }
+                                Label { text: "moon < " + root.moonMinSep.toFixed(0) + "°"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
                             }
                             RowLayout {
                                 spacing: dp(4)
-                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#cccccc"; border.color: "#999" }
-                                Label { text: "below limit"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#d3d3d3"; border.color: "#999" }
+                                Label { text: "nautical"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                            }
+                            RowLayout {
+                                spacing: dp(4)
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#808080"; border.color: "#999" }
+                                Label { text: "astronomical"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                            }
+                            RowLayout {
+                                spacing: dp(4)
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#ffff00"; border.color: "#999" }
+                                Label { text: "transit"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                            }
+                            // The four bare numbers at a bar's ends carry no units on
+                            // the chart: a degree sign on each widens them, and their width is
+                            // exactly what makes two neighbouring runs overprint.
+                            Label {
+                                text: "numbers: az / elev (°)"
+                                color: "#888"; font.pointSize: pt(baseFontPt - 3)
                             }
                         }
 
@@ -1679,6 +1718,11 @@ Item {
                         text: "noise"
                         checked: root.simNoise
                         onToggled: root.simNoise = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Draw a noise realisation. Unticked, the observables are " +
+                                      "the model exactly and the error bars are still written, " +
+                                      "which is what a truth file is: something to score a " +
+                                      "reconstruction against."
                     }
                     CheckBox {
                         id: debiasBox
@@ -1692,6 +1736,11 @@ Item {
                         // ignores debias without noise anyway (`if noise && debias`).
                         checked: root.simDebias
                         onToggled: root.simDebias = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Subtract the 2σ² bias a squared visibility built from a " +
+                                      "noisy complex visibility carries, as a real pipeline " +
+                                      "does. Without it every V² sits about half a sigma high " +
+                                      "and anything fitted to the data inherits that."
                     }
                     CheckBox {
                         id: systematicsBox
@@ -1716,8 +1765,8 @@ Item {
                         ToolTip.visible: hovered
                         ToolTip.text: "Co-phase with the instrument's fringe tracker, which " +
                                       "integrates longer at the cost of the tracker's own " +
-                                      "visibility loss. Only SPICA declares one at CHARA, and " +
-                                      "ASPRO requires it there; inert for other combiners."
+                                      "visibility loss. SPICA is the only CHARA combiner that " +
+                                      "has one, and it needs it; inert for the others."
                     }
                     Label { text: "n_samples"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                     SpinBox {
@@ -1965,6 +2014,10 @@ Item {
     // Summary by default, as in ASPRO: "when can I observe this" is the question asked first.
     // Detailed is the delay view -- one row per baseline -- and answers "why not".
     property bool detailed: false
+    // Which clock the Gantt's x axis is labelled in. The bars never move -- the chart is always
+    // computed in LST -- so this is a relabelling, and switching it costs one redraw.
+    property var    timeSystems: ["LST", "UTC", "Local"]
+    property string timeSystem: "LST"
     property string planText: ""
 
     // The Gantt hover readout: what was computed at the row and instant under the pointer.
@@ -1990,7 +2043,8 @@ Item {
 
         var reply = Julia.shell_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
                                       tels, root.popString, root.useDelay, root.detailed,
-                                      root.altLimit, root.altMax)
+                                      root.altLimit, root.altMax,
+                                      root.timeSystem.toLowerCase())
         // `summary \t dark window`. The summary is not shown here: it is long, it overflowed
         // the strip it sat in, and the console already keeps it. The chart itself is the
         // answer, and hovering a bar gives the numbers.

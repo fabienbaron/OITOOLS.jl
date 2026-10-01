@@ -120,6 +120,12 @@ shell_console() = join(_shell().console, "\n")
 
 const SHELL = Ref{Union{Nothing,ShellState}}(nothing)
 
+# Which clock the Gantt's x axis is labelled in: `:lst`, `:utc` or `:local`. Module state rather
+# than a ShellState field because the OFFSCREEN renderer needs it too -- "Save PNG" rebuilds the
+# chart in a second figure, and a saved image labelled in a different clock from the one on
+# screen is a bug report waiting to happen. The panel sends it on every draw regardless.
+const GANTT_TIME_SYSTEM = Ref{Symbol}(:lst)
+
 _shell() = SHELL[] === nothing ? error("no GUI running") : SHELL[]
 
 "Current dataset entry, or `nothing`."
@@ -3284,18 +3290,21 @@ end
 shell_telescopes(name::AbstractString) = join(facility_telescopes(String(name)), "\n")
 
 """
-    shell_gantt(facility, name, ra, dec, dateiso, telescopes, pops, use_delay, detailed) -> String
+    shell_gantt(facility, name, ra, dec, dateiso, telescopes, pops, use_delay, detailed,
+                alt_limit, alt_max, time_system) -> String
 
 Compute one night and draw it on the Observe canvas. Returns a one-line summary.
 
 `ra` and `dec` are DEGREES, `telescopes` and `pops` are space-separated. `use_delay` is opt-in
 because an unsearched POP configuration reports far less time than is really available — see
-[`night_plan`](@ref).
+[`night_plan`](@ref). `time_system` is `"lst"`, `"utc"` or `"local"` and labels the x axis;
+the bars do not move, only the ticks.
 """
 function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, dec::Real,
                      dateiso::AbstractString, telescopes::AbstractString,
                      pops::AbstractString, use_delay::Bool, detailed::Bool,
-                     alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX)
+                     alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
+                     time_system::AbstractString = "lst")
     sh = _shell()
     date = try
         DateTime(String(dateiso))
@@ -3316,7 +3325,10 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
         msg = "! " * _cause(err); console!(sh, msg); return msg
     end
 
-    sh.gantt === nothing || update_gantt!(sh.gantt, p; detailed)
+    tsys = Symbol(lowercase(String(time_system)))
+    tsys in (:lst, :utc, :local) || (tsys = :lst)
+    GANTT_TIME_SYSTEM[] = tsys
+    sh.gantt === nothing || update_gantt!(sh.gantt, p; detailed, time_system = tsys)
     # The delay chart is drawn from the same plan, so both views are always of one night.
     sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p)
 
