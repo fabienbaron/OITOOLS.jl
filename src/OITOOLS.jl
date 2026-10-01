@@ -212,6 +212,20 @@ export model_to_vis, model_to_obs, model_to_residuals, model_to_chi2, model_to_c
        model_to_image, model_to_sed, model_to_flux
 export cvis_to_chi2_f, cvis_to_chi2_fg, cvis_to_chi2_noalloc, model_and_image_to_chi2_fg
 
+# One analytic component, called directly. `public` rather than `export`: these are API with a
+# stability promise, reached as `OITOOLS.vis_ud(...)`, without six more generic names landing in
+# every `using OITOOLS` namespace.
+#
+# They are what the dict interface evaluates underneath, so there is no second implementation to
+# keep in step -- which is the whole reason the old `visibility_*(param, uv)` family went in
+# 0.13.2. The defect there was the CALLING CONVENTION, a packed parameter vector read by index;
+# these take named positional scalars (or vectors, for a parameter that varies with wavelength).
+#
+# Deliberately no Gaussian: an ellipse needs an inclination and a position angle, and applying
+# those is the model geometry's job. Exposing a circular one here would invite callers to roll
+# the rotation themselves, and the position-angle convention is exactly where that goes wrong.
+public vis_ud, vis_ldlin, vis_ldquad, vis_ldsqrt, vis_ldclaret4, vis_ldpow
+
 # ── Uncertainty estimation by resampling ─────────────────────────────────────
 export bootstrap_fit, bootstrap_driver, BootstrapResult
 export data_blocks, DataBlocks, resample_blocks

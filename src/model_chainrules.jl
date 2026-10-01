@@ -62,6 +62,19 @@ _dparam(::AbstractVector, v) = v
 #
 # Note: jinc(y) = 2 J₁(πy) / (πy), i.e. V = jinc(θ ρ / C)
 
+"""
+    vis_ud(θ, ρ)
+
+Visibility of a uniform disc of diameter `θ`, `V = 2J₁(t)/t` with `t = πθρ`.
+
+`θ` is in **mas** and `ρ = √(u²+v²)` in **cycles/rad**, which is the unit `OIdata.uv` is stored
+in -- so `ρ = sqrt.(uv[1,:].^2 .+ uv[2,:].^2)` and nothing needs converting. The result is real
+and normalised to 1 at `ρ = 0`; a component's phase comes from its offset, which belongs to the
+model geometry rather than here.
+
+Any parameter may be a vector as well as a scalar, so a diameter that varies with wavelength
+needs no loop.
+"""
 function vis_ud(θ::VisParam, ρ::AbstractVector)
     t = @. π * θ * ρ / MAS2RAD
     return @. ifelse(t < 1e-8, one(t), 2 * besselj1(t) / t)
@@ -110,6 +123,13 @@ end
 
 const _SQRTPIO2 = sqrt(π/2)
 
+"""
+    vis_ldlin(θ, u, ρ)
+
+Linearly limb-darkened disc, `I(μ) = 1 - u(1-μ)`, of diameter `θ` in mas.
+
+Units and conventions as [`vis_ud`](@ref).
+"""
 function vis_ldlin(θ::VisParam, u::VisParam, ρ::AbstractVector)
     N = @. 0.5 - u/6
     ζ = @. π * θ * ρ / MAS2RAD
@@ -235,6 +255,13 @@ end
 # ∂V/∂w  = (∂V_num/∂w · N + V_num/12) / N²
 #   ∂V_num/∂w = -B₁ + 2√(π/2) B₃₂ - 2B₂
 
+"""
+    vis_ldquad(θ, u, w, ρ)
+
+Quadratically limb-darkened disc, `I(μ) = 1 - u(1-μ) - w(1-μ)²`, of diameter `θ` in mas.
+
+Units and conventions as [`vis_ud`](@ref).
+"""
 function vis_ldquad(θ::VisParam, u::VisParam, w::VisParam, ρ::AbstractVector)
     N   = @. 0.5 - u/6 - w/12
     ζ   = @. π * θ * ρ / MAS2RAD
@@ -496,6 +523,13 @@ function _dbesselj_dnu(ν::Real, x::Real; nterms::Int=30)
     return lhalf * besselj(ν, x) - s
 end
 
+"""
+    vis_ldpow(θ, α, ρ)
+
+Power-law limb-darkened disc, `I(μ) = μ^α`, of diameter `θ` in mas.
+
+Units and conventions as [`vis_ud`](@ref).
+"""
 function vis_ldpow(θ::VisParam, α::VisParam, ρ::AbstractVector)
     ν   = @. α/2 + 1
     ζ   = @. π * θ * ρ / MAS2RAD

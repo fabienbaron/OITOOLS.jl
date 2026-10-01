@@ -177,5 +177,56 @@ V     = eval_model(model, Float64[], data.uv)
 
 The geometry `kind` names are listed with their parameters under **Parametric models** above.
 
+`eval_model` returns `ComplexF64`, with the imaginary part exactly zero for a component at the
+centre — a component's phase comes from its offset. Code that only wants the modulus should take
+`real.()` or `abs.()` at the boundary rather than carrying complex arithmetic downstream.
+
+**Build the model once, outside the loop.** Naming the parameters free and passing their values
+to `eval_model` gives bit-identical results to baking them into the dict, and `dict_to_model` is
+~10 µs against ~3 µs for the evaluation itself — so rebuilding it per call dominates at the few
+hundred uv points of a single epoch:
+
+```julia
+model = dict_to_model(Dict{String,Any}("star,ud" => 6.5, "star,f" => 1.0), ["star,ud"])
+V     = eval_model(model, [diameter], data.uv)     # vary the value, keep the model
+```
+
+### One component at a time
+
+For a single centred component these evaluate the analytic visibility directly, without a model
+dictionary. They are what the dictionary interface calls underneath, so there is no second
+implementation to disagree with it. `public`, not exported: reach them as `OITOOLS.vis_ud`.
+
+| Function | Law |
+|----------|-----|
+| `vis_ud(θ, ρ)` | uniform disc |
+| `vis_ldlin(θ, u, ρ)` | linear, `I(μ) = 1 - u(1-μ)` |
+| `vis_ldquad(θ, u, w, ρ)` | quadratic, `I(μ) = 1 - u(1-μ) - w(1-μ)²` |
+| `vis_ldsqrt(θ, c, d, ρ)` | square root, `I(μ) = 1 - c(1-μ) - d(1-√μ)` |
+| `vis_ldclaret4(θ, c1, c2, c3, c4, ρ)` | Claret four-parameter |
+| `vis_ldpow(θ, α, ρ)` | power law, `I(μ) = μ^α` |
+
+`θ` is in **mas** and `ρ = √(u²+v²)` in **cycles/rad**, the unit `OIdata.uv` is stored in, so
+`ρ = sqrt.(uv[1,:].^2 .+ uv[2,:].^2)` needs no conversion. The result is **real**. Any parameter
+may be a vector, for a quantity that varies with wavelength.
+
+There is deliberately no Gaussian here: an ellipse needs an inclination and a position angle, and
+applying those belongs to the model geometry. Go through the dictionary for it.
+
+```@docs
+OITOOLS.vis_ud
+OITOOLS.vis_ldlin
+OITOOLS.vis_ldquad
+OITOOLS.vis_ldsqrt
+OITOOLS.vis_ldclaret4
+OITOOLS.vis_ldpow
+```
+
 !!! note
-    The standalone `visibility_*(param, uv)` functions were removed in 0.13.2.
+    The standalone `visibility_*(param, uv)` functions were removed in 0.13.2 — the defect was
+    the calling convention, a packed parameter vector read by index, not the per-component
+    functions themselves. `vis_ud` and the rest above are that same physics with named
+    arguments. Porting an old call: `visibility_ud([D], uv)` → `vis_ud(D, ρ)`, and
+    `visibility_Gaussian([FWHM, i, ϕ], uv)` → a dictionary with `"c,fwhm"`, `"c,incl"` and
+    **`"c,pa" => 90 - ϕ`** — the old angle was measured from the u axis, `pa` is a position
+    angle, and mapping it straight across misorients the ellipse without raising anything.
