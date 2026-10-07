@@ -23,7 +23,7 @@ A binary at CHARA/MIRC H-band resolution (λ/2B ≈ 0.47 mas): a partially
 resolved primary and an unresolved companion 1.44 mas away with 5% of the flux.
 Four free parameters (`A,ud`, `B,f`, `B,x`, `B,y`), fitted against V² and T3PHI.
 The uv coverage, MJDs, telescope configurations and error bars are taken from a
-real dataset (`demos/data/iota_peg6t.oifits`); only the observable values are
+real dataset (`demos/data/Iota_Peg6T.oifits`); only the observable values are
 replaced.
 
 **The total flux is pinned to 1** via `A,f = 1 - B,f`. This is not cosmetic:

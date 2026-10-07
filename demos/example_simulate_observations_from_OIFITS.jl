@@ -5,7 +5,7 @@ using OITOOLS
 # The uv coverage and SNR of data points will be copied
 
 # Example 1 -- using a FITS image
-image_file="./data/2004true.fits"
+image_file="./data/images/2004true.fits"
 pixsize=0.101
 in_oifits  = "./data/BC2004/2004-data1.oifits"
 out_oifits  = "./data/2004-simulated.oifits"

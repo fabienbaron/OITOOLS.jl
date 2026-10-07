@@ -23,7 +23,7 @@ end
 data = readoifits(datafile; warn=false)[1,1]
 
 # ── Load ground truth image and resize to small grid for speed ───────────────
-truefile = joinpath(@__DIR__, "..", "demos", "data", "2004true.fits")
+truefile = joinpath(@__DIR__, "..", "demos", "data", "images", "2004true.fits")
 if isfile(truefile)
     img_full = Float64.(read(FITS(truefile)[1]))
     # Downsample to 32×32 by block averaging

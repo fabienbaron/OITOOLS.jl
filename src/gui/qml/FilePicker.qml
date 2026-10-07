@@ -64,6 +64,11 @@ Popup {
 
     property string title: "Open a file"
     property bool   saveMode: false            // show a filename field and confirm overwrites
+    // Pick a DIRECTORY rather than a file: the listing shows folders only, the filter and the
+    // name field go away, and the button returns wherever the browsing ended up. Without this a
+    // folder can only be chosen by selecting something inside it, which is guesswork when the
+    // folder is empty -- and a work directory usually is, the first time.
+    property bool   chooseFolder: false
     property string defaultSuffix: ""
     // Each entry is { label, patterns } with patterns a comma-separated glob list.
     property var    filters: [{ label: "All files", patterns: "*" }]
@@ -104,6 +109,7 @@ Popup {
             for (var i = 0; i < lines.length; ++i) {
                 var f = lines[i].split("\t")
                 if (f.length < 5) continue
+                if (chooseFolder && f[0] !== "dir") continue
                 entryModel.append({ kind: f[0], name: f[1], size: f[2],
                                     modified: f[3], sortkey: f[4] })
             }
@@ -139,7 +145,7 @@ Popup {
         var e = entryModel.get(i)
         if (e.kind === "dir") {
             folder = Julia.picker_join(folder, e.name)
-        } else if (e.kind === "file") {
+        } else if (e.kind === "file" && !chooseFolder) {
             selectedName = e.name
             nameField.text = e.name
             root.confirm()
@@ -147,6 +153,7 @@ Popup {
     }
 
     function confirm() {
+        if (chooseFolder) { root.accepted(root.folder); root.close(); return }
         var name = saveMode ? nameField.text.trim() : selectedName
         if (name.length === 0) { statusLabel.text = "nothing selected"; return }
         if (saveMode && defaultSuffix.length > 0 && name.indexOf(".") < 0)
@@ -391,6 +398,8 @@ Popup {
         RowLayout {
             Layout.fillWidth: true
             spacing: root.dp(6)
+            // A name and a file-type filter mean nothing when the answer is a directory.
+            visible: !root.chooseFolder
             Label { text: root.saveMode ? "Save as" : "File"; color: "#555" }
             TextField {
                 id: nameField
@@ -424,12 +433,17 @@ Popup {
             Item { Layout.fillWidth: true }
             Button { text: "Cancel"; implicitHeight: root.dp(28); onClicked: root.close() }
             Button {
-                text: root.saveMode ? "Save" : "Open"
+                text: root.chooseFolder ? "Choose this folder"
+                                        : root.saveMode ? "Save" : "Open"
                 implicitHeight: root.dp(28)
                 highlighted: true
-                enabled: root.saveMode ? nameField.text.trim().length > 0
-                                       : fileList.currentIndex >= 0
-                onClicked: root.activate(fileList.currentIndex)
+                // Choosing a folder needs no selection -- the answer is where you have browsed
+                // to, which is why an empty directory can be chosen at all.
+                enabled: root.chooseFolder ? true
+                       : root.saveMode     ? nameField.text.trim().length > 0
+                                           : fileList.currentIndex >= 0
+                onClicked: root.chooseFolder ? root.confirm()
+                                             : root.activate(fileList.currentIndex)
             }
         }
     }

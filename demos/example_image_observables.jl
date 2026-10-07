@@ -1,7 +1,7 @@
 using OITOOLS
 
 # ── Load image and data ──────────────────────────────────────────────────────
-fitsfile   = "./data/2004true.fits"
+fitsfile   = "./data/images/2004true.fits"
 pixsize    = 0.101   # mas/pixel
 x_true     = readfits(fitsfile)
 nx         = size(x_true, 1)

@@ -191,13 +191,11 @@ function picker_places()
     for (label, path) in picker_volumes()
         push!(rows, (label, path))
     end
+    # One entry per KIND of thing, not one per directory. The two beauty-contest sets had their
+    # own shortcuts here, which put three entries on the list that all opened into the same tree
+    # -- the demo data directory reaches both in one click, and `demos/data/README.md` says what
+    # each file is, which a place name never could.
     for (label, sub) in (("OITOOLS demo data", joinpath("demos", "data")),
-                         # The 2004 contest set: small, monochromatic and well understood, and
-                         # what most of the imaging examples and tests are written against.
-                         ("Beauty Contest 2004", joinpath("demos", "data", "BC2004")),
-                         # The only shipped files with differential phase and OI_FLUX, so the
-                         # only ones on which the diffphi and flux views show anything.
-                         ("Beauty Contest 2026", joinpath("demos", "data", "BC2026")),
                          # Starting points for the Model perspective, in the TOML format
                          # `read_model_file` takes -- a model to open and edit rather than one
                          # to build from an empty table.
@@ -205,7 +203,7 @@ function picker_places()
                          # PMOIRED's own models: Python dicts, which is what "Import PMOIRED…"
                          # reads. It already OPENS here; this is the way back after browsing
                          # somewhere else.
-                         ("PMOIRED models", joinpath("demos", "data", "pmoired")))
+                         ("PMOIRED models", joinpath("demos", "models", "pmoired")))
         p = OITOOLS.resource(sub)
         (p !== nothing && isdir(p)) && push!(rows, (label, p))
     end
@@ -236,11 +234,38 @@ function picker_start(hint::AbstractString = "")
     end
     forced = get(ENV, "OITOOLSGUI_DATA_DIR", "")
     isempty(forced) || (isdir(forced) && return abspath(forced))
+    # The work directory the user set in the settings panel, ahead of the shipped demo data: a
+    # saved answer to "where do I keep my data" should outrank the package's own examples, which
+    # are where a FIRST session has nowhere better to open.
+    w = gui_work_directory()
+    isempty(w) || return w
     for sub in (joinpath("demos", "data"), joinpath("test", "gui", "data"))
         p = OITOOLS.resource(sub)
         p === nothing || return p
     end
     return pwd()
+end
+
+"""
+    gui_work_directory() -> String
+
+The directory the settings panel last saved as the work directory, or `""`.
+
+Empty covers every way of not having one: no settings file, no key in it, or a path that has
+since been renamed or unmounted -- a stale entry must not strand the picker somewhere that no
+longer exists, so the answer is checked against the filesystem every time rather than cached.
+"""
+function gui_work_directory()
+    path = gui_settings_file()
+    isfile(path) || return ""
+    try
+        w = get(TOML.parsefile(path), "work_directory", "")
+        w isa AbstractString || return ""
+        d = abspath(expanduser(String(w)))
+        return isdir(d) ? d : ""
+    catch
+        return ""
+    end
 end
 
 """
@@ -255,7 +280,7 @@ it cannot read fails at the point of use.
 """
 function picker_examples(kind::AbstractString)
     k = lowercase(strip(String(kind)))
-    sub = k == "pmoired" ? joinpath("demos", "data", "pmoired") :
+    sub = k == "pmoired" ? joinpath("demos", "models", "pmoired") :
           k == "model"   ? joinpath("demos", "models")          : ""
     isempty(sub) && return ""
     p = OITOOLS.resource(sub)

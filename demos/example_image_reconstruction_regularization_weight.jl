@@ -11,7 +11,7 @@ ft = setup_ft(data, nx, pixsize);
 x_start = gaussian2d(nx,nx,nx/6);
 x_start = vec(x_start)/sum(x_start);
 
-x = readfits("./data/2004true.fits")[64:195,64:195]
+x = readfits("./data/images/2004true.fits")[64:195,64:195]
 imdisp(recenter(x,mask=x.>maximum(x)/10),pixscale=pixsize,colormap="gist_earth");
 text(-6,6,"Truth",color="white",size="xx-large")
 savefig("tvsqtruth.png")

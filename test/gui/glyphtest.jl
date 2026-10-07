@@ -78,7 +78,7 @@ const PINNED = (regular = "DejaVu Sans", bold = "DejaVu Sans",
 # ── the strings under test ───────────────────────────────────────────────────
 #
 # Taken from the GUI verbatim where possible, so a corruption seen here is the same corruption.
-const TITLE  = "v2 — AZCYG2011_FINAL2018.oifits"      # em dash, underscore, mixed case
+const TITLE  = "v2 — AZ_Cyg_2011.oifits"      # em dash, underscore, mixed case
 const XLABEL = "Baseline (Mλ)"                         # the label reported as "(⁄⁄⁄)"
 const YLABEL = "V²"                                    # superscript
 const ASCII1 = "!\"#\$%&'()*+,-./0123456789:;<=>?"

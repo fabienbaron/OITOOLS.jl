@@ -62,7 +62,7 @@ println("\ntempered + mask  : chi2r = ", round(dm.chi2r_mean, digits=3),
 # Gaussian with a frozen stepsize (reversible), not the annealing lattice, so
 # `diag.params` is a genuine posterior mean.
 #
-#   v1295 = readoifits(joinpath(@__DIR__, "data", "2019_v1295Aql.WL_SMOOTH.A.oifits");
+#   v1295 = readoifits(joinpath(@__DIR__, "data", "V1295_Aql.oifits");
 #                      T=Float64, filter_bad_data=true)
 #   ftv   = setup_ft(v1295, 32, 0.25; mode="dft")
 #   model = SqueezeSparco(f_star=0.30, env_indx=0.0, lambda0=1.6e-6,

@@ -97,7 +97,7 @@ just ran and are replayable, everything else is commentary. That keeps the pane 
 transcript rather than a log dump, and it matches what `export_script` will write -- the `>`
 lines are the script, in order.
 
-    > load_dataset!(session, "iota_peg4t.oifits")
+    > load_dataset!(session, "Iota_Peg4T.oifits")
       1520 V2 points, 1 wav-bin x 1 time-bin
     ! cannot plot t3phi/wav: BoundsError ...
 """
@@ -3008,7 +3008,9 @@ function shell_show_start_image(nx::Integer, pixsize::Real, mode::AbstractString
     w  = clamp(sh.imchannel, 1, nw)
     sh.imcanvas === nothing || show_image!(sh.imcanvas, _plane(cube, w), setup.pixsize;
                                            label = nw > 1 ? "starting image, channel $w of $nw" :
-                                                            "starting image")
+                                                            "starting image",
+                                           title = image_title(setup; kind = "start image",
+                                                               channel = w, nchannels = nw))
     console!(sh, "> start_image(setup, ft)   # $(startkind), $(Int(nx))×$(Int(nx))")
     return "showing the starting image"
 end
@@ -3042,7 +3044,11 @@ function shell_vi_prior_sample(nx::Integer, pixsize::Real, options::AbstractStri
         console!(sh, msg; kind = :err); return msg
     end
     sh.imcanvas === nothing || show_image!(sh.imcanvas, img, Float64(pixsize);
-                                           label = "prior sample")
+                                           label = "prior sample",
+                                           title = image_title(
+                                               ImagingSetup(; nx = Int(nx),
+                                                              pixsize = Float64(pixsize));
+                                               kind = "prior sample"))
     support = haskey(o, "vi_prior") && !isempty(o["vi_prior"]) ?
               "weight = " * basename(o["vi_prior"]) :
               "disc R = " * string(round(_optreal(o, "vi_radius", nx * pixsize / 5);
@@ -3218,7 +3224,8 @@ function shell_recenter_image()
                                r.seconds, r.setup, r.weights, r.breakdown, r.extra,
                                r.ensemble, r.wavelengths)
     sh.imcanvas === nothing ||
-        show_image!(sh.imcanvas, result_plane(sh.imaging, sh.imchannel), r.setup.pixsize)
+        show_image!(sh.imcanvas, result_plane(sh.imaging, sh.imchannel), r.setup.pixsize;
+                    title = _result_title(sh, sh.imaging))
     console!(sh, "> image = recenter(image)")
     return "recentred on the centroid"
 end
@@ -3642,6 +3649,15 @@ Take a finished reconstruction and put it on screen. **GUI thread only** — `sh
 GL call, and §5.4b of the design has the measurement for what happens when those run on a
 worker.
 """
+# The title for a finished reconstruction, with whichever channel the panel is showing.
+# Here rather than in `image_title` because the channel lives on the shell, not on the result.
+function _result_title(sh::ShellState, r)
+    n = result_channels(r)
+    λ = (n > 1 && !isempty(r.wavelengths) && 1 <= sh.imchannel <= length(r.wavelengths)) ?
+        r.wavelengths[sh.imchannel] : NaN
+    return image_title(r.setup; channel = sh.imchannel, nchannels = n, wavelength = λ)
+end
+
 function finish_reconstruct!(sh::ShellState, res)
     r = res.result
     sh.enginelog = res.output
@@ -3652,7 +3668,7 @@ function finish_reconstruct!(sh::ShellState, res)
         return msg
     end
     sh.imcanvas === nothing || show_image!(sh.imcanvas, result_plane(r, sh.imchannel),
-                                          r.setup.pixsize)
+                                          r.setup.pixsize; title = _result_title(sh, r))
     sh.imaging = r
 
     # Total flux is reported because nothing constrains it: V² and closure phase are both
@@ -3761,7 +3777,8 @@ function shell_show_channel(w::Integer)
     n = result_channels(r)
     sh.imchannel = clamp(Int(w), 1, n)
     sh.imcanvas === nothing ||
-        show_image!(sh.imcanvas, result_plane(r, sh.imchannel), r.setup.pixsize)
+        show_image!(sh.imcanvas, result_plane(r, sh.imchannel), r.setup.pixsize;
+                    title = _result_title(sh, r))
     lab = isempty(r.wavelengths) ? "channel $(sh.imchannel)" :
           string(round(r.wavelengths[sh.imchannel] * 1e6; digits = 4), " µm")
     return "channel $(sh.imchannel) of $n — $lab"
@@ -3807,7 +3824,7 @@ function shell_show_result(mode::AbstractString, index::Integer = 1)
     px = r.setup.pixsize
 
     if m == "result"
-        show_image!(sh.imcanvas, result_plane(r, sh.imchannel), px)
+        show_image!(sh.imcanvas, result_plane(r, sh.imchannel), px; title = _result_title(sh, r))
         return "showing the reconstruction"
     end
 

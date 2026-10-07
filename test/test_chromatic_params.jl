@@ -111,7 +111,7 @@ end
         "star,ud"   => 2.0, "star,f"   => "0.7 * ($WL/1.6e-6)^-4",
         "disk,fwhm" => 6.0, "disk,f"   => "0.3 * ($WL/1.6e-6)^-1.5")
 
-    for f in (joinpath("BC2004", "2004-data1.oifits"), "2019_v1295Aql.WL_SMOOTH.A.oifits")
+    for f in (joinpath("BC2004", "2004-data1.oifits"), "V1295_Aql.oifits")
         d  = readoifits(joinpath(datadir, f); warn = false)[1, 1]
         m  = dict_to_model(chromatic, String[])
         o  = model_to_obs(m, Float64[], d)

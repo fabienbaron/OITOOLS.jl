@@ -33,7 +33,7 @@ using OITOOLS, Test, LinearAlgebra
         # operation dereferences it: `remove_redundant_uv!` threw a BoundsError on an ASPRO 2
         # MIRC-X High_H observation at H = 6, where all 6900 V2 points come back flagged.
         # `cutoff_maxv2` reaches the same path from a shipped file.
-        for f in ("BC2004/2004-data1.oifits", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+        for f in ("BC2004/2004-data1.oifits", "V1295_Aql.oifits")
             e = readoifits(joinpath(@__DIR__, "..", "demos", "data", f);
                            warn = false, verbose = false, cutoff_maxv2 = -1.0)[1, 1]
             @test e.nv2 == 0

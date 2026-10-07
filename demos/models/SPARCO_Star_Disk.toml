@@ -14,7 +14,7 @@
 # the free parameter; the disc gets whatever is left. Written this way there is one flux
 # unknown rather than two, and the constraint holds identically instead of being fitted.
 #
-# Measured on demos/data/2019_v1295Aql.WL_SMOOTH.A.oifits (V², T3amp, T3φ, wavelengths merged):
+# Measured on demos/data/V1295_Aql.oifits (V², T3amp, T3φ, wavelengths merged):
 # fs = 0.4174, disc FWHM = 3.5169 mas, disc slope = +0.8168, χ²r = 4.362.
 #
 # NOTE the sign of the disc slope. It comes out POSITIVE, meaning the disc contributes

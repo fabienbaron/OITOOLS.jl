@@ -35,7 +35,7 @@ using OITOOLS, Test
     end
 
     @testset "a wavelength cube" begin
-        data = readoifits(joinpath(datadir, "2019_v1295Aql.WL_SMOOTH.A.oifits");
+        data = readoifits(joinpath(datadir, "V1295_Aql.oifits");
                           warn = false, verbose = false, polychromatic = true,
                           merge_oi_wavelength = true, use_vis = false)
         nwav = size(data, 1)

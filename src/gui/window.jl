@@ -80,6 +80,10 @@ function _initial_folder(session::Session)
     end
     forced = get(ENV, "OITOOLSGUI_DATA_DIR", "")
     isempty(forced) || (isdir(forced) && return file_url(abspath(forced)))
+    # Same order as `picker_start`, and for the same reason: a saved work directory outranks the
+    # shipped examples, which are only where a first session has nothing better to offer.
+    w = gui_work_directory()
+    isempty(w) || return file_url(w)
     for sub in (joinpath("demos", "data"), joinpath("test", "gui", "data"))
         p = OITOOLS.resource(sub)
         p === nothing || return file_url(p)

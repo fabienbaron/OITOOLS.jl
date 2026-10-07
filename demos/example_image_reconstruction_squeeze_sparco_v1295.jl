@@ -22,7 +22,7 @@
 #
 using OITOOLS
 
-oifitsfile = joinpath(@__DIR__, "data", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+oifitsfile = joinpath(@__DIR__, "data", "V1295_Aql.oifits")
 nx, pixsize = 64, 0.125
 lambda0 = 1.6e-6
 weights = [1.0, 0.0, 1.0]

@@ -13,7 +13,7 @@ using OITOOLS: scatter_obs_cotangent!, _pad_weights, _chi2_terms, _accumulate_g_
 @testset "observable cotangent adjoint" begin
     Random.seed!(4)
     dm = readoifits(joinpath(@__DIR__, "..", "demos", "data",
-                             "2019_v1295Aql.WL_SMOOTH.A.oifits");
+                             "V1295_Aql.oifits");
                     merge_oi_wavelength = true, filter_bad_data = true, T = Float64)
     d = dm[1, 1]; nx, ps = 20, 0.35
     cell = setup_ft(dm, nx, ps)[1, 1]

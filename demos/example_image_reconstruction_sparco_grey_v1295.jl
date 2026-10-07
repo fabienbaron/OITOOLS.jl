@@ -11,7 +11,7 @@
 using OITOOLS
 
 # Load data and setup
-oifitsfile = joinpath(@__DIR__, "data", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+oifitsfile = joinpath(@__DIR__, "data", "V1295_Aql.oifits")
 data = readoifits(oifitsfile, filter_bad_data=true)[1,1]
 
 pixsize = 0.125  # mas/pixel

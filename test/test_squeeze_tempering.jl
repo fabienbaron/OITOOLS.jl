@@ -119,7 +119,7 @@ end
 end
 
 @testset "SPARCO under tempering" begin
-    polyfile = joinpath(@__DIR__, "..", "demos", "data", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+    polyfile = joinpath(@__DIR__, "..", "demos", "data", "V1295_Aql.oifits")
     if !isfile(polyfile)
         @warn "V1295 Aql not found — skipping SPARCO tempering tests"
     else

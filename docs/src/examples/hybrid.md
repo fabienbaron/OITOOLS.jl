@@ -11,7 +11,7 @@ model + image combinations:
 
 ```julia
 using OITOOLS
-data = readoifits("data/2019_v1295Aql.WL_SMOOTH.A.oifits";
+data = readoifits("data/V1295_Aql.oifits";
                   polychromatic=true, filter_bad_data=true)
 nx      = 64
 pixsize = 0.25

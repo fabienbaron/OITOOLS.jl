@@ -13,7 +13,7 @@
     # Five H-band channels, which is enough to be a cube and small enough to reconstruct in a
     # test. `POLY` in the harness is BC2026's 119-channel N-band file, far too slow for this.
     POLYFILE = joinpath(@__DIR__, "..", "..", "demos", "data",
-                        "2019_v1295Aql.WL_SMOOTH.A.oifits")
+                        "V1295_Aql.oifits")
 
     @testset "geometry comes from the data, not from a constant" begin
         s = imaging_defaults(data; nx = 32)

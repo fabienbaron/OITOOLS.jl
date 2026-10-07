@@ -199,13 +199,61 @@ treesize(dir) = sum(islink(p) ? 0 : filesize(p)
                     for (r, _, fs) in walkdir(dir) for p in (joinpath(r, f) for f in fs);
                     init = 0)
 
+"""
+    tracked(rel...) -> Vector{String} or nothing
+
+Repository-relative paths under `rel` that git is tracking, or `nothing` outside a checkout.
+
+The bundle ships what the REPOSITORY holds, not what the build machine happens to have in the
+same directories. `demos/data` is a working directory as much as a shipped one: an 11 MB tree of
+one person's reduction, a tarball and a PDF were all going out in the AppImage because they sat
+beside the demo files, and nothing in the build said so. Asking git is the only check that
+cannot drift -- an allowlist here would need updating every time a demo file is added.
+"""
+function tracked(rel...)
+    try
+        out = readchomp(`git -C $ROOT ls-files -- $(joinpath(rel...))`)
+        return isempty(out) ? String[] : split(out, '\n')
+    catch
+        return nothing
+    end
+end
+
 function stage(rel...)
     src = joinpath(ROOT, rel...)
     ispath(src) || (@warn "resource missing, not staged" src; return 0)
     dst = joinpath(SHARE, rel...)
-    mkpath(dirname(dst))
-    cp(src, dst; force = true)
+    files = tracked(rel...)
+    if files === nothing
+        # Not a git checkout -- a source tarball, say. Copy the tree and say what that means,
+        # rather than shipping nothing.
+        @warn "not a git checkout; staging the whole tree, which may include untracked files" src
+        mkpath(dirname(dst)); cp(src, dst; force = true)
+        return treesize(dst)
+    end
+    if isempty(files)
+        @warn "nothing tracked under this path, not staged" src
+        return 0
+    end
+    for f in files
+        from = joinpath(ROOT, f)
+        isfile(from) || continue
+        to = joinpath(SHARE, f)
+        mkpath(dirname(to))
+        cp(from, to; force = true)
+    end
+    skipped = _untracked_count(src, files)
+    skipped > 0 && @info "staged only what git tracks" path = joinpath(rel...) files = length(files) untracked_skipped = skipped
     return treesize(dst)
+end
+
+# How many files under `src` git is NOT tracking, so the build says what it left out rather than
+# silently shipping a smaller bundle than the last one.
+function _untracked_count(src, files)
+    isdir(src) || return 0
+    keep = Set(joinpath(ROOT, f) for f in files)
+    return count(p -> !(p in keep),
+                 (joinpath(r, f) for (r, _, fs) in walkdir(src) for f in fs))
 end
 
 # QMLMakie's own QML module ("Makie", supplying MakieArea) is registered by its `__init__`

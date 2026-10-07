@@ -374,11 +374,11 @@ end
     # OIdata spanning several wavelengths is all that is needed.  On MONOCHROMATIC
     # data a central point star is degenerate with a central image component and
     # f_star is NOT identifiable.
-    polyfile   = joinpath(@__DIR__, "..", "demos", "data", "2019_v1295Aql.WL_SMOOTH.A.oifits")
+    polyfile   = joinpath(@__DIR__, "..", "demos", "data", "V1295_Aql.oifits")
     v1295_lam0 = 1.6e-6
     v1295_w    = [1.0, 0.0, 1.0]
     if !isfile(polyfile)
-        @warn "2019_v1295Aql.WL_SMOOTH.A.oifits not found — skipping SPARCO recovery tests"
+        @warn "V1295_Aql.oifits not found — skipping SPARCO recovery tests"
     else
         nxs, pss = 32, 0.25          # coarser than the demo's 64 @ 0.125, for speed
         data = readoifits(polyfile; T=Float64, filter_bad_data=true,

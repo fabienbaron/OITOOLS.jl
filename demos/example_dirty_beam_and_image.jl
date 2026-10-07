@@ -14,7 +14,7 @@ text(6,5.8,"Dirty Beam",color="white",size="large")
 savefig("dirty-beam.png")
 
 #Direct Inversion
-x = readfits("./data/2004true.fits")[66:193,66:193]
+x = readfits("./data/images/2004true.fits")[66:193,66:193]
 imdisp(recenter(x,mask=x.>maximum(x)/10),pixsize=pixsize,colormap="gist_earth");
 text(6,5.8,"Truth",color="white",size="large")
 savefig("dirty-truth.png")

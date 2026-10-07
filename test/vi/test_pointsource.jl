@@ -21,7 +21,7 @@ using Test
 function make_test_ps()
     # Use the OITOOLS demo data for testing
     oifitsfile = joinpath(dirname(pathof(OITOOLS)), "..", "demos", "data",
-                          "2019_v1295Aql.WL_SMOOTH.A.oifits")
+                          "V1295_Aql.oifits")
     if !isfile(oifitsfile)
         @warn "Test OIFITS file not found, skipping point source tests"
         return nothing, nothing, nothing

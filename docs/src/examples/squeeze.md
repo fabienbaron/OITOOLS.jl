@@ -225,7 +225,7 @@ enough: the chromatism enters per uv point through `uv_lam`, not through a
 polychromatic image cube.
 
 ```julia
-data = readoifits("2019_v1295Aql.WL_SMOOTH.A.oifits"; filter_bad_data = true)
+data = readoifits("V1295_Aql.oifits"; filter_bad_data = true)
 ft   = setup_ft(data, 64, 0.125; mode = "dft")
 
 model = SqueezeSparco(f_star  = 0.48,

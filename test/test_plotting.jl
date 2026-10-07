@@ -60,7 +60,7 @@ const _DPI = parse(Int, get(ENV, "OITOOLS_PLOT_DPI", "300"))
 #                coverage uses the smaller of the two and nothing else
 const mono = readoifits(joinpath(_DATA, "BC2004", "2004-data1.oifits");
                         warn = false, verbose = false)[1, 1]
-const poly = readoifits(joinpath(_DATA, "MWC275_T4a.oifits");
+const poly = readoifits(joinpath(_DATA, "MWC275_4T.oifits");
                         warn = false, verbose = false)[1, 1]
 const flux = readoifits(joinpath(_DATA, "BC2026", "OBJECT1_LM.oifits");
                         warn = false, verbose = false)[1, 1]

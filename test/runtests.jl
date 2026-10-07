@@ -44,7 +44,7 @@ BLAS.set_num_threads(1)
     # instead of letting it surface as a readoifits error three files later.
     @testset "test fixtures are present" begin
         for f in (joinpath("BC2004", "2004-data1.oifits"), "AlphaCenA.oifits",
-                  "2019_v1295Aql.WL_SMOOTH.A.oifits", "polaris.oifits",
+                  "V1295_Aql.oifits", "polaris.oifits",
                   joinpath("BC2026", "OBJECT1_N.oifits"))
             path = joinpath(@__DIR__, "..", "demos", "data", f)
             @test isfile(path) || error("missing test fixture: demos/data/$f")

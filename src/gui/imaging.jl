@@ -60,6 +60,50 @@ const IMAGING_ENGINES = Dict{Symbol,String}(
     :squeeze_sparco => "reconstruct_squeeze (model = SqueezeSparco)")
 
 """
+    image_title(setup; channel = 0, nchannels = 1, wavelength = NaN, kind = "") -> String
+
+What the image panel writes above a reconstruction: which engine made it, on what grid.
+
+"reconstruction" was the title for every image the panel ever drew, which says nothing a glance
+at the tab does not -- and the two things a reader actually needs in order to judge the picture,
+the engine and the pixel scale, were only in the console transcript. A screenshot of the panel
+carried neither.
+
+`kind` labels an image that is not a finished reconstruction ("start image", "prior"), in which
+case the engine is left out: it has not run yet.
+"""
+function image_title(setup; channel::Integer = 0, nchannels::Integer = 1,
+                     wavelength::Real = NaN, kind::AbstractString = "")
+    px = setup.pixsize
+    # Enough digits to tell 0.25 from 0.025, and no trailing zeros on a round number: the
+    # pixel scale is read as a number here, not compared.
+    pxs = px >= 0.1 ? string(round(px; digits = 3)) : string(round(px; sigdigits = 2))
+    head = isempty(kind) ? engine_label(setup.engine) : String(kind)
+    parts = [head, string(setup.nx, "×", setup.nx), pxs * " mas/pixel"]
+    if nchannels > 1 && channel >= 1
+        ch = string("channel ", channel, "/", nchannels)
+        isfinite(wavelength) && (ch *= string(" (", round(wavelength * 1e6; digits = 3), " µm)"))
+        push!(parts, ch)
+    end
+    return join(parts, " · ")
+end
+
+"""
+    engine_label(engine) -> String
+
+The engine's name as a reader knows it, which is not always how the symbol is spelled.
+"""
+engine_label(engine::Symbol) = get(Dict(
+    :vmlmb          => "VMLMB",
+    :bsmem          => "BSMEM",
+    :bsdmm          => "BSDMM",
+    :squeeze        => "SQUEEZE",
+    :squeeze_sparco => "SQUEEZE + SPARCO",
+    :tempering      => "SQUEEZE (tempered)",
+    :sparco         => "SPARCO",
+    :vi             => "VI"), engine, uppercase(String(engine)))
+
+"""
     engine_call_name(engine, options) -> String
 
 The call to echo in the console, which for VI depends on what the panel chose.

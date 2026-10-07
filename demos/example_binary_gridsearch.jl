@@ -53,7 +53,7 @@ end
 
 # Load Data
 #
-oifitsfile = "./data/AXCir.oifits";
+oifitsfile = "./data/AX_Cir.oifits";
 data = readoifits(oifitsfile)[1,1]; # data can be split by wavelength, time, etc.
 
 #

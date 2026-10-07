@@ -2,7 +2,7 @@
 # Reconstruction of beta Lyrae from snapshot MIRC-6T data
 #
 using OITOOLS
-oifitsfile = "./data/betlyr6t.oifits"
+oifitsfile = "./data/Bet_Lyr6T.oifits"
 pixsize = .05 # size of a pixel in milliarcseconds
 nx = 64 # width of image (number of pixels)
 data = readoifits(oifitsfile);

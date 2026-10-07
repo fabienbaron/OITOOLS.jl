@@ -12,7 +12,7 @@ dataset:
 ```julia
 using OITOOLS
 simulate_from_oifits("data/BC2004/2004-data1.oifits", "data/sim.oifits";
-                     image="data/2004true.fits", pixsize=0.101)
+                     image="data/images/2004true.fits", pixsize=0.101)
 ```
 
 A flat-dict parametric model can be used instead of an image:
@@ -128,7 +128,7 @@ combiner = read_comb_file("MIRCX")
 wave     = read_wave_file("MIRCX_LOWH")
 
 simulate(facility, target, combiner, wave, dates, "sim_image.oifits";
-         image="data/2004true.fits", pixsize=0.101)
+         image="data/images/2004true.fits", pixsize=0.101)
 ```
 
 ### Simulating from a parametric model

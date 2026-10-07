@@ -27,7 +27,7 @@
 #                  the question is how each behaves.
 #
 # The uv coverage, MJDs and error bars come from a real CHARA/MIRC dataset
-# (demos/data/iota_peg6t.oifits); only the observable values are replaced.
+# (demos/data/Iota_Peg6T.oifits); only the observable values are replaced.
 
 using OITOOLS
 using OIFITS
@@ -76,7 +76,7 @@ const WEIGHTS = [1.0, 0.0, 1.0]      # V2 and T3PHI, no T3AMP
 
 const REGIMES = ["ideal", "systematics", "underestimated", "fewblocks", "mismatch"]
 
-const SRC_TEMPLATE = joinpath(@__DIR__, "..", "data", "iota_peg6t.oifits")
+const SRC_TEMPLATE = joinpath(@__DIR__, "..", "data", "Iota_Peg6T.oifits")
 
 # Correlated-calibration amplitudes for the `systematics` regime
 const V2_SYS_RMS    = 0.05     # 5% multiplicative on V2, per (epoch, baseline)

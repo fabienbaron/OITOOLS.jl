@@ -190,7 +190,8 @@ mirrored, and a mirrored reconstruction is not obviously wrong to the eye.
 Nothing is created here. The heatmap already exists; this sets its data and swaps which plots
 are visible.
 """
-function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::AbstractString = "")
+function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real;
+                     label::AbstractString = "", title::AbstractString = "")
     # Re-styled at the screen's scale, as `update_canvas!` does for the scatter view. The axis
     # was styled once when it was built, and at that point QML has not yet reported the screen,
     # so `live_plot_scale()` was still 1.0 -- oiplot's 12 pt, sized for a paper column. On a
@@ -228,6 +229,9 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real; label::A
 
     c.axis.xlabel = "α (mas)"
     c.axis.ylabel = "δ (mas)"
+    # Left alone when the caller says nothing, so a panel that has not been told what it is
+    # showing keeps whatever it last said rather than going blank.
+    isempty(title) || (c.axis.title = String(title))
     Makie.limits!(c.axis, half, -half, -half, half)
     c.axis.aspect = 1
     # The zoom bounds are multiples of the home view, and for an image the home view is this
@@ -735,9 +739,10 @@ function _show_colorbar!(c::LiveCanvas, on::Bool)
     getfield(c.colorbar, :blockscene).visible[] = on
     on || (c.cbarlabel[] = "")
     Makie.colsize!(c.figure.layout, 2, on ? Makie.Auto() : Makie.Fixed(0))
-    # Sit beside the axis, not adrift from it. The default column gap is generous for a
-    # figure with several panels and looks detached with one.
-    Makie.colgap!(c.figure.layout, 1, on ? 8 : 0)
+    # Sit beside the axis, not adrift from it. The default column gap is generous for a figure
+    # with several panels and looks detached with one -- and 8 was still too much on an image,
+    # where the bar reads as part of the picture rather than as a second panel beside it.
+    Makie.colgap!(c.figure.layout, 1, on ? 4 : 0)
     # Hug the colorbar rather than sit centred in the cell. An isotropic plot -- uv coverage --
     # is square, so under DataAspect it fills only part of a wide cell and a colorbar pinned to
     # the cell's right edge ends up hundreds of pixels adrift of the data it describes.

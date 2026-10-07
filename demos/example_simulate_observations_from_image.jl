@@ -5,7 +5,7 @@ using Dates
 dates = collect(DateTime(2018,8,13,3,0,0):Minute(15):DateTime(2018,8,13,8,30,0))
 
 # Input image defining the target brightness distribution
-image_file="./data/2004true.fits";
+image_file="./data/images/2004true.fits";
 pixsize=0.101;
 
 # Target info
@@ -31,7 +31,7 @@ data = (readoifits(out_file, filter_bad_data=false, T=Float64))[1,1]; # data can
 uvplot(data, color="wav")
 #uvplot(data, color="mjd")
 
-#image_file="./data/2004true.fits";
+#image_file="./data/images/2004true.fits";
 x_true = readfits(image_file)
 x_true /= sum(x_true)
 ft = setup_nfft(data, size(x_true,1), pixsize);

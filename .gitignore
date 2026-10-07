@@ -53,3 +53,6 @@ plans/
 
 # Java classes from tools/, built on demand against the Aspro2 jar and never committed.
 *.class
+demos/data/BEN/
+demos/data/*.txt
+demos/data/test_readoifits_results.csv

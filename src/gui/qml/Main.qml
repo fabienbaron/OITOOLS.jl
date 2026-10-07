@@ -163,6 +163,10 @@ ApplicationWindow {
     // deliver different amounts of scroll for the same gesture. Filled from Julia when the
     // panel opens, since it is Julia that zooms.
     property real zoomStepUser: appearanceDefaults.zoomStepUser
+    // Where this user keeps their own data. Saved in the config, and consulted by `picker_start`
+    // and the window's opening folder ahead of the shipped demo data -- so after setting it once,
+    // every Open and Save starts where the work is rather than inside the package.
+    property string workDirectory: ""
 
     readonly property real uiScale: uiScaleUser > 0     ? uiScaleUser
                                   : uiScaleOverride > 0 ? uiScaleOverride
@@ -487,6 +491,7 @@ ApplicationWindow {
                                 Julia.shell_set_marker_size(win.markerSizeUser); break
             case "zoom_step":   if (v > 1) { win.zoomStepUser = v
                                              Julia.shell_set_zoom_step(v) } break
+            case "work_directory": win.workDirectory = f[1]; break
             }
         }
         if (verboseStartup) console.log("OITOOLSGUI applied saved appearance defaults")
@@ -844,6 +849,52 @@ ApplicationWindow {
                     // become palette roles first — not a dropdown, so there is no dropdown.
                 }
 
+                // ── Folders ───────────────────────────────────────────────────
+                //
+                // Not appearance, but it belongs to the same file and the same button: this is
+                // the panel for "things this installation should remember about me".
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: "Folders"; font.bold: true }
+                    Item { Layout.fillWidth: true }
+                    Label {
+                        text: "where Open and Save start"
+                        color: "#888"
+                        font.pointSize: pt(baseFontPt - 2)
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: dp(8)
+                    Label { text: "Work directory"; color: "#666" }
+                    TextField {
+                        id: workDirField
+                        Layout.fillWidth: true
+                        implicitHeight: dp(28)
+                        text: win.workDirectory
+                        placeholderText: "unset — the shipped demo data is used"
+                        font.pointSize: pt(baseFontPt - 1)
+                        // Typed as well as browsed: a path pasted from a terminal is often the
+                        // fastest way in, and on a machine where the folder is not mounted yet
+                        // it is the only way.
+                        onEditingFinished: win.workDirectory = text.trim()
+                    }
+                    Button {
+                        text: "Browse…"
+                        implicitHeight: dp(28)
+                        onClicked: workDirDialog.openAt(win.workDirectory)
+                    }
+                    Button {
+                        text: "Clear"
+                        implicitHeight: dp(28)
+                        enabled: win.workDirectory.length > 0
+                        ToolTip.visible: hovered
+                        ToolTip.text: "forget it, and go back to opening in the demo data"
+                        onClicked: win.workDirectory = ""
+                    }
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
                     // The buttons get the row to themselves. What happened is reported on the line
@@ -867,7 +918,8 @@ ApplicationWindow {
                                   "ui_font_pt\t"  + win.baseFontPt,
                                   "plot_scale\t"  + win.plotScaleUser,
                                   "marker_size\t" + win.markerSizeUser,
-                                  "zoom_step\t"   + win.zoomStepUser ].join("\n"))
+                                  "zoom_step\t"   + win.zoomStepUser,
+                                  "work_directory\t" + win.workDirectory ].join("\n"))
                             savedLabel.text = path.length > 0 ? "saved · " + path
                                                               : "could not save — see the console"
                         }
@@ -881,6 +933,10 @@ ApplicationWindow {
                             // applied at startup, so restoring the look while leaving the file in
                             // place would come back tweaked at the next launch.
                             var d = win.appearanceDefaults
+                            // The work directory goes with them: "reset to defaults" deletes the
+                            // config file, so leaving the path on screen would show a setting that
+                            // no longer exists anywhere.
+                            win.workDirectory  = ""
                             win.uiScaleUser    = d.uiScaleUser
                             win.uiFontFamily   = d.uiFontFamily
                             win.baseFontPt     = d.baseFontPt
@@ -933,6 +989,14 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    FilePicker {
+        id: workDirDialog
+        uiScale: win.uiScale; fontScale: win.fontScale; baseFontPt: win.baseFontPt
+        title: "Choose work directory"
+        chooseFolder: true
+        onAccepted: function (path) { win.workDirectory = path }
     }
 
     FilePicker {
