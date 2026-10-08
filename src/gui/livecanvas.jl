@@ -84,6 +84,11 @@ struct LiveCanvas
     # Makie's own `:limitreset` resets to `ax.limits[]`, and the zoom clamp sets that on every
     # step, so the built-in reset returned to the last zoom rather than to the whole picture.
     homelimits  :: Base.RefValue{NTuple{4,Float64}}
+    # uv coverage only: dotted circles of constant baseline/λ, and their radii as labels.
+    uvrings     :: Makie.Observable{Vector{Makie.Point2f}}
+    uvringpos   :: Makie.Observable{Vector{Makie.Point2f}}
+    uvringtext  :: Makie.Observable{Vector{String}}
+    uvringsize  :: Makie.Observable{Float32}
 end
 
 """
@@ -98,6 +103,19 @@ function build_canvas(fig, ax)
     errpts   = Makie.Observable(Makie.Point2f[])
     errlo    = Makie.Observable(Float32[])
     errhi    = Makie.Observable(Float32[])
+
+    # Circles of constant |uv| behind the uv coverage, as PMOIRED draws them: they turn a
+    # cloud of points into a reading of how far out the coverage reaches, and in which
+    # directions it does not. One `lines!` for all of them, separated by NaN, so the count can
+    # change without creating a plot. First, so everything else draws over them.
+    uvrings    = Makie.Observable(Makie.Point2f[])
+    uvringpos  = Makie.Observable(Makie.Point2f[])
+    # Seeded with every glyph a label can use, for the glyph-atlas reason `cblab` gives below.
+    uvringtext = Makie.Observable(["0123456789. Mλ"])
+    uvringsize = Makie.Observable(Float32(OIPLOT_TICKLABELSIZE * 0.8))
+    Makie.lines!(ax, uvrings; color = (:black, 0.3), linestyle = :dot, linewidth = 1)
+    Makie.text!(ax, uvringpos; text = uvringtext, color = (:black, 0.5),
+                fontsize = uvringsize, align = (:left, :bottom))
 
     # Error bars first so the markers sit on top, matching oiplot's z-order.
     errplot = Makie.errorbars!(ax, errpts, errlo, errhi; color = OIPLOT_ECOLOR)
@@ -163,7 +181,8 @@ function build_canvas(fig, ax)
                         cblim, cblab, cbar,
                         imdata, imx, imy, implot, cmap, cbmap, panels,
                         Base.RefValue((1.0, 1.0)),
-                        Base.RefValue((0.0, 1.0, 0.0, 1.0)))
+                        Base.RefValue((0.0, 1.0, 0.0, 1.0)),
+                        uvrings, uvringpos, uvringtext, uvringsize)
     _install_zoom!(canvas)
 
     # The legend axis is a drawing surface, not a plot. Left interactive it responds to the
@@ -173,6 +192,7 @@ function build_canvas(fig, ax)
         Makie.deregister_interaction!(legax, i)
     end
     set_legend!(canvas, Pair{String,Makie.RGBAf}[])
+    set_uv_rings!(canvas, 0.0)
     _show_colorbar!(canvas, false)
     show_panels!(canvas, false)
     return canvas
@@ -215,6 +235,7 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real;
     c.errpoints[] = Makie.Point2f[]
     c.errlow[] = Float32[]; c.errhigh[] = Float32[]
     set_legend!(c, Pair{String,Makie.RGBAf}[])
+    set_uv_rings!(c, 0.0)
 
     c.scatterplot.visible[] = false
     c.overplot.visible[] = false
@@ -240,6 +261,7 @@ function show_image!(c::LiveCanvas, img::AbstractMatrix, pixsize::Real;
     c.homespan[] = (2 * Float64(half), 2 * Float64(half))
     # Reversed in x, exactly as `limits!` above: East stays on the left across a reset.
     c.homelimits[] = (Float64(half), -Float64(half), -Float64(half), Float64(half))
+    _fit_plot_column!(c)
     return c
 end
 
@@ -249,6 +271,7 @@ function hide_image!(c::LiveCanvas)
     c.scatterplot.visible[] = true
     c.errplot.visible[] = true
     c.axis.aspect = nothing
+    _fit_plot_column!(c)
     return c
 end
 
@@ -590,6 +613,7 @@ function show_panels!(c::LiveCanvas, on::Bool)
     Makie.rowsize!(c.figure.layout, 1, on ? Makie.Fixed(0) : Makie.Auto())
     Makie.rowsize!(c.figure.layout, 3, on ? Makie.Auto() : Makie.Fixed(0))
     on && set_legend!(c, Pair{String,Makie.RGBAf}[])
+    on && set_uv_rings!(c, 0.0)
     on && _show_colorbar!(c, false)
     for a in c.panels.axes
         _set_axis_visible!(a, false)
@@ -743,12 +767,76 @@ function _show_colorbar!(c::LiveCanvas, on::Bool)
     # with several panels and looks detached with one -- and 8 was still too much on an image,
     # where the bar reads as part of the picture rather than as a second panel beside it.
     Makie.colgap!(c.figure.layout, 1, on ? 4 : 0)
-    # Hug the colorbar rather than sit centred in the cell. An isotropic plot -- uv coverage --
-    # is square, so under DataAspect it fills only part of a wide cell and a colorbar pinned to
-    # the cell's right edge ends up hundreds of pixels adrift of the data it describes.
-    c.axis.halign[] = on ? :right : :center
+    _fit_plot_column!(c)
     return nothing
 end
+
+"""
+    _fit_plot_column!(canvas)
+
+Size the plot's column to the plot when its shape is fixed and a colorbar stands beside it.
+
+An image, or uv coverage under `DataAspect`, fills only part of a wide cell, and Makie CENTRES
+an aspect-constrained axis in its cell -- `sceneareanode!` has the alignment commented out, so
+`halign` does nothing here. Left alone, a colorbar pinned to the cell's right edge drifts
+further from the data it describes every time the window widens. A column sized by `Aspect` is
+the axis's own width instead, and the layout centres axis and colorbar together.
+
+Only with the colorbar showing: without one there is nothing to keep close, and a free column
+is what lets the baseline legend below it spread across the whole width.
+"""
+function _fit_plot_column!(c::LiveCanvas)
+    asp = c.axis.aspect[]
+    r = asp isa Real            ? Float64(asp) :
+        asp isa Makie.AxisAspect ? Float64(asp.aspect) :
+        asp isa Makie.DataAspect ? (fl = c.axis.finallimits[];
+                                    Float64(fl.widths[1]) / Float64(fl.widths[2])) :
+        nothing
+    on = getfield(c.colorbar, :blockscene).visible[]
+    fixed = on && r !== nothing && isfinite(r) && r > 0
+    Makie.colsize!(c.figure.layout, 1, fixed ? Makie.Aspect(1, r) : Makie.Auto())
+    return nothing
+end
+
+"""
+    uv_ring_radii(rmax) -> Vector{Float64}
+
+Radii for the circles behind a uv plot, in Mλ: evenly spaced on a 1-2-2.5-5 step, two to five
+of them, the last no further out than the longest baseline. PMOIRED draws its circles at fixed
+lengths in metres; in Mλ no fixed list suits both a 30 m array in the N band and a 300 m one in
+H, so the step is chosen from the data instead, the way an axis chooses its ticks.
+"""
+function uv_ring_radii(rmax::Real)
+    (isfinite(rmax) && rmax > 0) || return Float64[]
+    raw = rmax / 5
+    p = 10.0^floor(log10(raw))
+    step = minimum(m * p for m in (1, 2, 2.5, 5, 10) if m * p >= raw)
+    return collect(step:step:rmax)
+end
+
+"""
+    set_uv_rings!(canvas, rmax)
+
+Draw the circles for a uv plot whose longest |uv| is `rmax` Mλ, or clear them with `0`.
+"""
+function set_uv_rings!(c::LiveCanvas, rmax::Real)
+    radii = uv_ring_radii(rmax)
+    pts = Makie.Point2f[]
+    t = range(0, 2π; length = 121)
+    for r in radii
+        append!(pts, Makie.Point2f.(r .* cos.(t), r .* sin.(t)))
+        push!(pts, Makie.Point2f(NaN, NaN))
+    end
+    c.uvrings[] = pts
+    # The labels where the circle meets the upper-left diagonal: clear of the axes, and on the
+    # side a uv plot's legend-free corner usually is.
+    c.uvringtext[] = [_ring_label(r) for r in radii]
+    c.uvringpos[]  = [Makie.Point2f(-r * cos(π / 4), r * sin(π / 4)) for r in radii]
+    c.uvringsize[] = Float32(OIPLOT_TICKLABELSIZE * 0.8 * live_plot_scale())
+    return c
+end
+
+_ring_label(r) = (isinteger(r) ? string(Int(r)) : string(round(r; sigdigits = 3))) * " Mλ"
 
 """
     ramp_colors(values; colormap = WAV_COLORMAP) -> Vector{RGBAf}
@@ -952,6 +1040,7 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
     end
 
     set_legend!(c, pd.legend)
+    set_uv_rings!(c, kind === :uv && !isempty(pd.x) ? maximum(hypot.(pd.x, pd.y)) : 0.0)
 
     if isempty(pd.cvals)
         _show_colorbar!(c, false)
@@ -993,5 +1082,6 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
         # leave the rest of the axis unlabelled. LogTicks puts them one per decade.
         ax.yticks[] = Makie.LogTicks(Makie.LinearTicks(OIPLOT_XTICKS))
     end
+    _fit_plot_column!(c)
     return pd.info
 end

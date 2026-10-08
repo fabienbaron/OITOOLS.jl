@@ -580,8 +580,7 @@ Item {
                                   work: f[4],
                                   ndof: parseInt(f[5]), nfree: parseInt(f[6]),
                                   ret: "", chi2: 0.0,
-                                  aic: parseFloat(f[7]), bic: parseFloat(f[8]),
-                                  params: f[9] })
+                                  params: f[7] })
         }
     }
 
@@ -691,7 +690,7 @@ Item {
     ListModel {
         id: fitModel
         // roles: label, optimiser, chi2, chi2rStart, chi2r, work, ndof, nfree, ret,
-        //        aic, bic, params. Roles are defined by the first append, so every
+        //        params. Roles are defined by the first append, so every
         //        append must carry all of them.
         // One row per completed fit, so competing models compare side by side.
     }
@@ -806,23 +805,44 @@ Item {
         // ── broadcasting and unrecognised-key banners ────────────────────────
         //
         // Both are silent in the library and both change what is being fitted, so they are
-        // banners rather than something to find in a panel.
+        // banners rather than something to find in a panel. An ignored key is amber, not red:
+        // it is as often a parameter just added with "+ parameter" that no expression uses YET
+        // as a misspelt shape key, and the text says which of the two to look for.
         Rectangle {
             Layout.fillWidth: true
             visible: root.unrecognisedKeys.length > 0
-            color: "#fdeaea"
-            border.color: root.cBad
+            color: "#fff6e0"
+            border.color: root.cWarn
             radius: dp(3)
-            implicitHeight: unrecLabel.implicitHeight + dp(10)
-            Label {
-                id: unrecLabel
+            implicitHeight: unrecRow.implicitHeight + dp(10)
+            RowLayout {
+                id: unrecRow
                 anchors.fill: parent
                 anchors.margins: dp(5)
-                wrapMode: Text.WordWrap
-                color: root.cBad
-                font.pointSize: root.pt(root.baseFontPt - 1)
-                text: "Keys the parser ignored: " + root.unrecognisedKeys.join(", ") +
-                      " — these do not error, they change what the component is."
+                spacing: dp(8)
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: root.cWarn
+                    font.pointSize: root.pt(root.baseFontPt - 1)
+                    text: "Nothing uses " + root.unrecognisedKeys.join(", ") +
+                          ", so the parser ignores " + (root.unrecognisedKeys.length === 1 ? "it" : "them") +
+                          ". Refer to a parameter from an expression to use it; a misspelt shape key " +
+                          "means the component is not the shape you meant."
+                }
+                // The model is the same without them, so clearing them is one click; the
+                // console names each key, so a misspelling removed here can be retyped.
+                Button {
+                    text: root.unrecognisedKeys.length === 1 ? "Remove it" : "Remove them"
+                    implicitHeight: Math.max(dp(22), implicitContentHeight + topPadding + bottomPadding)
+                    onClicked: {
+                        var err = Julia.shell_remove_unused()
+                        root.consoleChanged()
+                        if (err.length > 0) { root.fitText = err; return }
+                        root.modelDirty = true
+                        root.refreshModel()
+                    }
+                }
             }
         }
 
@@ -922,7 +942,7 @@ Item {
                                 height: cardCol.implicitHeight + root.dp(10)
                                 radius: root.dp(4)
                                 color: model.name === root.selectedComponent ? "#e8f0fe" : root.cPanel
-                                border.color: model.nunrecognised > 0 ? root.cBad : root.cLine
+                                border.color: model.nunrecognised > 0 ? root.cWarn : root.cLine
 
                                 // Declared BEFORE the content: later siblings sit on top and are
                                 // offered the click first, so the − button is reachable instead of
@@ -1269,17 +1289,49 @@ Item {
                                         root.refreshModel()
                                     }
                                 }
+                                // A quantity no component kind seeds -- SPARCO's `fs`, a spectral
+                                // slope -- has to come from somewhere, and an expression can only
+                                // refer to what exists.
                                 Button {
-                                    text: "Link"
+                                    text: "+ parameter"
                                     implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
-                                    // Selecting two parameters and linking creates a global and
-                                    // rewrites both rows to reference it ("$PA"). Tying two
-                                    // position angles together becomes one gesture instead of
-                                    // an expression-editing exercise. Unlinking inlines the
-                                    // current value back into each.
-                                    // NOT WIRED: needs multi-select in the parameter table, which
-                                    // the table does not have, plus a shell call to create the
-                                    // global and rewrite both rows to reference it.
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "a new global, or a new parameter on a component, for an expression to use"
+                                    onClicked: addParamDialog.open()
+                                }
+                                // Globals and parameters added with "+ parameter": no component
+                                // card removes a global, so without this a SPARCO model's `fs`
+                                // outlives its star and disc. A component's own keys are what the
+                                // parser identifies it by and go only with the component -- see
+                                // `shell_remove_param`.
+                                Button {
+                                    readonly property string selKey:
+                                        (paramList.currentIndex >= 0
+                                         && paramList.currentIndex < paramModel.count)
+                                        ? paramModel.get(paramList.currentIndex).key : ""
+                                    readonly property bool removable:
+                                        selKey.length > 0 && Julia.shell_param_removable(selKey) === "1"
+                                    text: "Remove"
+                                    implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
+                                    enabled: removable
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: removable
+                                                  ? "delete " + selKey
+                                                  : selKey.length > 0
+                                                    ? selKey + " is part of what makes its component what it is; it goes with the component"
+                                                    : "select a global, or a parameter added with \"+ parameter\""
+                                    onClicked: root.removeParam(selKey)
+                                }
+                                // Linking makes one global and rewrites each chosen row to
+                                // `$name`, so tying two position angles together is a choice
+                                // in a list rather than two expressions to type.
+                                Button {
+                                    text: "Link…"
+                                    implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
+                                    enabled: root.numericRows().length >= 2
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "make several parameters share one value, through a new global"
+                                    onClicked: linkDialog.open()
                                 }
                                 Item { Layout.fillWidth: true }
                                 Label {
@@ -1325,9 +1377,13 @@ Item {
                         // shared one made every `spacing:` a second assignment to the same
                         // property, which QML rejects outright.
                         ScrollView {
+                            id: creationScroll
                             clip: true
+                            // The pane's own width, so the frames below can share it out. A
+                            // fraction of the whole tab left a third of this pane empty beside
+                            // two plots squeezed into 300 dp.
                             ColumnLayout {
-                                width: root.width * 0.4
+                                width: creationScroll.availableWidth
                                 spacing: root.dp(8)
 
                                 ColumnLayout {
@@ -1531,6 +1587,66 @@ Item {
                                               "`profile` key."
                                     }
 
+                                    // ── the limb-darkening law ───────────────────────
+                                    //
+                                    // Beside the component rather than in the kind list: every
+                                    // one of these is a disc, and which law it wears is a
+                                    // question about the atmosphere, not the geometry.
+                                    // Outside the profile-only column below, which would hide it
+                                    // for exactly the components it belongs to.
+                                    GroupBox {
+                                        Layout.preferredWidth: root.dp(380)
+                                        visible: root.ldLawKey.length > 0
+                                        title: "Limb darkening"
+
+                                        ColumnLayout {
+                                            spacing: root.dp(4)
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: root.dp(6)
+                                                Label { text: "law"; color: "#666" }
+                                                ComboBox {
+                                                    Layout.fillWidth: true
+                                                    textRole: "label"
+                                                    valueRole: "key"
+                                                    model: root.ldLaws
+                                                    currentIndex: {
+                                                        for (var i = 0; i < root.ldLaws.length; ++i)
+                                                            if (root.ldLaws[i].key === root.ldLawKey)
+                                                                return i
+                                                        return -1
+                                                    }
+                                                    onActivated: {
+                                                        var e = Julia.shell_set_ld_law(
+                                                                    root.selectedComponent,
+                                                                    root.ldLaws[currentIndex].key)
+                                                        root.consoleChanged()
+                                                        if (e.length > 0 && e.charAt(0) === "!") {
+                                                            root.fitText = e; return
+                                                        }
+                                                        root.modelDirty = true
+                                                        root.refreshModel()
+                                                    }
+                                                }
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                color: "#666"
+                                                font.pointSize: root.pt(root.baseFontPt - 2)
+                                                text: {
+                                                    for (var i = 0; i < root.ldLaws.length; ++i)
+                                                        if (root.ldLaws[i].key === root.ldLawKey)
+                                                            return root.ldLaws[i].note
+                                                    return ""
+                                                }
+                                            }
+                                            // The diameter is the same quantity in every law and
+                                            // is kept; the coefficients are not and are reseeded.
+                                            InfoTip { tip: "Changing the law keeps the diameter and reseeds the coefficients: a value fitted under one law is not a value under another." }
+                                        }
+                                    }
+
                                     // Each picture beside the editor it illustrates, rather than both in a column
                                     // of their own. The two columns were independent, so a preview lined up with
                                     // its section only by accident and drifted the moment the editor grew -- which
@@ -1545,8 +1661,12 @@ Item {
                                             Layout.alignment: Qt.AlignTop
                                             spacing: root.dp(8)
                                         // ── freeform radial profile (§3.4) ───────────────
+                                        // Controls at a fixed width on the left, pictures taking the
+                                        // rest on the right -- here and in the azimuthal row below,
+                                        // so the two rows line up as two columns. An editor gains
+                                        // nothing from a wide pane; a plot gains everything.
                                         GroupBox {
-                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: root.dp(380)
                                             // AlignTop, like the preview beside it: without it the
                                             // RowLayout stretches this box to the row height the
                                             // taller preview sets, and the frames stop lining up.
@@ -1738,10 +1858,10 @@ Item {
                                             // begins at the row's top and therefore sits a title-height
                                             // above the thing it illustrates.
                                             GroupBox {
-                                                // A fixed width beside a fillWidth editor. Sharing the row by
-                                                // fillWidth collapses the picture to nothing, which is what
-                                                // happened when these moved out of their own column.
-                                                Layout.preferredWidth: root.dp(300)
+                                                // The rest of the row, with a floor: below ~300 dp two
+                                                // axes side by side smear their ticks together.
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: root.dp(300)
                                                 Layout.alignment: Qt.AlignTop
                                                 title: "I(r) and V(B)"
 
@@ -1784,68 +1904,10 @@ Item {
                                             Layout.fillWidth: true
                                             Layout.alignment: Qt.AlignTop
                                             spacing: root.dp(8)
-                                        // ── the limb-darkening law ───────────────────────
-                                    //
-                                    // Beside the component rather than in the kind list: every
-                                    // one of these is a disc, and which law it wears is a
-                                    // question about the atmosphere, not the geometry.
-                                    GroupBox {
-                                        Layout.fillWidth: true
-                                        visible: root.ldLawKey.length > 0
-                                        title: "Limb darkening"
-
-                                        ColumnLayout {
-                                            spacing: root.dp(4)
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: root.dp(6)
-                                                Label { text: "law"; color: "#666" }
-                                                ComboBox {
-                                                    Layout.fillWidth: true
-                                                    textRole: "label"
-                                                    valueRole: "key"
-                                                    model: root.ldLaws
-                                                    currentIndex: {
-                                                        for (var i = 0; i < root.ldLaws.length; ++i)
-                                                            if (root.ldLaws[i].key === root.ldLawKey)
-                                                                return i
-                                                        return -1
-                                                    }
-                                                    onActivated: {
-                                                        var e = Julia.shell_set_ld_law(
-                                                                    root.selectedComponent,
-                                                                    root.ldLaws[currentIndex].key)
-                                                        root.consoleChanged()
-                                                        if (e.length > 0 && e.charAt(0) === "!") {
-                                                            root.fitText = e; return
-                                                        }
-                                                        root.modelDirty = true
-                                                        root.refreshModel()
-                                                    }
-                                                }
-                                            }
-                                            Label {
-                                                Layout.fillWidth: true
-                                                wrapMode: Text.WordWrap
-                                                color: "#666"
-                                                font.pointSize: root.pt(root.baseFontPt - 2)
-                                                text: {
-                                                    for (var i = 0; i < root.ldLaws.length; ++i)
-                                                        if (root.ldLaws[i].key === root.ldLawKey)
-                                                            return root.ldLaws[i].note
-                                                    return ""
-                                                }
-                                            }
-                                            // The diameter is the same quantity in every law and
-                                            // is kept; the coefficients are not and are reseeded.
-                                            InfoTip { tip: "Changing the law keeps the diameter and reseeds the coefficients: a value fitted under one law is not a value under another." }
-                                        }
-                                    }
-
                                     // ── azimuthal modes (§3.5) ───────────────────────
                                         GroupBox {
                                             id: azBox
-                                            Layout.fillWidth: true
+                                            Layout.preferredWidth: root.dp(380)
                                             // AlignTop, like the preview beside it: without it the
                                             // RowLayout stretches this box to the row height the
                                             // taller preview sets, and the frames stop lining up.
@@ -1855,8 +1917,6 @@ Item {
 
                                             ColumnLayout {
                                                 spacing: root.dp(4)
-
-                                                InfoTip { tip: "amp and projang are added and removed together — the parser errors if one is missing." }
 
                                                 Repeater {
                                                     model: azModel
@@ -1905,16 +1965,16 @@ Item {
                                                         implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
                                                         onClicked: root.addAzMode()
                                                     }
+                                                    InfoTip { tip: "Each mode is an amp and a projang, added and removed together — the parser errors if one is missing. projang follows PMOIRED's convention, so a model moves between the two unchanged." }
                                                     Item { Layout.fillWidth: true }
                                                 }
-
-                                                InfoTip { tip: "projang follows PMOIRED's convention, so a model moves between the two unchanged." }
 
                                             }
                                         }
 
                                             GroupBox {
-                                                Layout.preferredWidth: root.dp(300)
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: root.dp(300)
                                                 Layout.alignment: Qt.AlignTop
                                                 title: "asymmetry"
                                                 Rectangle {
@@ -2400,7 +2460,11 @@ Item {
                                         model: root.optimisers
                                         textRole: "name"
                                         valueRole: "key"
-                                        onActivated: root.optimiser = root.optimiserKey(index)
+                                        // A formal parameter, not the injected one: Qt 6 deprecates injecting a signal's
+                                        // arguments into the handler's scope and warns on every load.
+                                        onActivated: function (index) {
+                                            root.optimiser = root.optimiserKey(index)
+                                        }
 
                                         // The Image tab's treatment of Pigeons and OIVI, applied
                                         // to a sampler that is not loaded: dimmed, still readable,
@@ -2541,7 +2605,9 @@ Item {
                                         // :config is the default and the right one for calibrated
                                         // interferometric data — a block is one (MJD, configuration).
                                         model: ["config", "epoch", "point"]
-                                        onActivated: root.bootGranularity = ["config", "epoch", "point"][index]
+                                        onActivated: function (index) {
+                                            root.bootGranularity = ["config", "epoch", "point"][index]
+                                        }
                                     }
                                     Label { text: "seed"; color: "#666" }
                                     SpinBox {
@@ -2569,7 +2635,11 @@ Item {
                         }
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: root.dp(120)
+                            // A 24dp header over rows of 22dp: 220 shows eight fits where 120
+                            // showed four, which is the difference between comparing a run
+                            // against the last few and scrolling to find them. It also pushes
+                            // "Optimiser output" down the panel, where a trace belongs.
+                            Layout.preferredHeight: root.dp(220)
                             color: "white"
                             border.color: root.cLine
                             radius: root.dp(3)
@@ -2666,10 +2736,6 @@ Item {
                                                 color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
                                         Label { Layout.preferredWidth: root.dp(90); text: "points"
                                                 color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
-                                        Label { Layout.preferredWidth: root.dp(80); text: "AIC"
-                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
-                                        Label { Layout.preferredWidth: root.dp(80); text: "BIC"
-                                                color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
                                         Label { Layout.fillWidth: true; text: "optimised parameters"
                                                 color: "#777"; font.pointSize: root.pt(root.baseFontPt - 2) }
                                     }
@@ -2710,14 +2776,9 @@ Item {
                                                 : "χ² evaluations; NLopt reports no iteration count"
                                             HoverHandler { id: fitWorkHover }
                                         }
-                                        // ndof counts data points and is NOT reduced by the number of free
-                                        // parameters, so it is labelled as such and AIC/BIC are computed
-                                        // properly rather than read off chi2r.
+                                        // ndof counts data points and is NOT reduced by the number
+                                        // of free parameters, which is why it is labelled "pts".
                                         Label { Layout.preferredWidth: root.dp(90);  text: model.ndof + " pts"
-                                                color: "#666" }
-                                        Label { Layout.preferredWidth: root.dp(80);  text: root.fmt(model.aic, 1)
-                                                color: "#666" }
-                                        Label { Layout.preferredWidth: root.dp(80);  text: root.fmt(model.bic, 1)
                                                 color: "#666" }
                                         // Where the parameters landed. Two fits that differ only
                                         // in χ² are two numbers; this is what makes them two
@@ -2743,7 +2804,10 @@ Item {
                         GroupBox {
                             title: "Optimiser output"
                             Layout.fillWidth: true
-                            Layout.preferredHeight: root.dp(150)
+                            // A fitter's trace is many short lines -- NLopt's evaluations, a
+                            // sampler's progress -- and at 150 only a handful were on screen at
+                            // once, so following a run meant scrolling a box while it wrote.
+                            Layout.preferredHeight: root.dp(260)
                             // Also while fitting, even though the text has just been cleared: a
                             // GridLayout skips invisible items rather than reserving their cell,
                             // so binding this to the text alone made the panel below jump 150dp
@@ -3045,6 +3109,36 @@ Item {
         root.consoleChanged()
     }
 
+    // Rows holding a number, fixed or free: what Link can tie together. A derived row is
+    // already an expression, and linking it would discard what it says.
+    function numericRows() {
+        var out = []
+        for (var i = 0; i < paramModel.count; ++i) {
+            var r = paramModel.get(i)
+            if (r.mode !== "expr") out.push({ key: r.key, param: r.param, mode: r.mode })
+        }
+        return out
+    }
+
+    // A global name not already taken, from `base`: `pa`, then `pa2`, `pa3`.
+    function uniqueGlobal(base) {
+        var taken = {}
+        for (var i = 0; i < paramModel.count; ++i) taken[paramModel.get(i).key] = true
+        if (!taken[base]) return base
+        for (var n = 2; ; ++n) if (!taken[base + n]) return base + n
+    }
+
+    // The single-key deletion: globals, and parameters added to a component with "+ parameter".
+    // Julia decides which keys qualify, and refuses the rest.
+    function removeParam(key) {
+        if (key.length === 0) return
+        var err = Julia.shell_remove_param(key)
+        if (err.length > 0) { root.fitText = err; return }
+        root.modelDirty = true
+        refreshModel()
+        root.consoleChanged()
+    }
+
     // Adding goes through Julia too, which builds the key set the parser identifies the kind
     // by. A component assembled in QML could name keys OITOOLS does not recognise, and the
     // failure would be a silently different component rather than an error.
@@ -3232,8 +3326,9 @@ Item {
                 var lines = txt.split("\n")
                 for (var i = 0; i < lines.length; ++i) {
                     var f = lines[i].split("\t")
-                    if (f.length === 4)
-                        kw.push({ name: f[0], meaning: f[1], enabled: f[2] === "1", reason: f[3] })
+                    if (f.length === 5)
+                        kw.push({ name: f[0], short: f[1], enabled: f[2] === "1", reason: f[3],
+                                  meaning: f[4] })
                 }
             }
             keywords = kw
@@ -3276,100 +3371,310 @@ Item {
 
         onOpened: refresh()
 
-        ColumnLayout {
-            spacing: root.dp(6)
-            Label {
-                // The count changing behind the user's back is the thing to prevent.
-                text: "This removes the parameter from the fit vector: " +
-                      Math.max(0, root.nFree - 1) + " free parameters will remain."
-                wrapMode: Text.WordWrap
-                Layout.maximumWidth: root.dp(360)
-                visible: !exprDialog.editKey.endsWith(",profile")
-            }
-            InfoTip { tip: "The radial profile I(r). Every name here that is not $R or $MU is a parameter, discovered from the expression and resolved component-qualified first, then global." }
-            TextField {
-                id: exprField
-                Layout.fillWidth: true
-                Layout.preferredWidth: root.dp(360)
-                placeholderText: exprDialog.editKey.endsWith(",profile")
-                                 ? "I(r), e.g. exp(-($R / $scale)^2 / 2)"
-                                 : "expression, e.g. $star,ud * 3"
-                font.family: "monospace"
-                onTextEdited: exprDialog.check()
-            }
-
-            // ── the implicit variables, and which of them apply here ──────────
-            //
-            // All four always listed. The two that are out of scope are disabled with the
-            // reason rather than hidden: a keyword that is simply absent reads as one that
-            // does not exist, and the whole difficulty with these is that nothing anywhere
-            // names them.
-            Label {
-                text: "Keywords"
-                font.bold: true
-                font.pointSize: root.pt(root.baseFontPt - 1)
-            }
-            Repeater {
-                model: exprDialog.keywords
-                delegate: RowLayout {
-                    Layout.maximumWidth: root.dp(360)
-                    spacing: root.dp(6)
-                    Button {
-                        text: modelData.name
-                        enabled: modelData.enabled
-                        opacity: enabled ? 1.0 : 0.5
-                        font.family: "monospace"
-                        implicitWidth: root.dp(52)
-                        onClicked: exprDialog.insert(modelData.name)
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        text: modelData.enabled ? modelData.meaning : modelData.reason
-                        color: modelData.enabled ? "#666" : "#c62828"
-                        font.pointSize: root.pt(root.baseFontPt - 2)
-                    }
-                }
-            }
-
-            // A profile is the one place where writing a name CREATES the need for a
-            // parameter rather than referring to one, so the offer to make them belongs here
-            // and not in the component card.
-            Button {
-                Layout.fillWidth: true
-                visible: exprDialog.missing.length > 0
-                text: exprDialog.missing.length === 1
-                      ? "Create $" + exprDialog.missing[0]
-                      : "Create " + exprDialog.missing.length + " missing parameters"
-                onClicked: {
-                    var err = Julia.shell_add_profile_params(exprDialog.editKey, exprField.text)
-                    root.consoleChanged()
-                    if (err.length > 0 && err.charAt(0) === "!") { root.fitText = err; return }
-                    root.modelDirty = true
-                    root.refreshModel()
-                    exprDialog.check()
-                }
-            }
-
-            // ── what the references resolve to, as they are typed ─────────────
-            //
-            // `dict_to_model` accepts an out-of-scope keyword and a misspelt parameter alike,
-            // and both surface much later as the same `UndefVarError` naming an internal
-            // module. Telling them apart here is the point.
-            Repeater {
-                model: exprDialog.refs
-                delegate: Label {
-                    Layout.maximumWidth: root.dp(360)
+        RowLayout {
+            spacing: root.dp(14)
+            ColumnLayout {
+                Layout.alignment: Qt.AlignTop
+                spacing: root.dp(6)
+                Label {
+                    // The count changing behind the user's back is the thing to prevent.
+                    text: "This removes the parameter from the fit vector: " +
+                          Math.max(0, root.nFree - 1) + " free parameters will remain."
                     wrapMode: Text.WordWrap
-                    visible: modelData.cls !== "ok" || modelData.msg.length > 0
+                    Layout.maximumWidth: root.dp(360)
+                    visible: !exprDialog.editKey.endsWith(",profile")
+                }
+                InfoTip { tip: "The radial profile I(r). Every name here that is not $R or $MU is a parameter, discovered from the expression and resolved component-qualified first, then global." }
+                TextField {
+                    id: exprField
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: root.dp(360)
+                    placeholderText: exprDialog.editKey.endsWith(",profile")
+                                     ? "I(r), e.g. exp(-($R / $scale)^2 / 2)"
+                                     : "expression, e.g. $star,ud * 3"
+                    font.family: "monospace"
+                    onTextEdited: exprDialog.check()
+                }
+
+                // A profile is the one place where writing a name CREATES the need for a
+                // parameter rather than referring to one, so the offer to make them belongs here
+                // and not in the component card.
+                Button {
+                    Layout.fillWidth: true
+                    visible: exprDialog.missing.length > 0
+                    text: exprDialog.missing.length === 1
+                          ? "Create $" + exprDialog.missing[0]
+                          : "Create " + exprDialog.missing.length + " missing parameters"
+                    onClicked: {
+                        var err = Julia.shell_add_profile_params(exprDialog.editKey, exprField.text)
+                        root.consoleChanged()
+                        if (err.length > 0 && err.charAt(0) === "!") { root.fitText = err; return }
+                        root.modelDirty = true
+                        root.refreshModel()
+                        exprDialog.check()
+                    }
+                }
+
+                // ── what the references resolve to, as they are typed ─────────────
+                //
+                // `dict_to_model` accepts an out-of-scope keyword and a misspelt parameter alike,
+                // and both surface much later as the same `UndefVarError` naming an internal
+                // module. Telling them apart here is the point.
+                Repeater {
+                    model: exprDialog.refs
+                    delegate: Label {
+                        Layout.maximumWidth: root.dp(360)
+                        wrapMode: Text.WordWrap
+                        visible: modelData.cls !== "ok" || modelData.msg.length > 0
+                        font.pointSize: root.pt(root.baseFontPt - 2)
+                        color: modelData.cls === "unknown" ? root.cBad
+                             : modelData.cls === "scope"   ? root.cWarn : "#666"
+                        text: "$" + modelData.ref + " — " + modelData.msg
+                    }
+                }
+            }
+
+            // ── the implicit variables, beside the field they paste into ─────────
+            //
+            // Nothing else in the panel names these, so every one is a button with a few words
+            // beside it, inserting itself at the cursor. The ones this kind of expression can
+            // use come first; the rest are greyed and say on hover where they DO apply, rather
+            // than being hidden -- a variable that is simply absent reads as one that does not
+            // exist anywhere.
+            ColumnLayout {
+                Layout.alignment: Qt.AlignTop
+                Layout.preferredWidth: root.dp(200)
+                spacing: root.dp(3)
+                Label {
+                    text: "Variables"
+                    font.bold: true
+                    font.pointSize: root.pt(root.baseFontPt - 1)
+                }
+                Label {
+                    text: "click to insert at the cursor"
+                    color: "#666"
                     font.pointSize: root.pt(root.baseFontPt - 2)
-                    color: modelData.cls === "unknown" ? root.cBad
-                         : modelData.cls === "scope"   ? root.cWarn : "#666"
-                    text: "$" + modelData.ref + " — " + modelData.msg
+                }
+                Repeater {
+                    model: exprDialog.keywords.filter(function (k) { return k.enabled })
+                           .concat(exprDialog.keywords.filter(function (k) { return !k.enabled }))
+                    delegate: RowLayout {
+                        spacing: root.dp(6)
+                        Button {
+                            id: kwButton
+                            text: modelData.name
+                            enabled: modelData.enabled
+                            // The style's own disabled look barely differs from enabled here.
+                            opacity: enabled ? 1.0 : 0.45
+                            font.family: "monospace"
+                            implicitWidth: root.dp(64)
+                            implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
+                            onClicked: exprDialog.insert(modelData.name)
+                        }
+                        Label {
+                            text: modelData.short
+                            color: modelData.enabled ? "#666" : "#aaa"
+                            font.pointSize: root.pt(root.baseFontPt - 2)
+                        }
+                        // On the row rather than the button, because a disabled button
+                        // receives no hover and its reason is exactly what needs showing.
+                        HoverHandler { id: kwHover }
+                        ToolTip.visible: kwHover.hovered
+                        ToolTip.text: modelData.enabled ? modelData.meaning : modelData.reason
+                    }
                 }
             }
         }
         onAccepted: root.commitExpr(row, exprField.text)
+    }
+
+    // ── + parameter ─────────────────────────────────────────────────────────
+    //
+    // Where it lives, what it is called, what it starts at. The name is checked against Julia
+    // as it is typed, so OK is only ever pressed on a name that will be accepted.
+    Dialog {
+        id: addParamDialog
+        title: "Add a parameter"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: root.dp(340)
+
+        property var owners: []
+        property string problem: ""
+        readonly property string owner:
+            ownerField.currentIndex > 0 ? owners[ownerField.currentIndex] : "__global__"
+
+        // From the combo rather than `owner`: this runs from the combo's own change signal,
+        // which can arrive before the binding on `owner` has been re-evaluated.
+        function recheck() {
+            var o = ownerField.currentIndex > 0 ? owners[ownerField.currentIndex] : "__global__"
+            problem = Julia.shell_param_name_problem(o, paramNameField.text)
+            var ok = standardButton(Dialog.Ok)
+            if (ok) ok.enabled = problem.length === 0
+        }
+
+        onOpened: {
+            var o = ["global"]
+            for (var i = 0; i < componentModel.count; ++i) o.push(componentModel.get(i).name)
+            owners = o
+            ownerField.currentIndex = 0
+            paramNameField.text = ""
+            paramValueField.text = "0"
+            recheck()
+            paramNameField.forceActiveFocus()
+        }
+
+        GridLayout {
+            anchors.fill: parent
+            columns: 2
+            columnSpacing: root.dp(8)
+            rowSpacing: root.dp(6)
+            Label { text: "on" }
+            ComboBox {
+                id: ownerField
+                Layout.fillWidth: true
+                model: addParamDialog.owners
+                onCurrentIndexChanged: addParamDialog.recheck()
+            }
+            Label { text: "name" }
+            TextField {
+                id: paramNameField
+                Layout.fillWidth: true
+                font.family: "monospace"
+                placeholderText: "e.g. fs, slope, d0"
+                onTextEdited: addParamDialog.recheck()
+            }
+            Label { text: "value" }
+            TextField {
+                id: paramValueField
+                Layout.fillWidth: true
+                validator: DoubleValidator {}
+            }
+            Label {
+                Layout.columnSpan: 2
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.pointSize: root.pt(root.baseFontPt - 2)
+                color: addParamDialog.problem.length > 0 ? root.cBad : "#666"
+                text: addParamDialog.problem.length > 0
+                      ? addParamDialog.problem
+                      : paramNameField.text.length === 0 ? ""
+                      : "refer to it as $" + (addParamDialog.owner === "__global__" ? ""
+                                              : addParamDialog.owner + ",") + paramNameField.text +
+                        (addParamDialog.owner === "__global__" ? ""
+                         : ", or as $" + paramNameField.text + " inside " +
+                           addParamDialog.owner + "'s own profile or visibility function")
+            }
+        }
+        onAccepted: {
+            var v = parseFloat(paramValueField.text)
+            var err = Julia.shell_add_param(owner, paramNameField.text, isNaN(v) ? 0.0 : v)
+            root.consoleChanged()
+            if (err.length > 0) { root.fitText = err; return }
+            root.modelDirty = true
+            root.refreshModel()
+        }
+    }
+
+    // ── Link ────────────────────────────────────────────────────────────────
+    //
+    // Tick the parameters that should share one value and name the global that will hold it.
+    // The row selected in the table starts ticked, and the name follows the first ticked
+    // parameter until it is typed over -- linking two `pa` rows suggests `pa`.
+    Dialog {
+        id: linkDialog
+        title: "Link parameters"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: root.dp(360)
+
+        property var rows: []
+        property var ticked: ({})
+        property bool nameEdited: false
+        property string problem: ""
+
+        function chosen() {
+            var out = []
+            for (var i = 0; i < rows.length; ++i) if (ticked[rows[i].key]) out.push(rows[i])
+            return out
+        }
+        function recheck() {
+            var c = chosen()
+            if (!nameEdited)
+                linkNameField.text = c.length > 0 ? root.uniqueGlobal(c[0].param) : ""
+            problem = c.length < 2 ? "tick at least two parameters"
+                    : Julia.shell_param_name_problem("__global__", linkNameField.text)
+            var ok = standardButton(Dialog.Ok)
+            if (ok) ok.enabled = problem.length === 0
+        }
+
+        onOpened: {
+            rows = root.numericRows()
+            var t = {}
+            var sel = paramList.currentIndex >= 0 && paramList.currentIndex < paramModel.count
+                      ? paramModel.get(paramList.currentIndex).key : ""
+            if (sel.length > 0) t[sel] = true
+            ticked = t
+            nameEdited = false
+            recheck()
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: root.dp(4)
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(root.dp(260), linkColumn.implicitHeight)
+                clip: true
+                ColumnLayout {
+                    id: linkColumn
+                    spacing: 0
+                    Repeater {
+                        model: linkDialog.rows
+                        delegate: CheckBox {
+                            text: modelData.key + (modelData.mode === "free" ? "  (free)" : "")
+                            font.family: "monospace"
+                            checked: linkDialog.ticked[modelData.key] === true
+                            onToggled: {
+                                var t = Object.assign({}, linkDialog.ticked)
+                                t[modelData.key] = checked
+                                linkDialog.ticked = t
+                                linkDialog.recheck()
+                            }
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                Label { text: "shared global" }
+                TextField {
+                    id: linkNameField
+                    Layout.fillWidth: true
+                    font.family: "monospace"
+                    onTextEdited: { linkDialog.nameEdited = true; linkDialog.recheck() }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.pointSize: root.pt(root.baseFontPt - 2)
+                color: linkDialog.problem.length > 0 ? root.cBad : "#666"
+                text: linkDialog.problem.length > 0 ? linkDialog.problem
+                      : "each ticked row becomes $" + linkNameField.text +
+                        "; the global starts at the first one's value and bounds, and is free " +
+                        "if any of them was"
+            }
+        }
+        onAccepted: {
+            var keys = linkDialog.chosen().map(function (r) { return r.key })
+            var err = Julia.shell_link_params(linkNameField.text, keys.join("\t"))
+            root.consoleChanged()
+            if (err.length > 0) { root.fitText = err; return }
+            root.modelDirty = true
+            root.refreshModel()
+        }
     }
 
     // Name and kind together: the kind decides which keys are written, and the parser reads the
@@ -3490,7 +3795,6 @@ Item {
                     return ""
                 }
             }
-            InfoTip { tip: "Values start somewhere sane rather than at anything measured, the geometry parameter starts free, and the flux is shared with whatever is already there." }
         }
 
         onAccepted: root.addComponent(nameField.text, chosenId)

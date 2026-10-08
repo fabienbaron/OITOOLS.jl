@@ -1,5 +1,5 @@
 using OITOOLS
-oifitsfile = "./data/BC2004/2004-data1.oifits"
+oifitsfile = "./data/Beauty_Contest_2004/2004-data1.oifits"
 pixsize  = 0.101   # mas/pixel; set to 0 to use auto_pixsize
 #oifitsfile = "./data/Bet_Lyr6T.oifits"
 #pixsize = 0.05

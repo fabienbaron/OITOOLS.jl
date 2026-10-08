@@ -337,7 +337,7 @@ Item {
     // point source but an empty weight, which divides the whole image by 1e-12.
     property real   viRadius: 0
     // FOV/3, matching `vi_sky_params`' own default -- see the measurements there. The disc is
-    // a hard support, so too small a one cannot be fitted out of: on BC2004 FOV/5 stalls at
+    // a hard support, so too small a one cannot be fitted out of: on Beauty_Contest_2004 FOV/5 stalls at
     // chi2r 19 where FOV/3 reaches 0.85.
     readonly property real viRadiusAuto: nx * pixsize / 3
     property real   viLimb: 0.2
@@ -798,6 +798,9 @@ Item {
     // real framebuffer and a software GL stack refuses the very large ones.
     function savePng(which, area) {
         savePngDialog.which = which
+        // The engine and the grid, which is what the title above the picture says too.
+        savePngDialog.suggestedName =
+            Julia.picker_suggest(root.engine + "\t" + root.nx + "x" + root.nx, "png")
         savePngDialog.pxw = Math.min(2400, Math.max(640, area.width))
         savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
         savePngDialog.openAt("")
@@ -949,16 +952,19 @@ Item {
         ListElement { key: "vmlmb";     name: "VMLMB";                                 entry: "reconstruct" }
         ListElement { key: "bsmem";     name: "BSMEM";                                 entry: "reconstruct_bsmem" }
         ListElement { key: "bsdmm";     name: "BSDMM";                                 entry: "reconstruct_bsdmm" }
-        ListElement { key: "sparco";    name: "SPARCO hybrid";                         entry: "reconstruct_hybrid" }
-        // SQUEEZE appears three times because the three are used as three different
-        // engines, not as one engine with settings: annealing and tempering are separate
-        // entry points, and the SPARCO variant additionally samples a parametric component
-        // alongside the image. Sharing one row and a checkbox would bury that.
+        // Squeeze is three rows, not one row with settings: annealing and tempering are
+        // separate entry points, and sharing a row behind a checkbox would bury that.
         ListElement { key: "squeeze";        name: "Squeeze (Annealing)";
                       entry: "reconstruct_squeeze" }
         ListElement { key: "tempering";      name: "Squeeze (Tempering)";
                       entry: "reconstruct_squeeze_tempered" }
-        ListElement { key: "squeeze_sparco"; name: "Squeeze (Annealing + SPARCO)";
+        // The two SPARCO rows are the same parametric star-plus-image model under different
+        // solvers, so they sit together: what the name in brackets picks is which engine fits
+        // it. Ordered by key elsewhere -- `regPageFor` and `engineIndexOf` both switch on the
+        // key, so this list's order is presentation only.
+        ListElement { key: "sparco";         name: "SPARCO (VMLMB)";
+                      entry: "reconstruct_hybrid" }
+        ListElement { key: "squeeze_sparco"; name: "SPARCO (Squeeze - annealing)";
                       entry: "reconstruct_squeeze  (model = SqueezeSparco)" }
         ListElement { key: "vi";        name: "Variational inference";
                       entry: "reconstruct_map / mgvi / geovi / hybrid" }
@@ -2151,7 +2157,7 @@ Item {
                                     }
                                 }
 
-                                // 5 — SPARCO hybrid: the same specs as VMLMB, plus the parametric star
+                                // 5 — SPARCO (VMLMB): the same specs as VMLMB, plus the parametric star
                                 ColumnLayout {
                                     spacing: dp(6)
                                     Loader {
@@ -2420,7 +2426,14 @@ Item {
                 Button {
                     text: "Save FITS…"
                     enabled: root.hasResult
-                    onClicked: saveImageDialog.openAt("")
+                    onClicked: {
+                        // Same stem as the PNG of the same run, so a reconstruction's picture
+                        // and its data land side by side in a directory listing.
+                        saveImageDialog.suggestedName =
+                            Julia.picker_suggest(root.engine + "\t" + root.nx + "x" + root.nx,
+                                                 "fits")
+                        saveImageDialog.openAt("")
+                    }
                 }
             }
 

@@ -14,7 +14,7 @@
 using OITOOLS, VarInf, Test, Random, LinearAlgebra
 
 const E = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)
-const PFILE = joinpath(pkgdir(OITOOLS), "demos", "data", "BC2004", "2004-data1.oifits")
+const PFILE = joinpath(pkgdir(OITOOLS), "demos", "data", "Beauty_Contest_2004", "2004-data1.oifits")
 const PNX, PPS = 32, 0.5
 
 _setup(T) = let d = readoifits(PFILE; T = T, filter_bad_data = true, verbose = false, warn = false)

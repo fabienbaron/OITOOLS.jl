@@ -167,6 +167,9 @@ ApplicationWindow {
     // and the window's opening folder ahead of the shipped demo data -- so after setting it once,
     // every Open and Save starts where the work is rather than inside the package.
     property string workDirectory: ""
+    // Applied at once, not at "Save config": that button is for the NEXT launch, and a folder
+    // that appears to do nothing until you press an unrelated button reads as broken.
+    onWorkDirectoryChanged: Julia.shell_set_work_directory(workDirectory)
 
     readonly property real uiScale: uiScaleUser > 0     ? uiScaleUser
                                   : uiScaleOverride > 0 ? uiScaleOverride
@@ -241,6 +244,9 @@ ApplicationWindow {
     function savePng(which, area) {
         savePngDialog.pxw = Math.min(2400, Math.max(640, area.width))
         savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
+        // The dataset and the view are what distinguish one of these files from the next.
+        savePngDialog.suggestedName = Julia.picker_suggest(
+            (datasetBox.currentText || "plot") + "\t" + (kindBox.currentText || ""), "png")
         savePngDialog.openAt("")
     }
 
@@ -572,7 +578,7 @@ ApplicationWindow {
                 // precisely when a second click happens; the extra dialog then outlives the
                 // one that was answered and reads as a picker that would not close.
                 enabled: !openDialog.visible
-                onClicked: openDialog.openAt(initialFolder)
+                onClicked: openDialog.openAt(Julia.shell_initial_folder())
             }
             Label { text: win.status; elide: Text.ElideMiddle; Layout.fillWidth: true }
 
@@ -1299,7 +1305,7 @@ ApplicationWindow {
                     Button {
                         text: "Export script…"
                         enabled: logToggle.checked && !saveDialog.visible
-                        onClicked: saveDialog.openAt(initialFolder)
+                        onClicked: saveDialog.openAt(Julia.shell_initial_folder())
                     }
                 }
                 ScrollView {

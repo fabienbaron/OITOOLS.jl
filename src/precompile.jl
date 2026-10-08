@@ -15,11 +15,11 @@
 #
 # Note the `isfile` guard below fails *quietly*: if the data file is ever moved or renamed
 # the workload silently becomes a no-op and time-to-first-call regresses ~20x with nothing
-# in the build log to say so. demos/data/BC2026/ is tracked, so this holds for a plain
+# in the build log to say so. demos/data/Beauty_Contest_2026/ is tracked, so this holds for a plain
 # checkout; it is the reason to be careful about relocating the demo data.
 @compile_workload begin
-    # BC2026 OBJECT1_N has OI_VIS, OI_VIS2, OI_T3, OI_FLUX across multiple channels
-    oifitsfile = joinpath(@__DIR__, "..", "demos", "data", "BC2026", "OBJECT1_N.oifits")
+    # Beauty_Contest_2026 OBJECT1_N has OI_VIS, OI_VIS2, OI_T3, OI_FLUX across multiple channels
+    oifitsfile = joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2026", "OBJECT1_N.oifits")
     if isfile(oifitsfile)
         # warn=false as well as verbose=false: OBJECT1_N has station indices absent from its
         # OI_ARRAY, so without it every fresh precompile prints a dozen warnings that have
@@ -50,7 +50,7 @@
         # The MONOCHROMATIC read, which is a different branch from the polychromatic one above
         # and is what the GUI takes for an ordinary file. Cheap, and it is the very first thing
         # any session does.
-        mono = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
+        mono = joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2004", "2004-data1.oifits")
         if isfile(mono)
             dmono = readoifits(mono; verbose=false, warn=false)
             ftm = setup_ft(dmono, 32, 0.3)

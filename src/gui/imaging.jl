@@ -93,15 +93,19 @@ end
 
 The engine's name as a reader knows it, which is not always how the symbol is spelled.
 """
+# The names the Image panel's own engine list uses, so the title over a picture says what the
+# dropdown that made it said. Two reconstructors can share a family name -- SPARCO runs on
+# either VMLMB or the annealing sampler -- and the title has to say WHICH, or two images of the
+# same object are indistinguishable once saved.
 engine_label(engine::Symbol) = get(Dict(
     :vmlmb          => "VMLMB",
     :bsmem          => "BSMEM",
     :bsdmm          => "BSDMM",
-    :squeeze        => "SQUEEZE",
-    :squeeze_sparco => "SQUEEZE + SPARCO",
-    :tempering      => "SQUEEZE (tempered)",
-    :sparco         => "SPARCO",
-    :vi             => "VI"), engine, uppercase(String(engine)))
+    :squeeze        => "Squeeze (Annealing)",
+    :squeeze_sparco => "SPARCO (Squeeze - annealing)",
+    :tempering      => "Squeeze (Tempering)",
+    :sparco         => "SPARCO (VMLMB)",
+    :vi             => "Variational inference"), engine, uppercase(String(engine)))
 
 """
     engine_call_name(engine, options) -> String
@@ -983,12 +987,12 @@ function vi_sky_params(ext, o::AbstractDict, nx::Integer, pixsize::Real, lam::Re
     #
     # FOV/3 for the automatic radius. The support disc is a HARD constraint -- the model is
     # `D .* exp(field)`, so anything outside it is exactly zero -- and a disc smaller than the
-    # source cannot be fitted out of. Measured on BC2004 (nx = 32, 0.5 mas), MAP to
+    # source cannot be fitted out of. Measured on Beauty_Contest_2004 (nx = 32, 0.5 mas), MAP to
     # convergence: FOV/5 stalls at chi2r 19.05, FOV/4 reaches 0.75, FOV/3 0.85, FOV/2.5 0.92,
     # against VMLMB's 0.68 on the same geometry. Loosening the fluctuation prior instead barely
     # moves it (19.05 -> 17.4), so it is the support and not the prior's strength.
     #
-    # FOV/3 rather than the best-scoring FOV/4: it is within 15% of it on BC2004, better on
+    # FOV/3 rather than the best-scoring FOV/4: it is within 15% of it on Beauty_Contest_2004, better on
     # v1295 Aql (7.56 against 7.79), and further from the cliff at FOV/2, where the disc
     # reaches the grid edge and chi2r goes to 368.
     path = String(get(o, "vi_prior", ""))

@@ -11,7 +11,7 @@
     IMGFILE = joinpath(@__DIR__, "data", "2004-data1.oifits")
     data = readoifits(IMGFILE; warn = false, verbose = false)
     # Five H-band channels, which is enough to be a cube and small enough to reconstruct in a
-    # test. `POLY` in the harness is BC2026's 119-channel N-band file, far too slow for this.
+    # test. `POLY` in the harness is Beauty_Contest_2026's 119-channel N-band file, far too slow for this.
     POLYFILE = joinpath(@__DIR__, "..", "..", "demos", "data",
                         "V1295_Aql.oifits")
 

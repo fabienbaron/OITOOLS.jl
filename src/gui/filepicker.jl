@@ -81,21 +81,27 @@ function picker_list(dir::AbstractString, patterns::AbstractString = "*",
         return "error\t" * sprint(showerror, err) * "\t\t\t0"
     end
 
-    rows = String[]
+    # (sortkey, row): the key puts directories ahead of files and is alphabetical within each,
+    # which is what every other file dialog does and what makes a folder findable in a directory
+    # holding thirty data files. It was already being computed and sent to QML, and nothing had
+    # ever sorted by it -- so `Beauty_Contest_2004` sat between `AZ_Cyg_2014` and `Bet_Lyr6T`.
+    rows = Tuple{String,String}[]
     for n in sort(names; by = lowercase)
         (!show_hidden && startswith(n, ".")) && continue
         full = joinpath(d, n)
         isdirectory = try; isdir(full); catch; false; end
         if isdirectory
-            push!(rows, join(("dir", n, "", _modified(full), "0" * lowercase(n)), "\t"))
+            k = "0" * lowercase(n)
+            push!(rows, (k, join(("dir", n, "", _modified(full), k), "\t")))
         else
             picker_matches(n, pats) || continue
             sz = try; filesize(full); catch; 0; end
-            push!(rows, join(("file", n, _human_size(sz), _modified(full),
-                              "1" * lowercase(n)), "\t"))
+            k = "1" * lowercase(n)
+            push!(rows, (k, join(("file", n, _human_size(sz), _modified(full), k), "\t")))
         end
     end
-    return join(rows, "\n")
+    sort!(rows; by = first)
+    return join((r[2] for r in rows), "\n")
 end
 
 """
@@ -213,6 +219,48 @@ end
 "Absolute, normalised path. QML should never do path arithmetic itself."
 picker_join(a, b) = abspath(joinpath(expanduser(String(a)), String(b)))
 
+"""
+    shell_set_work_directory(path) -> String
+
+Apply a work directory to THIS session. `path` may be empty, which goes back to the saved one.
+"""
+function shell_set_work_directory(path)
+    WORK_DIR_LIVE[] = String(path)
+    return gui_work_directory()
+end
+
+"""
+    picker_suggest(parts, suffix) -> String
+
+A filename built from tab-separated `parts`, safe to put on any filesystem.
+
+The panels know what they are saving -- which dataset, which engine, which night -- and a save
+dialog that opens with an empty field throws that away and asks the user to invent it. Target
+names carry spaces, slashes and the occasional asterisk (`"HD 190073"`, `"V* bet Lyr"`), none of
+which belong in a path, so every part is reduced to word characters and the separators collapse.
+"""
+function picker_suggest(parts::AbstractString, suffix::AbstractString = "")
+    clean = String[]
+    for p in split(String(parts), '\t')
+        q = replace(strip(String(p)), r"[^A-Za-z0-9._+-]+" => "_")
+        q = strip(q, '_')
+        isempty(q) || push!(clean, q)
+    end
+    isempty(clean) && (clean = ["untitled"])
+    name = join(clean, "_")
+    sfx = String(suffix)
+    return isempty(sfx) ? name : name * "." * sfx
+end
+
+"Last component of a path, for a label that names a directory without spelling out its parents."
+function picker_basename(p)
+    d = abspath(expanduser(String(p)))
+    b = basename(rstrip(d, '/'))
+    # The root has no last component. Falling back to the stripped path returns an EMPTY label
+    # there, which on a button reads as a missing string rather than as "/".
+    return isempty(b) ? d : b
+end
+
 "The containing directory, or the same path when already at the root."
 picker_parent(p) = (d = abspath(expanduser(String(p))); dirname(d) == d ? d : dirname(d))
 
@@ -247,6 +295,16 @@ function picker_start(hint::AbstractString = "")
 end
 
 """
+The work directory in force RIGHT NOW, which is not always the saved one.
+
+The panel sets this as soon as the field changes, so a directory chosen mid-session applies to
+the next dialog without waiting for "Save config" -- that button is for the NEXT launch, and
+making an in-session setting depend on it meant choosing a folder appeared to do nothing.
+Empty means "fall back to the file", which is what a fresh session reads.
+"""
+const WORK_DIR_LIVE = Ref("")
+
+"""
     gui_work_directory() -> String
 
 The directory the settings panel last saved as the work directory, or `""`.
@@ -256,6 +314,12 @@ since been renamed or unmounted -- a stale entry must not strand the picker some
 longer exists, so the answer is checked against the filesystem every time rather than cached.
 """
 function gui_work_directory()
+    # The live value wins: it is either what the user just chose, or empty, in which case the
+    # saved one is still the answer.
+    if !isempty(WORK_DIR_LIVE[])
+        d = abspath(expanduser(WORK_DIR_LIVE[]))
+        isdir(d) && return d
+    end
     path = gui_settings_file()
     isfile(path) || return ""
     try

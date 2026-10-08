@@ -84,17 +84,95 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
+    implicit_vars(key) -> Tuple
+
+The implicit variables an expression stored under `key` can use. Each expression kind is
+compiled with its own arguments, so the set is fixed by the key's parameter name:
+
+| key | variables | why |
+|---|---|---|
+| `c,profile` | `\$R`, `\$MU`, `\$D`, `\$RMIN`, `\$RMAX`, `\$DMIN`, `\$DMAX` | evaluated on the radial grid, before any uv point |
+| `c,visfunc` | `\$B`, `\$WL`, `\$MJD` | evaluated per uv point, on its baseline |
+| anything else | `\$WL`, `\$MJD` | resolved once per uv point |
+
+A variable used outside its set raises `UndefVarError` when the model is evaluated, naming the
+variable but not the expression.
+"""
+function implicit_vars(key::AbstractString)
+    i = findfirst(',', key)
+    par = i === nothing ? key : key[i+1:end]
+    par == "profile" && return ("R", "MU", "D", "RMIN", "RMAX", "DMIN", "DMAX")
+    par == "visfunc" && return ("B", "WL", "MJD")
+    return ("WL", "MJD")
+end
+
+"""
+    missing_refs(model_dict) -> Vector{Tuple{String,String}}
+
+The `(key, reference)` pairs where an expression names something it cannot see, sorted by key:
+a parameter the model does not define, or an implicit variable outside its
+`implicit_vars` set.
+
+The lookup rule is the parser's and it differs by key, so this mirrors it rather than guessing:
+a `profile` or `visfunc` expression qualifies a bare `\$a` with its own component and falls back
+to a global `a`, while every other expression resolves a reference literally — a derived
+`"star,f" = "\$ud * 0.1"` does NOT find `star,ud`.
+"""
+function missing_refs(model_dict::AbstractDict)
+    out = Tuple{String,String}[]
+    for key in sort!(String.(collect(keys(model_dict))))
+        v = model_dict[key]
+        v isa AbstractString || continue
+        i = findfirst(',', key)
+        comp = i === nothing ? "" : key[1:i-1]
+        par  = i === nothing ? key : key[i+1:end]
+        qualifies = par == "profile" || par == "visfunc"
+        inscope = implicit_vars(key)
+        for ref in extract_refs(String(v))
+            if ref in IMPLICIT_VARS || ref == "B"
+                ref in inscope || push!(out, (key, ref))
+                continue
+            end
+            found = if qualifies && !occursin(',', ref)
+                haskey(model_dict, comp * "," * ref) || haskey(model_dict, ref)
+            else
+                haskey(model_dict, ref)
+            end
+            found || push!(out, (key, ref))
+        end
+    end
+    return out
+end
+
+# One sentence for a `missing_refs` pair: an implicit variable used out of its scope reads
+# differently from a parameter that does not exist, and the fix differs too.
+function _missing_ref_message(key, ref)
+    ref in IMPLICIT_VARS || ref == "B" || return "$key refers to \$$ref, which the model does not define"
+    ok = implicit_vars(key)
+    return "$key uses \$$ref, which this kind of expression cannot see (it has " *
+           join(("\$" * v for v in ok), ", ") * ")"
+end
+
+"""
     model_warnings(model_dict, list_free_params; lb, ub) -> Vector{String}
 
 Everything wrong with a model that can be seen without fitting it, one sentence each.
 
-Four checks, and every one of them describes a setup that runs happily and answers the wrong
-question: a starting value outside its own bounds, bounds that exclude everything, and flux
-fractions that do not sum to one. The last is the quiet one -- a second component added with
-`f = 1` doubles the model's flux, and the only symptom is a χ² in the millions.
+Four of the five describe a setup that runs happily and answers the wrong question: a starting
+value outside its own bounds, bounds that exclude everything, and flux fractions that do not sum
+to one. The flux check is the quiet one -- a second component added with `f = 1` doubles the
+model's flux, and the only symptom is a χ² in the millions.
 
-Shared with [`display_model`](@ref), which prints these to a terminal, so a GUI and a script
-cannot disagree about what is wrong with the same model.
+The fifth, an expression referring to a parameter that is not in the model or to an implicit
+variable its kind of expression cannot see (`\$WL` inside a profile), does not run at all:
+the resolver raises `UndefVarError: \`fs\` not defined in \`OITOOLS.RGF\`` at EVALUATION time,
+naming its own internal module rather than the key or the expression at fault. Removing a
+component or a global leaves exactly that behind in anything that referred to it, so the model
+panel reports it here instead.
+
+[`display_model`](@ref) reports the same five. It calls this function for the reference check
+alone and keeps the bound warnings in its own per-parameter table, where each one reads beside
+the bounds it is about.
 
 Flux fractions given as expressions are not checked: their values depend on the resolver, so
 summing the literals would be summing the wrong things.
@@ -120,6 +198,11 @@ function model_warnings(model_dict::Dict{String}, list_free_params::AbstractVect
             "flux fractions sum to $(round(fsum; digits = 4)), not 1 — every component is " *
             "carrying its own full flux, which inflates χ² rather than sharing the source " *
             "between them")
+    end
+
+    for (key, ref) in missing_refs(model_dict)
+        push!(w, _missing_ref_message(key, ref) * " — evaluating the model raises " *
+                 "UndefVarError naming $ref but not the key using it")
     end
     return w
 end
@@ -252,6 +335,13 @@ function display_model(model_dict  ::Dict{String},
         end
     elseif !isempty(expr_fluxes)
         println("  Note: some flux fractions are expressions — sum check skipped")
+    end
+
+    # An expression naming a parameter the model does not define raises at evaluation time,
+    # out of the resolver's own module, so the name of the key at fault is only available here.
+    for (key, ref) in missing_refs(model_dict)
+        println("⚠ ", _missing_ref_message(key, ref))
+        n_warnings += 1
     end
 
     if n_warnings > 0

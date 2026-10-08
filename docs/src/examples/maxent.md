@@ -9,7 +9,7 @@ OITOOLS integration).
 
 ```julia
 using OITOOLS, PythonPlot
-data    = readoifits("data/BC2004/2004-data1.oifits")
+data    = readoifits("data/Beauty_Contest_2004/2004-data1.oifits")
 nx      = 128
 pixsize = 0.05   # mas/pixel
 ft      = setup_ft(data, nx, pixsize)

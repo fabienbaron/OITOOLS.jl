@@ -8,7 +8,6 @@ dataset with `vis=0` cannot show you a differential-phase plot however the panel
 
 | file | target | V² | T3φ | VIS | λ channels | band | tel |
 |---|---|---|---|---|---|---|---|
-| `2004-simulated.oifits` | FKV0497 | 195 | 130 | 0 | 1 | 0.55 µm | 6 |
 | `AX_Cir.oifits` | AX Cir | 900 | 600 | 0 | 3 | H | 4 |
 | `AZ_Cyg_2011.oifits` | AZ Cyg | 916 | 1199 | 0 | 8 | H | 6 |
 | `AZ_Cyg_2014.oifits` | AZ Cyg | 600 | 586 | 0 | 16 | H | 6 |
@@ -34,16 +33,15 @@ Picking one:
 - **`polaris.oifits` and `Rho_Cas.oifits` are the big ones**, 98 and 41 channels. Use them to see
   how a view behaves with real spectral coverage, and expect reconstructions to take a while.
 - **`HD140573.oifits` is the only visible-band file** (0.56–0.86 µm); everything else is H or K.
-- **`2004-simulated.oifits` is monochromatic**, which makes it the degenerate case for anything
-  that colours by wavelength.
+- **`Beauty_Contest_2004/2004-data1.oifits` is monochromatic**, which makes it the degenerate
+  case for anything that colours by wavelength.
 
 ## Directories
 
 | directory | what is in it |
 |---|---|
-| `BC2004/` | The 2004 imaging beauty contest: `2004-data1.oifits`, small, monochromatic and well understood. Its truth image is `images/`. |
-| `BC2026/` | The 2026 contest: `OBJECT1_LM`, `OBJECT1_N`, `OBJECT2_K`. The only shipped files carrying **differential phase and OI_FLUX**, so the only ones on which the diffphi and flux views show anything. |
-| `BEN/` | A multi-epoch MWC 275 set, plus the merge products built from it. **Not tracked by git** — a local working directory, not part of the package. |
+| `Beauty_Contest_2004/` | The 2004 imaging beauty contest: `2004-data1.oifits`, small, monochromatic and well understood. Its truth image is `images/`. |
+| `Beauty_Contest_2026/` | The 2026 contest: `OBJECT1_LM`, `OBJECT1_N`, `OBJECT2_K`. The only shipped files carrying **differential phase and OI_FLUX**, so the only ones on which the diffphi and flux views show anything. |
 | `images/` | FITS images rather than interferometric data: truth images for the beauty contest. Kept apart so the file picker's OIFITS listing is data only. |
 
 ## A note on the names

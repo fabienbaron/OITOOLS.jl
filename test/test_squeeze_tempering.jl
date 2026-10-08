@@ -25,7 +25,7 @@ if !_HAVE_PIGEONS
     @test true
 else
 
-datafile = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
+datafile = joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2004", "2004-data1.oifits")
 nx, pixsize = 64, 0.2
 data = readoifits(datafile; T=Float64, verbose=false, warn=false)[1,1]
 ft = setup_dft(data, nx, pixsize)

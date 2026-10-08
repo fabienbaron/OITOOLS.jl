@@ -11,7 +11,7 @@ using PythonPlot           # live-monitor testset: pyplot.switch_backend, plotcl
 # ─────────────────────────────────────────────────────────────────────────────
 
 const SQ = OITOOLS
-const SQ_DATAFILE = joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits")
+const SQ_DATAFILE = joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2004", "2004-data1.oifits")
 
 @testset "squeeze" begin
 

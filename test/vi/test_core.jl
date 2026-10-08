@@ -322,7 +322,7 @@ end
 # Observe tests — require real NFFT plans from OIFITS data
 # ============================================================================
 
-const oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/BC2004/2004-data1.oifits"
+const oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/Beauty_Contest_2004/2004-data1.oifits"
 
 function _make_obs_and_image()
     data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)

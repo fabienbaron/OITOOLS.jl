@@ -321,13 +321,15 @@ end
     compile_visfunc(expr_str, param_names) -> Function
 
 Compile a user-written **visibility** expression into an AD-transparent broadcast function of
-`(_B_, params...)`, where `_B_` is the baseline in Mλ.
+`(_B_, _WL_, _MJD_, params...)`: the baseline in Mλ, and the wavelength in metres and the epoch
+of each uv point.
 
 The mirror of [`compile_profile`](@ref), and deliberately the same machinery: whole-token
 substitution over the `extract_refs` pattern, so a parameter whose name begins with B does not
 get rewritten the way `\$Rin` once was by a naive `\$R` replacement.
 
-`\$B` is the only implicit variable. There is no `\$R` or `\$MU` here: those are radii on an image
+The implicit variables are `\$B`, `\$WL` and `\$MJD`, all per uv point, so a visibility can be
+chromatic or time-variable directly. There is no `\$R` or `\$MU` here: those are radii on an image
 grid, and this expression never builds an image -- it IS the visibility.
 
 The result is not normalised or checked. `V(0) = 1` is what makes a component's flux fraction
@@ -338,11 +340,13 @@ change the model that was written.
 function compile_visfunc(expr_str::AbstractString, param_names::Vector{String})
     s = replace(expr_str, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => function (m)
         name = m[2:end]
-        name == "B" && return "_B_"
+        name == "B"   && return "_B_"
+        name == "WL"  && return "_WL_"
+        name == "MJD" && return "_MJD_"
         return replace(name, "," => "__")
     end)
     arg_symbols = [Symbol(replace(n, "," => "__")) for n in param_names]
-    args = Expr(:tuple, :_B_, arg_symbols...)
+    args = Expr(:tuple, :_B_, :_WL_, :_MJD_, arg_symbols...)
     fn_expr = Meta.parse("$args -> @. $s")
     return @RuntimeGeneratedFunction(fn_expr)
 end

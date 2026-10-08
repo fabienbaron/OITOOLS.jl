@@ -2,7 +2,7 @@
 # Very Basic Image reconstruction code
 #
 using OITOOLS
-oifitsfile = "./data/BC2004/2004-data1.oifits"
+oifitsfile = "./data/Beauty_Contest_2004/2004-data1.oifits"
 data = readoifits(oifitsfile)
 
 # ── Starting image ───────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ datadir = joinpath(@__DIR__, "..", "demos", "data")
 
 # --- Polychromatic data (many wavelengths, multiple MJDs) ---
 println("=== Polychromatic data (OBJECT1_N) ===")
-data = readoifits(joinpath(datadir, "BC2026", "OBJECT1_N.oifits"), warn=false)[1,1]
+data = readoifits(joinpath(datadir, "Beauty_Contest_2026", "OBJECT1_N.oifits"), warn=false)[1,1]
 display(data)
 
 println("\n--- plot_obs(data) ---")
@@ -24,7 +24,7 @@ plot_obs(data; obs=["V2", "T3PHI", "VISAMP", "VISPHI"], color="wav")
 
 # --- Monochromatic data (single wavelength, single MJD) ---
 println("\n=== Monochromatic data (2004-data1) ===")
-data2 = readoifits(joinpath(datadir, "BC2004", "2004-data1.oifits"), warn=false)[1,1]
+data2 = readoifits(joinpath(datadir, "Beauty_Contest_2004", "2004-data1.oifits"), warn=false)[1,1]
 display(data2)
 
 println("--- plot_obs(data2, color=\"wav\") — should fall back to baseline ---")

@@ -13,7 +13,7 @@
 using OITOOLS, Test, LinearAlgebra
 
 @testset "Fourier transform plans" begin
-    data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits");
+    data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2004", "2004-data1.oifits");
                       warn = false, verbose = false)
     d = data[1, 1]
 
@@ -33,7 +33,7 @@ using OITOOLS, Test, LinearAlgebra
         # operation dereferences it: `remove_redundant_uv!` threw a BoundsError on an ASPRO 2
         # MIRC-X High_H observation at H = 6, where all 6900 V2 points come back flagged.
         # `cutoff_maxv2` reaches the same path from a shipped file.
-        for f in ("BC2004/2004-data1.oifits", "V1295_Aql.oifits")
+        for f in ("Beauty_Contest_2004/2004-data1.oifits", "V1295_Aql.oifits")
             e = readoifits(joinpath(@__DIR__, "..", "demos", "data", f);
                            warn = false, verbose = false, cutoff_maxv2 = -1.0)[1, 1]
             @test e.nv2 == 0
@@ -93,7 +93,7 @@ using OITOOLS, Test, LinearAlgebra
     end
 
     @testset "precision flows through" begin
-        d64 = readoifits(joinpath(@__DIR__, "..", "demos", "data", "BC2004", "2004-data1.oifits");
+        d64 = readoifits(joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2004", "2004-data1.oifits");
                          warn = false, verbose = false, T = Float64)
         @test setup_ft(data, 16, 0.5) isa OIft{Float32}
         @test setup_ft(d64,  16, 0.5) isa OIft{Float64}

@@ -43,9 +43,9 @@ BLAS.set_num_threads(1)
     # here, 42 MB of byte-identical files). Demo data gets pruned, so name a missing one plainly
     # instead of letting it surface as a readoifits error three files later.
     @testset "test fixtures are present" begin
-        for f in (joinpath("BC2004", "2004-data1.oifits"), "AlphaCenA.oifits",
+        for f in (joinpath("Beauty_Contest_2004", "2004-data1.oifits"), "AlphaCenA.oifits",
                   "V1295_Aql.oifits", "polaris.oifits",
-                  joinpath("BC2026", "OBJECT1_N.oifits"))
+                  joinpath("Beauty_Contest_2026", "OBJECT1_N.oifits"))
             path = joinpath(@__DIR__, "..", "demos", "data", f)
             @test isfile(path) || error("missing test fixture: demos/data/$f")
         end

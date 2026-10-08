@@ -15,7 +15,7 @@
 using OITOOLS
 using Pigeons              # <- this is what enables the method
 
-oifitsfile = joinpath(@__DIR__, "data", "BC2004", "2004-data1.oifits")
+oifitsfile = joinpath(@__DIR__, "data", "Beauty_Contest_2004", "2004-data1.oifits")
 nx, pixsize = 64, 0.2
 
 data = readoifits(oifitsfile; T=Float64)

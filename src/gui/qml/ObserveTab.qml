@@ -2179,6 +2179,12 @@ Item {
         savePngDialog.which = which
         savePngDialog.pxw = Math.min(2400, Math.max(640, area.width))
         savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
+        // Target and night: two Gantts of different objects, or of the same object on
+        // different dates, are the files most likely to be saved side by side.
+        var t = targetModel.count > 0
+                ? targetModel.get(Math.max(0, currentTargetIndex)).name : ""
+        savePngDialog.suggestedName =
+            Julia.picker_suggest(t + "\t" + root.dateISO + "\t" + which, "png")
         savePngDialog.openAt("")
     }
 

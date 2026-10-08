@@ -18,7 +18,7 @@ using OITOOLS, Test
                     g ./ sum(g))
 
     @testset "one image" begin
-        data = readoifits(joinpath(datadir, "BC2004", "2004-data1.oifits");
+        data = readoifits(joinpath(datadir, "Beauty_Contest_2004", "2004-data1.oifits");
                           warn = false, verbose = false)
         nx = 24
         ft = setup_ft(data, nx, 0.4)
@@ -70,7 +70,7 @@ using OITOOLS, Test
         # no weight can switch off. On OBJECT2_K such a copy is 1e13 against a V2+T3phi chi2 of
         # 1e6, and the flux normalisation projects its gradient out, so value and gradient
         # disagree and BSDMM's image does not leave its start.
-        file = joinpath(datadir, "BC2026", "OBJECT1_N.oifits")
+        file = joinpath(datadir, "Beauty_Contest_2026", "OBJECT1_N.oifits")
         grey = readoifits(file; warn = false, verbose = false, use_vis = false)[1, 1]
         lo, hi = extrema(Float64.(grey.uv_lam))
         edges = range(lo - 1e-12, hi + 1e-12; length = 4)

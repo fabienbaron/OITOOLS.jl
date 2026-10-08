@@ -15,7 +15,7 @@ Random.seed!(7)
 
 println("=== Step 3a generic-reconstruct test ===")
 
-oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/BC2004/2004-data1.oifits"
+oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/Beauty_Contest_2004/2004-data1.oifits"
 npix = 24
 pixsize = 0.4
 data = readoifits(oifitsfile; filter_bad_data=true, verbose=false, warn=false, T=Float64)

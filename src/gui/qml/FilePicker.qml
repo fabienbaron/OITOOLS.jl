@@ -70,6 +70,10 @@ Popup {
     // folder is empty -- and a work directory usually is, the first time.
     property bool   chooseFolder: false
     property string defaultSuffix: ""
+    // What the name field starts with in save mode. A dialog that opens empty makes the user
+    // invent a name for something the application can already describe -- the dataset, the
+    // engine, the night -- and the names people invent under that pressure are "out.png".
+    property string suggestedName: ""
     // Each entry is { label, patterns } with patterns a comma-separated glob list.
     property var    filters: [{ label: "All files", patterns: "*" }]
     property string folder: ""
@@ -87,6 +91,14 @@ Popup {
     height: Math.min(parent ? parent.height - dp(80) : dp(560), dp(560))
     padding: dp(10)
 
+    // What "Choose" acts on: the highlighted directory if there is one, otherwise the directory
+    // being browsed. Selecting a row means "that one"; selecting nothing means "this one".
+    readonly property string chosenFolder:
+        (chooseFolder && fileList.currentIndex >= 0 && fileList.currentIndex < entryModel.count
+         && entryModel.get(fileList.currentIndex).kind === "dir")
+            ? Julia.picker_join(folder, entryModel.get(fileList.currentIndex).name)
+            : folder
+
     readonly property string currentPatterns:
         (filters && filters.length > 0 && filterBox.currentIndex >= 0
          && filterBox.currentIndex < filters.length)
@@ -96,9 +108,11 @@ Popup {
     function openAt(hint) {
         folder = Julia.picker_start(hint === undefined ? "" : hint)
         selectedName = ""
-        nameField.text = ""
+        // Suggested, not imposed: the field is selected so the first keystroke replaces it.
+        nameField.text = saveMode ? suggestedName : ""
         refresh()
         open()
+        if (saveMode && nameField.text.length > 0) nameField.selectAll()
     }
 
     function refresh() {
@@ -114,7 +128,10 @@ Popup {
                                     modified: f[3], sortkey: f[4] })
             }
         }
-        fileList.currentIndex = entryModel.count > 0 ? 0 : -1
+        // Nothing preselected when choosing a FOLDER: the button acts on the highlighted row,
+        // and auto-highlighting the first subdirectory would make the folder you are standing in
+        // the one answer you could not give.
+        fileList.currentIndex = (chooseFolder || entryModel.count === 0) ? -1 : 0
         statusLabel.text = entryModel.count + (entryModel.count === 1 ? " item" : " items")
     }
 
@@ -153,7 +170,7 @@ Popup {
     }
 
     function confirm() {
-        if (chooseFolder) { root.accepted(root.folder); root.close(); return }
+        if (chooseFolder) { root.accepted(root.chosenFolder); root.close(); return }
         var name = saveMode ? nameField.text.trim() : selectedName
         if (name.length === 0) { statusLabel.text = "nothing selected"; return }
         if (saveMode && defaultSuffix.length > 0 && name.indexOf(".") < 0)
@@ -433,8 +450,11 @@ Popup {
             Item { Layout.fillWidth: true }
             Button { text: "Cancel"; implicitHeight: root.dp(28); onClicked: root.close() }
             Button {
-                text: root.chooseFolder ? "Choose this folder"
-                                        : root.saveMode ? "Save" : "Open"
+                text: root.chooseFolder
+                      ? (root.chosenFolder === root.folder
+                         ? "Choose this folder"
+                         : "Choose \"" + Julia.picker_basename(root.chosenFolder) + "\"")
+                      : root.saveMode ? "Save" : "Open"
                 implicitHeight: root.dp(28)
                 highlighted: true
                 // Choosing a folder needs no selection -- the answer is where you have browsed
@@ -442,8 +462,15 @@ Popup {
                 enabled: root.chooseFolder ? true
                        : root.saveMode     ? nameField.text.trim().length > 0
                                            : fileList.currentIndex >= 0
-                onClicked: root.chooseFolder ? root.confirm()
-                                             : root.activate(fileList.currentIndex)
+                // SAVE acts on the name field, not on the highlighted row. Through `activate`
+                // it did the latter: clicking Save walked into whichever directory happened to
+                // be highlighted, or adopted a highlighted file's name and offered to overwrite
+                // it -- so the only way to save under a NEW name was to press Enter instead of
+                // pressing the button marked Save. Opening is the case where the selection IS
+                // the answer; a double click still walks into a directory either way.
+                onClicked: (root.chooseFolder || root.saveMode)
+                           ? root.confirm()
+                           : root.activate(fileList.currentIndex)
             }
         }
     }

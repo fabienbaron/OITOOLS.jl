@@ -26,7 +26,7 @@ println()
 # InterferometricProblem round-trip
 # ---------------------------------------------------------------------------
 
-oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/BC2004/2004-data1.oifits"
+oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/Beauty_Contest_2004/2004-data1.oifits"
 npix = 32
 pixsize = 0.2
 

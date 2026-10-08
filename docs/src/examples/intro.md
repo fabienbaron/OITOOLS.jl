@@ -69,6 +69,6 @@ from inside that directory. Data files live in `demos/data/`.
 | `AlphaCenA.oifits` | VLTI/PIONIER data — used in model fitting examples |
 | `MWC480.oifits` | Polychromatic dataset for multi-channel reconstruction |
 | `Rho_Cas.oifits` | Example file for plotting demos |
-| `BC2026/OBJECT1_LM.oifits` | Beauty Contest 2026 — object 1, LM band |
-| `BC2026/OBJECT1_N.oifits` | Beauty Contest 2026 — object 1, N band |
-| `BC2026/OBJECT2_K.oifits` | Beauty Contest 2026 — object 2, K band (GRAVITY, with OI_CORR) |
+| `Beauty_Contest_2026/OBJECT1_LM.oifits` | Beauty Contest 2026 — object 1, LM band |
+| `Beauty_Contest_2026/OBJECT1_N.oifits` | Beauty Contest 2026 — object 1, N band |
+| `Beauty_Contest_2026/OBJECT2_K.oifits` | Beauty Contest 2026 — object 2, K band (GRAVITY, with OI_CORR) |

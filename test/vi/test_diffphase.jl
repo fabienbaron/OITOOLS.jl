@@ -4,7 +4,7 @@ const OIVI = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)
 using .OIVI
 using Statistics: mean
 
-oifits = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/BC2026/OBJECT1_N.oifits"
+oifits = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/Beauty_Contest_2026/OBJECT1_N.oifits"
 data = readoifits(oifits; polychromatic=true, filter_bad_data=true, verbose=false, warn=false, T=Float64)
 
 nf_test = 3

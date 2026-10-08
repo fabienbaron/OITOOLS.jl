@@ -7,7 +7,7 @@ using OITOOLS
 using OptimPackNextGen
 using LinearAlgebra, Printf
 
-oifitsfile = joinpath(@__DIR__, "data", "BC2004", "2004-data1.oifits")
+oifitsfile = joinpath(@__DIR__, "data", "Beauty_Contest_2004", "2004-data1.oifits")
 data = readoifits(oifitsfile)
 
 nx = 64

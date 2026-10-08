@@ -13,7 +13,7 @@ Random.seed!(42)
 
 println("=== Step 1b end-to-end test ===")
 
-oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/BC2004/2004-data1.oifits"
+oifitsfile = "/home/baron/SOFTWARE/OITOOLS.jl/demos/data/Beauty_Contest_2004/2004-data1.oifits"
 npix = 24
 pixsize = 0.4
 

@@ -296,4 +296,80 @@ end
     @test isempty(m.priors)
 end
 
+
+# An expression naming a parameter the model does not define is the state a removal leaves
+# behind -- delete the star and the disc of a SPARCO model and every `$fs` in what is left
+# points at nothing. It is not a dangling LABEL: the resolver raises on it, out of its own
+# module, so the only report that names the key at fault is this one.
+@testset "an expression referring to nothing is reported before it raises" begin
+    uv = [1e7 2e7; 0.0 0.0]
+    # Can this model be evaluated at all? The rules below are asserted against the PARSER
+    # rather than restated, so a change in how a reference resolves fails here.
+    runs(d) = try
+        eval_model(dict_to_model(d, String[]), Float64[], uv;
+                   wl = fill(1.6e-6, 2), mjd = fill(57000.0, 2))
+        true
+    catch
+        false
+    end
+
+    gone = Dict{String,Any}("star,ud" => 3.0, "star,f"    => "\$fs * 1.0",
+                            "disk,fwhm" => 5.0, "disk,f"  => "1 - \$fs")
+    @test OITOOLS.missing_refs(gone) == [("disk,f", "fs"), ("star,f", "fs")]
+    @test !runs(gone)
+    @test length(model_warnings(gone, String[])) == 2
+    @test all(occursin("fs", w) for w in model_warnings(gone, String[]))
+
+    # A removed COMPONENT leaves a qualified reference, which is the same defect.
+    @test OITOOLS.missing_refs(Dict{String,Any}("disk,fwhm" => 5.0,
+                                                "disk,f" => "\$star,ud * 0.1")) ==
+          [("disk,f", "star,ud")]
+
+    # The lookup rule differs by key and the check mirrors it. A profile or a visibility
+    # expression qualifies a bare name with its own component and falls back to a global;
+    # an ordinary derived value does neither, so `\$ud` does NOT find `star,ud`.
+    qualified = Dict{String,Any}("ring,profile" => "exp(-\$R/\$a)", "ring,r_max" => 5.0,
+                                 "ring,a" => 1.0, "ring,f" => 1.0)
+    global_fallback = Dict{String,Any}("ring,profile" => "exp(-\$R/\$a)", "ring,r_max" => 5.0,
+                                       "a" => 1.0, "ring,f" => 1.0)
+    neither = Dict{String,Any}("ring,profile" => "exp(-\$R/\$a)", "ring,r_max" => 5.0,
+                               "ring,f" => 1.0)
+    derived = Dict{String,Any}("star,ud" => 3.0, "star,f" => "\$ud * 0.1")
+    for (d, clean) in ((qualified, true), (global_fallback, true),
+                       (neither, false), (derived, false))
+        @test isempty(OITOOLS.missing_refs(d)) == clean
+        @test runs(d) == clean
+    end
+
+    # Each kind of expression sees its own implicit variables and no others: the grid inside a
+    # profile, the baseline inside a visibility function, the wavelength and epoch everywhere
+    # else. Every variable in every kind, against the parser.
+    kinds = (("c,profile", v -> Dict{String,Any}("c,profile" => "exp(-\$R/2) * (1 + 0 * \$$v)",
+                                                 "c,udout" => 4.0, "c,f" => 1.0)),
+             ("c,visfunc", v -> Dict{String,Any}("c,visfunc" => "exp(-\$g * \$B) * (1 + 0 * \$$v)",
+                                                 "c,g" => 0.01, "c,f" => 1.0)),
+             ("c,ud",      v -> Dict{String,Any}("c,ud" => "3 + 0 * \$$v", "c,f" => 1.0)))
+    for (key, model) in kinds, v in vcat(collect(OITOOLS.IMPLICIT_VARS), "B")
+        d = model(v)
+        visible = v in OITOOLS.implicit_vars(key)
+        @test isempty(OITOOLS.missing_refs(d)) == visible
+        @test runs(d) == visible
+    end
+    @test any(occursin("cannot see", w) for w in model_warnings(kinds[1][2]("WL"), String[]))
+
+    # And a visibility function sees each uv point's OWN wavelength and epoch, not a scalar:
+    # at B = 10 and 20 Mλ, observed at 1.6 and 3.2 µm, V = exp(-g·B·λ/1.6 µm).
+    chromatic = Dict{String,Any}("c,visfunc" => "exp(-\$g * \$B * \$WL / 1.6e-6) * \$MJD / \$MJD",
+                                 "c,g" => 0.01, "c,f" => 1.0)
+    V = eval_model(dict_to_model(chromatic, String[]), Float64[], uv;
+                   wl = [1.6e-6, 3.2e-6], mjd = [57000.0, 57001.0])
+    @test real.(V) ≈ [exp(-0.01 * 10), exp(-0.01 * 20 * 2)]
+
+    # Every model the package ships is clean, which is what makes a report here meaningful.
+    for f in readdir(joinpath(pkgdir(OITOOLS), "demos", "models"); join = true)
+        endswith(f, ".toml") || continue
+        @test isempty(OITOOLS.missing_refs(read_model_file(f).model))
+    end
+end
+
 end

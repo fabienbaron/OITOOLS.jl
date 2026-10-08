@@ -1,7 +1,7 @@
 using OITOOLS
 
-# Read BC2026 = Fake MATISSE LM-band data
-oifitsfile = "./data/BC2026/OBJECT1_LM.oifits"
+# Read Beauty_Contest_2026 = Fake MATISSE LM-band data
+oifitsfile = "./data/Beauty_Contest_2026/OBJECT1_LM.oifits"
 data = readoifits(oifitsfile)
 
 # ── UV coverage ──────────────────────────────────────────────────────────────

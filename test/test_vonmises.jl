@@ -29,8 +29,8 @@ using OITOOLS
   chi2r_gauss = norm(mod2pijdm(x-μ)./σ)^2/n
   chi2r_vonMises =  -2*sum(k.*cos.(x-μ))/n+ log(2*pi) + 2*sum(logbesselI0.(k)-log.(σ))/n
   #using OITOOLS
-  # Test 3: BC2004 data
-  oifitsfile = "./data/BC2004/2004-data1.oifits";
+  # Test 3: Beauty_Contest_2004 data
+  oifitsfile = "./data/Beauty_Contest_2004/2004-data1.oifits";
   x0 = vec(readfits("./data/2004-64.fits"));
   x0 /= sum(x0)
   pixsize = 0.202;

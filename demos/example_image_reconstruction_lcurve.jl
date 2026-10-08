@@ -2,7 +2,7 @@
 # Image reconstruction using total variation and l-curve
 #
 using OITOOLS, PythonPlot
-oifitsfile = "./data/BC2004/2004-data1.oifits"
+oifitsfile = "./data/Beauty_Contest_2004/2004-data1.oifits"
 pixsize = 0.2
 nx = 64
 data = readoifits(oifitsfile);

@@ -31,6 +31,8 @@ function __init__()
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component,
+                     shell_remove_param, shell_add_param, shell_link_params, shell_param_name_problem,
+                     shell_param_removable, shell_remove_unused,
                      shell_rename_component, shell_save_figure,
                      shell_expression_keywords, shell_check_expression,
                      shell_profile_params, shell_add_profile_params, shell_profile_grid,
@@ -53,7 +55,8 @@ function __init__()
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
                      # Julia for everything the toolkit would otherwise supply.
-                     picker_list, picker_places, picker_join, picker_parent,
+                     picker_list, picker_places, picker_join, picker_parent, picker_basename, picker_suggest,
+                     shell_initial_folder, shell_set_work_directory,
                      picker_start, picker_kind, picker_would_overwrite, picker_examples)
     return nothing
 end
@@ -63,7 +66,7 @@ Folder the file dialog opens in.
 
 Next to the last dataset loaded if there is one, then `\$OITOOLSGUI_DATA_DIR`, then the
 package's `demos/data`. That last is the user-facing data directory — it holds Alpha Cen A and
-B, the 2004 beauty-contest set, and `BC2026/`, whose files are the only ones shipped with
+B, the 2004 beauty-contest set, and `Beauty_Contest_2026/`, whose files are the only ones shipped with
 differential phase and OI_FLUX and therefore the only ones on which the `diffphi` and `flux`
 views show anything.
 
@@ -89,6 +92,21 @@ function _initial_folder(session::Session)
         p === nothing || return file_url(p)
     end
     return file_url(pwd())
+end
+
+"""
+    shell_initial_folder() -> String
+
+Where a file dialog should open, worked out NOW rather than when the window was built.
+
+QML had the startup value as a context property and passed it to every Open: a work directory
+chosen mid-session could not reach it, so Open kept returning to the demo data until the
+application was restarted while Save -- which asks for the folder afresh -- followed along.
+"""
+function shell_initial_folder()
+    sh = SHELL[]
+    sh === nothing && return picker_start("")
+    return _initial_folder(sh.session)
 end
 
 "Tab names, in the order Main.qml lists them."
@@ -318,11 +336,11 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(oax)
     chi2map = build_chi2_map(ofig, oax)
 
-    # And a seventh for the radial-profile preview. Two axes side by side rather than two
+    # And a seventh for the radial-profile preview. Two axes in one figure rather than two
     # figures: I(r) and V(B) are read together -- the question is always what a change to the
-    # profile does to the signature the data actually measures.
-    # Stacked, not side by side: this figure lives in the ~300dp preview column beside the
-    # profile editor, and two axes across that width leaves the r ticks an unreadable smear.
+    # profile does to the signature the data actually measures. Side by side, because the
+    # preview takes whatever width the pane has beside a fixed-width editor, and a wide frame
+    # stacked into two strips leaves each plot a sliver of its own height.
     # And an eighth for the model residuals. It shares the χ² map's rectangle -- only one of
     # the two is ever visible -- but not its figure: that one is a heatmap with a colorbar in
     # `fig[1, 2]`, and this is a scatter with a legend there.
@@ -341,7 +359,7 @@ function OITOOLS.gui(session::Session = Session();
 
     prfig = Makie.Figure(fonts = PLOT_FONTS)
     priax = Makie.Axis(prfig[1, 1])
-    prvax = Makie.Axis(prfig[2, 1])
+    prvax = Makie.Axis(prfig[1, 2])
     style_axis!(priax); style_axis!(prvax)
     profileplot = build_profile_plot(prfig, priax, prvax)
 

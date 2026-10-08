@@ -831,8 +831,7 @@ end
     shell_fit_rows() -> String
 
 Completed fits as
-`label\toptimiser\tchi2r_start\tchi2r\twork\tndof\tnfree\taic\tbic\tparams` rows, newest
-first.
+`label\toptimiser\tchi2r_start\tchi2r\twork\tndof\tnfree\tparams` rows, newest first.
 
 `chi2r_start` is the model as it stood when the fit was launched, measured with the fit's own
 weights and divided by the fit's own `ndof`, so the two chi2r columns are the same quantity and
@@ -842,9 +841,11 @@ evaluated, which the panel renders as an em dash.
 `work` is `_fit_work` rendered with its unit, because iterations and evaluations are different
 quantities and only one of them exists for any given optimiser.
 
-AIC and BIC are computed here rather than read off `chi2r`, because `ndof` counts DATA POINTS
-and is not reduced by the free-parameter count — so a comparison that used it as a degrees-of-
-freedom would favour the larger model for the wrong reason.
+No AIC or BIC. Both are information criteria for choosing BETWEEN models, and this package has
+a better answer for that question: `fit_model_nested` returns the log-evidence, which compares
+models without assuming the likelihood is Gaussian in the parameters or that the sample is
+large. A column that is a worse version of something the package already does well invites the
+comparison to be made with the worse one.
 """
 function shell_fit_rows()
     sh = _shell()
@@ -852,8 +853,6 @@ function shell_fit_rows()
     for (i, f) in enumerate(reverse(sh.fits))
         r = f.result
         k = length(f.free)
-        aic = r.chi2 + 2k
-        bic = r.chi2 + k * log(max(r.ndof, 1))
         # The starting chi2 divided by the FIT'S ndof, so the two chi2r columns are the same
         # quantity and the fit's progress is the ratio between them.
         start = isfinite(f.chi2_start) ? f.chi2_start / max(r.ndof, 1) : NaN
@@ -864,7 +863,6 @@ function shell_fit_rows()
         push!(rows, join((string("fit ", length(sh.fits) - i + 1), f.optimiser,
                           _numv(start), string(round(r.chi2r; digits = 4)),
                           work, string(r.ndof), string(k),
-                          string(round(aic; digits = 1)), string(round(bic; digits = 1)),
                           _fit_params(r)), "\t"))
     end
     return join(rows, "\n")
@@ -2009,35 +2007,45 @@ end
 """
     shell_expression_keywords(key) -> String
 
-The implicit variables an expression for `key` may use, as `name\tmeaning\tenabled\treason`.
+Every implicit variable, as `name\tshort\tenabled\treason\tmeaning`: a few words for beside
+its button, whether an expression for `key` can use it, why not when it cannot, and the full
+description.
 
-They are SCOPED, and nothing else says so. `\$R` and `\$MU` are substituted by
-`compile_profile` and exist only inside a profile string; `\$WL` and `\$MJD` come from the uv
-points and exist only outside one, because a profile is evaluated on the radial grid before any
-uv point is in hand. Crossing the boundary is not caught when it is typed -- it surfaces later
-as `UndefVarError: WL not defined in OITOOLS`, which names neither the rule nor the expression
-that broke it, and which a plain typo produces too.
+They are SCOPED, and nothing else says so. Each kind of expression is compiled with its own
+arguments -- a profile with the radial grid, a visibility function with each uv point's
+baseline, wavelength and epoch, every other expression with the wavelength and epoch alone --
+and `OITOOLS.implicit_vars` is that rule. Crossing it is not caught when it is typed: it surfaces later as
+`UndefVarError: WL not defined in OITOOLS`, which names neither the rule nor the expression that
+broke it, and which a plain typo produces too.
 
-So the four are always listed and the out-of-scope pair is disabled with the reason, rather
-than being absent: a keyword that is simply missing reads as one that does not exist.
+So every variable is always listed and the out-of-scope ones are disabled with the reason,
+rather than being absent: a keyword that is simply missing reads as one that does not exist.
 """
 function shell_expression_keywords(key::AbstractString)
-    inprofile = endswith(String(key), ",profile")
-    why_out = inprofile ?
-        "not in a profile: the profile is evaluated on the radial grid, before any uv point" :
-        "only inside a profile string, where compile_profile substitutes it"
-    rows = (("R",    "radius over the profile grid, mas",            inprofile),
-            ("MU",   "sqrt(1 - (r/r_max)^2), for limb darkening",    inprofile),
-            ("D",    "diameter at each grid radius, i.e. 2\$R",      inprofile),
-            ("RMIN", "the grid's inner radius, mas",                 inprofile),
-            ("RMAX", "the grid's outer radius, mas",                 inprofile),
-            ("DMIN", "the grid's inner diameter, mas",               inprofile),
-            ("DMAX", "the grid's outer diameter, mas",               inprofile),
-            ("WL",   "wavelength in METRES, one per uv point",       !inprofile),
-            ("MJD",  "Modified Julian Date, one per uv point (~5.6 min resolution " *
-                     "unless the file was read with T = Float64)",   !inprofile))
-    return join((string("\$", n, '\t', m, '\t', ok ? "1" : "0", '\t', ok ? "" : why_out)
-                 for (n, m, ok) in rows), "\n")
+    inscope = OITOOLS.implicit_vars(String(key))
+    rows = (("R",    "radius, mas",            "radius over the profile grid, mas"),
+            ("MU",   "μ, for limb darkening",  "sqrt(1 - (r/r_max)^2), for limb darkening"),
+            ("D",    "diameter, 2R",           "diameter at each grid radius, i.e. 2\$R"),
+            ("RMIN", "grid inner radius",      "the grid's inner radius, mas"),
+            ("RMAX", "grid outer radius",      "the grid's outer radius, mas"),
+            ("DMIN", "grid inner diameter",    "the grid's inner diameter, mas"),
+            ("DMAX", "grid outer diameter",    "the grid's outer diameter, mas"),
+            ("B",    "baseline, Mλ",           "baseline length in Mλ, one per uv point"),
+            ("WL",   "wavelength, m",          "wavelength in METRES, one per uv point"),
+            ("MJD",  "date, MJD",              "Modified Julian Date, one per uv point (~5.6 min " *
+                                               "resolution unless the file was read with " *
+                                               "T = Float64)"))
+    return join((string("\$", n, '\t', short, '\t', n in inscope ? "1" : "0", '\t',
+                        n in inscope ? "" : _implicit_scope_reason(n), '\t', long)
+                 for (n, short, long) in rows), "\n")
+end
+
+# Where an implicit variable CAN be used, for the line explaining why it cannot be used here.
+function _implicit_scope_reason(name)
+    name == "B" && return "only in a visibility function, which is the one place a baseline exists"
+    name in ("WL", "MJD") &&
+        return "not in a profile: the profile is evaluated on the radial grid, before any uv point"
+    return "only inside a profile string, where compile_profile substitutes it"
 end
 
 """
@@ -2050,33 +2058,37 @@ expression is written: `dict_to_model` accepts all three happily and the mistake
 when something evaluates, as an `UndefVarError` naming an internal module. An out-of-scope
 implicit variable and a misspelt parameter are indistinguishable there, and distinguishing them
 is the whole point of doing it here.
+
+The lookup follows the parser, which differs by key: a `profile` or `visfunc` expression finds
+a bare `\$a` on its own component first and then among the globals, while any other expression
+looks a reference up literally -- `\$ud` in `star,f` is NOT `star,ud`, and says so.
 """
 function shell_check_expression(key::AbstractString, expr::AbstractString)
     m = _model()
     k = String(key)
-    inprofile = endswith(k, ",profile")
-    comp = (i = findfirst(==(','), k)) === nothing ? "" : k[1:i-1]
+    i = findfirst(==(','), k)
+    comp = i === nothing ? "" : k[1:i-1]
+    par  = i === nothing ? k : k[i+1:end]
+    qualifies = par == "profile" || par == "visfunc"
+    inscope = OITOOLS.implicit_vars(k)
     out = String[]
     for ref in OITOOLS.extract_refs(String(expr))
-        if ref in OITOOLS.IMPLICIT_VARS
-            # The grid variables belong to a profile; the uv-point ones cannot appear in one,
-            # because a profile is evaluated on the radial grid before any uv point is in hand.
-            gridvar = ref in ("R", "MU", "D", "RMIN", "RMAX", "DMIN", "DMAX")
-            ok = gridvar ? inprofile : !inprofile
+        if ref in OITOOLS.IMPLICIT_VARS || ref == "B"
+            ok = ref in inscope
             push!(out, join((ref, ok ? "ok" : "scope",
-                             ok ? "" : (gridvar ?
-                                        "\$$(ref) only means anything inside a profile string" :
-                                        "\$$(ref) is a uv-point quantity and is not available " *
-                                        "inside a profile")), '\t'))
+                             ok ? "" : "\$$(ref): " * _implicit_scope_reason(ref)), '\t'))
         elseif haskey(m.dict, ref)
             push!(out, join((ref, "ok", ""), '\t'))
-        elseif !isempty(comp) && haskey(m.dict, comp * "," * ref)
-            # A profile resolves a bare name against its own component first, then the globals
-            # -- so inside `disk,profile`, `\$scale` means `disk,scale` if that exists.
+        elseif qualifies && !occursin(',', ref) && haskey(m.dict, comp * "," * ref)
             push!(out, join((ref, "ok", "resolves to " * comp * "," * ref), '\t'))
+        elseif !qualifies && !isempty(comp) && !occursin(',', ref) &&
+               haskey(m.dict, comp * "," * ref)
+            push!(out, join((ref, "unknown",
+                             "write \$" * comp * "," * ref * ": only a profile or a visibility " *
+                             "function looks inside its own component"), '\t'))
         else
             push!(out, join((ref, "unknown",
-                             inprofile ?
+                             par == "profile" ?
                              "no parameter of this name: a profile treats every name that is " *
                              "not \$R or \$MU as one, so this would have to be created" :
                              "no parameter or global of this name"), '\t'))
@@ -2662,8 +2674,8 @@ Delete a component and every key belonging to it, including its bounds and its p
 free list.
 
 Expressions elsewhere that referenced it are deliberately NOT rewritten: a dangling `\$name,ud`
-shows up in the inspector's unrecognised list, which is a visible problem, where a silent
-substitution would be an invisible one.
+is listed by `model_warnings`, which the panel shows, where a silent substitution would be an
+invisible one.
 """
 function shell_remove_component(name)
     sh = _shell(); m = _model(sh)
@@ -2675,6 +2687,191 @@ function shell_remove_component(name)
     end
     filter!(p -> !startswith(p, pre), m.free)
     console!(sh, "  removed $(nm): $(length(ks)) keys")
+    return ""
+end
+
+"""
+    shell_remove_param(key) -> String
+
+Delete one parameter that is the model's own rather than the parser's: a global, or a key on a
+component whose name the parser gives no meaning to (`disk,slope`, added with
+[`shell_add_param`](@ref)). Its bounds and its place in the free list go with it.
+
+A component's OTHER keys are what the parser identifies it by, so deleting `disk,fwhm` on its
+own does not leave a smaller disc, it leaves a `disk,f` the parser can no longer place;
+removing the component is the operation that exists for that. A global belongs to no
+component, so [`shell_remove_component`](@ref) can never reach one, and without this a global
+outlives every component that referenced it and cannot be cleared at all.
+
+Expressions that still refer to it are not rewritten, for the same reason a removed component's
+references are not. Unlike that case the result IS reported: `model_warnings` lists every
+expression naming a parameter the model does not define, which is what the panel shows.
+"""
+function shell_remove_param(key)
+    sh = _shell(); m = _model(sh); k = String(key)
+    haskey(m.dict, k) || return "! no such parameter: " * k
+    i = findfirst(',', k)
+    i !== nothing && OITOOLS.reserved_suffix(k[i+1:end]) &&
+        return "! " * k * " is part of what makes the component what it is; remove the " *
+               "component instead"
+    delete!(m.dict, k); delete!(m.lb, k); delete!(m.ub, k)
+    filter!(!=(k), m.free)
+    nref = count(v -> v isa AbstractString && k in OITOOLS.extract_refs(v), values(m.dict))
+    console!(sh, "  removed " * (i === nothing ? "the global " : "") * k *
+                 (nref > 0 ? ": $(nref) expression(s) still refer to it" : ""))
+    return ""
+end
+
+# Why `name` cannot be a new parameter on component `cn` ("" for a global), or "" when it can.
+function _param_name_problem(m, cn::AbstractString, nm::AbstractString)
+    isempty(nm) && return "a parameter needs a name"
+    occursin(r"^[A-Za-z_][A-Za-z0-9_]*$", nm) ||
+        return "a name is letters, digits and underscores, not starting with a digit: " *
+               "it has to survive being written as \$" * nm
+    (nm in OITOOLS.IMPLICIT_VARS || nm == "B") &&
+        return "\$" * nm * " is a built-in variable"
+    if isempty(cn)
+        nm == "spatial_kernel" && return "spatial_kernel is a setting the parser reads by name"
+        haskey(m.dict, nm) && return "there is already a global called " * nm
+    else
+        any(k -> startswith(k, cn * ","), keys(m.dict)) || return "no component called " * cn
+        OITOOLS.reserved_suffix(nm) &&
+            return "on a component, " * nm * " already means something to the parser"
+        haskey(m.dict, cn * "," * nm) && return "there is already a parameter " * cn * "," * nm
+    end
+    return ""
+end
+
+"""
+    shell_remove_unused() -> String
+
+Delete every key the parser ignores -- the ones the panel's "Nothing uses …" banner lists --
+with their bounds and their places in the free list. Returns `""` or a message beginning `!`.
+
+These are keys `model_inspection` reports as unrecognised: on a component, a name no kind
+reads and no expression refers to; it is either a parameter added and never used, or a
+misspelt shape key. Either way the model is the same without it. The console names each key
+removed, so a misspelling deleted here can be typed back correctly.
+"""
+function shell_remove_unused()
+    sh = _shell(); m = _model(sh)
+    insp = try
+        model_inspection(m.dict)
+    catch err
+        return "! " * _cause(err)
+    end
+    ks = [String(k) for k in insp.unrecognised if haskey(m.dict, k)]
+    isempty(ks) && return "! nothing to remove: the parser uses every key"
+    for k in ks
+        delete!(m.dict, k); delete!(m.lb, k); delete!(m.ub, k)
+        filter!(!=(k), m.free)
+    end
+    console!(sh, "  removed what nothing used: " * join(ks, ", "))
+    return ""
+end
+
+"""
+    shell_param_removable(key) -> String
+
+`"1"` when [`shell_remove_param`](@ref) would delete `key`, otherwise `"0"`: the panel enables
+its Remove button from this, so the button and the refusal cannot disagree.
+"""
+function shell_param_removable(key)
+    k = String(key)
+    haskey(_model().dict, k) || return "0"
+    i = findfirst(',', k)
+    return i === nothing || !OITOOLS.reserved_suffix(k[i+1:end]) ? "1" : "0"
+end
+
+"""
+    shell_param_name_problem(component, name) -> String
+
+Why `name` cannot be added to `component` (`""` or `"__global__"` for a global), or `""`. The
+dialog asks as the name is typed, so OK is never pressed on a name that would be refused.
+"""
+function shell_param_name_problem(component, name)
+    cn = String(component); cn == GLOBAL_COMPONENT && (cn = "")
+    return _param_name_problem(_model(), cn, strip(String(name)))
+end
+
+"""
+    shell_add_param(component, name, value) -> String
+
+Create a fixed parameter at `value`: a global when `component` is `""` or `"__global__"`,
+otherwise `component,name`. Returns `""` or a message beginning with `!`.
+
+This is how a model gets a quantity that no component kind seeds: SPARCO's flux fraction `fs`,
+a spectral slope, the `d0` and `p` of a diameter written as `\$d0 * (\$WL/1.6e-6)^\$p`. It
+starts fixed and referenced by nothing, because what it means is decided by the expression
+that uses it; until one does, the parser lists it among the keys it ignored, which is true.
+
+A name the parser already reads on a component is refused rather than added: `ud` on a
+Gaussian is not a new parameter, it turns the Gaussian into a uniform disc.
+"""
+function shell_add_param(component, name, value)
+    sh = _shell(); m = _model(sh)
+    cn = String(component); cn == GLOBAL_COMPONENT && (cn = "")
+    nm = strip(String(name))
+    msg = _param_name_problem(m, cn, nm)
+    isempty(msg) || return "! " * msg
+    key = isempty(cn) ? String(nm) : cn * "," * nm
+    m.dict[key] = Float64(value)
+    console!(sh, "  added " * (isempty(cn) ? "the global " : "") * key * " = " *
+                 string(Float64(value)) * "; nothing refers to it yet -- write \$" * key *
+                 " in an expression")
+    return ""
+end
+
+"""
+    shell_link_params(name, keys) -> String
+
+Tie parameters together: create the global `name` and make each of `keys` (tab-separated) the
+expression `\$name`. Returns `""` or a message beginning with `!`.
+
+The global takes the first parameter's value and bounds, and is free when any of them was, so
+linking two fitted position angles leaves one fitted position angle. The linked rows lose their
+bounds and their place in the fit vector, as any derived row does.
+
+Through a global rather than by making one row follow another, because a link should survive
+either side being removed: `disk,pa = \$ring,pa` dangles when the ring goes, `\$pa` does not.
+"""
+function shell_link_params(name, keys_)
+    sh = _shell(); m = _model(sh)
+    nm = String(strip(String(name)))
+    ks = [String(k) for k in split(String(keys_), '\t') if !isempty(k)]
+    length(unique(ks)) < 2 && return "! linking needs at least two parameters"
+    for k in ks
+        haskey(m.dict, k) || return "! no such parameter: " * k
+        m.dict[k] isa Real || return "! " * k * " is already an expression"
+    end
+    msg = _param_name_problem(m, "", nm)
+    isempty(msg) || return "! " * msg
+
+    k1 = ks[1]
+    lb, ub = get(m.lb, k1, nothing), get(m.ub, k1, nothing)
+    if lb === nothing || ub === nothing
+        dlb, dub = default_bounds(m.dict, [k1])
+        lb === nothing && (lb = get(dlb, k1, nothing))
+        ub === nothing && (ub = get(dub, k1, nothing))
+    end
+    vals = [Float64(m.dict[k]) for k in ks]
+    wasfree = any(k -> k in m.free, ks)
+
+    m.dict[nm] = vals[1]
+    lb === nothing || (m.lb[nm] = Float64(lb))
+    ub === nothing || (m.ub[nm] = Float64(ub))
+    for k in ks
+        m.dict[k] = "\$" * nm
+        delete!(m.lb, k); delete!(m.ub, k)
+        filter!(!=(k), m.free)
+    end
+    wasfree && push!(m.free, nm)
+
+    console!(sh, "  linked " * join(ks, ", ") * " through the global " * nm *
+                 (wasfree ? " (free)" : " (fixed)"))
+    allequal(vals) ||
+        console!(sh, "  they held " * join(string.(vals), ", ") * "; " * nm * " starts at " *
+                     string(vals[1]) * ", the first")
     return ""
 end
 

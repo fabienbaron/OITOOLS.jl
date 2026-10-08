@@ -1,8 +1,8 @@
 #
-# Image reconstruction of the BC2026 data
+# Image reconstruction of the Beauty_Contest_2026 data
 #
 using OITOOLS
-oifitsfile = "./data/BC2026/OBJECT1_N.oifits"
+oifitsfile = "./data/Beauty_Contest_2026/OBJECT1_N.oifits"
 
 # In this example we will not try a polychromatic reconstruction
 data = readoifits(oifitsfile);

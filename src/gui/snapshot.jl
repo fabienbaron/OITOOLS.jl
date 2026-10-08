@@ -64,6 +64,9 @@ function _snapshot_image_figure(img, pixsize, colormap, size; label = "flux / pi
     hm = Makie.heatmap!(ax, range(-half, half; length = nx), range(-half, half; length = nx),
                         img; colormap, colorrange = (0.0, mx > 0 ? Float64(mx) : 1.0))
     Makie.Colorbar(fig[1, 2], hm; label)
+    # The column the image's own width, so the colorbar sits against it at any figure size --
+    # see `_fit_plot_column!`, which does the same for the live canvas.
+    Makie.colsize!(fig.layout, 1, Makie.Aspect(1, 1.0))
     Makie.limits!(ax, half, -half, -half, half)
     return fig
 end

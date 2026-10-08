@@ -1,6 +1,6 @@
 # Example: Correlated V² chi2 using OI_CORR from GRAVITY data
 #
-# Reads demos/data/BC2026/OBJECT2_K.oifits, extracts V² data and the
+# Reads demos/data/Beauty_Contest_2026/OBJECT2_K.oifits, extracts V² data and the
 # associated OI_CORR correlation matrix, whitens the data, and computes
 # chi2 = |w|² where w = L⁻¹ r  (L from Cholesky of covariance).
 #
@@ -87,7 +87,7 @@ end
 
 function main()
     # ── 1. Read the data ─────────────────────────────────────────────────────
-    oifitsfile = joinpath(@__DIR__, "data", "BC2026", "OBJECT2_K.oifits")
+    oifitsfile = joinpath(@__DIR__, "data", "Beauty_Contest_2026", "OBJECT2_K.oifits")
     data = readoifits(oifitsfile, filter_bad_data=false)[1,1]
 
     println("V² points:  $(data.nv2)")

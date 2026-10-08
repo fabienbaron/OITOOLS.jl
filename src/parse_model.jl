@@ -444,7 +444,7 @@ and the one a formula from a paper is normally written in.
 struct VisFuncSpec <: AbstractComponentSpec
     comp_name    ::String
     f_idx        ::Int
-    vis_fn       ::Function       # (B_Mlambda, params...) -> V
+    vis_fn       ::Function       # (B_Mlambda, WL_m, MJD, params...) -> V
     param_idx    ::Vector{Int}
     incl_idx     ::Int
     pa_idx       ::Int
@@ -647,6 +647,28 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# Suffixes every component may carry, the sugar `dict_to_model` expands, and the keys a radial
+# profile reads on top of its expression.
+const _UNIVERSAL_SUFFIXES = Set(["f", "x", "y", "incl", "pa", "projang"])
+const _SUGAR_SUFFIXES     = Set(["diam", "thick", "spectrum"])
+const _HANKEL_SUFFIXES    = Set(["profile", "r_max", "nr", "udout", "diamin", "diamout"])
+
+"""
+    reserved_suffix(suffix) -> Bool
+
+Whether the parser gives `component,suffix` a meaning of its own, for ANY kind of component.
+
+A parameter added under such a name would not be a new parameter. `ud` on a Gaussian turns it
+into a uniform disc, because `_identify_kind` reads the shape off the keys, and `u` is a
+limb-darkening coefficient. Anything else is free for a component to carry as a parameter of
+its own, used from an expression.
+"""
+reserved_suffix(suffix::AbstractString) =
+    suffix in _UNIVERSAL_SUFFIXES || suffix in _SUGAR_SUFFIXES || suffix in _HANKEL_SUFFIXES ||
+    suffix in _GEOMETRY_KEYS ||
+    any(s -> suffix in s, values(_ANALYTIC_PARAM_SUFFIXES)) ||
+    startswith(suffix, "az amp") || startswith(suffix, "az projang")
+
 """
 Warn about `component,key` pairs the parser never consumes.
 
@@ -665,16 +687,12 @@ function _warn_unrecognised_keys(pd::Dict{String})
         union!(referenced, extract_refs(v))
     end
 
-    universal = Set(["f", "x", "y", "incl", "pa", "projang"])
-    sugar     = Set(["diam", "thick", "spectrum"])
-    hankel_ok = Set(["profile", "r_max", "nr", "udout", "diamin", "diamout"])
-
     unknown = String[]
     for cn in _component_names(pd)
         kind = _identify_kind(cn, pd)
-        ok = union(Set{String}(universal), sugar,
+        ok = union(_UNIVERSAL_SUFFIXES, _SUGAR_SUFFIXES,
                    Set{String}(get(_ANALYTIC_PARAM_SUFFIXES, kind, String[])))
-        kind === :hankel && union!(ok, hankel_ok)
+        kind === :hankel && union!(ok, _HANKEL_SUFFIXES)
         gk = get(_KIND_GEOMETRY, kind, "")
         isempty(gk) || push!(ok, gk)
 
@@ -992,8 +1010,10 @@ function eval_model(model::FlatModel,
             # `$B` is in Mλ: ρ is cycles/rad, which IS baseline/λ, and the observable plots
             # divide it by 1e6 and label the axis Mλ. A formula copied from a paper is written
             # in those units, so the expression is evaluated in them.
+            # `$WL` and `$MJD` are the same per-uv-point values the resolver was given, or NaN
+            # when the caller passed none -- as they are in a derived parameter.
             params = pv[comp.param_idx]
-            Vi = comp.vis_fn(ρ_comp ./ 1e6, params...)
+            Vi = comp.vis_fn(ρ_comp ./ 1e6, _wl, _mjd, params...)
 
         elseif comp isa AnalyticSpec && comp.kind == :crescent
             # Crescent needs (u,v) for internal offset phase shifts

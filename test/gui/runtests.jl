@@ -27,7 +27,7 @@ using .GUI
 
 const OIF = joinpath(@__DIR__, "..", "..", "demos", "data")
 const MONO = joinpath(OIF, "AlphaCenA.oifits")
-const POLY = joinpath(OIF, "BC2026", "OBJECT1_N.oifits")
+const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
 
 @testset "OITOOLSGUI" begin
 
@@ -156,6 +156,39 @@ end
     s = Session()
     load_dataset!(s, MONO; warn = false, verbose = false)
     d = s.datasets[1].data[1, 1]
+
+    # The circles behind a uv plot, and a colorbar that stays beside the plot it describes.
+    @testset "uv circles, and a colorbar column the plot's own width" begin
+        @test GUI.uv_ring_radii(125.0) == [25.0, 50.0, 75.0, 100.0, 125.0]
+        @test GUI.uv_ring_radii(60.0)  == [20.0, 40.0, 60.0]
+        @test isempty(GUI.uv_ring_radii(0.0)) && isempty(GUI.uv_ring_radii(NaN))
+        for rmax in (0.7, 9.0, 31.0, 125.0, 310.0, 4000.0)
+            r = GUI.uv_ring_radii(rmax)
+            @test 2 <= length(r) <= 5 && r[end] <= rmax
+        end
+
+        fig = Makie.Figure(); ax = Makie.Axis(fig[1, 1])
+        c = build_canvas(fig, ax)
+        update_canvas!(c, d, :uv; color = :baseline)
+        rmax = maximum(hypot.(Float64.(d.uv[1, :]), Float64.(d.uv[2, :]))) / 1e6
+        @test length(c.uvringtext[]) == length(GUI.uv_ring_radii(rmax)) >= 2
+        @test all(endswith("Mλ"), c.uvringtext[])
+        update_canvas!(c, d, :v2)
+        @test isempty(c.uvrings[]) && isempty(c.uvringtext[])
+
+        # Baseline colours: no colorbar, so the column is free for the legend below it.
+        update_canvas!(c, d, :uv; color = :baseline)
+        @test fig.layout.colsizes[1] isa Makie.Auto
+        # A colorbar beside a fixed-shape plot: the column becomes the plot's own width.
+        update_canvas!(c, d, :uv; color = :mjd)
+        @test fig.layout.colsizes[1] isa Makie.Aspect
+        GUI.show_image!(c, rand(16, 16), 0.5)
+        @test fig.layout.colsizes[1] isa Makie.Aspect && fig.layout.colsizes[1].ratio == 1
+        @test isempty(c.uvrings[])
+        GUI.hide_image!(c)
+        update_canvas!(c, d, :v2)
+        @test fig.layout.colsizes[1] isa Makie.Auto
+    end
 
     @testset "zoom is bounded at both ends" begin
         # The wheel arithmetic, without a mouse. QMLMakie hands Makie the raw Qt delta when a
@@ -1063,6 +1096,207 @@ end
         # the volumes are carried through into the places listing
         for (label, path) in vols
             @test any(r -> r[1] == label && r[2] == path, rows)
+        end
+    end
+
+    # A global belongs to no component, so no component card can remove one. Open the SPARCO
+    # model, delete the star and the disc, and `fs` was left behind -- in the fit vector, with
+    # its bounds, and unreachable: `shell_remove_component` only deletes keys prefixed
+    # `name,`, and a global has no comma. The model could not be cleared to start another.
+    @testset "a global survives its components, and can still be removed" begin
+        G = GUI
+        prev = G.SHELL[]
+        sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        try
+            G.shell_open_model(joinpath(pkgdir(OITOOLS), "demos", "models",
+                                        "SPARCO_Star_Disk.toml"))
+            m = G._model(sh)
+            @test haskey(m.dict, "fs") && "fs" in m.free
+
+            @test G.shell_remove_component("star") == ""
+            @test G.shell_remove_component("disk") == ""
+            @test collect(keys(m.dict)) == ["fs"]        # the bug: the global outlives both
+
+            # Globals only. A component's keys are what the parser identifies it BY, so a
+            # single-key deletion there leaves a component it can no longer place.
+            @test startswith(G.shell_remove_param("disk,fwhm"), "!")
+            @test startswith(G.shell_remove_param("nope"), "!")
+
+            @test G.shell_remove_param("fs") == ""
+            @test isempty(m.dict) && isempty(m.free) && isempty(m.lb) && isempty(m.ub)
+            @test G.shell_model_rows() == ""
+
+            # Removed while something still refers to it, the result is reported rather than
+            # rewritten -- `model_warnings` names every expression left pointing at nothing.
+            m.dict = Dict{String,Any}("star,ud" => 3.0, "star,f" => "\$fs * 1.0",
+                                      "disk,fwhm" => 5.0, "disk,f" => "1 - \$fs",
+                                      "fs" => 0.4)
+            m.free = ["fs"]
+            @test G.shell_remove_param("fs") == ""
+            w = split(G.shell_model_warnings(), "\n")
+            @test length(w) == 2
+            @test all(occursin("fs", x) for x in w)
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
+    # The expression dialog's checker and keyword list answer the question the parser answers
+    # later, so every verdict is held against whether the model actually evaluates.
+    @testset "the expression checker agrees with the parser" begin
+        G = GUI
+        prev = G.SHELL[]
+        sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        uv = [1e7 2e7; 0.0 0.0]
+        runs(d) = try
+            eval_model(dict_to_model(Dict{String,Any}(d), String[]), Float64[], uv;
+                       wl = fill(1.6e-6, 2), mjd = fill(57000.0, 2))
+            true
+        catch
+            false
+        end
+        verdicts(key, expr) = Dict(f[1] => f[2] for f in
+                                   split.(split(G.shell_check_expression(key, expr), "\n"), '\t'))
+        enabled(key) = [f[1] for f in split.(split(G.shell_expression_keywords(key), "\n"), '\t')
+                        if f[3] == "1"]
+        try
+            m = G._model(sh)
+
+            # An ordinary derived value looks a reference up literally: `$ud` in `star,f` is
+            # not `star,ud`, and the checker says what to write instead.
+            @test G.shell_add_component("star", "ud") == ""
+            @test G.shell_set_param("star,f", "expr", "\$ud * 0.1") == ""
+            f = split(G.shell_check_expression("star,f", "\$ud * 0.1"), '\t')
+            @test f[2] == "unknown" && occursin("\$star,ud", f[3])
+            @test !runs(m.dict)
+            @test verdicts("star,f", "\$star,ud * 0.1")["star,ud"] == "ok"
+            @test G.shell_set_param("star,f", "expr", "\$star,ud * 0.1") == ""
+            @test runs(m.dict)
+            @test G.shell_remove_component("star") == ""
+
+            # The visibility function's own seed checks clean, `$B` included, and its palette
+            # offers the baseline beside the wavelength and the epoch.
+            @test G.shell_add_component("comp", "vis_func") == ""
+            @test all(==("ok"), values(verdicts("comp,visfunc", m.dict["comp,visfunc"])))
+            @test runs(m.dict)
+            @test sort(enabled("comp,visfunc")) == ["\$B", "\$MJD", "\$WL"]
+            @test verdicts("comp,visfunc", "\$B * \$WL")["WL"] == "ok"
+            @test verdicts("comp,visfunc", "\$B * \$R")["R"] == "scope"
+            @test G.shell_remove_component("comp") == ""
+
+            @test all(length(split(l, '\t')) == 5
+                      for l in split(G.shell_expression_keywords("star,f"), "\n"))
+            @test sort(enabled("ring,profile")) ==
+                  sort(["\$R", "\$MU", "\$D", "\$RMIN", "\$RMAX", "\$DMIN", "\$DMAX"])
+            @test sort(enabled("star,f")) == ["\$MJD", "\$WL"]
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
+    # The two models the click-through walkthrough could not build -- SPARCO, and anything
+    # sharing a parameter -- built here from an empty panel with the panel's own calls.
+    @testset "+ parameter and Link build what clicks could not" begin
+        G = GUI
+        prev = G.SHELL[]
+        sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        uv = [1e7 2e7; 0.0 0.0]
+        runs(d) = try
+            eval_model(dict_to_model(Dict{String,Any}(d), String[]), Float64[], uv;
+                       wl = fill(1.6e-6, 2), mjd = fill(57000.0, 2))
+            true
+        catch
+            false
+        end
+        try
+            m = G._model(sh)
+
+            # SPARCO: a global flux fraction and a spectral slope on the disc.
+            @test G.shell_add_component("star", "point") == ""
+            @test G.shell_add_component("disk", "gaussian") == ""
+            @test G.shell_add_param("__global__", "fs", 0.4) == ""
+            @test G.shell_add_param("disk", "slope", 0.5) == ""
+            @test m.dict["fs"] == 0.4 && m.dict["disk,slope"] == 0.5
+            @test G.shell_set_param("fs", "mode", "free") == ""
+            @test G.shell_set_param("disk,slope", "mode", "free") == ""
+            den = "(\$fs * (\$WL/1.6e-6)^(-4) + (1 - \$fs) * (\$WL/1.6e-6)^\$disk,slope)"
+            @test G.shell_set_param("star,f", "expr", "\$fs * (\$WL/1.6e-6)^(-4) / " * den) == ""
+            @test G.shell_set_param("disk,f", "expr",
+                                    "(1 - \$fs) * (\$WL/1.6e-6)^\$disk,slope / " * den) == ""
+            demo = read_model_file(joinpath(pkgdir(OITOOLS), "demos", "models",
+                                            "SPARCO_Star_Disk.toml"))
+            @test sort(collect(keys(m.dict))) == sort(collect(keys(demo.model)))
+            @test sort(m.free) == sort(demo.free)
+            @test isempty(G.shell_model_warnings())
+            @test runs(m.dict)
+
+            # A name the parser already reads, a built-in, a bad identifier, a duplicate, a
+            # component that is not there: each refused, and the dialog's check says so first.
+            for (c, n) in (("disk", "ud"), ("disk", "u"), ("disk", "az amp1"), ("__global__", "WL"),
+                           ("__global__", "B"), ("__global__", "2x"), ("__global__", "a,b"),
+                           ("__global__", "fs"), ("disk", "slope"), ("nope", "a"),
+                           ("__global__", "spatial_kernel"), ("__global__", ""))
+                @test !isempty(G.shell_param_name_problem(c, n))
+                @test startswith(G.shell_add_param(c, n, 1.0), "!")
+            end
+            @test m.dict["disk,fwhm"] isa Real                 # still a Gaussian
+
+            # What "+ parameter" adds, Remove takes away; what the parser reads, it does not.
+            @test G.shell_param_removable("fs") == "1"
+            @test G.shell_param_removable("disk,slope") == "1"
+            @test G.shell_param_removable("disk,fwhm") == "0"
+            @test G.shell_param_removable("star,f") == "0"
+            @test startswith(G.shell_remove_param("disk,fwhm"), "!")
+            @test G.shell_add_param("disk", "spare", 2.0) == ""
+            @test G.shell_remove_param("disk,spare") == ""
+            @test !haskey(m.dict, "disk,spare")
+
+            # What nothing uses, the banner's "Remove them" clears in one go.
+            @test G.shell_add_param("disk", "spare", 2.0) == ""
+            @test G.shell_add_param("disk", "other", 3.0) == ""
+            @test occursin("disk,spare", G.shell_model_inspection())
+            @test G.shell_remove_unused() == ""
+            @test !haskey(m.dict, "disk,spare") && !haskey(m.dict, "disk,other")
+            @test haskey(m.dict, "disk,slope")                 # used, so kept
+            @test startswith(G.shell_remove_unused(), "!")
+
+            # Link: two orientations through one global, which takes the first's value and is
+            # free because one of them was.
+            empty!(m.dict); empty!(m.free); empty!(m.lb); empty!(m.ub)
+            @test G.shell_add_component("ring", "ring") == ""
+            @test G.shell_add_component("disk", "gaussian") == ""
+            @test G.shell_set_component_geometry("ring", "orientation", true) == ""
+            @test G.shell_set_component_geometry("disk", "orientation", true) == ""
+            G.shell_set_param("ring,incl", "value", 30.0); G.shell_set_param("ring,incl", "mode", "free")
+            G.shell_set_param("disk,incl", "value", 45.0)
+            @test startswith(G.shell_link_params("incl", "ring,incl"), "!")         # one is not a link
+            @test G.shell_link_params("incl", "ring,incl\tdisk,incl") == ""
+            @test m.dict["incl"] == 30.0 && "incl" in m.free
+            @test m.dict["ring,incl"] == "\$incl" && m.dict["disk,incl"] == "\$incl"
+            @test !("ring,incl" in m.free) && !haskey(m.lb, "ring,incl")
+            @test haskey(m.lb, "incl") && haskey(m.ub, "incl")
+            @test runs(m.dict)
+            @test startswith(G.shell_link_params("incl", "ring,pa\tdisk,pa"), "!")  # name taken
+            @test startswith(G.shell_link_params("pa", "ring,incl\tdisk,pa"), "!")  # an expression
+
+            # Through a global, so removing either side leaves the other intact.
+            @test G.shell_remove_component("ring") == ""
+            @test !occursin("does not define", G.shell_model_warnings())
+            @test runs(m.dict)
+        finally
+            G.SHELL[] = prev
         end
     end
 end

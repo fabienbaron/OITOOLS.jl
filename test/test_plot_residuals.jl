@@ -4,7 +4,7 @@ datadir = joinpath(@__DIR__, "..", "demos", "data")
 
 # --- Monochromatic data ---
 println("=== Monochromatic (2004-data1) ===")
-data = readoifits(joinpath(datadir, "BC2004", "2004-data1.oifits"), warn=false)[1,1]
+data = readoifits(joinpath(datadir, "Beauty_Contest_2004", "2004-data1.oifits"), warn=false)[1,1]
 nx = 64; pixsize = 0.2
 ft = setup_nfft(data, nx, pixsize)
 x = gaussian2d(nx, nx, nx/6)
@@ -34,7 +34,7 @@ plot_t3amp_residuals(data, obs.t3amp)
 
 # --- Polychromatic data ---
 println("\n=== Polychromatic (OBJECT1_N) ===")
-data2 = readoifits(joinpath(datadir, "BC2026", "OBJECT1_N.oifits"), warn=false)[1,1]
+data2 = readoifits(joinpath(datadir, "Beauty_Contest_2026", "OBJECT1_N.oifits"), warn=false)[1,1]
 nx2 = 64; pixsize2 = 0.5
 ft2 = setup_nfft(data2, nx2, pixsize2)
 x2 = gaussian2d(nx2, nx2, nx2/6)
