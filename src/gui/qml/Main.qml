@@ -263,7 +263,8 @@ ApplicationWindow {
     function afterAction() { refreshConsole(); redrawPlot(); refreshObservables()
                              exploreTab.refreshCompareAvailability()
                              exploreTab.datasetName = datasetBox.currentText
-                             exploreTab.refreshSummary() }
+                             exploreTab.refreshSummary()
+                             exploreTab.refreshFilter() }
 
     // Plot scale, marker size and zoom step live in Julia, so ask it rather than trusting the
     // numbers the spin boxes were built with. The first field is the scale in FORCE, which is
@@ -395,6 +396,12 @@ ApplicationWindow {
     // Reads the dataset list back from the session and selects the newest entry. Called both
     // after a load and at startup, because a Session may already hold datasets before the
     // window exists -- `oitoolsgui.jl file.oifits` loads them and then calls gui().
+    // After Julia has moved to another dataset (a filter was applied), the box follows it.
+    function selectCurrentDataset() {
+        refreshDatasets()
+        afterAction()
+    }
+
     function refreshDatasets() {
         var names = Julia.shell_dataset_names().split("\n").filter(function (s) { return s.length > 0 })
         datasetBox.model = names
@@ -944,6 +951,8 @@ ApplicationWindow {
                 onStatusReported: function (text) { win.status = text }
                 onActionDone: win.afterAction()
                 onSavePngRequested: function (area) { win.savePng("explore", area) }
+                // A new dataset: the box lists and selects it, and everything follows it.
+                onFilterApplied: win.selectCurrentDataset()
             }
 
             // ── Observe ──────────────────────────────────────────────────────

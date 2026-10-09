@@ -48,33 +48,164 @@ function load_dataset!(s::Session, path::AbstractString; kwargs...)
 end
 
 """
-    filter_dataset!(session, name; kwargs...) -> DatasetEntry
+    filter_dataset!(session, name; read = Dict(), prep = Dict(), spec = "", kwargs...)
+        -> DatasetEntry
 
-Apply `set_data_filter` + `filter_data` to a loaded dataset and add the result as a new
-entry, leaving the original untouched.
+Filter a loaded dataset into a new entry, leaving the original untouched, and log the calls
+that do it.
 
-Filtering in OITOOLS is destructive-by-copy, so keeping the source is what gives the GUI undo
-for free: the filtered dataset is derived, and dropping it restores the original view.
-Every bin is filtered, each by its own discard lists, and the dataset keeps its shape: a
-binned dataset stays binned.
+- `kwargs` go to `set_data_filter`, bin by bin: every bin is filtered by its own discard lists
+  and the dataset keeps its shape.
+- `read`: options for `readoifits` (`insname`, `targetname`, `use_v2`, `ignore_flags`, …).
+  What they select is decided when the file is read, so when any is given the file is read
+  again with the source's own options plus these, and the filter applies to that.
+- `prep`: error-bar floors and multipliers for `oifits_prep`, applied to the result. They
+  change the data rather than remove any of it.
+- `spec`: the Filter section's settings, kept on the entry so the section can show them again.
+
+Filtering is destructive-by-copy, so keeping the source is what gives the GUI undo for free:
+choosing the source again is the undo.
 """
-function filter_dataset!(s::Session, name::AbstractString; kwargs...)
+function filter_dataset!(s::Session, name::AbstractString;
+                         read::AbstractDict = Dict{Symbol,Any}(),
+                         prep::AbstractDict = Dict{Symbol,Any}(),
+                         spec::AbstractString = "", kwargs...)
     src = dataset(s, name)
     kw  = Dict{Symbol,Any}(kwargs)
-    out = map(d -> OITOOLS.filter_data(d, OITOOLS.set_data_filter(d; kwargs...)), src.data)
+    ropts = merge(src.readopts, Dict{Symbol,Any}(read))
+    base = isempty(read) ? src.data :
+           OITOOLS.readoifits(src.path; ropts..., warn = false, verbose = false)
+    base isa AbstractArray || throw(ArgumentError("readoifits returned nothing for $(src.path)"))
+    out = map(d -> OITOOLS.filter_data(d, OITOOLS.set_data_filter(d; kwargs...)), base)
+    isempty(prep) || foreach(d -> OITOOLS.oifits_prep(d; prep...), out)
 
     newname = _next_name(s.datasets, "data")
-    # The source's READ options: the filter is in the log, and a re-read of the file (rebinning)
-    # must not be handed filter keywords as though readoifits took them.
-    entry = DatasetEntry(newname, src.path, out, copy(src.readopts), src.spectralbin,
-                         src.temporalbin, src.name)
+    entry = DatasetEntry(newname, src.path, out, ropts, src.spectralbin, src.temporalbin,
+                         src.name, String(spec))
     push!(s.datasets, entry)
 
-    kwstr = _kwargs([k => v for (k, v) in sort(collect(kw), by = first)])
+    # Typed: over an empty dict a bare comprehension is a `Vector{Any}`, which `_kwargs` refuses.
+    kwstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(kw), by = first)])
     call  = isempty(kwstr) ? "set_data_filter(d)" : "set_data_filter(d; $kwstr)"
-    log!(s, "$(newname) = map(d -> filter_data(d, $call), $name)";
+    from  = if isempty(read)
+        name
+    else
+        rstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(ropts), by = first)];
+                       defaults = _READOIFITS_DEFAULTS)
+        isempty(rstr) ? "readoifits($(_literal(src.path)))" :
+                        "readoifits($(_literal(src.path)); $rstr)"
+    end
+    log!(s, "$(newname) = map(d -> filter_data(d, $call), $from)";
          note = "filter $(src.name)", binding = newname)
+    if !isempty(prep)
+        pstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(prep), by = first)])
+        log!(s, "foreach(d -> oifits_prep(d; $pstr), $newname)"; note = "error bars of $newname")
+    end
     return entry
+end
+
+# ── the Filter section's settings ─────────────────────────────────────────────────────
+
+const _ERR_ROWS = ("v2", "t3amp", "t3phi", "visamp", "visphi", "flux")
+_is_phase(o) = o in ("t3phi", "visphi")
+
+"""
+    filter_spec_kwargs(spec) -> (; read, filter, prep) or a String
+
+The Filter section's settings, as `key\tvalue` lines, turned into the three groups
+`filter_dataset!` takes. A field left empty takes no part. A String is a refusal to show as it
+is (a range whose minimum is above its maximum, a number that does not parse).
+
+| keys | becomes |
+|---|---|
+| `wav_min`, `wav_max` (µm) | `wav_range` |
+| `bl_min`, `bl_max` with `bl_unit` = `Mλ` or `m` | `baseline_range` or `baseline_length_range` |
+| `nights` (MJD days kept, comma-separated) | `mjd_range`, one window per night |
+| `insname`, `target`, `use_v2`, `use_t3`, `use_vis`, `use_flux`, `ignore_flags` | read options |
+| `exclude_stations`, `exclude_baselines`, `exclude_triangles` (comma-separated) | the same keywords |
+| `<obs>_add`, `<obs>_rel`, `<obs>_mult` for v2, t3amp, t3phi, visamp, visphi, flux | `oifits_prep` |
+| `<obs>_cap`, `<obs>_caprel` | `max_<obs>_err`, `max_<obs>_err_rel` |
+| `bad`, `snr`, `v2_min`, `v2_max`, `t3amp_min`, `t3amp_max` | the quality cuts |
+| `remove_v2`, `remove_t3`, `remove_vis`, `remove_flux` (indices), `remove_uv` | the points picked by hand (`uv_bad` for uv points) |
+"""
+function filter_spec_kwargs(spec::AbstractString)
+    d = Dict{String,String}()
+    for line in split(String(spec), '\n')
+        f = split(line, '\t'; limit = 2)
+        length(f) == 2 && !isempty(strip(f[2])) && (d[String(strip(f[1]))] = String(strip(f[2])))
+    end
+    num(k) = (v = tryparse(Float64, get(d, k, "")); v)
+    for (k, v) in d
+        (endswith(k, "_min") || endswith(k, "_max") || endswith(k, "_add") ||
+         endswith(k, "_rel") || endswith(k, "_mult") || endswith(k, "_cap") ||
+         endswith(k, "_caprel") || k == "snr") && tryparse(Float64, v) === nothing &&
+            return "! $(k): $(repr(v)) is not a number"
+    end
+    list(k) = String[strip(x) for x in split(get(d, k, ""), ',') if !isempty(strip(x))]
+    flag(k) = get(d, k, "") == "1"
+    read = Dict{Symbol,Any}(); filt = Dict{Symbol,Any}(); prep = Dict{Symbol,Any}()
+
+    function range!(key, lo, hi, scale, what, none_lo)
+        a, b = num(lo), num(hi)
+        a === nothing && b === nothing && return nothing
+        a !== nothing && b !== nothing && a > b && return "! the $what range is empty: $a is above $b"
+        filt[key] = Float64[a === nothing ? none_lo : a * scale, b === nothing ? 1e99 : b * scale]
+        return nothing
+    end
+    r = range!(:wav_range, "wav_min", "wav_max", 1e-6, "wavelength", -1.0)
+    r === nothing || return r
+    r = get(d, "bl_unit", "Mλ") == "m" ?
+        range!(:baseline_length_range, "bl_min", "bl_max", 1.0, "baseline", 0.0) :
+        range!(:baseline_range, "bl_min", "bl_max", 1e6, "baseline", 0.0)
+    r === nothing || return r
+    if haskey(d, "nights")
+        n = [tryparse(Int, x) for x in list("nights")]
+        any(isnothing, n) && return "! nights: not a list of MJD days"
+        isempty(n) && return "! no night left: tick at least one"
+        filt[:mjd_range] = [Float64[k, k + 1] for k in sort(n)]
+    end
+
+    haskey(d, "insname") && (read[:insname] = d["insname"])
+    haskey(d, "target")  && (read[:targetname] = d["target"])
+    for t in ("v2", "t3", "vis", "flux")
+        get(d, "use_$t", "1") == "0" && (read[Symbol("use_$t")] = false)
+    end
+    flag("ignore_flags") && (read[:ignore_flags] = true)
+
+    for (k, kk) in (("exclude_stations", :exclude_stations), ("exclude_baselines", :exclude_baselines),
+                    ("exclude_triangles", :exclude_triangles))
+        l = list(k); isempty(l) || (filt[kk] = l)
+    end
+
+    # Points picked by hand with the selection tools, as indices.
+    for (k, kk) in (("remove_v2", :remove_v2), ("remove_t3", :remove_t3), ("remove_vis", :remove_vis),
+                    ("remove_flux", :remove_flux), ("remove_uv", :uv_bad))
+        haskey(d, k) || continue
+        v = [tryparse(Int, x) for x in list(k)]
+        any(isnothing, v) && return "! $(k): not a list of point numbers"
+        isempty(v) || (filt[kk] = Int.(v))
+    end
+
+    for o in _ERR_ROWS
+        a, m = num("$(o)_add"), num("$(o)_mult")
+        a === nothing || (prep[Symbol("min_$(o)_err_add")] = a)
+        m === nothing || (prep[Symbol("$(o)_err_mult")] = m)
+        if !_is_phase(o)
+            rr = num("$(o)_rel"); rr === nothing || (prep[Symbol("min_$(o)_err_rel")] = rr)
+            cr = num("$(o)_caprel"); cr === nothing || (filt[Symbol("max_$(o)_err_rel")] = cr)
+        end
+        c = num("$(o)_cap"); c === nothing || (filt[Symbol("max_$(o)_err")] = c)
+    end
+
+    if flag("bad")
+        filt[:filter_bad_data] = true
+        for (k, kk) in (("snr", :filter_v2_snr_threshold), ("v2_min", :cutoff_minv2),
+                        ("v2_max", :cutoff_maxv2), ("t3amp_min", :cutoff_mint3amp),
+                        ("t3amp_max", :cutoff_maxt3amp))
+            v = num(k); v === nothing || (filt[kk] = v)
+        end
+    end
+    return (; read, filter = filt, prep)
 end
 
 """
@@ -130,8 +261,11 @@ function dataset_summary(e::DatasetEntry)
     counts = [("V²", :nv2), ("T3amp", :nt3amp), ("T3φ", :nt3phi), ("VISamp", :nvisamp),
               ("VISφ", :nvisphi), ("flux", :nflux)]
     push!(rows, "points" => join((string(l, " ", tot(f)) for (l, f) in counts if tot(f) > 0), " · "))
-    push!(rows, "AMPTYP / PHITYP" => string(isempty(d1.amptyp) ? "—" : d1.amptyp, " / ",
-                                            isempty(d1.phityp) ? "—" : d1.phityp))
+    # AMPTYP / PHITYP describe the OI_VIS tables, so only when there are some.
+    if any(d -> length(d.visamp) > 0, data)
+        push!(rows, "AMPTYP / PHITYP" => string(isempty(d1.amptyp) ? "—" : d1.amptyp, " / ",
+                                                isempty(d1.phityp) ? "—" : d1.phityp))
+    end
     size(e.data) == (1, 1) ||
         push!(rows, "bins" => string(size(e.data, 1), " wavelength × ", size(e.data, 2), " epoch"))
     e.derived_from === nothing || push!(rows, "filtered from" => e.derived_from)

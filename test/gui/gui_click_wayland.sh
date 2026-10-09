@@ -130,9 +130,9 @@ SHOT 01_dialog
 CL 700 342 1          # v1295Aql.oifits
 CL 801 603 8          # the dialog's Open button
 SHOT 02_after_open
-CL 133 96 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3   # Plot menu, in the frame
+CL 148 611 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3   # Plot menu, in the frame
 SHOT 03_kind
-CL 133 123 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3   # Colour menu
+CL 148 638 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3   # Colour menu
 SHOT 04_colour
 
 wait "$GUI_PID" 2>/dev/null

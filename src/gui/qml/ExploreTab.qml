@@ -45,10 +45,26 @@ Item {
     // The plot kind as the menu shows it, for the window's PNG file name.
     readonly property string currentKind: kindBox.currentText
     property string pickText: ""
+    property string selectTool: "none"
+    property string selectionText: ""
 
     signal statusReported(string text)      // a status line for the window's header
     signal actionDone()                     // the window refreshes everything that follows the data
     signal savePngRequested(var area)       // the window owns the picker
+    signal filterApplied()                  // a filtered dataset was made and selected
+
+    // The Filter section follows the dataset on screen: a new dataset brings its own choices
+    // and settings; anything else (a new plot kind, a redraw) only needs the preview again,
+    // which every redraw clears -- and must not lose settings being edited.
+    property string filterDataset: "\u0000"
+    function refreshFilter() {
+        if (root.datasetName !== root.filterDataset) {
+            root.filterDataset = root.datasetName
+            filterPanel.refresh()
+        } else {
+            filterPanel.preview()
+        }
+    }
 
     // Repaint the plot. This is NOT optional and it is easy to forget: the shell updates
     // Makie Observables rather than inserting plots, and an Observable assignment does not by
@@ -185,6 +201,11 @@ Item {
         onTriggered: {
             var t = Julia.shell_pick_text()
             if (t !== root.pickText) root.pickText = t
+            // The selection is made by Julia, from the mouse, so it is read the same way.
+            if (root.selectTool !== "none" || root.selectionText.length > 0) {
+                var st = Julia.shell_selection_text()
+                if (st !== root.selectionText) root.selectionText = st
+            }
         }
     }
 
@@ -197,7 +218,7 @@ Item {
         ScrollView {
             id: frame
             visible: root.frameOpen
-            SplitView.preferredWidth: root.dp(290)
+            SplitView.preferredWidth: root.dp(330)
             SplitView.minimumWidth: root.dp(220)
             contentWidth: availableWidth
             clip: true
@@ -206,10 +227,75 @@ Item {
                 width: frame.availableWidth
                 spacing: dp(8)
 
+                // What is plotted: read-only, from the file and the loaded data. First, so what
+                // the controls below act on is the first thing read.
+                GroupBox {
+                    title: "Dataset"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: dp(6); Layout.rightMargin: dp(6); Layout.topMargin: dp(6)
+
+                    GridLayout {
+                        anchors.fill: parent
+                        columns: 2
+                        columnSpacing: dp(8)
+                        rowSpacing: dp(2)
+
+                        Label {
+                            Layout.columnSpan: 2
+                            Layout.fillWidth: true
+                            text: root.datasetName.length > 0 ? root.datasetName : "no dataset loaded"
+                            color: root.datasetName.length > 0 ? "#000" : "#888"
+                            font.bold: root.datasetName.length > 0
+                            elide: Text.ElideMiddle
+                        }
+                        Repeater {
+                            model: root.summaryRows
+                            delegate: Label {
+                                required property var modelData
+                                required property int index
+                                Layout.row: 1 + index
+                                Layout.column: 0
+                                Layout.alignment: Qt.AlignTop
+                                text: modelData.label
+                                color: "#666"
+                                font.pointSize: pt(baseFontPt - 1)
+                            }
+                        }
+                        Repeater {
+                            model: root.summaryRows
+                            delegate: Label {
+                                required property var modelData
+                                required property int index
+                                Layout.row: 1 + index
+                                Layout.column: 1
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                text: modelData.value
+                                wrapMode: Text.Wrap
+                                font.pointSize: pt(baseFontPt - 1)
+                            }
+                        }
+                    }
+                }
+
+                GroupBox {
+                    title: "Filter"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: dp(6); Layout.rightMargin: dp(6)
+                    FilterPanel {
+                        id: filterPanel
+                        anchors.fill: parent
+                        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+                        onStatusReported: function (text) { root.statusReported(text) }
+                        onApplied: root.filterApplied()
+                        onPreviewChanged: root.redraw()
+                    }
+                }
+
                 GroupBox {
                     title: "Plot"
                     Layout.fillWidth: true
-                    Layout.leftMargin: dp(6); Layout.rightMargin: dp(6); Layout.topMargin: dp(6)
+                    Layout.leftMargin: dp(6); Layout.rightMargin: dp(6)
 
                     GridLayout {
                         anchors.fill: parent
@@ -339,52 +425,61 @@ Item {
                     }
                 }
 
-                // What is plotted: read-only, from the file and the loaded data. Below the
-                // controls, so its length -- which changes with the dataset -- never moves them.
+                // Selection: a box or a lasso drawn on the plot picks points, ringed in red;
+                // "Add to filter" hands them to the Filter section, whose Apply removes them.
+                // With "none" the plot's own zoom, pan, pick and reset are untouched.
                 GroupBox {
-                    title: "Dataset"
+                    title: "Select"
                     Layout.fillWidth: true
                     Layout.leftMargin: dp(6); Layout.rightMargin: dp(6)
 
-                    GridLayout {
+                    ColumnLayout {
                         anchors.fill: parent
-                        columns: 2
-                        columnSpacing: dp(8)
-                        rowSpacing: dp(2)
-
-                        Label {
-                            Layout.columnSpan: 2
-                            Layout.fillWidth: true
-                            text: root.datasetName.length > 0 ? root.datasetName : "no dataset loaded"
-                            color: root.datasetName.length > 0 ? "#000" : "#888"
-                            font.bold: root.datasetName.length > 0
-                            elide: Text.ElideMiddle
-                        }
-                        Repeater {
-                            model: root.summaryRows
-                            delegate: Label {
-                                required property var modelData
-                                required property int index
-                                Layout.row: 1 + index
-                                Layout.column: 0
-                                Layout.alignment: Qt.AlignTop
-                                text: modelData.label
-                                color: "#666"
-                                font.pointSize: pt(baseFontPt - 1)
+                        spacing: dp(2)
+                        RowLayout {
+                            ButtonGroup { id: toolGroup }
+                            Repeater {
+                                model: ["none", "box", "lasso"]
+                                RadioButton {
+                                    required property string modelData
+                                    text: modelData
+                                    ButtonGroup.group: toolGroup
+                                    checked: root.selectTool === modelData
+                                    onClicked: {
+                                        root.selectTool = modelData
+                                        Julia.shell_set_select_tool(modelData)
+                                    }
+                                }
                             }
                         }
-                        Repeater {
-                            model: root.summaryRows
-                            delegate: Label {
-                                required property var modelData
-                                required property int index
-                                Layout.row: 1 + index
-                                Layout.column: 1
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: 1
-                                text: modelData.value
-                                wrapMode: Text.Wrap
-                                font.pointSize: pt(baseFontPt - 1)
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: root.selectionText.length > 0 ? root.selectionText
+                                  : root.selectTool === "none" ? "choose box or lasso, then drag on the plot"
+                                  : "drag on the plot"
+                            color: root.selectionText.length > 0 ? "#000" : "#888"
+                            font.pointSize: pt(baseFontPt - 1)
+                        }
+                        RowLayout {
+                            Button {
+                                text: "Add to filter"
+                                enabled: root.selectionText.length > 0
+                                onClicked: {
+                                    filterPanel.addHandPicked(Julia.shell_selection_spec())
+                                    Julia.shell_clear_selection()
+                                    root.selectionText = ""
+                                    root.redraw()
+                                }
+                            }
+                            Button {
+                                text: "Clear"
+                                enabled: root.selectionText.length > 0
+                                onClicked: {
+                                    Julia.shell_clear_selection()
+                                    root.selectionText = ""
+                                    root.redraw()
+                                }
                             }
                         }
                     }

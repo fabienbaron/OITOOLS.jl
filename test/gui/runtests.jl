@@ -156,6 +156,188 @@ const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
         @test Dict(G.dataset_summary(f))["filtered from"] == "data1"
     end
 
+    # Explore's Filter section (GUI_Explore.md, Phase 4), through the shell calls the panel
+    # makes: each kind of setting applied, the result compared with the library called
+    # directly on the parent, the settings kept with the result, the exported script
+    # replaying every cut, and the Model panel then evaluating the filtered data.
+    @testset "the Filter section: each kind, against the library, and replayed" begin
+        G = GUI
+        prev = G.SHELL[]
+        gd = joinpath(@__DIR__, "data")
+        sess = Session()
+        load_dataset!(sess, joinpath(gd, "2004-data1.oifits"); warn = false, verbose = false)
+        load_dataset!(sess, joinpath(gd, "v1295Aql.oifits"); warn = false, verbose = false)
+        load_dataset!(sess, joinpath(OIF, "MWC275_4T.oifits"); warn = false, verbose = false)
+        sfig = Makie.Figure(); sax = Makie.Axis(sfig[1, 1])
+        sh = G.ShellState(sess, sfig, sax, nothing, String[], Any[], 1,
+                          :v2, :baseline, false, :none, :none, false, "", String[],
+                          G.build_canvas(sfig, sax), "", nothing, nothing, nothing, nothing,
+                          nothing, nothing, nothing, Any[], nothing, nothing, nothing,
+                          nothing, "", "", nothing)
+        G.SHELL[] = sh
+        try
+            sel(name) = (sh.current = findfirst(e -> e.name == name, sess.datasets))
+            direct(name; kw...) = (d = G.dataset(sess, name).data[1, 1];
+                                   OITOOLS.filter_data(d, OITOOLS.set_data_filter(d; kw...)))
+            function apply(name, spec)
+                sel(name)
+                @test !startswith(G.shell_apply_filter(spec), "!")
+                e = G.current_dataset(sh)
+                @test e.derived_from == name && e.filterspec == spec
+                @test G.shell_filter_spec() == spec
+                return e.data[1, 1]
+            end
+
+            # The choices come from the file: 2004-data1's six stations and fifteen baselines.
+            sel("data1")
+            ch = split(G.shell_filter_choices(), '\n')
+            @test count(startswith("station\t"), ch) == 6
+            @test count(startswith("baseline\t"), ch) == 15
+            @test any(startswith("night\t"), ch) && any(==("target\tFKV0497"), ch)
+
+            # The preview counts what Apply removes, and draws it on the V² plot.
+            sel("data1"); sh.kind = :v2
+            pv = G.shell_filter_preview("bl_max\t60")
+            want = direct("data1"; baseline_range = [0.0, 60e6])
+            d0 = G.dataset(sess, "data1").data[1, 1]
+            @test occursin("Filtered $(d0.nv2 - want.nv2)/$(d0.nv2) V²", pv)
+            @test length(sh.canvas.prevpoints[]) == d0.nv2 - want.nv2
+            @test G.shell_filter_preview_clear() == "" && isempty(sh.canvas.prevpoints[])
+            @test startswith(G.shell_filter_preview("bl_min\t9\nbl_max\t1"), "! the baseline range is empty")
+            @test startswith(G.shell_apply_filter(""), "! nothing to filter")
+
+            # Ranges: spatial frequency, baseline length, wavelength, nights.
+            @test apply("data1", "bl_max\t60").nv2 == want.nv2
+            @test apply("data1", "bl_unit\tm\nbl_min\t15").nv2 ==
+                  direct("data1"; baseline_length_range = [15.0, 1e99]).nv2
+            @test apply("data2", "wav_max\t1.6").nv2 ==
+                  direct("data2"; wav_range = [-1.0, 1.6e-6]).nv2
+            n1 = minimum(floor.(Int, G.dataset(sess, "data2").data[1, 1].uv_mjd))
+            @test apply("data2", "nights\t$n1").nv2 ==
+                  direct("data2"; mjd_range = [[Float64(n1), n1 + 1.0]]).nv2
+            # Telescopes, baselines, triangles.
+            @test apply("data1", "exclude_stations\tE02").nv2 ==
+                  direct("data1"; exclude_stations = ["E02"]).nv2
+            @test apply("data1", "exclude_baselines\tAC0-AE0").nv2 ==
+                  direct("data1"; exclude_baselines = ["AC0-AE0"]).nv2
+            # Error bars: a cap removes, a floor inflates.
+            @test apply("data1", "v2_cap\t0.005").nv2 == direct("data1"; max_v2_err = 0.005).nv2
+            f = apply("data1", "v2_add\t0.05")
+            @test f.nv2 == d0.nv2 && all(f.v2_err .>= 0.05f0)
+            # Quality.
+            @test apply("data1", "bad\t1\nsnr\t5").nv2 ==
+                  direct("data1"; filter_bad_data = true, filter_v2_snr_threshold = 5.0).nv2
+            # Read options: an instrument, and the flags reset (MWC 275 flags 30 finite triangles).
+            @test apply("data2", "insname\tMIRCX").nv2 ==
+                  readoifits(joinpath(gd, "v1295Aql.oifits"); insname = "MIRCX",
+                             warn = false, verbose = false)[1, 1].nv2
+            m0 = G.dataset(sess, "data3").data[1, 1]
+            @test length(apply("data3", "ignore_flags\t1").t3phi) == length(m0.t3phi) + 30
+
+            # Applying from a filtered dataset filters its unfiltered source afresh.
+            g = apply("data1", "bl_max\t60")
+            nm = G.current_dataset(sh).name
+            @test !startswith(G.shell_apply_filter("bl_min\t60"), "!")
+            @test G.current_dataset(sh).derived_from == "data1"
+            @test G.current_dataset(sh).data[1, 1].nv2 == direct("data1"; baseline_range = [60e6, 1e99]).nv2
+            @test occursin("data1 › filtered", G.shell_dataset_names())
+
+            # The exported script makes every one of these datasets.
+            m = Module(:ReplayFilterSection)
+            Core.eval(m, :(using OITOOLS))
+            Core.eval(m, Meta.parseall(export_script(sess)))
+            for e in sess.datasets
+                e.derived_from === nothing && continue
+                @test Core.eval(m, :($(Symbol(e.name))[1, 1].nv2)) == e.data[1, 1].nv2
+                @test Core.eval(m, :(length($(Symbol(e.name))[1, 1].t3phi))) == length(e.data[1, 1].t3phi)
+            end
+
+            # The Model panel evaluates the dataset on screen, the filtered one included.
+            G.shell_open_model(joinpath(pkgdir(OITOOLS), "demos", "models", "Uniform_Disk.toml"))
+            sel("data1"); c_all = G.shell_model_chi2()
+            sel(nm);      c_cut = G.shell_model_chi2()
+            @test c_all != c_cut && !isempty(c_cut)
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
+    # Explore's selection (GUI_Explore.md, Phase 5), without a mouse: the polygon the mouse
+    # handler hands over selects known points, "Add to filter" turns them into indices of the
+    # unfiltered dataset, and Apply removes exactly those -- also when the selection was made
+    # on a filtered copy, and for uv points. The exported script replays it.
+    @testset "selection: a known set flagged, on the source and through a filtered copy" begin
+        G = GUI
+        prev = G.SHELL[]
+        sess = Session()
+        load_dataset!(sess, joinpath(@__DIR__, "data", "2004-data1.oifits"); warn = false, verbose = false)
+        sfig = Makie.Figure(); sax = Makie.Axis(sfig[1, 1])
+        sh = G.ShellState(sess, sfig, sax, nothing, String[], Any[], 1,
+                          :v2, :baseline, false, :none, :none, false, "", String[],
+                          G.build_canvas(sfig, sax), "", nothing, nothing, nothing, nothing,
+                          nothing, nothing, nothing, Any[], nothing, nothing, nothing,
+                          nothing, "", "", nothing)
+        G.SHELL[] = sh
+        try
+            d = sess.datasets[1].data[1, 1]
+            x = Float64.(d.v2_baseline) ./ 1e6; y = Float64.(d.v2)
+            box(x0, x1, y0, y1) = [Makie.Point2f(x0, y0), Makie.Point2f(x1, y0),
+                                   Makie.Point2f(x1, y1), Makie.Point2f(x0, y1)]
+            want = findall(i -> 20 < x[i] < 30 && 0.08 < y[i] < 0.35, eachindex(x))
+            @test !isempty(want)
+
+            # The tools switch Makie's rectangle zoom off and back on.
+            @test G.shell_set_select_tool("box") == ""
+            @test startswith(G.shell_set_select_tool("magic"), "!")
+            @test G.select_polygon!(sh, box(20, 30, 0.08, 0.35)) == length(want)
+            @test G.SELECTION[].idx == want && length(sh.canvas.selpoints[]) == length(want)
+            @test occursin("$(length(want)) V² points selected on data1", G.shell_selection_text())
+            spec = G.shell_selection_spec()
+            @test spec == "remove_v2\t" * join(want, ",")
+
+            # Through the Filter section: exactly those points go.
+            @test !startswith(G.shell_apply_filter(spec), "!")
+            f = G.current_dataset(sh)
+            @test f.derived_from == "data1" && f.data[1, 1].nv2 == d.nv2 - length(want)
+            @test f.data[1, 1].v2 == d.v2[setdiff(1:d.nv2, want)]
+
+            # On the filtered copy, the same box names the same SOURCE points (none left there,
+            # so pick a different region and check it maps back by identity).
+            fd = f.data[1, 1]
+            fx = Float64.(fd.v2_baseline) ./ 1e6; fy = Float64.(fd.v2)
+            onf = findall(i -> 45 < fx[i] < 70, eachindex(fx))
+            @test G.select_polygon!(sh, box(45, 70, -1, 2)) == length(onf)
+            spec2 = G.shell_selection_spec()
+            src = parse.(Int, split(split(spec2, '\t')[2], ','))
+            @test d.v2[src] == fd.v2[onf] && d.v2_mjd[src] == fd.v2_mjd[onf]
+
+            # uv points: a point or its conjugate inside; removing them removes what uses them.
+            sh.current = 1; sh.kind = :uv
+            u = Float64.(d.uv[1, :]) ./ 1e6; v = Float64.(d.uv[2, :]) ./ 1e6
+            inuv = findall(i -> (40 < u[i] < 80 && 0 < v[i] < 60) || (40 < -u[i] < 80 && 0 < -v[i] < 60), eachindex(u))
+            @test G.select_polygon!(sh, box(40, 80, 0, 60)) == length(inuv)
+            uspec = G.shell_selection_spec()
+            @test startswith(uspec, "remove_uv\t")
+            @test !startswith(G.shell_apply_filter(uspec), "!")
+            g = G.current_dataset(sh).data[1, 1]
+            @test g.nuv == d.nuv - length(inuv) || g.nuv < d.nuv
+
+            @test G.shell_clear_selection() == "" && G.SELECTION[] === nothing
+            @test G.shell_set_select_tool("none") == ""
+
+            m = Module(:ReplaySelection)
+            Core.eval(m, :(using OITOOLS))
+            Core.eval(m, Meta.parseall(export_script(sess)))
+            for e in sess.datasets
+                e.derived_from === nothing && continue
+                @test Core.eval(m, :($(Symbol(e.name))[1, 1].nv2)) == e.data[1, 1].nv2
+            end
+        finally
+            G.SEL_TOOL[] = :none; G.SELECTION[] = nothing
+            G.SHELL[] = prev
+        end
+    end
+
     @testset "filter_dataset! derives without mutating the source" begin
         s = Session()
         load_dataset!(s, MONO; warn = false, verbose = false)
@@ -263,6 +445,28 @@ end
         @test all(isempty(p[]) for p in c.panels.errpoints)
         G.show_panels!(c, true)
         @test G.update_panels!(c, d, :v2) == n && !isempty(c.panels.points[1][])
+    end
+
+    # Log axes are labelled at whole decades and simple multiples, never 10^-0.5.
+    @testset "log ticks are never fractional powers of ten" begin
+        G = GUI
+        # At most two significant figures: 0.02, 0.5, 0.31 -- never 10^-0.5 = 0.316…
+        isnice(v) = (m = 10 * v / 10.0^floor(log10(v)); isapprox(m, round(m); atol = 1e-6))
+        for (lo, hi) in ((0.01, 0.9), (1e-6, 1.0), (0.2, 0.8), (3e-4, 2e-3), (1e-12, 10.0), (0.31, 0.36))
+            v = G.log_tick_values(lo, hi)
+            @test length(v) >= 2 && all(lo .<= v .<= hi)
+            @test all(isnice, v)
+            @test all(l -> !occursin('^', l), G.log_tick_label.(v))
+        end
+        @test G.log_tick_values(0.01, 0.9) == [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
+        @test G.log_tick_values(1e-6, 1.0) == [1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 1.0]
+        @test length(G.log_tick_values(1e-12, 10.0)) <= 9
+        fig = Makie.Figure(); ax = Makie.Axis(fig[1, 1])
+        c = build_canvas(fig, ax)
+        update_canvas!(c, d, :v2; logscale = true)
+        @test ax.yticks[] === G.log_tick_values
+        update_canvas!(c, d, :v2)
+        @test ax.ytickformat[] === Makie.automatic
     end
 
     @testset "zoom is bounded at both ends" begin

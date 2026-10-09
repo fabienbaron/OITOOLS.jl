@@ -29,7 +29,12 @@ mutable struct DatasetEntry
     spectralbin :: Any
     temporalbin :: Any
     derived_from:: Union{Nothing,String}   # set when this came from filtering another entry
+    # The Filter section's settings that made a filtered entry, as `key\tvalue` lines, so the
+    # section shows them again when the entry is selected. Empty for a file as read.
+    filterspec  :: String
 end
+DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from) =
+    DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, "")
 
 """
     ModelEntry

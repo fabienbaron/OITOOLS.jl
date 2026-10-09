@@ -400,11 +400,198 @@ function shell_select_dataset(i::Integer)
 end
 
 """Dataset names for the context-bar dropdown, newline-separated (QML reads a plain string)."""
-shell_dataset_names() = join([e.name * " — " * basename(e.path)
+shell_dataset_names() = join([e.name * " — " *
+                              (e.derived_from === nothing ? basename(e.path) :
+                                                            e.derived_from * " › filtered")
                               for e in _shell().session.datasets], "\n")
 
 """Index (1-based) of the dataset every perspective is looking at; 0 with none loaded."""
 shell_current_dataset() = _shell().current
+
+# ── the Filter section (Explore) ──────────────────────────────────────────────────────
+
+# The dataset a filter applies to: the current one, or the unfiltered dataset it came from.
+# A filter's settings describe the whole cut, so applying them again replaces the cut rather
+# than cutting what an earlier one left.
+function _filter_root(sh::ShellState)
+    e = current_dataset(sh)
+    for _ in 1:length(sh.session.datasets)
+        (e === nothing || e.derived_from === nothing) && break
+        i = findfirst(x -> x.name == e.derived_from, sh.session.datasets)
+        i === nothing && break
+        e = sh.session.datasets[i]
+    end
+    return e
+end
+
+"""
+    shell_filter_choices() -> String
+
+What the Filter section offers, from the unfiltered dataset and its file, as `kind\t…` lines:
+`extent_wav\tlo\thi` (µm), `extent_bl` (Mλ), `extent_blm` (m), `night\tMJD day\tlabel`,
+`insname\tname`, `target\tname`, `station\tname`, `baseline\tA-B`, `triangle\tA-B-C`.
+"""
+function shell_filter_choices()
+    sh = _shell()
+    e = _filter_root(sh)
+    e === nothing && return ""
+    data = vec(e.data)
+    lines = String[]
+    allof(f) = reduce(vcat, (Float64.(getfield(d, f)) for d in data))
+    lam, bl, mjd = allof(:uv_lam), allof(:uv_baseline), allof(:uv_mjd)
+    g(v) = @sprintf("%.4g", v)
+    if !isempty(lam)
+        push!(lines, join(("extent_wav", g(minimum(lam) * 1e6), g(maximum(lam) * 1e6)), "\t"))
+        push!(lines, join(("extent_bl", g(minimum(bl) / 1e6), g(maximum(bl) / 1e6)), "\t"))
+        blm = bl .* lam
+        push!(lines, join(("extent_blm", g(minimum(blm)), g(maximum(blm))), "\t"))
+    end
+    for n in sort(unique(floor.(Int, mjd)))
+        c = count(m -> floor(Int, m) == n, mjd)
+        push!(lines, string("night\t", n, "\t", Date(1858, 11, 17) + Day(n), "  ·  ", c, " uv points"))
+    end
+    hdr = try OITOOLS.load_oifits(e.path) catch; nothing end
+    if hdr !== nothing
+        for n in unique(String[i.insname for i in hdr.instr]);   push!(lines, "insname\t" * n); end
+        for n in unique(String[t.target for t in hdr.target]);   push!(lines, "target\t" * n);  end
+    end
+    d1 = first(data)
+    name(k) = d1.sta_name[findfirst(==(k), d1.sta_index)]
+    used = Set{Int}(); pairs = Set{Vector{Int}}(); tris = Set{Vector{Int}}()
+    for d in data
+        for c in eachcol(d.v2_sta_index);  push!(pairs, sort(collect(c))); union!(used, c); end
+        for c in eachcol(d.vis_sta_index); push!(pairs, sort(collect(c))); union!(used, c); end
+        for c in eachcol(d.t3_sta_index);  push!(tris, sort(collect(c)));  union!(used, c); end
+    end
+    for k in sort(collect(used)); push!(lines, "station\t" * name(k)); end
+    for p in sort(collect(pairs)); push!(lines, "baseline\t" * join(name.(p), "-")); end
+    for t in sort(collect(tris));  push!(lines, "triangle\t" * join(name.(t), "-")); end
+    return join(lines, "\n")
+end
+
+"""
+    shell_filter_preview(spec) -> String
+
+What the Filter section's settings would remove, without applying them: "Filtered 37/494 V²
+· 12/260 T3", over every bin (a T3 point holds its amplitude and phase together, so one count). When the plot shows the dataset being filtered (its first bin,
+as Explore plots it), those points are drawn hollow and grey on it.
+
+The instrument, target, table and flag choices are read options, decided when the file is
+read: they are not counted here, only on Apply.
+"""
+function shell_filter_preview(spec::AbstractString)
+    sh = _shell()
+    root = _filter_root(sh)
+    root === nothing && return ""
+    k = filter_spec_kwargs(spec)
+    if k isa String
+        sh.canvas === nothing || (sh.canvas.prevpoints[] = Makie.Point2f[])
+        return k
+    end
+    data = vec(root.data)
+    idxs = try
+        [OITOOLS.set_data_filter(d; k.filter...) for d in data]
+    catch err
+        sh.canvas === nothing || (sh.canvas.prevpoints[] = Makie.Point2f[])
+        return "! " * _cause(err)
+    end
+    parts = String[]
+    for (label, field, slot) in (("V²", :v2, 3), ("T3", :t3phi, 4), ("VIS", :visamp, 2), ("flux", :flux, 5))
+        n = sum(length(getfield(d, field)) for d in data)
+        n > 0 || continue
+        push!(parts, string(sum(length(ix[slot]) for ix in idxs), "/", n, " ", label))
+    end
+    msg = "Filtered " * join(parts, " · ")
+    _set_filter_preview!(sh, root, first(idxs))
+    return msg
+end
+
+# The removed points of the plot on screen, when it shows `root`'s first bin as data (not
+# panels, not residuals, whose y is not the data's).
+function _set_filter_preview!(sh::ShellState, root, idx)
+    c = sh.canvas
+    c === nothing && return nothing
+    if current_dataset(sh) !== root || sh.panels || sh.residual !== :none
+        c.prevpoints[] = Makie.Point2f[]
+        return nothing
+    end
+    d = root.data[1, 1]
+    kind = sh.kind
+    pts = Makie.Point2f[]
+    if kind === :uv
+        keep(n, bad) = setdiff(1:n, bad)
+        kept = Set{Int}()
+        union!(kept, d.indx_v2[keep(length(d.indx_v2), idx[3])])
+        t3k = keep(length(d.indx_t3_1), idx[4])
+        union!(kept, d.indx_t3_1[t3k], d.indx_t3_2[t3k], d.indx_t3_3[t3k])
+        union!(kept, d.indx_vis[keep(length(d.indx_vis), idx[2])])
+        gone = union(setdiff(1:d.nuv, kept), idx[1])
+        u = Float64.(d.uv[1, gone]) ./ 1e6; v = Float64.(d.uv[2, gone]) ./ 1e6
+        pts = vcat(Makie.Point2f.(u, v), Makie.Point2f.(-u, -v))
+    elseif haskey(OBS_SPECS, kind)
+        spec = OBS_SPECS[kind]
+        slot = spec.y === :v2 ? 3 : spec.y in (:t3phi, :t3amp) ? 4 :
+               spec.y === :flux ? 5 : 2
+        x = Float64.(getfield(d, spec.x)) .* spec.xscale
+        y = Float64.(getfield(d, spec.y))
+        r = sort(idx[slot])
+        pts = Makie.Point2f.(x[r], y[r])
+        sh.logy && filter!(p -> isfinite(p[2]) && p[2] > 0, pts)
+    end
+    c.prevpoints[] = pts
+    return nothing
+end
+
+"""
+    shell_apply_filter(spec) -> String
+
+Filter the dataset on screen -- or, when that is itself a filter's result, the dataset it came
+from -- with the Filter section's settings, into a new dataset shown as "data1 › filtered".
+Logged, so the exported script makes the same cut.
+"""
+function shell_apply_filter(spec::AbstractString)
+    sh = _shell()
+    root = _filter_root(sh)
+    root === nothing && return "! no dataset loaded"
+    k = filter_spec_kwargs(spec)
+    k isa String && return k
+    (isempty(k.read) && isempty(k.filter) && isempty(k.prep)) &&
+        return "! nothing to filter: every setting is at its default"
+    nlog = length(sh.session.log)
+    entry = try
+        filter_dataset!(sh.session, root.name; read = k.read, prep = k.prep,
+                        spec = String(spec), k.filter...)
+    catch err
+        msg = "! could not filter $(root.name): " * _cause(err)
+        console!(sh, msg; kind = :err)
+        return msg
+    end
+    for l in sh.session.log[nlog+1:end]
+        console!(sh, l.code; kind = :cmd)
+    end
+    sh.current = length(sh.session.datasets)
+    sh.canvas === nothing || (sh.canvas.prevpoints[] = Makie.Point2f[])
+    sh.status = try
+        refresh_plot!(sh)
+    catch err
+        "filtered into $(entry.name), but cannot plot it: " * _cause(err)
+    end
+    console!(sh, sh.status)
+    return sh.status
+end
+
+"""The Filter section's settings that made the current dataset; empty for a file as read."""
+function shell_filter_spec()
+    e = current_dataset(_shell())
+    return e === nothing ? "" : e.filterspec
+end
+
+"""Remove the filter preview from the plot (the section was reset or closed)."""
+function shell_filter_preview_clear()
+    sh = _shell()
+    sh.canvas === nothing || (sh.canvas.prevpoints[] = Makie.Point2f[])
+    return ""
+end
 
 """
     shell_dataset_summary() -> String
@@ -530,9 +717,40 @@ function install_interactions!(sh::ShellState)
     scene  = sh.axis.scene
     events = Makie.events(scene)
     downat = Ref((0.0, 0.0))
+    drawing = Ref(false)
+
+    # The selection tools: while one is chosen, a left drag draws a box or a lasso instead of
+    # zooming, and its release selects what is inside. With none chosen nothing here runs.
+    Makie.on(events.mouseposition, priority = 100) do _
+        (drawing[] && sh.canvas !== nothing) || return Makie.Consume(false)
+        p = Makie.Point2f(Makie.mouseposition(scene))
+        o = sh.canvas.seloutline[]
+        if SEL_TOOL[] === :box && !isempty(o)
+            a = o[1]
+            sh.canvas.seloutline[] = [a, Makie.Point2f(p[1], a[2]), p, Makie.Point2f(a[1], p[2]), a]
+        else
+            # `[p]`, not `p`: a Point2f is itself a vector, and vcat would splice in its two
+            # coordinates rather than append the point.
+            sh.canvas.seloutline[] = vcat(o, [p])
+        end
+        return Makie.Consume(true)
+    end
 
     Makie.on(events.mousebutton, priority = 100) do ev
         pos = Tuple(Float64.(events.mouseposition[]))
+        if SEL_TOOL[] !== :none && ev.button == Makie.Mouse.left && sh.canvas !== nothing &&
+           (ev.action == Makie.Mouse.press ? Makie.is_mouseinside(scene) : drawing[])
+            if ev.action == Makie.Mouse.press
+                drawing[] = true
+                sh.canvas.seloutline[] = [Makie.Point2f(Makie.mouseposition(scene))]
+            else
+                drawing[] = false
+                poly = sh.canvas.seloutline[]
+                sh.canvas.seloutline[] = Makie.Point2f[]
+                select_polygon!(sh, poly)
+            end
+            return Makie.Consume(true)
+        end
         if ev.button == Makie.Mouse.left && ev.action == Makie.Mouse.press
             sh.picktext = shell_pick()
             if get(ENV, "OITOOLSGUI_DEBUG_PICK", "") == "1"
@@ -550,6 +768,119 @@ function install_interactions!(sh::ShellState)
         return Makie.Consume(false)      # never swallow: zoom and pan still need these
     end
     return nothing
+end
+
+# ── the selection tools (Explore) ──────────────────────────────────────────────────
+
+# `:none`, `:box` or `:lasso`; and the selection: the dataset and plot kind it was made on,
+# which observable (`set_data_filter`'s discard-list slot: 1 uv, 2 VIS, 3 V², 4 T3, 5 flux)
+# and the indices into it.
+const SEL_TOOL  = Ref(:none)
+const SELECTION = Ref{Any}(nothing)
+
+"""
+    shell_set_select_tool(mode) -> String
+
+`"none"`, `"box"` or `"lasso"`. With a tool chosen, a left drag on the plot selects instead of
+zooming; with none, the plot's zoom, pan, pick and reset are untouched.
+"""
+function shell_set_select_tool(mode::AbstractString)
+    sh = _shell()
+    t = Symbol(mode)
+    t in (:none, :box, :lasso) || return "! the selection tools are none, box and lasso"
+    SEL_TOOL[] = t
+    if sh.canvas !== nothing
+        t === :none ? Makie.activate_interaction!(sh.canvas.axis, :rectanglezoom) :
+                      Makie.deactivate_interaction!(sh.canvas.axis, :rectanglezoom)
+    end
+    return ""
+end
+
+"""
+    select_polygon!(sh, poly) -> Int
+
+Select the points of the plot on screen inside `poly` (data coordinates; a box is its four
+corners), ring them, and keep them as the selection. What the mouse handler calls on release,
+and what a test calls without a mouse. Returns how many were selected.
+"""
+function select_polygon!(sh::ShellState, poly::AbstractVector)
+    e = current_dataset(sh)
+    (e === nothing || sh.panels || sh.residual !== :none || length(poly) < 3) && return 0
+    slot, idx, pts = selection_indices(e.data[1, 1], sh.kind, poly)
+    SELECTION[] = isempty(idx) ? nothing : (; dataset = e.name, kind = sh.kind, slot, idx)
+    sh.canvas === nothing || (sh.canvas.selpoints[] = pts)
+    return length(idx)
+end
+
+const _SLOT_NAMES = ("uv point", "VIS point", "V² point", "T3 point", "flux point")
+const _SLOT_KEYS  = ("remove_uv", "remove_vis", "remove_v2", "remove_t3", "remove_flux")
+
+"""What is selected, for the Select section: "12 V² points on data1", or empty."""
+function shell_selection_text()
+    s = SELECTION[]
+    s === nothing && return ""
+    return string(length(s.idx), " ", _SLOT_NAMES[s.slot], length(s.idx) == 1 ? "" : "s",
+                  " selected on ", s.dataset)
+end
+
+"""Forget the selection and its rings."""
+function shell_clear_selection()
+    sh = _shell()
+    SELECTION[] = nothing
+    sh.canvas === nothing || (sh.canvas.selpoints[] = Makie.Point2f[]; sh.canvas.seloutline[] = Makie.Point2f[])
+    return ""
+end
+
+# A point's identity across filtered copies of a dataset, so a selection made on a filtered view
+# names the same points in the unfiltered dataset the Filter section applies to: its uv
+# coordinates (one pair, or a triangle's three), wavelength and stations. Not its epoch alone:
+# a Float32 MJD can be the same for a whole night. Flux has no uv, so its value stands in.
+function _point_keys(d, slot)
+    uvat(k) = (d.uv[1, k], d.uv[2, k])
+    slot == 1 && return [(uvat(i), d.uv_lam[i]) for i in 1:size(d.uv, 2)]
+    slot == 2 && return [(uvat(d.indx_vis[i]), d.vis_lam[i], sort(d.vis_sta_index[:, i]))
+                         for i in eachindex(d.visamp)]
+    slot == 3 && return [(uvat(d.indx_v2[i]), d.v2_lam[i], sort(d.v2_sta_index[:, i]))
+                         for i in eachindex(d.v2)]
+    slot == 4 && return [(uvat(d.indx_t3_1[i]), uvat(d.indx_t3_2[i]), uvat(d.indx_t3_3[i]),
+                          d.t3_lam[i]) for i in eachindex(d.t3phi)]
+    return [(d.flux_mjd[i], d.flux_lam[i], d.flux_sta_index[i], d.flux[i]) for i in eachindex(d.flux)]
+end
+
+"""
+    shell_selection_spec() -> String
+
+The selection as Filter-section lines -- `remove_v2\t3,17,42` -- indexed into the unfiltered
+dataset the section filters, so "Add to filter" can add them to its hand-picked points. A
+selection made on a filtered copy is matched to the source point by point. `""` with nothing
+selected; a line starting with "!" when it cannot be (a binned source, whose bins a single
+plotted bin does not index).
+"""
+function shell_selection_spec()
+    sh = _shell()
+    s = SELECTION[]
+    s === nothing && return ""
+    i = findfirst(e -> e.name == s.dataset, sh.session.datasets)
+    i === nothing && return "! the dataset the selection was made on is gone"
+    e = sh.session.datasets[i]
+    root = e
+    for _ in 1:length(sh.session.datasets)
+        root.derived_from === nothing && break
+        j = findfirst(x -> x.name == root.derived_from, sh.session.datasets)
+        j === nothing && break
+        root = sh.session.datasets[j]
+    end
+    size(root.data) == (1, 1) ||
+        return "! hand-picked points need a single-bin dataset; $(root.name) has $(length(root.data)) bins"
+    idx = if root === e
+        s.idx
+    else
+        rk = _point_keys(root.data[1, 1], s.slot)
+        where = Dict(k => n for (n, k) in enumerate(rk))
+        sk = _point_keys(e.data[1, 1], s.slot)
+        sort!([where[sk[i]] for i in s.idx if haskey(where, sk[i])])
+    end
+    return string(_SLOT_KEYS[s.slot], "\t", join(idx, ","))
 end
 
 """Last identified point. QML polls this rather than asking for a pick itself."""

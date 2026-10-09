@@ -21,14 +21,15 @@ cd "$(dirname "$0")/../.."
 WIN_W=1400;          WIN_H=950
 DATASET_BOX="216 14"
 TAB_EXPLORE="175 40"; TAB_MODEL="875 40";  TAB_IMAGE="1224 40"
-# The frame: Plot and Colour menus, the three ticks, the Compare radio group (the Dataset
-# section is below them, so its length never moves these).
-KIND_BOX="133 96";   COLOR_BOX="133 123"
-LOG_Y="26 152";      PER_GROUP="26 182";   MAX_BL="26 212"
-DATA_ONLY="26 284";  OVER_MODEL="26 311";  OVER_IMAGE="26 338"
-RESID_MODEL="26 365"; RESID_IMAGE="26 392"
+# The frame, top to bottom: Dataset, Filter (collapsed), Plot, Compare. The Dataset summary's
+# length moves the controls below it, so these are data1's (2004-data1); data2's summary
+# (v1295Aql) is 85 px longer, and the one step on data2 uses KIND_BOX_DATA2.
+KIND_BOX="148 526";  COLOR_BOX="148 553";  KIND_BOX_DATA2="148 611"
+LOG_Y="26 582";      PER_GROUP="26 612";   MAX_BL="26 642"
+DATA_ONLY="26 714";  OVER_MODEL="26 741";  OVER_IMAGE="26 768"
+RESID_MODEL="26 795"; RESID_IMAGE="26 822"
 SAVE_PNG="1355 66"                          # on the plot, top right
-KIND_MENU_VISAMP="100 206"                  # the visamp row of the open Plot menu
+KIND_MENU_VISAMP="100 636"                  # the visamp row of the open Plot menu
 PLOT_CENTRE="840 415"                       # inside the axis on every view used below
 PICK_AT="514 598"                           # an AC0-AE0 point on the V² plot of 2004-data1
 MODEL_OPEN="147 68"; MODEL_CARD_REMOVE="214 103"
@@ -186,7 +187,8 @@ CL "$OVER_IMAGE" 3;  SHOT 22_v2_image_obs
 CL "$RESID_IMAGE" 3; SHOT 23_v2_resid_image
 
 # ── C3: a kind the next file lacks falls back to uv ────────────────────────────────────
-MENU "$DATASET_BOX" 1; sleep 3; KIND visamp; SHOT 25_data2_visamp
+MENU "$DATASET_BOX" 1; sleep 3
+MENU "$KIND_BOX_DATA2" "$(index_of visamp "${KINDS[@]}")"; SHOT 25_data2_visamp
 MENU "$DATASET_BOX" 0; sleep 3; SHOT 26_data1_after_visamp
 KIND v2
 

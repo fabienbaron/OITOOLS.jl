@@ -403,6 +403,8 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `mjd_range` — MJD window(s), same format. Default: keep all.
 - `baseline_range` — `[min, max]` spatial frequency B/λ in cycles/rad (the same units as
   `uv_baseline`, so e.g. `[5e6, 300e6]` is 5–300 Mλ). Default: keep all.
+- `baseline_length_range` — `[min, max]` projected baseline length in metres (B/λ × λ), the
+  same cut in the telescopes' units rather than the spatial frequency's. Default: keep all.
 - `filter_bad_data` — apply quality cuts (flags, NaN, SNR, amplitude range). Default: `false`.
 - `ignore_flags` — the quality cuts disregard the FLAG columns. Default: `false`.
 - `filter_vis`, `filter_v2`, `filter_t3amp`, `filter_t3phi`, `filter_flux` — enable cuts per observable type.
@@ -413,6 +415,9 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `force_full_t3` — require both T3amp and T3phi to be valid (default: either).
 - `special_filter_diffvis` — enable differential visibility filtering mode.
 - `uv_bad` — pre-supplied list of UV indices to remove.
+- `remove_v2`, `remove_t3`, `remove_vis`, `remove_flux` — indices of individual points to
+  remove (into `v2`, the T3 arrays, the VIS arrays, `flux`): points picked by hand, as the
+  GUI's selection tools do.
 - `filter_visphi`, `filter_visamp` — enable visibility phase/amplitude filtering.
 - `exclude_stations` — station names (`sta_name`, e.g. `["E1", "W2"]`): every V², VIS, T3 and
   flux point that uses one is removed.
@@ -432,6 +437,7 @@ function set_data_filter(data::OIdata{T};
         wav_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
         mjd_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
         baseline_range::Vector{Float64} = [0.0, 1e99],
+        baseline_length_range::Vector{Float64} = [0.0, 1e99],
         filter_bad_data = false, ignore_flags = false, filter_vis = true, filter_v2 = true,
         filter_t3amp = true, filter_t3phi = true, filter_flux = true,
         cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
@@ -443,7 +449,10 @@ function set_data_filter(data::OIdata{T};
         exclude_triangles::AbstractVector{<:AbstractString} = String[],
         max_v2_err = Inf, max_v2_err_rel = Inf, max_t3amp_err = Inf, max_t3amp_err_rel = Inf,
         max_t3phi_err = Inf, max_visamp_err = Inf, max_visamp_err_rel = Inf,
-        max_visphi_err = Inf, max_flux_err = Inf, max_flux_err_rel = Inf) where T
+        max_visphi_err = Inf, max_flux_err = Inf, max_flux_err_rel = Inf,
+        remove_v2::AbstractVector{<:Integer} = Int[], remove_t3::AbstractVector{<:Integer} = Int[],
+        remove_vis::AbstractVector{<:Integer} = Int[],
+        remove_flux::AbstractVector{<:Integer} = Int[]) where T
 
     !isempty(wav_range) && typeof(wav_range) == Vector{Float64} && (wav_range = [wav_range])
     !isempty(mjd_range) && typeof(mjd_range) == Vector{Float64} && (mjd_range = [mjd_range])
@@ -497,6 +506,11 @@ function set_data_filter(data::OIdata{T};
     baseline_range != [0.0, 1e99] && (uv_bad = union(uv_bad,
         findall(data.uv_baseline .< baseline_range[1]),
         findall(data.uv_baseline .> baseline_range[2])))
+    if baseline_length_range != [0.0, 1e99]
+        len = Float64.(data.uv_baseline) .* Float64.(data.uv_lam)
+        uv_bad = union(uv_bad, findall(len .< baseline_length_range[1]),
+                       findall(len .> baseline_length_range[2]))
+    end
     uv_good = setdiff(1:data.nuv, uv_bad)
     !isempty(mjd_range) && (uv_good = intersect(uv_good,
         vcat([findall(mjd_range[i][1] .<= data.uv_mjd .<= mjd_range[i][2]) for i in eachindex(mjd_range)]...)))
@@ -526,6 +540,15 @@ function set_data_filter(data::OIdata{T};
         end
         flux_bad = union(flux_bad, setdiff(1:data.nflux, flux_good_range))
     end
+
+    # Points picked by hand. An index outside its array is an error: it was picked on other data.
+    for (r, n, what) in ((remove_v2, length(data.v2), "V²"), (remove_t3, length(data.t3phi), "T3"),
+                         (remove_vis, length(data.visamp), "VIS"), (remove_flux, length(data.flux), "flux"))
+        all(i -> 1 <= i <= n, r) ||
+            throw(ArgumentError("a $what point to remove is out of range (this data has $n)"))
+    end
+    v2_bad = union(v2_bad, remove_v2);   t3_bad = union(t3_bad, remove_t3)
+    vis_bad = union(vis_bad, remove_vis); flux_bad = union(flux_bad, remove_flux)
 
     # Error-bar caps: above an absolute value, or above a fraction of the value's magnitude.
     capped(err, val, a, r) = findall(i -> err[i] > a || err[i] > r * abs(val[i]), eachindex(err))

@@ -126,3 +126,28 @@ end
     @test sort(idx[2]) == findall(>(10.0), d.visphi_err)
     @test all(isempty, set_data_filter(d))           # no cap, nothing removed
 end
+
+# The baseline cut in metres: B/λ × λ, the telescopes' separation projected on the sky.
+@testset "baseline_length_range" begin
+    d = readoifits(joinpath(@__DIR__, "..", "demos", "data", "V1295_Aql.oifits");
+                   warn = false, verbose = false)[1, 1]
+    len = Float64.(d.uv_baseline) .* Float64.(d.uv_lam)
+    lo, hi = 50.0, 150.0
+    idx = set_data_filter(d; baseline_length_range = [lo, hi])
+    gone = findall(i -> !(lo <= len[d.indx_v2[i]] <= hi), eachindex(d.indx_v2))
+    @test !isempty(gone) && sort(idx[3]) == gone
+    f = filter_data(d, idx)
+    @test all(lo .<= Float64.(f.v2_baseline) .* Float64.(f.v2_lam) .<= hi)
+end
+
+# Points picked by hand, by index: exactly those, and an index the data does not have refused.
+@testset "remove_* (points picked by hand)" begin
+    d = readoifits(joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2004",
+                            "2004-data1.oifits"); warn = false, verbose = false)[1, 1]
+    idx = set_data_filter(d; remove_v2 = [1, 5, 9], remove_t3 = [2])
+    @test sort(idx[3]) == [1, 5, 9] && idx[4] == [2]
+    f = filter_data(d, idx)
+    @test f.nv2 == d.nv2 - 3 && length(f.t3phi) == length(d.t3phi) - 1
+    @test f.v2 == d.v2[setdiff(1:d.nv2, [1, 5, 9])]
+    @test_throws ArgumentError set_data_filter(d; remove_v2 = [d.nv2 + 1])
+end

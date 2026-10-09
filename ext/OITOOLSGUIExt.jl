@@ -129,7 +129,7 @@ include(joinpath(GUIDIR, "window.jl"))        # gui(): builds the window and run
 using PrecompileTools
 
 @setup_workload begin
-    _pcfile = joinpath(pkgdir(OITOOLS), "test", "gui", "data", "Beauty_Contest_2004", "2004-data1.oifits")
+    _pcfile = joinpath(pkgdir(OITOOLS), "test", "gui", "data", "2004-data1.oifits")
     @compile_workload begin
         if isfile(_pcfile)
             data = readoifits(_pcfile; verbose = false, warn = false)
@@ -183,6 +183,12 @@ using PrecompileTools
             gax  = Makie.Axis(gfig[1, 1])
             gg   = build_gantt(gfig, gax)
             update_gantt!(gg, plan)
+
+            # Explore's Filter section: its first preview compiled for 3.5 s while the user
+            # waited for a count. The settings go through the same parser and keyword splat.
+            let k = filter_spec_kwargs("bl_max\t60\nexclude_stations\tE02\nbad\t1\nv2_cap\t0.1")
+                OITOOLS.filter_data(d, OITOOLS.set_data_filter(d; k.filter...))
+            end
 
             # The canvas itself. `build_canvas` creates one of every plot the shell can show,
             # and that construction is a large part of the delay before the first window

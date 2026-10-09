@@ -86,6 +86,13 @@ struct LiveCanvas
     homelimits  :: Base.RefValue{NTuple{4,Float64}}
     # uv coverage only: dotted circles of constant baseline/λ.
     uvrings     :: Makie.Observable{Vector{Makie.Point2f}}
+    # The Filter section's preview: the points a filter would remove, drawn hollow and grey
+    # over the data.
+    prevpoints  :: Makie.Observable{Vector{Makie.Point2f}}
+    prevplot    :: Any
+    # The selection tools: the box or lasso being drawn, and the points selected, ringed.
+    seloutline  :: Makie.Observable{Vector{Makie.Point2f}}
+    selpoints   :: Makie.Observable{Vector{Makie.Point2f}}
 end
 
 """
@@ -119,6 +126,19 @@ function build_canvas(fig, ax)
     overplot = Makie.scatter!(ax, overpts; color = (:black, 0.75), marker = :circle,
                               markersize = msize, strokewidth = 1.2,
                               strokecolor = (:black, 0.9), visible = false)
+    # The Filter section's preview: a white disc with a grey ring over each point the filter
+    # would remove, so the point reads as hollow and grey. Last, so it sits on top.
+    prevpts  = Makie.Observable(Makie.Point2f[])
+    prevplot = Makie.scatter!(ax, prevpts; color = :white, marker = OIPLOT_MARKER,
+                              markersize = msize, strokewidth = 1.2,
+                              strokecolor = (:gray35, 1.0))
+    # The selection: a red ring round each selected point, and the outline being drawn.
+    selpts  = Makie.Observable(Makie.Point2f[])
+    Makie.scatter!(ax, selpts; color = (:white, 0.0), marker = :circle,
+                   markersize = Makie.lift(m -> 1.8f0 * m, msize), strokewidth = 1.6,
+                   strokecolor = (:red, 0.9))
+    selline = Makie.Observable(Makie.Point2f[])
+    Makie.lines!(ax, selline; color = (:red, 0.8), linestyle = :dash, linewidth = 1.2)
 
     # The legend is drawn by hand rather than with Makie.Legend.
     #
@@ -173,7 +193,7 @@ function build_canvas(fig, ax)
                         imdata, imx, imy, implot, cmap, cbmap, panels,
                         Base.RefValue((1.0, 1.0)),
                         Base.RefValue((0.0, 1.0, 0.0, 1.0)),
-                        uvrings)
+                        uvrings, prevpts, prevplot, selline, selpts)
     _install_zoom!(canvas)
 
     # The legend axis is a drawing surface, not a plot. Left interactive it responds to the
@@ -605,6 +625,7 @@ function show_panels!(c::LiveCanvas, on::Bool)
     Makie.rowsize!(c.figure.layout, 3, on ? Makie.Auto() : Makie.Fixed(0))
     on && set_legend!(c, Pair{String,Makie.RGBAf}[])
     on && set_uv_rings!(c, 0.0)
+    on && (c.prevpoints[] = Makie.Point2f[])
     on && _show_colorbar!(c, false)
     for a in c.panels.axes
         _set_axis_visible!(a, false)
@@ -992,6 +1013,11 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
                         overlay::Union{Nothing,AbstractVector} = nothing)
     pd = canvas_data(d, kind; color = color, conjugate = conjugate, logscale = logscale,
                      residual = residual)
+    # A filter preview belongs to the view it was computed for; the panel computes it again.
+    # A selection belongs to the view it was drawn on, and goes with it.
+    c.prevpoints[] = Makie.Point2f[]
+    c.selpoints[]  = Makie.Point2f[]
+    c.seloutline[] = Makie.Point2f[]
 
     ax = c.axis
     ax.xlabel[] = pd.xlabel
@@ -1075,9 +1101,93 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
         ax.yscale[] = log10
         # style_axis! has just forced LinearTicks, which on a log axis places ten evenly
         # SPACED labels at evenly VALUED positions -- so they bunch into the top decade and
-        # leave the rest of the axis unlabelled. LogTicks puts them one per decade.
-        ax.yticks[] = Makie.LogTicks(Makie.LinearTicks(OIPLOT_XTICKS))
+        # leave the rest of the axis unlabelled. `LogTicks` fixes the spacing but places its
+        # ticks evenly in the EXPONENT, so a range of less than a few decades is labelled
+        # 10^-0.5, 10^0.5. These are whole decades and simple multiples of them, written as
+        # plain numbers.
+        ax.yticks[] = log_tick_values
+        ax.ytickformat[] = vs -> [log_tick_label(v) for v in vs]
+    else
+        ax.ytickformat[] = Makie.automatic
     end
     _fit_plot_column!(c)
     return pd.info
+end
+
+"""
+    log_tick_values(lo, hi) -> Vector{Float64}
+
+Ticks for a log axis between `lo` and `hi`: whole powers of ten, plus 2× and 5× them when the
+range spans three decades or fewer, plus every integer multiple when it spans one or less.
+Never a fractional power of ten. Over many decades, every few decades only, so the labels do
+not collide.
+"""
+function log_tick_values(lo, hi)
+    (isfinite(lo) && isfinite(hi) && lo > 0 && hi > lo) || return Float64[]
+    a, b = floor(Int, log10(lo)), ceil(Int, log10(hi))
+    span = b - a
+    mant = span <= 1 ? (1:9) : span <= 3 ? (1, 2, 5) : (1,)
+    every = max(1, cld(span, 8))
+    # m·10^k as m/10^-k below 1: 10.0^-2 is 0.010000000000000002, 1/100 is 0.01.
+    tick(m, k) = k >= 0 ? m * 10.0^k : m / 10.0^(-k)
+    vals = Float64[tick(m, k) for k in a:b for m in mant
+                   if mod(k - a, every) == 0 && lo <= tick(m, k) <= hi]
+    # A range narrower than one step of 1..9: evenly spaced two-figure numbers instead.
+    if length(vals) < 2
+        e = floor(Int, log10(hi - lo))
+        vals = [tick(j, e) for j in ceil(Int, lo / tick(1, e)):floor(Int, hi / tick(1, e))]
+    end
+    return vals
+end
+
+"A log-axis tick as a plain number: `0.01`, `0.2`, `1e-05`."
+log_tick_label(v::Real) = @sprintf("%g", v)
+
+"""
+    point_in_polygon(x, y, poly) -> Bool
+
+Whether `(x, y)` lies inside the closed polygon `poly` (a vector of points, the last joined back
+to the first), by the even-odd rule.
+"""
+function point_in_polygon(x::Real, y::Real, poly::AbstractVector)
+    inside = false
+    n = length(poly)
+    n < 3 && return false
+    j = n
+    for i in 1:n
+        xi, yi = poly[i][1], poly[i][2]
+        xj, yj = poly[j][1], poly[j][2]
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi
+            inside = !inside
+        end
+        j = i
+    end
+    return inside
+end
+
+"""
+    selection_indices(d, kind, poly) -> (slot, idx, points)
+
+The points of `kind`'s plot of `d` inside the polygon `poly` (in the plot's data coordinates),
+as indices into the observable they belong to: `slot` is 1 for uv points (a uv point is
+selected when it or its conjugate is inside), 2 VIS, 3 V², 4 T3, 5 flux -- the order of
+`set_data_filter`'s discard lists. `points` are the selected points as drawn, for the rings.
+"""
+function selection_indices(d, kind::Symbol, poly::AbstractVector)
+    pts = Makie.Point2f[]
+    if kind === :uv
+        u = Float64.(d.uv[1, :]) ./ 1e6; v = Float64.(d.uv[2, :]) ./ 1e6
+        idx = [i for i in eachindex(u) if point_in_polygon(u[i], v[i], poly) ||
+                                          point_in_polygon(-u[i], -v[i], poly)]
+        pts = vcat(Makie.Point2f.(u[idx], v[idx]), Makie.Point2f.(-u[idx], -v[idx]))
+        return 1, idx, pts
+    end
+    haskey(OBS_SPECS, kind) || return 0, Int[], pts
+    spec = OBS_SPECS[kind]
+    slot = spec.y === :v2 ? 3 : spec.y in (:t3phi, :t3amp) ? 4 : spec.y === :flux ? 5 : 2
+    x = Float64.(getfield(d, spec.x)) .* spec.xscale
+    y = Float64.(getfield(d, spec.y))
+    idx = [i for i in eachindex(x) if isfinite(x[i]) && isfinite(y[i]) &&
+                                      point_in_polygon(x[i], y[i], poly)]
+    return slot, idx, Makie.Point2f.(x[idx], y[idx])
 end

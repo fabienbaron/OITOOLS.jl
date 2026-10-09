@@ -32,10 +32,17 @@ FAIL=0
 GUI_PID=""
 XVFB_PID=""
 
+HEADLESS=0
 if [ "${1:-}" = "--display" ]; then
     DISP="${DISPLAY:?--display needs DISPLAY set}"
 else
-    DISP=":99"
+    HEADLESS=1
+    # The first free display from :99 up, as `xvfb-run -a` chooses. A fixed :99 drove whatever
+    # Xvfb already held it -- a stale 640x480 one, found running for days -- and every
+    # coordinate below then landed on the wrong screen.
+    n=99
+    while [ -e "/tmp/.X${n}-lock" ] || [ -e "/tmp/.X11-unix/X${n}" ]; do n=$((n + 1)); done
+    DISP=":$n"
 fi
 
 cleanup() {
@@ -51,12 +58,12 @@ say "display      $DISP"
 say "julia log    $JLOG"
 say "console dump $DUMP"
 say "screenshots  $SHOTDIR"
-if [ "$DISP" != ":99" ]; then
+if [ "$HEADLESS" = 0 ]; then
     say "NOTE: on a real display this moves your mouse pointer and clicks. Keep hands off"
     say "      for ~90 s, and do not let another window take focus."
 fi
 
-if [ "$DISP" = ":99" ]; then
+if [ "$HEADLESS" = 1 ]; then
     Xvfb "$DISP" -screen 0 1400x1000x24 >/dev/null 2>&1 &
     XVFB_PID=$!
     sleep 2
@@ -91,7 +98,7 @@ GUI_PID=$!
 
 WID=""
 for i in $(seq 1 240); do
-    WID=$(DISPLAY="$DISP" xdotool search --name "^OITOOLS$" 2>/dev/null | head -1)
+    WID=$(DISPLAY="$DISP" xdotool search --name "^OITOOLS$" 2>/dev/null | tail -1)
     [ -n "$WID" ] && break
     if ! kill -0 "$GUI_PID" 2>/dev/null; then
         say "FAIL  the GUI process exited before a window appeared:"; tail -25 "$JLOG"; exit 1
@@ -123,7 +130,12 @@ if [ -z "$WID" ]; then
     exit 1
 fi
 say "window $WID found; driving it now"
-sleep 3
+# A known size, as explore_walk.sh uses: left to itself the window's size depends on the screen,
+# and the frame's controls -- placed below the dataset summary -- move with it. After a wait and
+# a second search, because the first window with this title can be one Qt replaces.
+sleep 12
+WID=$(DISPLAY="$DISP" xdotool search --name "^OITOOLS$" 2>/dev/null | tail -1)
+DISPLAY="$DISP" xdotool windowsize "$WID" 1400 950; sleep 3
 
 CL()   { DISPLAY="$DISP" xdotool mousemove --window "$WID" "$1" "$2" click 1; sleep "${3:-1.5}"; }
 SHOT() { DISPLAY="$DISP" import -window "$WID" "$SHOTDIR/$1.png" 2>/dev/null; }
@@ -150,9 +162,9 @@ DISPLAY="$DISP" xdotool key Return; sleep 8
 SHOT 03_after_open
 
 # -- redraws after the dialog has been open ----------------------------------
-CL 133 96 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3   # Plot menu, in the frame
+CL 148 611 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3   # Plot menu, in the frame below v1295Aql's summary
 SHOT 04_plot_kind
-CL 133 123 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3   # Colour menu
+CL 148 638 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3   # Colour menu
 SHOT 05_colour
 
 # -- click a data point, and reset the view ----------------------------------
@@ -169,9 +181,9 @@ SHOT 05_colour
 # run then reported a broken pick rather than a stale coordinate. Fractions ride the resize,
 # because the axis fills its share of the window either way.
 eval "$(DISPLAY="$DISP" xdotool getwindowgeometry --shell "$WID")"
-# 52%: the Explore frame takes the left of the window, so the axis starts a quarter of the
-# way across and the band at ~60 Mλ sits right of the middle.
-PICK_X=$((WIDTH * 52 / 100)); PICK_Y=$((HEIGHT * 50 / 100))
+# At 1400x950 the Explore frame takes the left sixth, and the dense V² band of v1295Aql at
+# 60-80 Mλ, V² ~ 0.15, sits at about 46% across and 57% down.
+PICK_X=$((WIDTH * 46 / 100)); PICK_Y=$((HEIGHT * 57 / 100))
 say "picking at ${PICK_X},${PICK_Y} of ${WIDTH}x${HEIGHT}"
 CL "$PICK_X" "$PICK_Y" 2
 CL "$PICK_X" "$PICK_Y" 3
