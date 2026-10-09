@@ -235,6 +235,26 @@ ApplicationWindow {
         }
     }
 
+    // Explore's Export: the dataset on screen, as filtered, to a new OIFITS file.
+    FilePicker {
+        id: exportDataDialog
+        uiScale: win.uiScale; fontScale: win.fontScale; baseFontPt: win.baseFontPt
+        title: "Save the dataset as OIFITS"
+        saveMode: true
+        defaultSuffix: "oifits"
+        filters: [{ label: "OIFITS files (*.oifits *.fits)", patterns: "*.oifits *.fits" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            win.status = Julia.shell_export_oifits(path)
+            win.refreshConsole()
+        }
+    }
+    function exportData() {
+        exportDataDialog.suggestedName = Julia.picker_suggest(
+            (datasetBox.currentText || "data").replace(/\.(oi)?fits$/i, ""), "oifits")
+        exportDataDialog.openAt("")
+    }
+
     // The panel's own size, which Julia uses only when it cannot measure the live scene: the
     // file has to be laid out like the picture on screen, and Makie sizes text in points, so
     // asking for a bigger figure would re-lay it out rather than enlarge it. Resolution comes
@@ -951,6 +971,7 @@ ApplicationWindow {
                 onStatusReported: function (text) { win.status = text }
                 onActionDone: win.afterAction()
                 onSavePngRequested: function (area) { win.savePng("explore", area) }
+                onExportRequested: win.exportData()
                 // A new dataset: the box lists and selects it, and everything follows it.
                 onFilterApplied: win.selectCurrentDataset()
             }

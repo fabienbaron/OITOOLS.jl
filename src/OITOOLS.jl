@@ -20,6 +20,7 @@ include("resources.jl")          # where shipped QML, configs and demo data are 
 include("graphics.jl")           # GL driver environment; must be callable before GLMakie
 include("gui_launcher.jl")       # oitoolsgui(): loads the GUI stack in the required order
 include("readoifits.jl")
+include("write_oifits.jl")        # OIdata back to OIFITS v2, read back to the same points
 include("image_component.jl")   # FITS images and cubes as model components (convention shared with ROTIR)
 include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
 include("plot_data.jl")      # what to draw: groups, colours, labels, click text -- no toolkit
@@ -176,7 +177,7 @@ export oitoolsgui
 
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
-export readoifits, readoifits_multiepochs, list_oifits_targets
+export readoifits, readoifits_multiepochs, list_oifits_targets, write_oifits
 export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_image_plane, model_image_vis
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter

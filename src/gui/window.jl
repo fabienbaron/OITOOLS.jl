@@ -10,7 +10,7 @@ function __init__()
                      shell_filter_choices, shell_filter_preview, shell_apply_filter,
                      shell_filter_spec, shell_filter_preview_clear,
                      shell_set_select_tool, shell_selection_text, shell_clear_selection,
-                     shell_selection_spec, shell_script, shell_export, shell_pick,
+                     shell_selection_spec, shell_export_oifits, shell_script, shell_export, shell_pick,
                      shell_console, shell_ready, shell_reset_zoom, shell_pick_text,
                      shell_observables, shell_plot_kinds, shell_grouping_noun, shell_gantt_hover, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,

@@ -16,6 +16,7 @@
 | `model_image_vis(image, uv; wl, mjd)` | Its complex visibilities at uv points, plane by plane |
 | `fits_pixsize(file)` | Pixel scale of a FITS image in mas, from its WCS keywords, or `nothing` |
 | `oifits_prep(data; kwargs...)` | Inflate error bars (additive/relative floors, multiplicative scaling) |
+| `write_oifits(path, data; overwrite)` | Write a dataset, filtered or binned, to an OIFITS v2 file that reads back to the same points |
 | `updatefits_aspro(in, out, pixsize)` | Add ASPRO-compatible WCS headers to a FITS image |
 
 ```@docs
@@ -31,6 +32,7 @@ readoifits_multiepochs
 filter_data
 set_data_filter
 oifits_prep
+write_oifits
 ```
 
 ## Writing

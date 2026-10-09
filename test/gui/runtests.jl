@@ -338,6 +338,38 @@ const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
         end
     end
 
+    # Explore's Export (GUI_Explore.md, Phase 6): a filtered dataset to OIFITS reads back to the
+    # points kept, and the source file is never the target.
+    @testset "export: filtered dataset to OIFITS" begin
+        G = GUI
+        prev = G.SHELL[]
+        sess = Session()
+        load_dataset!(sess, joinpath(@__DIR__, "data", "2004-data1.oifits"); warn = false, verbose = false)
+        sfig = Makie.Figure(); sax = Makie.Axis(sfig[1, 1])
+        sh = G.ShellState(sess, sfig, sax, nothing, String[], Any[], 1,
+                          :v2, :baseline, false, :none, :none, false, "", String[],
+                          G.build_canvas(sfig, sax), "", nothing, nothing, nothing, nothing,
+                          nothing, nothing, nothing, Any[], nothing, nothing, nothing,
+                          nothing, "", "", nothing)
+        G.SHELL[] = sh
+        dir = mktempdir()
+        try
+            d = sess.datasets[1].data[1, 1]
+            @test startswith(G.shell_export_oifits(sess.datasets[1].path), "!")
+            @test !startswith(G.shell_apply_filter("bl_max\t60"), "!")
+            f = G.current_dataset(sh).data[1, 1]
+            @test 0 < f.nv2 < d.nv2
+
+            out = joinpath(dir, "filtered.oifits")
+            @test G.shell_export_oifits("file://" * out) == "saved filtered.oifits"
+            back = readoifits(out; warn = false, verbose = false)[1, 1]
+            @test sort(back.v2) == sort(f.v2) && sort(back.t3phi) == sort(f.t3phi)
+            @test occursin("write_oifits(\"$out\"", G.shell_console())
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
     @testset "filter_dataset! derives without mutating the source" begin
         s = Session()
         load_dataset!(s, MONO; warn = false, verbose = false)

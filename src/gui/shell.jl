@@ -883,6 +883,28 @@ function shell_selection_spec()
     return string(_SLOT_KEYS[s.slot], "\t", join(idx, ","))
 end
 
+"""
+    shell_export_oifits(path) -> String
+
+Write the current dataset -- filtered or binned, as it is -- to an OIFITS file through
+[`write_oifits`](@ref). The original file is never the target: writing over the file a dataset
+was read from would replace the data with a copy of itself less whatever was filtered out.
+"""
+function shell_export_oifits(path::AbstractString)
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    p = strip_file_url(path)
+    OITOOLS._same_file(p, e.path) && return "! that is the file the dataset was read from; choose another name"
+    try
+        write_oifits(p, e.data; overwrite = true)
+    catch err
+        msg = "! could not write OIFITS: " * _cause(err); console!(sh, msg; kind = :err); return msg
+    end
+    console!(sh, "> write_oifits(\"" * p * "\", " * e.name * ".data; overwrite = true)")
+    return "saved " * basename(p)
+end
+
 """Last identified point. QML polls this rather than asking for a pick itself."""
 shell_pick_text() = _shell().picktext
 

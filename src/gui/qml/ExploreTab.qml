@@ -52,6 +52,7 @@ Item {
     signal actionDone()                     // the window refreshes everything that follows the data
     signal savePngRequested(var area)       // the window owns the picker
     signal filterApplied()                  // a filtered dataset was made and selected
+    signal exportRequested()                // the window owns the picker
 
     // The Filter section follows the dataset on screen: a new dataset brings its own choices
     // and settings; anything else (a new plot kind, a redraw) only needs the preview again,
@@ -481,6 +482,24 @@ Item {
                                     root.redraw()
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Export: the dataset on screen, filtered or binned as it is, to OIFITS.
+                GroupBox {
+                    title: "Export"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: dp(6); Layout.rightMargin: dp(6)
+
+                    RowLayout {
+                        anchors.fill: parent
+                        Button {
+                            text: "OIFITS…"
+                            enabled: root.datasetName.length > 0
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Write this dataset, as filtered, to a new OIFITS file"
+                            onClicked: root.exportRequested()
                         }
                     }
                 }
