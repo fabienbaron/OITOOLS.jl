@@ -706,6 +706,121 @@ function remove_redundant_uv!(data::OIdata{T}; uvtol = 2e2) where T
     return data
 end
 
+"""
+    merge_oidata(datas) -> OIdata
+
+One dataset holding every point of `datas` -- typically the same bin of several files, read
+separately. Merging after reading rather than merging the files: OIFITS.jl refuses two
+OI_TARGET entries that share a name and differ in a coordinate, which files from different
+nights do routinely.
+
+- Stations are matched by NAME: each file's indices are renumbered into one table, so `A0` in
+  every file is one station; a blank name is never matched. Flux index 0 (a calibrated
+  spectrum, no telescope) stays 0.
+- uv points are appended and each observable's uv indices shifted with them.
+- OI_CORR matrices are combined block-diagonally: no correlation is assumed across files.
+- `filename` is the first file's; the target is whatever the first file's is.
+
+Refused with an `ArgumentError`, rather than resolved by a guess:
+- files whose VIS points disagree on AMPTYP or PHITYP -- one label governs every VIS point, so
+  absolute and differential phases would be fitted as one kind;
+- files whose flux disagrees on calibration -- an uncalibrated spectrum is rescaled to the model
+  as a whole, which cannot mean anything across a calibrated one.
+"""
+function merge_oidata(datas::AbstractVector{<:OIdata{T}}) where T
+    isempty(datas) && throw(ArgumentError("nothing to merge"))
+    length(datas) == 1 && return deepcopy(datas[1])
+    name(d) = basename(d.filename)
+
+    withvis = [d for d in datas if !isempty(d.visamp)]
+    for (f, what) in ((d -> _canon_obstype(d.amptyp), "AMPTYP"), (d -> _canon_obstype(d.phityp), "PHITYP"))
+        labels = unique(f.(withvis))
+        length(labels) > 1 && throw(ArgumentError(string("the files disagree on ", what, ": ",
+            join([string(name(d), " \"", f(d), "\"") for d in withvis], ", "),
+            "; read them separately")))
+    end
+    withflux = [d for d in datas if !isempty(d.flux)]
+    length(unique(d.flux_calibrated for d in withflux)) > 1 &&
+        throw(ArgumentError("the files mix calibrated and uncalibrated OI_FLUX; read them separately"))
+
+    # One station table, by name. A blank name identifies nothing, so it is never matched.
+    sta_name = String[]; tel_name = String[]
+    remap = map(datas) do d
+        m = Dict{Int,Int}(0 => 0)
+        for (k, i) in enumerate(d.sta_index)
+            j = isempty(strip(d.sta_name[k])) ? nothing : findfirst(==(d.sta_name[k]), sta_name)
+            if j === nothing
+                push!(sta_name, d.sta_name[k])
+                push!(tel_name, k <= length(d.tel_name) ? d.tel_name[k] : d.sta_name[k])
+                j = length(sta_name)
+            end
+            m[i] = j
+        end
+        m
+    end
+    re(m, idx) = map(i -> get(m, i, i), idx)
+
+    out = deepcopy(datas[1])
+    cat(f) = reduce(vcat, [getfield(d, f) for d in datas])
+    for f in (:visamp, :visamp_err, :visphi, :visphi_err, :vis_baseline, :vis_mjd, :vis_lam,
+              :vis_dlam, :vis_flag, :v2, :v2_err, :v2_baseline, :v2_mjd, :v2_lam, :v2_dlam,
+              :v2_flag, :t3amp, :t3amp_err, :t3phi, :t3phi_err, :t3_baseline, :t3_maxbaseline,
+              :t3_mjd, :t3_lam, :t3_dlam, :t3_flag, :flux, :flux_err, :flux_mjd, :flux_lam,
+              :flux_dlam, :flux_flag, :uv_lam, :uv_dlam, :uv_mjd, :uv_baseline)
+        setfield!(out, f, cat(f))
+    end
+    out.uv = reduce(hcat, [d.uv for d in datas])
+    off = cumsum([0; [size(d.uv, 2) for d in datas[1:end-1]]])
+    for f in (:indx_vis, :indx_v2, :indx_t3_1, :indx_t3_2, :indx_t3_3)
+        setfield!(out, f, reduce(vcat, [getfield(d, f) .+ o for (d, o) in zip(datas, off)]))
+    end
+    for f in (:vis_sta_index, :v2_sta_index, :t3_sta_index)
+        setfield!(out, f, reduce(hcat, [re(m, getfield(d, f)) for (d, m) in zip(datas, remap)]))
+    end
+    out.flux_sta_index = reduce(vcat, [re(m, d.flux_sta_index) for (d, m) in zip(datas, remap)])
+    out.sta_name = sta_name; out.tel_name = tel_name; out.sta_index = collect(1:length(sta_name))
+
+    for (c, ci, n) in ((:v2_corr, :v2_corr_idx, :v2), (:t3amp_corr, :t3amp_corr_idx, :t3amp),
+                       (:t3phi_corr, :t3phi_corr_idx, :t3phi), (:visamp_corr, :visamp_corr_idx, :visamp),
+                       (:visphi_corr, :visphi_corr_idx, :visphi), (:flux_corr, :flux_corr_idx, :flux))
+        any(d -> !isempty(getfield(d, ci)), datas) || continue
+        mats = [getfield(d, c) for d in datas]
+        coff = cumsum([0; [size(m, 1) for m in mats[1:end-1]]])
+        setfield!(out, c, blockdiag(mats...))
+        setfield!(out, ci, reduce(vcat, [isempty(getfield(d, ci)) ? zeros(Int, length(getfield(d, n))) :
+                                         map(i -> i == 0 ? 0 : i + o, getfield(d, ci))
+                                         for (d, o) in zip(datas, coff)]))
+    end
+
+    for f in (:nflux, :nvisamp, :nvisphi, :nv2, :nt3amp, :nt3phi, :nuv)
+        setfield!(out, f, sum(getfield(d, f) for d in datas))
+    end
+    out.mean_mjd = sum(d.mean_mjd * d.nuv for d in datas) / max(1, out.nuv)
+    isempty(withvis) || (out.amptyp = withvis[1].amptyp; out.phityp = withvis[1].phityp)
+    isempty(withflux) || (out.flux_calibrated = withflux[1].flux_calibrated)
+    return out
+end
+
+"""
+    readoifits(files::AbstractVector{<:AbstractString}; kwargs...) -> Array{OIdata{T}, 2}
+
+Several files as one dataset: each is read with the same keywords, then bin `[i, j]` of every
+file is merged by [`merge_oidata`](@ref). The files must give the same bin layout -- the same
+`spectralbin` / `temporalbin`, or `polychromatic` on files with the same channels -- and a
+`polychromatic` read of files with different channels is refused rather than paired up by
+position.
+"""
+function readoifits(files::AbstractVector{<:AbstractString}; kwargs...)
+    isempty(files) && throw(ArgumentError("no file to read"))
+    each = [readoifits(f; kwargs...) for f in files]
+    length(each) == 1 && return each[1]
+    sz = size(each[1])
+    all(e -> size(e) == sz, each) || throw(ArgumentError(string(
+        "the files give different bin layouts (", join([string(basename(f), " ", join(size(e), "×"))
+        for (f, e) in zip(files, each)], ", "), "); give spectralbin explicitly")))
+    return [merge_oidata([e[i, j] for e in each]) for i in 1:sz[1], j in 1:sz[2]]
+end
+
 # ===========================================================================
 # LOADING + PARSING HELPERS
 # ===========================================================================

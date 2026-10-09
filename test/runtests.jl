@@ -22,6 +22,7 @@ BLAS.set_num_threads(1)
     include("test_resources.jl")         # where shipped QML/configs/demo data are found
     include("test_data_filter.jl")       # set_data_filter: stations, baselines, triangles by name
     include("test_write_oifits.jl")      # write_oifits reads back to the same points
+    include("test_merge_oidata.jl")      # several files as one dataset
     include("test_bsmem_precision.jl")   # cheap structural checks first
     include("test_chromatic_params.jl")  # $WL / $MJD / $B model parameters
     include("test_model_gradients.jl")   # analytic model gradients vs finite differences

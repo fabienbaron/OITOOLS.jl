@@ -14,7 +14,9 @@ const _READOIFITS_DEFAULTS = Dict{Symbol,Any}(
 """
     load_dataset!(session, path; kwargs...) -> DatasetEntry
 
-Load an OIFITS file into the session and log the `readoifits` call that did it.
+Load an OIFITS file into the session and log the `readoifits` call that did it. `path` may
+be a list of files, read as one dataset (`readoifits(files)`, which merges them point by point
+through `merge_oidata`).
 
 `kwargs` are passed straight through to `readoifits`, so anything it accepts works here
 (`targetname`, `polychromatic`, `merge_oi_wavelength`, `filter_bad_data`, `T`, …).
@@ -25,15 +27,21 @@ Two behaviours worth knowing, both inherited from `readoifits`:
   * on a missing file it returns `[[]]` rather than throwing, which would surface as a
     baffling error much later — so this checks first and throws immediately.
 """
-function load_dataset!(s::Session, path::AbstractString; kwargs...)
-    isfile(path) || throw(ArgumentError("no such OIFITS file: $(repr(path))"))
+function load_dataset!(s::Session, path::Union{AbstractString,AbstractVector{<:AbstractString}};
+                       kwargs...)
+    files = path isa AbstractString ? [String(path)] : String.(collect(path))
+    isempty(files) && throw(ArgumentError("no file to read"))
+    for f in files
+        isfile(f) || throw(ArgumentError("no such OIFITS file: $(repr(f))"))
+    end
     kw = Dict{Symbol,Any}(kwargs)
-    data = OITOOLS.readoifits(path; kwargs...)
+    data = OITOOLS.readoifits(length(files) == 1 ? files[1] : files; kwargs...)
     data isa AbstractArray || throw(ArgumentError("readoifits did not return data for $(repr(path))"))
 
     name = _next_name(s.datasets, "data")
-    entry = DatasetEntry(name, String(path), data, kw,
-                         get(kw, :spectralbin, nothing), get(kw, :temporalbin, nothing), nothing)
+    entry = DatasetEntry(name, files[1], data, kw,
+                         get(kw, :spectralbin, nothing), get(kw, :temporalbin, nothing), nothing,
+                         "", length(files) == 1 ? String[] : files)
     push!(s.datasets, entry)
 
     # `Pair{Symbol,Any}[...]`, not a bare comprehension: over an EMPTY `kw` the comprehension
@@ -41,9 +49,9 @@ function load_dataset!(s::Session, path::AbstractString; kwargs...)
     # file with no read options at all threw a MethodError rather than logging the plain call.
     kwstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(kw), by = first)];
                     defaults = _READOIFITS_DEFAULTS)
-    call  = isempty(kwstr) ? "readoifits($(_literal(path)))" :
-                             "readoifits($(_literal(path)); $kwstr)"
-    log!(s, "$name = $call"; note = "load $(basename(path))", binding = name)
+    call  = isempty(kwstr) ? "readoifits($(_literal(sources(entry))))" :
+                             "readoifits($(_literal(sources(entry))); $kwstr)"
+    log!(s, "$name = $call"; note = "load $(source_label(entry))", binding = name)
     return entry
 end
 
@@ -74,14 +82,14 @@ function filter_dataset!(s::Session, name::AbstractString;
     kw  = Dict{Symbol,Any}(kwargs)
     ropts = merge(src.readopts, Dict{Symbol,Any}(read))
     base = isempty(read) ? src.data :
-           OITOOLS.readoifits(src.path; ropts..., warn = false, verbose = false)
-    base isa AbstractArray || throw(ArgumentError("readoifits returned nothing for $(src.path)"))
+           OITOOLS.readoifits(sources(src); ropts..., warn = false, verbose = false)
+    base isa AbstractArray || throw(ArgumentError("readoifits returned nothing for $(source_label(src))"))
     out = map(d -> OITOOLS.filter_data(d, OITOOLS.set_data_filter(d; kwargs...)), base)
     isempty(prep) || foreach(d -> OITOOLS.oifits_prep(d; prep...), out)
 
     newname = _next_name(s.datasets, "data")
     entry = DatasetEntry(newname, src.path, out, ropts, src.spectralbin, src.temporalbin,
-                         src.name, String(spec))
+                         src.name, String(spec), src.files)
     push!(s.datasets, entry)
 
     # Typed: over an empty dict a bare comprehension is a `Vector{Any}`, which `_kwargs` refuses.
@@ -92,8 +100,8 @@ function filter_dataset!(s::Session, name::AbstractString;
     else
         rstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(ropts), by = first)];
                        defaults = _READOIFITS_DEFAULTS)
-        isempty(rstr) ? "readoifits($(_literal(src.path)))" :
-                        "readoifits($(_literal(src.path)); $rstr)"
+        isempty(rstr) ? "readoifits($(_literal(sources(src))))" :
+                        "readoifits($(_literal(sources(src))); $rstr)"
     end
     log!(s, "$(newname) = map(d -> filter_data(d, $call), $from)";
          note = "filter $(src.name)", binding = newname)
@@ -224,17 +232,17 @@ function dataset_summary(e::DatasetEntry)
     data = vec(e.data)
     d1 = first(data)
     rows = Pair{String,String}[]
-    hdr = try
-        OITOOLS.load_oifits(e.path)
-    catch
-        nothing
-    end
-    if hdr !== nothing
+    files = isempty(e.files) ? [e.path] : e.files
+    length(files) > 1 && push!(rows, "files" => string(length(files), ": ",
+                                                       _first_few(basename.(files))))
+    hdrs = [h for h in (try OITOOLS.load_oifits(f) catch; nothing end for f in files)
+            if h !== nothing]
+    if !isempty(hdrs)
         tn = get(e.readopts, :targetname, "")
-        targets = isempty(tn) ? unique(String[t.target for t in hdr.target]) : [String(tn)]
+        targets = isempty(tn) ? unique(String[t.target for h in hdrs for t in h.target]) : [String(tn)]
         push!(rows, "target" => _first_few(targets))
-        push!(rows, "instrument" => _first_few(unique(String[i.insname for i in hdr.instr])))
-        push!(rows, "array" => _first_few(unique(String[a.arrname for a in hdr.array])))
+        push!(rows, "instrument" => _first_few(unique(String[i.insname for h in hdrs for i in h.instr])))
+        push!(rows, "array" => _first_few(unique(String[a.arrname for h in hdrs for a in h.array])))
     end
     used = Int[]
     for d in data

@@ -1277,6 +1277,15 @@ Item {
                                         text: isNaN(rowItem.rValue) ? "—" : rowItem.rValue.toFixed(4)
                                         horizontalAlignment: Text.AlignRight
                                         onEditingFinished: root.commitParam(rowItem.rIndex, "value", text)
+                                        // On a derived row the number is the expression's; a
+                                        // click opens the expression itself.
+                                        TapHandler {
+                                            enabled: rowItem.rMode === "expr"
+                                            onTapped: root.editExpression(rowItem.rIndex)
+                                        }
+                                        HoverHandler { id: valueHover; enabled: rowItem.rMode === "expr" }
+                                        ToolTip.visible: valueHover.hovered && rowItem.rMode === "expr"
+                                        ToolTip.text: "Click to edit the expression"
                                     }
 
                                     TextField {
@@ -1564,13 +1573,23 @@ Item {
                                                 x: root.dp(6); y: root.dp(5)
                                                 width: parent.width - root.dp(12)
                                                 spacing: root.dp(2)
-                                                Label {
-                                                    text: resRow.keyText + " = " + resRow.exprText
-                                                    color: root.cExpr
-                                                    font.family: "monospace"
-                                                    font.pointSize: root.pt(root.baseFontPt - 1)
-                                                    elide: Text.ElideRight
+                                                RowLayout {
                                                     Layout.fillWidth: true
+                                                    Label {
+                                                        text: resRow.keyText + " = " + resRow.exprText
+                                                        color: root.cExpr
+                                                        font.family: "monospace"
+                                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                                        elide: Text.ElideRight
+                                                        Layout.fillWidth: true
+                                                    }
+                                                    Button {
+                                                        text: "Edit…"
+                                                        flat: true
+                                                        implicitHeight: root.dp(22)
+                                                        font.pointSize: root.pt(root.baseFontPt - 2)
+                                                        onClicked: root.editExpression(index)
+                                                    }
                                                 }
                                                 Flow {
                                                     Layout.fillWidth: true
@@ -3472,6 +3491,8 @@ Item {
     // fixed → free needs bounds from somewhere.
     function requestModeChange(row, newMode) {
         var r = paramModel.get(row)
+        // Choosing "derived" again on a derived row is the way back into its expression.
+        if (r.mode === "expr" && newMode === "expr") { root.editExpression(row); return }
         if (r.mode === newMode) return
 
         if (r.mode === "expr" && newMode === "free") {
@@ -3487,11 +3508,17 @@ Item {
             // `shell_set_param(key, "mode", "expr")` cannot: all it does is drop the row from
             // the free list, so a fixed row asked to become derived kept its number, came back
             // from `model_rows` as fixed again, and the click did nothing at all.
-            exprDialog.row = row
-            exprDialog.open()
+            root.editExpression(row)
             return
         }
         root.applyMode(row, newMode)
+    }
+
+    // Open the expression dialog on a row, holding its current expression when it has one.
+    function editExpression(row) {
+        if (row < 0 || row >= paramModel.count) return
+        exprDialog.row = row
+        exprDialog.open()
     }
 
     // The expression ITSELF, which is the part `applyMode` cannot carry: `shell_set_param`'s
@@ -3764,7 +3791,11 @@ Item {
     Dialog {
         id: exprDialog
         property int row: -1
-        title: "Make this an expression"
+        // Set on opening: whether the row already holds an expression, and how many free
+        // parameters the conversion leaves (one fewer only when the row itself was free).
+        property bool editing: false
+        property int freeAfter: 0
+        title: editing ? "Edit the expression" : "Make this an expression"
         modal: true
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Ok | Dialog.Cancel
@@ -3825,7 +3856,14 @@ Item {
             check()
         }
 
-        onOpened: refresh()
+        onOpened: {
+            var r = row >= 0 && row < paramModel.count ? paramModel.get(row) : null
+            editing = r !== null && r.mode === "expr"
+            freeAfter = root.nFree - (r !== null && r.mode === "free" ? 1 : 0)
+            exprField.text = editing ? r.expr : ""
+            refresh()
+            exprField.forceActiveFocus()
+        }
 
         RowLayout {
             spacing: root.dp(14)
@@ -3834,7 +3872,8 @@ Item {
                 spacing: root.dp(6)
                 Label {
                     // The count changing behind the user's back is the thing to prevent.
-                    text: Math.max(0, root.nFree - 1) + " free parameters will remain."
+                    text: exprDialog.freeAfter + (exprDialog.freeAfter === 1 ? " free parameter" : " free parameters") +
+                          (exprDialog.editing ? "." : " will remain.")
                     wrapMode: Text.WordWrap
                     Layout.maximumWidth: root.dp(360)
                     visible: !exprDialog.editKey.endsWith(",profile")

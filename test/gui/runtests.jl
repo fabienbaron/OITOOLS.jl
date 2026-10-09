@@ -370,6 +370,60 @@ const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
         end
     end
 
+    # Several files as one dataset (GUI_TODO.md, row 4): the open dialog hands over one path per
+    # line; the dataset is every point of both files, names them in its summary, re-reads both
+    # when a filter needs a read option, refuses both as export targets, and the exported
+    # script rebuilds it.
+    @testset "several files opened as one dataset" begin
+        G = GUI
+        prev = G.SHELL[]
+        sess = Session()
+        sfig = Makie.Figure(); sax = Makie.Axis(sfig[1, 1])
+        sh = G.ShellState(sess, sfig, sax, nothing, String[], Any[], 1,
+                          :v2, :baseline, false, :none, :none, false, "", String[],
+                          G.build_canvas(sfig, sax), "", nothing, nothing, nothing, nothing,
+                          nothing, nothing, nothing, Any[], nothing, nothing, nothing,
+                          nothing, "", "", nothing)
+        G.SHELL[] = sh
+        demo = joinpath(pkgdir(OITOOLS), "demos", "data")
+        fs = joinpath.(demo, ["AZ_Cyg_2011.oifits", "AZ_Cyg_2014.oifits"])
+        try
+            each = [readoifits(f; warn = false, verbose = false)[1, 1] for f in fs]
+            st = G.shell_open("file://" * fs[1] * "\n" * fs[2] * "\n")
+            @test !startswith(st, "could not")
+            e = G.current_dataset(sh)
+            @test e.files == fs && e.path == fs[1]
+            @test e.data[1, 1].nv2 == sum(x.nv2 for x in each)
+            @test e.data[1, 1].nt3phi == sum(x.nt3phi for x in each)
+            @test G.source_label(e) == "AZ_Cyg_2011.oifits + 1 more"
+            @test occursin("AZ_Cyg_2011.oifits + 1 more", G.shell_dataset_names())
+            @test occursin("files\t2: ", G.shell_dataset_summary())
+
+            # One file through the same call is the plain single-file dataset.
+            G.shell_open(fs[1])
+            @test isempty(G.current_dataset(sh).files)
+            sh.current = 1
+
+            # A filter with a read option re-reads both files.
+            @test !startswith(G.shell_apply_filter("ignore_flags\t1"), "!")
+            f = G.current_dataset(sh)
+            @test f.files == fs && f.derived_from == e.name
+            @test f.data[1, 1].nv2 >= e.data[1, 1].nv2
+
+            # Neither source file is a target, for export or for a simulation.
+            @test startswith(G.shell_export_oifits(fs[2]), "!")
+            @test occursin("readoifits([", G.shell_script())
+
+            m = Module(:ReplaySeveral)
+            Core.eval(m, :(using OITOOLS))
+            Core.eval(m, Meta.parseall(export_script(sess)))
+            @test Core.eval(m, :($(Symbol(e.name))[1, 1].nv2)) == e.data[1, 1].nv2
+            @test Core.eval(m, :($(Symbol(f.name))[1, 1].nv2)) == f.data[1, 1].nv2
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
     @testset "filter_dataset! derives without mutating the source" begin
         s = Session()
         load_dataset!(s, MONO; warn = false, verbose = false)

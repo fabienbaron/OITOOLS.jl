@@ -17,6 +17,7 @@
 | `fits_pixsize(file)` | Pixel scale of a FITS image in mas, from its WCS keywords, or `nothing` |
 | `oifits_prep(data; kwargs...)` | Inflate error bars (additive/relative floors, multiplicative scaling) |
 | `write_oifits(path, data; overwrite)` | Write a dataset, filtered or binned, to an OIFITS v2 file that reads back to the same points |
+| `merge_oidata(datas)`, `readoifits(files::Vector)` | Several files as one dataset: stations matched by name, every point kept |
 | `updatefits_aspro(in, out, pixsize)` | Add ASPRO-compatible WCS headers to a FITS image |
 
 ```@docs
@@ -33,6 +34,7 @@ filter_data
 set_data_filter
 oifits_prep
 write_oifits
+merge_oidata
 ```
 
 ## Writing

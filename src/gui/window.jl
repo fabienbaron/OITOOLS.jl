@@ -393,7 +393,7 @@ function OITOOLS.gui(session::Session = Session();
     console!(sh, "glyph atlas: $(nglyphs) glyphs pre-warmed")
     console!(sh, "ui scale: $(uiscale.reason)")
     for (i, d) in enumerate(session.datasets)
-        console!(sh, "load_dataset!(session, \"$(d.path)\")"; kind = :cmd)
+        console!(sh, "load_dataset!(session, $(_literal(sources(d))))"; kind = :cmd)
         i == sh.current && console!(sh, sh.status)
     end
     isempty(session.datasets) && console!(sh, "no dataset loaded — use Open OIFITS…")

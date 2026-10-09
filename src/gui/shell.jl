@@ -157,7 +157,7 @@ function refresh_plot!(sh::ShellState = _shell())
         n = update_panels!(sh.canvas, d, sh.kind)
         sh.info = String[]                      # picking is per-point on the single plot only
         total = length(panel_data(d, sh.kind).panels)
-        return string(e.name, " — ", basename(e.path), " — ", sh.kind,
+        return string(e.name, " — ", source_label(e), " — ", sh.kind,
                       " (", n, " of ", total, " ", grouping_noun(sh.kind), "s)")
     else
         # Live: assignment only. See src/livecanvas.jl for why nothing may be created here.
@@ -178,7 +178,7 @@ function refresh_plot!(sh::ShellState = _shell())
     end
     suffix = sh.residual === :none ? "" : " — " * String(sh.residual) * " residuals"
     suffix *= sh.overlay === :none ? "" : " + " * String(sh.overlay) * " overplotted"
-    return string(e.name, " — ", basename(e.path), " — ", sh.kind,
+    return string(e.name, " — ", source_label(e), " — ", sh.kind,
                   " (", length(sh.info), " points)", suffix)
 end
 
@@ -340,18 +340,26 @@ function shell_ready()
     return sh.status
 end
 
-"""Load an OIFITS chosen in the file dialog. Returns a status string for the UI."""
+"""
+    shell_open(path) -> String
+
+Load what the file dialog chose: one OIFITS file, or several -- one path per line -- read as
+one dataset. Returns a status string for the UI.
+"""
 function shell_open(path::AbstractString)
     sh = _shell()
-    p = strip_file_url(path)
-    console!(sh, "load_dataset!(session, \"$p\")"; kind = :cmd)
+    ps = [strip_file_url(String(l)) for l in split(path, '\n') if !isempty(strip(l))]
+    isempty(ps) && return "! no file chosen"
+    p = length(ps) == 1 ? ps[1] : ps
+    console!(sh, "load_dataset!(session, $(_literal(p)))"; kind = :cmd)
     try
         load_dataset!(sh.session, p; warn = false, verbose = false)
         sh.current = length(sh.session.datasets)
         sh.status = refresh_plot!(sh)
         console!(sh, sh.status)
     catch err
-        sh.status = "could not load $(basename(p)): " * _cause(err)
+        sh.status = "could not load $(basename(ps[1]))" *
+                    (length(ps) > 1 ? " + $(length(ps) - 1) more: " : ": ") * _cause(err)
         console!(sh, sh.status; kind = :err)
     end
     return sh.status
@@ -401,7 +409,7 @@ end
 
 """Dataset names for the context-bar dropdown, newline-separated (QML reads a plain string)."""
 shell_dataset_names() = join([e.name * " — " *
-                              (e.derived_from === nothing ? basename(e.path) :
+                              (e.derived_from === nothing ? source_label(e) :
                                                             e.derived_from * " › filtered")
                               for e in _shell().session.datasets], "\n")
 
@@ -450,11 +458,10 @@ function shell_filter_choices()
         c = count(m -> floor(Int, m) == n, mjd)
         push!(lines, string("night\t", n, "\t", Date(1858, 11, 17) + Day(n), "  ·  ", c, " uv points"))
     end
-    hdr = try OITOOLS.load_oifits(e.path) catch; nothing end
-    if hdr !== nothing
-        for n in unique(String[i.insname for i in hdr.instr]);   push!(lines, "insname\t" * n); end
-        for n in unique(String[t.target for t in hdr.target]);   push!(lines, "target\t" * n);  end
-    end
+    hdrs = [h for h in (try OITOOLS.load_oifits(f) catch; nothing end
+                        for f in (isempty(e.files) ? [e.path] : e.files)) if h !== nothing]
+    for n in unique(String[i.insname for h in hdrs for i in h.instr]); push!(lines, "insname\t" * n); end
+    for n in unique(String[t.target for h in hdrs for t in h.target]); push!(lines, "target\t" * n);  end
     d1 = first(data)
     name(k) = d1.sta_name[findfirst(==(k), d1.sta_index)]
     used = Set{Int}(); pairs = Set{Vector{Int}}(); tris = Set{Vector{Int}}()
@@ -895,7 +902,8 @@ function shell_export_oifits(path::AbstractString)
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
     p = strip_file_url(path)
-    OITOOLS._same_file(p, e.path) && return "! that is the file the dataset was read from; choose another name"
+    any(f -> OITOOLS._same_file(p, f), [e.path; e.files]) &&
+        return "! that is a file the dataset was read from; choose another name"
     try
         write_oifits(p, e.data; overwrite = true)
     catch err
@@ -2057,8 +2065,8 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
     # file, but "replace?" is a question about a name; this is a question about someone's
     # observations, and the answer is no.
     for e in sh.session.datasets
-        if OITOOLS._same_file(out, e.path)
-            msg = "! that is $(e.name)'s own file ($(basename(e.path))) — simulating into it " *
+        if any(f -> OITOOLS._same_file(out, f), [e.path; e.files])
+            msg = "! that is $(e.name)'s own file ($(source_label(e))) — simulating into it " *
                   "would overwrite the loaded data; choose another output file"
             console!(sh, msg); return msg
         end
@@ -2082,6 +2090,8 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
     if _optbool(o, "copy", false)
         e = current_dataset(sh)
         e === nothing && return "! Copy existing OIFITS structure needs a dataset loaded in Exploring"
+        length(e.files) > 1 &&
+            return "! Copy existing OIFITS structure copies one file; $(e.name) is $(length(e.files)) files read as one"
         mode = get(o, "copy_mode", "copy_snr")
         try
             simulate_from_oifits(e.path, out; mode = mode, noise = noise, seed = seed, sky...)
@@ -4457,12 +4467,12 @@ function shell_rebin(mode::AbstractString, nbins::Integer = 0)
     end
 
     data = try
-        OITOOLS.readoifits(e.path; warn = false, verbose = false, kw...)
+        OITOOLS.readoifits(sources(e); warn = false, verbose = false, kw...)
     catch err
-        msg = "! could not re-read " * basename(e.path) * ": " * _cause(err)
+        msg = "! could not re-read " * source_label(e) * ": " * _cause(err)
         console!(sh, msg; kind = :err); return msg
     end
-    data isa AbstractArray || return "! readoifits returned nothing for " * basename(e.path)
+    data isa AbstractArray || return "! readoifits returned nothing for " * source_label(e)
 
     e.data = data
     e.readopts = kw
@@ -4470,9 +4480,9 @@ function shell_rebin(mode::AbstractString, nbins::Integer = 0)
 
     kwstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(kw), by = first)];
                     defaults = _READOIFITS_DEFAULTS)
-    call = isempty(kwstr) ? "readoifits($(_literal(e.path)))" :
-                            "readoifits($(_literal(e.path)); $kwstr)"
-    log!(sh.session, "$(e.name) = $call"; note = "rebin $(basename(e.path))", binding = e.name)
+    call = isempty(kwstr) ? "readoifits($(_literal(sources(e))))" :
+                            "readoifits($(_literal(sources(e))); $kwstr)"
+    log!(sh.session, "$(e.name) = $call"; note = "rebin $(source_label(e))", binding = e.name)
     console!(sh, "$(e.name) = $call"; kind = :cmd)
 
     sh.ftcache = nothing          # the plan is per bin; a rebin invalidates every cell

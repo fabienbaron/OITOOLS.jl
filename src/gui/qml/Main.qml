@@ -512,7 +512,8 @@ ApplicationWindow {
     FilePicker {
         id: openDialog
         uiScale: win.uiScale; fontScale: win.fontScale; baseFontPt: win.baseFontPt
-        title: "Open OIFITS"
+        title: "Open OIFITS  (Ctrl- or Shift-click: several files as one dataset)"
+        multiSelect: true
         filters: [{ label: "OIFITS files (*.oifits *.fits)", patterns: "*.oifits,*.fits" },
                   { label: "All files", patterns: "*" }]
         onAccepted: function (path) {

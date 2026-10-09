@@ -177,7 +177,7 @@ export oitoolsgui
 
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
-export readoifits, readoifits_multiepochs, list_oifits_targets, write_oifits
+export readoifits, readoifits_multiepochs, list_oifits_targets, write_oifits, merge_oidata
 export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_image_plane, model_image_vis
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter

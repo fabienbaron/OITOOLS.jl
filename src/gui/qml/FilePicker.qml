@@ -79,6 +79,12 @@ Popup {
     property string folder: ""
     property string selectedName: ""
     property bool   showHidden: false
+    // Opening several files at once: Ctrl-click adds or removes a file, Shift-click takes the
+    // run from the last one clicked. With more than one marked, `accepted` carries their paths,
+    // one per line.
+    property bool   multiSelect: false
+    property int    _anchor: -1
+    property int    markedCount: 0
 
     signal accepted(string path)
     signal rejected()
@@ -125,13 +131,15 @@ Popup {
                 if (f.length < 5) continue
                 if (chooseFolder && f[0] !== "dir") continue
                 entryModel.append({ kind: f[0], name: f[1], size: f[2],
-                                    modified: f[3], sortkey: f[4] })
+                                    modified: f[3], sortkey: f[4], marked: false })
             }
         }
         // Nothing preselected when choosing a FOLDER: the button acts on the highlighted row,
         // and auto-highlighting the first subdirectory would make the folder you are standing in
         // the one answer you could not give.
         fileList.currentIndex = (chooseFolder || entryModel.count === 0) ? -1 : 0
+        _anchor = fileList.currentIndex
+        markedCount = 0
         statusLabel.text = entryModel.count + (entryModel.count === 1 ? " item" : " items")
     }
 
@@ -169,8 +177,56 @@ Popup {
         }
     }
 
+    // A click on row `i`: plain selects it alone; with multiSelect, Ctrl toggles a file and Shift
+    // marks the files from the last click to this one. The row that was current when the first
+    // Ctrl-click came is marked too, since it was already the selection.
+    function clickRow(i, mods) {
+        if (i < 0 || i >= entryModel.count) return
+        var isFile = entryModel.get(i).kind === "file"
+        if (!multiSelect || !isFile || !(mods & (Qt.ControlModifier | Qt.ShiftModifier))) {
+            clearMarks()
+            fileList.currentIndex = i
+            _anchor = i
+            return
+        }
+        if (mods & Qt.ShiftModifier && _anchor >= 0) {
+            clearMarks()
+            for (var k = Math.min(_anchor, i); k <= Math.max(_anchor, i); ++k)
+                if (entryModel.get(k).kind === "file") entryModel.setProperty(k, "marked", true)
+        } else {
+            var c = fileList.currentIndex
+            if (markedCount === 0 && c >= 0 && c !== i && entryModel.get(c).kind === "file")
+                entryModel.setProperty(c, "marked", true)
+            entryModel.setProperty(i, "marked", !entryModel.get(i).marked)
+            _anchor = i
+        }
+        fileList.currentIndex = i
+        countMarks()
+    }
+    function clearMarks() {
+        for (var k = 0; k < entryModel.count; ++k)
+            if (entryModel.get(k).marked) entryModel.setProperty(k, "marked", false)
+        markedCount = 0
+    }
+    function countMarks() {
+        var n = 0
+        for (var k = 0; k < entryModel.count; ++k) if (entryModel.get(k).marked) ++n
+        markedCount = n
+        if (n > 1) {
+            nameField.text = n + " files"
+            statusLabel.text = n + " files selected"
+        }
+    }
+    function markedPaths() {
+        var out = []
+        for (var k = 0; k < entryModel.count; ++k)
+            if (entryModel.get(k).marked) out.push(Julia.picker_join(folder, entryModel.get(k).name))
+        return out
+    }
+
     function confirm() {
         if (chooseFolder) { root.accepted(root.chosenFolder); root.close(); return }
+        if (multiSelect && !saveMode && markedCount > 1) { root.finish(markedPaths().join("\n")); return }
         var name = saveMode ? nameField.text.trim() : selectedName
         if (name.length === 0) { statusLabel.text = "nothing selected"; return }
         if (saveMode && defaultSuffix.length > 0 && name.indexOf(".") < 0)
@@ -319,8 +375,8 @@ Popup {
 
                         // Backspace goes up, Return opens, Escape cancels — the three gestures
                         // every file list has had for thirty years.
-                        Keys.onReturnPressed: root.activate(currentIndex)
-                        Keys.onEnterPressed:  root.activate(currentIndex)
+                        Keys.onReturnPressed: root.markedCount > 1 ? root.confirm() : root.activate(currentIndex)
+                        Keys.onEnterPressed:  root.markedCount > 1 ? root.confirm() : root.activate(currentIndex)
                         Keys.onPressed: function (event) {
                             if (event.key === Qt.Key_Backspace) {
                                 root.folder = Julia.picker_parent(root.folder)
@@ -348,7 +404,7 @@ Popup {
                             // padding, and the labels centre themselves in the full height.
                             topPadding: 0
                             bottomPadding: 0
-                            highlighted: ListView.isCurrentItem
+                            highlighted: ListView.isCurrentItem || rMarked
                             // Captured, because `model` inside a nested Control means that
                             // control's own model rather than this row.
                             readonly property string rKind: model.kind
@@ -356,9 +412,14 @@ Popup {
                             readonly property string rSize: model.size
                             readonly property string rMod:  model.modified
                             readonly property int    rIndex: index
+                            readonly property bool   rMarked: model.marked
 
-                            onClicked: fileList.currentIndex = rIndex
-                            onDoubleClicked: root.activate(rIndex)
+                            // A MouseArea rather than onClicked, which carries no modifiers.
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: function (mouse) { root.clickRow(rowItem.rIndex, mouse.modifiers) }
+                                onDoubleClicked: { root.clearMarks(); root.activate(rowItem.rIndex) }
+                            }
 
                             contentItem: RowLayout {
                                 spacing: root.dp(6)
@@ -468,7 +529,7 @@ Popup {
                 // it -- so the only way to save under a NEW name was to press Enter instead of
                 // pressing the button marked Save. Opening is the case where the selection IS
                 // the answer; a double click still walks into a directory either way.
-                onClicked: (root.chooseFolder || root.saveMode)
+                onClicked: (root.chooseFolder || root.saveMode || root.markedCount > 1)
                            ? root.confirm()
                            : root.activate(fileList.currentIndex)
             }

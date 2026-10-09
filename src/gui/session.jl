@@ -32,9 +32,23 @@ mutable struct DatasetEntry
     # The Filter section's settings that made a filtered entry, as `key\tvalue` lines, so the
     # section shows them again when the entry is selected. Empty for a file as read.
     filterspec  :: String
+    # Every file the dataset was read from, when it is several read as one (`path` is then the
+    # first). Empty for a single file.
+    files       :: Vector{String}
 end
 DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from) =
-    DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, "")
+    DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, "", String[])
+DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec) =
+    DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec,
+                 String[])
+
+"""What `readoifits` reads for this entry: its file, or its list of files."""
+sources(e::DatasetEntry) = isempty(e.files) ? e.path : e.files
+
+"""The entry's file as a label: its name, or the first name and how many more."""
+source_label(e::DatasetEntry) =
+    length(e.files) > 1 ? string(basename(e.path), " + ", length(e.files) - 1, " more") :
+                          basename(e.path)
 
 """
     ModelEntry
