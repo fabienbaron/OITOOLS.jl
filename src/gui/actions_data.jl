@@ -118,6 +118,41 @@ const _ERR_ROWS = ("v2", "t3amp", "t3phi", "visamp", "visphi", "flux")
 _is_phase(o) = o in ("t3phi", "visphi")
 
 """
+    _nights(mjd) -> Vector{(; lo, hi, n)}
+
+The observing nights among a set of epochs: runs of sorted MJDs with no gap longer than 12
+hours, each with its first and last epoch and its number of epochs. A UT day is not a night: one
+that crosses 0h UT is one night here, not two. Twelve hours separates nights at any site, while
+nothing inside one night is that far apart.
+"""
+function _nights(mjd)
+    t = sort(Float64.(vec(mjd)))
+    out = NamedTuple{(:lo, :hi, :n), Tuple{Float64, Float64, Int}}[]
+    isempty(t) && return out
+    lo = prev = t[1]; n = 0
+    for x in t
+        if x - prev > 0.5
+            push!(out, (; lo, hi = prev, n)); lo = x; n = 0
+        end
+        n += 1; prev = x
+    end
+    push!(out, (; lo, hi = prev, n))
+    return out
+end
+
+"""
+    _night_window(nights, i) -> (lo, hi)
+
+The MJD window that keeps night `i` of `_nights`: halfway to the neighbouring nights (half a day
+beyond the first and last), so an epoch at the edge of a night is never lost to rounding.
+"""
+function _night_window(ns, i)
+    a = i == 1 ? ns[i].lo - 0.5 : (ns[i - 1].hi + ns[i].lo) / 2
+    b = i == length(ns) ? ns[i].hi + 0.5 : (ns[i].hi + ns[i + 1].lo) / 2
+    return (a, b)
+end
+
+"""
     filter_spec_kwargs(spec) -> (; read, filter, prep) or a String
 
 The Filter section's settings, as `key\tvalue` lines, turned into the three groups
@@ -128,7 +163,7 @@ is (a range whose minimum is above its maximum, a number that does not parse).
 |---|---|
 | `wav_min`, `wav_max` (µm) | `wav_range` |
 | `bl_min`, `bl_max` with `bl_unit` = `Mλ` or `m` | `baseline_range` or `baseline_length_range` |
-| `nights` (MJD days kept, comma-separated) | `mjd_range`, one window per night |
+| `nights` (nights kept, comma-separated: an MJD window `lo:hi`, or an MJD day) | `mjd_range`, one window per night |
 | `insname`, `target`, `use_v2`, `use_t3`, `use_vis`, `use_flux`, `ignore_flags` | read options |
 | `exclude_stations`, `exclude_baselines`, `exclude_triangles` (comma-separated) | the same keywords |
 | `<obs>_add`, `<obs>_rel`, `<obs>_mult` for v2, t3amp, t3phi, visamp, visphi, flux | `oifits_prep` |
@@ -167,10 +202,15 @@ function filter_spec_kwargs(spec::AbstractString)
         range!(:baseline_range, "bl_min", "bl_max", 1e6, "baseline", 0.0)
     r === nothing || return r
     if haskey(d, "nights")
-        n = [tryparse(Int, x) for x in list("nights")]
-        any(isnothing, n) && return "! nights: not a list of MJD days"
-        isempty(n) && return "! no night left: tick at least one"
-        filt[:mjd_range] = [Float64[k, k + 1] for k in sort(n)]
+        w = map(list("nights")) do x
+            ab = tryparse.(Float64, split(x, ':'))
+            length(ab) == 2 && !any(isnothing, ab) && return Float64[ab[1], ab[2]]
+            k = tryparse(Int, x)
+            k === nothing ? nothing : Float64[k, k + 1]
+        end
+        any(isnothing, w) && return "! nights: not a list of MJD windows or days"
+        isempty(w) && return "! no night left: tick at least one"
+        filt[:mjd_range] = sort(w)
     end
 
     haskey(d, "insname") && (read[:insname] = d["insname"])
@@ -254,7 +294,7 @@ function dataset_summary(e::DatasetEntry)
     mjd = reduce(vcat, (Float64.(d.uv_mjd) for d in data))
     if !isempty(mjd)
         lo, hi = extrema(mjd)
-        nights = length(unique(floor.(Int, mjd)))
+        nights = length(_nights(mjd))
         push!(rows, "MJD" => @sprintf("%.4f – %.4f  (%d night%s)", lo, hi, nights,
                                       nights == 1 ? "" : "s"))
     end

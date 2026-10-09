@@ -215,6 +215,15 @@ const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
             n1 = minimum(floor.(Int, G.dataset(sess, "data2").data[1, 1].uv_mjd))
             @test apply("data2", "nights\t$n1").nv2 ==
                   direct("data2"; mjd_range = [[Float64(n1), n1 + 1.0]]).nv2
+            # The choices offer a night as its MJD window, and a night is a run of epochs, not a
+            # UT day: one crossing 0h UT stays one.
+            sel("data2")
+            w1 = split(first(filter(startswith("night\t"), split(G.shell_filter_choices(), '\n'))), '\t')[2]
+            a1, b1 = parse.(Float64, split(w1, ':'))
+            @test apply("data2", "nights\t$w1").nv2 == direct("data2"; mjd_range = [[a1, b1]]).nv2
+            @test [n.n for n in G._nights([100.9, 101.1, 101.2, 102.95])] == [3, 1]
+            @test G._night_window(G._nights([100.9, 101.1, 102.95]), 1) == (100.4, (101.1 + 102.95) / 2)
+            @test startswith(G.shell_apply_filter("nights\tyesterday"), "! nights")
             # Telescopes, baselines, triangles.
             @test apply("data1", "exclude_stations\tE02").nv2 ==
                   direct("data1"; exclude_stations = ["E02"]).nv2
@@ -1484,6 +1493,19 @@ end
             G.shell_open_model(joinpath(pkgdir(OITOOLS), "demos", "models", "AX_Cir_Binary.toml"))
             @test G.shell_companion_candidates() == "companion"
 
+            # The header χ²r is the library's, over the ticked observables: V² and T3φ give the
+            # fit's 0.7305, and ticking T3amp too changes the number rather than leaving it.
+            d1 = sess.datasets[1].data[1, 1]
+            fm = parse_model(G._model(sh).dict, G._model(sh).free)
+            x1 = Float64[G._model(sh).dict[k] for k in G._model(sh).free]
+            w13 = [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            @test G.shell_model_chi2(true, false, true, false, false, false) ==
+                  GUI.Printf.@sprintf("%.4f", OITOOLS.chi2_flat(fm, x1, d1; weights = w13) / OITOOLS._ndof(d1, w13))
+            @test parse(Float64, G.shell_model_chi2(true, false, true, false, false, false)) ≈ 0.7305 atol = 1e-3
+            @test G.shell_model_chi2(true, true, true, false, false, false) !=
+                  G.shell_model_chi2(true, false, true, false, false, false)
+            @test G.shell_model_chi2(false, false, false, false, false, false) == ""
+
             # Smearing is a menu, not a row: the model file's "auto" shows there, and the menu
             # writes the keys back (off removes them).
             @test G.shell_smearing() == "auto\tincoherent"
@@ -1575,6 +1597,63 @@ end
                         for l in split(G.shell_fit_values(), '\n'))
             @test vals["companion,x"] == s.best.x && vals["companion,y"] == s.best.y
             @test vals["companion,f"] == s.best.f && haskey(vals, "star,ud")
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
+    # The Uncertainty selector decides the ± in the fits table: LM's own σ, none, or a
+    # bootstrap run after the fit -- whose σ must be the library's for the same call.
+    @testset "the Uncertainty selector reaches the fit" begin
+        G = GUI
+        prev = G.SHELL[]
+        sess = Session()
+        load_dataset!(sess, joinpath(pkgdir(OITOOLS), "demos", "data", "AX_Cir.oifits");
+                      warn = false, verbose = false)
+        sh = G.ShellState(sess, nothing, nothing, nothing, String[], Any[], 1,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        function wait_fit()
+            for _ in 1:2400
+                r = G.shell_job_poll()
+                startswith(r, "running") || return r
+                sleep(0.25)
+            end
+            return ""
+        end
+        free = "star,ud\t0\t3\ncompanion,f\t0\t0.5\ncompanion,x\t-60\t60\ncompanion,y\t-60\t60"
+        fit(unc; cons = "", opt = "lsqfit", nboot = 12) =
+            G.shell_fit_model(free, cons, "", true, false, true, false, false, false, opt, 200,
+                              "", "", 60, 0, unc, nboot, "replacement", "config", 7, false)
+        try
+            G.shell_open_model(joinpath(pkgdir(OITOOLS), "demos", "models", "AX_Cir_Binary.toml"))
+            @test fit("jacobian") == "fitting…" && startswith(wait_fit(), "done\tchi2r")
+            f = last(sh.fits)
+            @test f.sigma == f.result.stderror && f.boot === nothing && f.optimiser == "lsqfit"
+            @test occursin("±", split(G.shell_fit_rows(), '\n')[1])
+
+            @test fit("none") == "fitting…" && startswith(wait_fit(), "done\tchi2r")
+            @test last(sh.fits).sigma === nothing
+            @test !occursin("±", split(G.shell_fit_rows(), '\n')[1])
+
+            @test fit("bootstrap") == "fitting…" && startswith(wait_fit(), "done\tchi2r")
+            f = last(sh.fits)
+            @test f.optimiser == "lsqfit + bootstrap 12" && f.boot isa OITOOLS.BootstrapResult
+            mb = copy(G._model(sh).dict)
+            for (k, v) in zip(f.result.list_free_params, f.result.x_opt); mb[k] = v; end
+            _, lb, ub = G.parse_free_lines(free)
+            ref = bootstrap_fit(mb, f.free, sess.datasets[1].data[1, 1]; nboot = 12,
+                                mode = :replacement, granularity = :config, fitter = :lsqfit,
+                                lb, ub, weights = G.fitting_weights(; t3amp = false),
+                                maxeval = 200, seed = 7, threaded = false, verb = false)
+            @test f.sigma ≈ ref.sigma rtol = 1e-8
+            @test occursin("±", split(G.shell_fit_rows(), '\n')[1])
+
+            @test startswith(fit("bootstrap"; opt = "grid"), "! bootstrap refits")
+            @test startswith(fit("bootstrap"; cons = "star,ud\t>\t0.1"), "! bootstrap replicates")
+            @test startswith(fit("sideways"), "! unknown uncertainty")
         finally
             G.SHELL[] = prev
         end

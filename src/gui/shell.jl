@@ -436,7 +436,8 @@ end
     shell_filter_choices() -> String
 
 What the Filter section offers, from the unfiltered dataset and its file, as `kind\t…` lines:
-`extent_wav\tlo\thi` (µm), `extent_bl` (Mλ), `extent_blm` (m), `night\tMJD day\tlabel`,
+`extent_wav\tlo\thi` (µm), `extent_bl` (Mλ), `extent_blm` (m), `night\tlo:hi\tlabel` (the MJD
+window that keeps one night, from `_nights`),
 `insname\tname`, `target\tname`, `station\tname`, `baseline\tA-B`, `triangle\tA-B-C`.
 """
 function shell_filter_choices()
@@ -454,9 +455,11 @@ function shell_filter_choices()
         blm = bl .* lam
         push!(lines, join(("extent_blm", g(minimum(blm)), g(maximum(blm))), "\t"))
     end
-    for n in sort(unique(floor.(Int, mjd)))
-        c = count(m -> floor(Int, m) == n, mjd)
-        push!(lines, string("night\t", n, "\t", Date(1858, 11, 17) + Day(n), "  ·  ", c, " uv points"))
+    ns = _nights(mjd)
+    for (i, n) in enumerate(ns)
+        a, b = _night_window(ns, i)
+        push!(lines, string("night\t", @sprintf("%.5f:%.5f", a, b), "\t",
+                            Date(1858, 11, 17) + Day(floor(Int, n.lo)), " UT  ·  ", n.n, " uv points"))
     end
     hdrs = [h for h in (try OITOOLS.load_oifits(f) catch; nothing end
                         for f in (isempty(e.files) ? [e.path] : e.files)) if h !== nothing]
@@ -953,7 +956,9 @@ _collapse_cr(s::AbstractString) =
 
 """
     shell_fit_model(free_lines, constraint_lines, prior_lines,
-                    v2, t3amp, t3phi, cvis, flux, diffvis, optimiser, maxeval) -> String
+                    v2, t3amp, t3phi, cvis, flux, diffvis, optimiser, maxeval,
+                    gridp1, gridp2, gridn, gridn2,
+                    uncertainty, nboot, bootmode, granularity, seed, threaded) -> String
 
 Fit the model the panel is editing (the session's live model) to the current dataset. Returns
 a one-line summary.
@@ -962,6 +967,18 @@ The optimiser choice decides more than speed. NLopt takes the constraints as rea
 constraints, so they hold at the optimum; Levenberg-Marquardt and nested sampling have no such
 machinery and apply a soft penalty that a steep χ² can overrule. That difference is stated in
 the console rather than left to be discovered.
+
+`uncertainty` is the panel's Uncertainty selector, and decides the `±` the fits table shows:
+
+| choice | σ |
+|---|---|
+| `"none"` | none |
+| `"jacobian"` | Levenberg-Marquardt's `stderror` (none from the other optimisers) |
+| `"bootstrap"` | [`bootstrap_fit`](@ref) after the fit, started from its optimum, with `nboot`, `bootmode`, `granularity`, `seed` and `threaded`; the inner fitter is LM when the optimiser is, NLopt otherwise |
+| `"posterior"` | the standard deviation of the nested-sampling posterior |
+
+Bootstrap replicates are fitted without constraints or priors, so a bootstrap is refused when
+the panel has either, as it is after a grid search or nested sampling.
 """
 function shell_fit_model(free_lines::AbstractString,
                          constraint_lines::AbstractString, prior_lines::AbstractString,
@@ -969,7 +986,11 @@ function shell_fit_model(free_lines::AbstractString,
                          cvis::Bool, flux::Bool, diffvis::Bool,
                          optimiser::AbstractString, maxeval::Integer,
                          gridp1::AbstractString = "", gridp2::AbstractString = "",
-                         gridn::Integer = 60, gridn2::Integer = 0)
+                         gridn::Integer = 60, gridn2::Integer = 0,
+                         uncertainty::AbstractString = "jacobian", nboot::Integer = 200,
+                         bootmode::AbstractString = "replacement",
+                         granularity::AbstractString = "config", seed::Integer = 1,
+                         threaded::Bool = true)
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
@@ -991,6 +1012,23 @@ function shell_fit_model(free_lines::AbstractString,
 
     data = e.data[1, 1]
     opt  = String(optimiser)
+
+    unc = String(uncertainty)
+    unc in ("none", "jacobian", "bootstrap", "posterior") ||
+        return "! unknown uncertainty: " * unc
+    bmode, bgran = Symbol(bootmode), Symbol(granularity)
+    bfitter = opt == "lsqfit" ? :lsqfit : :nlopt
+    if unc == "bootstrap"
+        opt in ("grid", "nested") &&
+            return "! bootstrap refits with Levenberg-Marquardt or NLopt; choose one of those"
+        (isempty(cons) && isempty(priors)) ||
+            return "! bootstrap replicates are fitted without constraints or priors; remove them or choose another uncertainty"
+        bmode in (:replacement, :halfsample, :weights, :pmoired) ||
+            return "! unknown bootstrap mode: " * String(bootmode)
+        bgran in (:config, :epoch, :point) ||
+            return "! unknown bootstrap granularity: " * String(granularity)
+        nboot >= 2 || return "! nboot must be at least 2"
+    end
 
     isempty(cons) || console!(sh, "  constraints: " *
         (startswith(opt, "L") && opt != "lsqfit" ?
@@ -1014,6 +1052,10 @@ function shell_fit_model(free_lines::AbstractString,
         console!(sh, "> fit_model(model, $(free), data; " *
                      "weights = $(weights), method = :$(opt))")
     end
+    unc == "bootstrap" &&
+        console!(sh, "> bootstrap_fit(model, $(free), data; nboot = $(Int(nboot)), " *
+                     "mode = :$(bmode), granularity = :$(bgran), fitter = :$(bfitter), " *
+                     "weights = $(weights), seed = $(Int(seed)), threaded = $(threaded))")
 
     # `verb = true` throughout: the console under the results table shows what the optimiser
     # printed, so it has to print. The fit runs on a worker — see `GuiJob` — so the window
@@ -1054,10 +1096,30 @@ function shell_fit_model(free_lines::AbstractString,
             fit_model(md, free, data; lb, ub, weights, priors, constraints = cons,
                       method = optsym, maxeval = Int(maxeval), verb = true)
         end
+        boot = nothing
+        sigma = if unc == "bootstrap"
+            # From the optimum, so the full-data fit `bootstrap_fit` starts with is a few
+            # iterations rather than the whole fit again.
+            mb = copy(md)
+            for (k, v) in zip(r.list_free_params, r.x_opt); mb[k] = v; end
+            boot = bootstrap_fit(mb, free, data; nboot = Int(nboot), mode = bmode,
+                                 granularity = bgran, fitter = bfitter, lb, ub, weights,
+                                 method = bfitter == :nlopt ? optsym : :LD_LBFGS,
+                                 maxeval = Int(maxeval), seed = Int(seed), threaded,
+                                 verb = true)
+            boot.sigma
+        elseif unc == "jacobian" && opt != "grid"
+            _jacobian_sigma(r)
+        elseif unc == "posterior"
+            _posterior_sigma(r)
+        else
+            nothing
+        end
+        label = unc == "bootstrap" ? string(opt, " + bootstrap ", Int(nboot)) : opt
         # The map travels with the result rather than being drawn here: `update_chi2_map!`
         # touches Makie, which belongs to the GUI thread.
-        return (; result = r, map = themap, seconds = time() - t0, optimiser = opt, free,
-                  chi2_start)
+        return (; result = r, map = themap, seconds = time() - t0, optimiser = label, free,
+                  chi2_start, sigma, boot)
     end)
     return "fitting…"
 end
@@ -1087,10 +1149,15 @@ function finish_fit!(sh::ShellState, res)
     # The map belongs to the fit that produced it, not to the shell: two grid fits over
     # different parameter pairs both stay reachable, and selecting an older fit can redraw it.
     f.map === nothing || sh.chi2map === nothing || update_chi2_map!(sh.chi2map, f.map)
+    # A companion search chooses no uncertainty; its best node keeps whatever its fit carries.
+    sigma = haskey(f, :sigma) ? f.sigma : _result_sigma(r)
     push!(sh.fits, (; result = r, optimiser = f.optimiser, seconds = f.seconds,
-                      free = f.free, map = f.map, chi2_start = f.chi2_start))
-    for (k, v) in zip(r.list_free_params, r.x_opt)
-        console!(sh, @sprintf("    %-22s = %.6g", k, v))
+                      free = f.free, map = f.map, chi2_start = f.chi2_start, sigma,
+                      boot = get(f, :boot, nothing)))
+    for (j, (k, v)) in enumerate(zip(r.list_free_params, r.x_opt))
+        console!(sh, sigma === nothing || !isfinite(sigma[j]) ?
+                     @sprintf("    %-22s = %.6g", k, v) :
+                     @sprintf("    %-22s = %.6g ± %.3g", k, v, sigma[j]))
     end
     if f.map isa CompanionSearch
         COMPANION_LIVE[] = nothing
@@ -1348,32 +1415,42 @@ function shell_companion_map_view(which::AbstractString)
 end
 
 """
-    _fit_params(r) -> String
+    _jacobian_sigma(r), _posterior_sigma(r), _result_sigma(r) -> Vector{Float64} or nothing
 
-A fit's optimised parameters as `name = value` pairs, with an uncertainty where the fitter
-produced one.
+The uncertainty a fit result carries by itself: Levenberg-Marquardt's `stderror` from the
+Jacobian, or the standard deviation of a nested-sampling posterior; `_result_sigma` takes
+whichever there is. The plain NLopt methods carry neither, and get `nothing` rather than a `±`
+on a number that came from nowhere.
+"""
+function _jacobian_sigma(r)
+    hasproperty(r, :stderror) && r.stderror !== nothing &&
+        length(r.stderror) == length(r.x_opt) || return nothing
+    return Float64.(r.stderror)
+end
+
+function _posterior_sigma(r)
+    hasproperty(r, :posterior) && r.posterior isa AbstractMatrix &&
+        size(r.posterior, 2) == length(r.x_opt) || return nothing
+    return [std(@view r.posterior[:, j]) for j in axes(r.posterior, 2)]
+end
+
+function _result_sigma(r)
+    j = _jacobian_sigma(r)
+    return j === nothing ? _posterior_sigma(r) : j
+end
+
+"""
+    _fit_params(r, errs) -> String
+
+A fit's optimised parameters as `name = value` pairs, with `± σ` from `errs` where it holds
+a finite one (`errs === nothing` for none).
 
 The point of a row per fit is comparing fits, and two fits that differ only in χ² are two
 numbers, not two models. What separates them is where the parameters landed.
-
-`± σ` appears only when it was actually computed: Levenberg-Marquardt carries `stderror` from
-the Jacobian, nested sampling has a posterior to take a standard deviation of, and the plain
-NLopt methods have neither. Writing `±` on a number that came from nowhere would be worse than
-leaving it off.
 """
-function _fit_params(r)
+function _fit_params(r, errs)
     names = r.list_free_params
     vals  = r.x_opt
-    # `stderror` on the LM result; a posterior column-wise for nested sampling.
-    errs = if hasproperty(r, :stderror) && r.stderror !== nothing &&
-              length(r.stderror) == length(vals)
-        Float64.(r.stderror)
-    elseif hasproperty(r, :posterior) && r.posterior isa AbstractMatrix &&
-           size(r.posterior, 2) == length(vals)
-        [std(@view r.posterior[:, j]) for j in eachindex(vals)]
-    else
-        nothing
-    end
     parts = String[]
     for (j, n) in enumerate(names)
         v = @sprintf("%.5g", vals[j])
@@ -1451,7 +1528,7 @@ function shell_fit_rows()
         push!(rows, join((string("fit ", length(sh.fits) - i + 1), f.optimiser,
                           _numv(start), string(round(r.chi2r; digits = 4)),
                           work, string(r.ndof), string(k),
-                          _fit_params(r)), "\t"))
+                          _fit_params(r, f.sigma)), "\t"))
     end
     return join(rows, "\n")
 end
@@ -1753,12 +1830,17 @@ function _current_residuals(sh::ShellState; quiet::Bool = false)
 end
 
 """
-    shell_model_chi2() -> String
+    shell_model_chi2(v2, t3amp, t3phi, cvis, flux, diffvis) -> String
 
 Reduced chi2 of the model as it stands, against the current dataset, or `""` when either is
 missing. Cheap for analytic components, which is what makes it worth recomputing on every edit.
+
+The six flags are the panel's Observables ticks, and the number is `chi2_flat` over
+`_ndof(data, weights)` with the weights `shell_fit_model` builds from the same ticks -- so after
+"Adopt" it is the χ²r the fit reported, not a figure over observables the fit never saw.
 """
-function shell_model_chi2()
+function shell_model_chi2(v2::Bool = true, t3amp::Bool = true, t3phi::Bool = true,
+                          cvis::Bool = false, flux::Bool = false, diffvis::Bool = false)
     sh = _shell()
     m = _model(sh)
     e = current_dataset(sh)
@@ -1770,8 +1852,10 @@ function shell_model_chi2()
         fm = parse_model(Dict{String,Any}(String(k) => v for (k, v) in m.dict),
                          String.(m.free); nB_workspace = 1)
         x = Float64[_row_value(m, k) for k in m.free]
-        chi2 = model_to_chi2(fm, x, d)
-        @sprintf("%.4f", chi2 / max(1, _chi2_ndof(d)))
+        weights = fitting_weights(; v2, t3amp, t3phi, cvis, flux, diffvis)
+        all(iszero, weights) && return ""
+        chi2 = model_to_chi2(fm, x, d; weights)
+        @sprintf("%.4f", chi2 / OITOOLS._ndof(d, weights))
     catch err
         # A model mid-edit is not an error, it is simply not evaluable yet — but say so once,
         # or a permanently blank chi2 looks like the number rather than the model being absent.
@@ -1781,9 +1865,6 @@ function shell_model_chi2()
 end
 
 _row_value(m, key) = get(m.dict, key, 0.0) isa Real ? Float64(m.dict[key]) : 0.0
-
-"Data points the chi2 is taken over. Counts VALID points, which is what `ndof` means here."
-_chi2_ndof(d) = d.nv2 + d.nt3amp + d.nt3phi + d.nvisamp + d.nvisphi
 
 """
     shell_set_param(key, field, value) -> String

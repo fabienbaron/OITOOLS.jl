@@ -627,7 +627,9 @@ Item {
                       root.useV2, root.useT3amp, root.useT3phi,
                       root.useCvis, root.useFlux, root.useDiffvis,
                       root.optimiser, root.maxeval,
-                      gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value)
+                      gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value,
+                      root.uncertainty, root.nboot, root.bootMode, root.bootGranularity,
+                      root.bootSeed, root.bootThreaded)
             root.fitOutput = ""
             if (root.fitText.length > 0 && root.fitText.charAt(0) === "!") {
                 root.running = false
@@ -740,6 +742,18 @@ Item {
     readonly property bool anyObservable:
         useCvis || useV2 || useT3amp || useT3phi || useDiffvis || useFlux
 
+    // The header χ²ᵣ is taken over the ticked observables, as the fit is, so a tick changes it.
+    function refreshChi2() {
+        var chi2 = Julia.shell_model_chi2(useV2, useT3amp, useT3phi, useCvis, useFlux, useDiffvis)
+        root.currentChi2r = chi2.length > 0 ? parseFloat(chi2) : NaN
+    }
+    onUseCvisChanged:    refreshChi2()
+    onUseV2Changed:      refreshChi2()
+    onUseT3ampChanged:   refreshChi2()
+    onUseT3phiChanged:   refreshChi2()
+    onUseDiffvisChanged: refreshChi2()
+    onUseFluxChanged:    refreshChi2()
+
     // ── optimiser and uncertainty: two separate, composable selectors (§3.7, §3.8) ──
     //
     // Bootstrap is not a fifth optimiser. It is a wrapper that runs an inner fitter many
@@ -747,7 +761,7 @@ Item {
     // lsqfit by default: it is the one reached for most often, and it is the only fitter that
     // returns a covariance, so the default path is also the one that can report an uncertainty.
     property string optimiser: "lsqfit"
-    property string uncertainty: "none"         // none | jacobian | bootstrap | posterior
+    property string uncertainty: "jacobian"     // none | jacobian | bootstrap | posterior
 
     property int  maxeval: 2000
     property real ftolRel: 1e-8
@@ -2791,6 +2805,7 @@ Item {
                                         // estimated at all, and "none" reads like a result the fit
                                         // came back with rather than a step being left out.
                                         model: ["skip", "Jacobian", "bootstrap", "posterior"]
+                                        currentIndex: 1
                                         onActivated: root.uncertainty =
                                             ["none", "jacobian", "bootstrap", "posterior"][index]
                                     }
@@ -3018,12 +3033,19 @@ Item {
 
                                     delegate: RowLayout {
                                         width: fitList.width
-                                        height: root.dp(22)
+                                        // As tall as the wrapped parameter list, so every
+                                        // parameter of every fit is on screen.
+                                        height: Math.max(root.dp(22), fitParamLabel.implicitHeight + root.dp(4))
                                         spacing: root.dp(6)
                                         Label { Layout.preferredWidth: root.dp(140); text: model.label
                                                 leftPadding: root.dp(6); elide: Text.ElideRight }
-                                        Label { Layout.preferredWidth: root.dp(130); text: model.optimiser
-                                                color: "#666" }
+                                        Label {
+                                            Layout.preferredWidth: root.dp(130); text: model.optimiser
+                                            color: "#666"; elide: Text.ElideRight
+                                            ToolTip.visible: fitOptHover.hovered && truncated
+                                            ToolTip.text: model.optimiser
+                                            HoverHandler { id: fitOptHover }
+                                        }
                                         // Where the fit began and where it ended, in the same
                                         // units and against the same ndof. A fit whose two
                                         // numbers are equal did not move.
@@ -3049,17 +3071,17 @@ Item {
                                                 color: "#666" }
                                         // Where the parameters landed. Two fits that differ only
                                         // in χ² are two numbers; this is what makes them two
-                                        // models. `± σ` appears only where the fitter actually
-                                        // produced one — LM's Jacobian, or a posterior.
+                                        // models. `± σ` is the one the Uncertainty selector
+                                        // asked for. Wrapped, and only between parameters: the
+                                        // spaces inside "name = value ± σ" are non-breaking.
                                         Label {
+                                            id: fitParamLabel
                                             Layout.fillWidth: true
-                                            text: model.params
+                                            text: model.params.split("   ").map(function (p) {
+                                                return p.replace(/ /g, "\u00a0") }).join("   ")
                                             font.family: "monospace"
                                             font.pointSize: root.pt(root.baseFontPt - 2)
-                                            elide: Text.ElideRight
-                                            ToolTip.visible: fitParamHover.hovered && text.length > 0
-                                            ToolTip.text: model.params
-                                            HoverHandler { id: fitParamHover }
+                                            wrapMode: Text.WordWrap
                                         }
                                     }
                                 }
@@ -3351,8 +3373,7 @@ Item {
         refreshAzModes()
         refreshImage()
 
-        var chi2 = Julia.shell_model_chi2()
-        root.currentChi2r = chi2.length > 0 ? parseFloat(chi2) : NaN
+        refreshChi2()
 
         var fn = Julia.shell_free_names()
         root.freeNames = fn.length > 0 ? fn.split("\n") : []
