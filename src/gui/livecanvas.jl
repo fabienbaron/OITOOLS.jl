@@ -84,11 +84,8 @@ struct LiveCanvas
     # Makie's own `:limitreset` resets to `ax.limits[]`, and the zoom clamp sets that on every
     # step, so the built-in reset returned to the last zoom rather than to the whole picture.
     homelimits  :: Base.RefValue{NTuple{4,Float64}}
-    # uv coverage only: dotted circles of constant baseline/λ, and their radii as labels.
+    # uv coverage only: dotted circles of constant baseline/λ.
     uvrings     :: Makie.Observable{Vector{Makie.Point2f}}
-    uvringpos   :: Makie.Observable{Vector{Makie.Point2f}}
-    uvringtext  :: Makie.Observable{Vector{String}}
-    uvringsize  :: Makie.Observable{Float32}
 end
 
 """
@@ -109,13 +106,7 @@ function build_canvas(fig, ax)
     # directions it does not. One `lines!` for all of them, separated by NaN, so the count can
     # change without creating a plot. First, so everything else draws over them.
     uvrings    = Makie.Observable(Makie.Point2f[])
-    uvringpos  = Makie.Observable(Makie.Point2f[])
-    # Seeded with every glyph a label can use, for the glyph-atlas reason `cblab` gives below.
-    uvringtext = Makie.Observable(["0123456789. Mλ"])
-    uvringsize = Makie.Observable(Float32(OIPLOT_TICKLABELSIZE * 0.8))
     Makie.lines!(ax, uvrings; color = (:black, 0.3), linestyle = :dot, linewidth = 1)
-    Makie.text!(ax, uvringpos; text = uvringtext, color = (:black, 0.5),
-                fontsize = uvringsize, align = (:left, :bottom))
 
     # Error bars first so the markers sit on top, matching oiplot's z-order.
     errplot = Makie.errorbars!(ax, errpts, errlo, errhi; color = OIPLOT_ECOLOR)
@@ -182,7 +173,7 @@ function build_canvas(fig, ax)
                         imdata, imx, imy, implot, cmap, cbmap, panels,
                         Base.RefValue((1.0, 1.0)),
                         Base.RefValue((0.0, 1.0, 0.0, 1.0)),
-                        uvrings, uvringpos, uvringtext, uvringsize)
+                        uvrings)
     _install_zoom!(canvas)
 
     # The legend axis is a drawing surface, not a plot. Left interactive it responds to the
@@ -618,6 +609,18 @@ function show_panels!(c::LiveCanvas, on::Bool)
     for a in c.panels.axes
         _set_axis_visible!(a, false)
     end
+    # The same holds for the grid's own plots: hiding a panel axis leaves its scatter and error
+    # bars drawing, squashed into row 3 once that collapses, as coloured dashes and tick
+    # fragments around the legend. Emptying them is what hides them; `update_panels!` refills
+    # whichever panels the grid shows next.
+    if !on
+        for k in eachindex(c.panels.points)
+            c.panels.points[k][]    = Makie.Point2f[]
+            c.panels.errpoints[k][] = Makie.Point2f[]
+            c.panels.errlow[k][]    = Float32[]
+            c.panels.errhigh[k][]   = Float32[]
+        end
+    end
     return nothing
 end
 
@@ -828,15 +831,8 @@ function set_uv_rings!(c::LiveCanvas, rmax::Real)
         push!(pts, Makie.Point2f(NaN, NaN))
     end
     c.uvrings[] = pts
-    # The labels where the circle meets the upper-left diagonal: clear of the axes, and on the
-    # side a uv plot's legend-free corner usually is.
-    c.uvringtext[] = [_ring_label(r) for r in radii]
-    c.uvringpos[]  = [Makie.Point2f(-r * cos(π / 4), r * sin(π / 4)) for r in radii]
-    c.uvringsize[] = Float32(OIPLOT_TICKLABELSIZE * 0.8 * live_plot_scale())
     return c
 end
-
-_ring_label(r) = (isinteger(r) ? string(Int(r)) : string(round(r; sigdigits = 3))) * " Mλ"
 
 """
     ramp_colors(values; colormap = WAV_COLORMAP) -> Vector{RGBAf}

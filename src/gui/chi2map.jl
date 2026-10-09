@@ -83,6 +83,12 @@ function update_chi2_map!(c, m::Chi2Map)
     b = argmin(m.chi2)
     c.best[] = [Makie.Point2f(m.v1[b[1]], m.v2[b[2]])]
 
+    # A companion map before this one leaves the sky's aspect behind; a parameter grid has no
+    # equal units on its two axes. (`xlims!` below, low to high, unreverses the x axis.)
+    c.axis.aspect = nothing
+    c.heatmap.colormap = Makie.Reverse(:gist_heat)
+    c.colorbar.colormap = Makie.Reverse(:gist_heat)
+    c.colorbar.label = "log₁₀(Δχ² + 1)"
     c.axis.xlabel = m.p1
     c.axis.ylabel = m.p2
     c.axis.title  = @sprintf("χ²r = %.4g at %s = %.4g, %s = %.4g",
@@ -93,3 +99,75 @@ function update_chi2_map!(c, m::Chi2Map)
     Makie.ylims!(c.axis, first(m.v2), last(m.v2))
     return c
 end
+
+"""
+    update_chi2_map!(c, s::CompanionSearch; show = :chi2r)
+
+Draw a companion search into the same chart: χ²ᵣ at every node (`show = :chi2r`), or the
+companion flux fitted there (`show = :flux`), with the nodes that were not searched (inside
+`rmin`, outside `rmax`, masked) left blank and the best node ringed.
+
+On the sky, so East is to the LEFT (`x` grows leftwards) and the axes share a scale, the
+convention `imdisp` and `test_image_orientation.jl` pin. The map shows χ²ᵣ itself rather than
+log Δχ²: CANDID and PMOIRED show it that way, and the colours are compared against the χ²ᵣ of
+no companion, which the title gives. No contours: their levels are for a parameter grid's Δχ².
+"""
+function update_chi2_map!(c, s::CompanionSearch; show::Symbol = :chi2r)
+    z = show === :flux ? companion_flux_map(s) : s.chi2r
+    b = s.best
+    title = @sprintf("best %.2f mas at PA %.1f°, %s,f = %.4g, χ²ᵣ %.4g (%.4g without): %.1fσ",
+                     b.sep, b.pa, s.companion, b.f, b.chi2r, s.chi2r_null, s.nsigma)
+    return _draw_companion_map!(c, s.x, s.y, z, [Makie.Point2f(b.x, b.y)], title,
+                                show === :flux ? s.companion * ",f" : "χ²ᵣ")
+end
+
+"""
+    update_companion_progress!(c, g, companion) -> (done, total)
+
+Draw a companion search while it runs: `g` is what [`companion_search`](@ref) hands its
+`on_grid` hook, whose χ²ᵣ array its threads are filling. Nodes not yet fitted are blank, so the
+axes and the grid's extent appear as soon as the search starts and the map fills in. The best
+node so far is ringed.
+"""
+function update_companion_progress!(c, g, companion::AbstractString)
+    z = copy(g.chi2r)                     # a snapshot: the search's threads keep writing
+    done = count(isfinite, z)
+    best = Makie.Point2f[]
+    if done > 0
+        ib = argmin(v -> isfinite(z[v]) ? z[v] : Inf, CartesianIndices(z))
+        best = [Makie.Point2f(g.x[ib[1]], g.y[ib[2]])]
+    end
+    _draw_companion_map!(c, g.x, g.y, z, best,
+                         @sprintf("searching for %s: %d of %d nodes", companion, done, g.nnodes),
+                         "χ²ᵣ")
+    return done, g.nnodes
+end
+
+# The sky's conventions for a companion map: East to the LEFT, equal scales on the two axes,
+# blank (NaN) where no node was fitted.
+function _draw_companion_map!(c, x, y, z, best, title, label)
+    zz = Float32.(z)
+    c.xs[]  = Float32.(x)
+    c.ys[]  = Float32.(y)
+    c.raw[] = zeros(Float32, size(zz))
+    c.zs[]  = zz
+    ok = filter(isfinite, zz)
+    lo, hi = isempty(ok) ? (0.0f0, 1.0f0) : extrema(ok)
+    c.cbarlimits[] = (lo, hi > lo ? hi : lo + 1)
+    c.colorbar.label = label
+    # Neither end white: the nodes not searched are blank (NaN), and with the grid map's
+    # colours the best node was white too, indistinguishable from the blank centre.
+    c.heatmap.colormap = :viridis
+    c.colorbar.colormap = :viridis
+    c.best[] = best
+    c.axis.xlabel = "x (mas, East)"
+    c.axis.ylabel = "y (mas, North)"
+    c.axis.aspect = Makie.DataAspect()
+    c.axis.title = title
+    # High to low: `xlims!` sets `xreversed` from the order it is given, so this is what puts
+    # East on the left.
+    Makie.xlims!(c.axis, last(x), first(x))
+    Makie.ylims!(c.axis, first(y), last(y))
+    return c
+end
+

@@ -1,15 +1,12 @@
 # resolvers.jl
 #
-# Flat-dict parameter expression resolver for OITOOLS2 model fitting.
-#
-# Three implementations sharing a common utility module:
-#   1. HandRolled  — custom AST interpreter, zero dependencies
-#   2. RGF         — RuntimeGeneratedFunctions.jl, compiled at parse time
-#   3. Symbolic    — Symbolics.jl, CAS-based, enables analytic gradients
+# Flat-dict parameter expression resolver for model fitting: free parameters in, every named
+# parameter (free, fixed, derived) out, compiled once per model with RuntimeGeneratedFunctions.
 #
 # Interface:
-#   resolver = build_resolver(model_dict, list_free_params)
-#   all_vals = resolver(x::Vector{Float64}) -> Dict{String,Float64}
+#   resolver = RGF.build_resolver(model_dict, list_free_params)
+#   resolver.fn(x, WL, MJD)               -> Vector of every value, by `all_names`
+#   resolver.fill!(s, cols, x, WL, MJD)   -> writes them into typed storage (see below)
 
 using RuntimeGeneratedFunctions
 
@@ -129,129 +126,7 @@ end
 
 
 ##############################################################################
-# IMPLEMENTATION 1: Hand-rolled AST interpreter
-##############################################################################
-module HandRolled
-
-using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
-
-# ── Upgraded AST: Using Indices instead of Names ──────────────────────────────
-abstract type Expr_ end
-
-struct Lit      <: Expr_; val::Float64; end
-struct RefIdx   <: Expr_; idx::Int;     end  # Store index, not name
-struct BinOp    <: Expr_; op::Symbol; lhs::Expr_; rhs::Expr_; end
-struct UnaryOp  <: Expr_; op::Symbol; arg::Expr_; end
-struct FuncCall <: Expr_; fn::Symbol; arg::Expr_; end
-
-# ── Parser logic (Internal) ───────────────────────────────────────────────────
-mangle(name::AbstractString) = "__" * replace(name, "," => "__")
-demangle(id::AbstractString) = replace(lstrip(id, '_'), "__" => ",")
-
-function preprocess(s::String)::String
-    replace(s, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => s -> mangle(s[2:end]))
-end
-
-function parse_to_idx(jexpr, name_to_idx::Dict{String, Int})::Expr_
-    if jexpr isa Number
-        return Lit(Float64(jexpr))
-    elseif jexpr isa Symbol
-        s = string(jexpr)
-        if startswith(s, "__")
-            name = demangle(s)
-            return RefIdx(name_to_idx[name])
-        elseif s == "pi"; return Lit(π)
-        elseif s == "e";  return Lit(ℯ)
-        else; error("Unknown symbol: $s")
-        end
-    elseif jexpr isa Expr
-        h, args = jexpr.head, jexpr.args
-        if h == :call
-            fn = args[1]
-            if length(args) == 3
-                return BinOp(fn, parse_to_idx(args[2], name_to_idx), parse_to_idx(args[3], name_to_idx))
-            elseif length(args) == 2
-                if fn in (:+, :-); return UnaryOp(fn, parse_to_idx(args[2], name_to_idx))
-                else;              return FuncCall(fn, parse_to_idx(args[2], name_to_idx))
-                end
-            end
-        end
-    end
-    error("Cannot parse: $jexpr")
-end
-
-# ── Optimized Evaluator: Working on a Vector ──────────────────────────────────
-eval_v(node::Lit,      v::Vector{Float64}) = node.val
-eval_v(node::RefIdx,   v::Vector{Float64}) = v[node.idx] # Direct index access
-eval_v(node::UnaryOp,  v::Vector{Float64}) = node.op == :- ? -eval_v(node.arg, v) : eval_v(node.arg, v)
-
-function eval_v(node::BinOp, v::Vector{Float64})
-    l, r = eval_v(node.lhs, v), eval_v(node.rhs, v)
-    node.op == :+ ? l + r : node.op == :- ? l - r :
-    node.op == :* ? l * r : node.op == :/ ? l / r :
-    node.op == :^ ? l ^ r : error("Op error")
-end
-
-function eval_v(node::FuncCall, v::Vector{Float64})
-    val = eval_v(node.arg, v)
-    fn = node.fn
-    fn == :sqrt ? sqrt(val) : fn == :sin ? sin(val) :
-    fn == :cos  ? cos(val)  : fn == :exp ? exp(val) :
-    fn == :log  ? log(val)  : abs(val) # Add more as needed
-end
-
-# ── Resolver ──────────────────────────────────────────────────────────────────
-struct Resolver
-    all_names   ::Vector{String}
-    fixed_idxs  ::Vector{Int}
-    fixed_vals  ::Vector{Float64}
-    free_idxs   ::Vector{Int}
-    derived_idxs::Vector{Int}
-    compiled    ::Vector{Expr_}
-end
-
-function build_resolver(model_dict::Dict{String}, list_free_params::Vector{String})
-    free, fixed, derived = partition_dict(model_dict, list_free_params)
-    sorted = topo_sort(derived)
-
-    # Create a stable global indexing for this model
-    all_names = [list_free_params; collect(keys(fixed)); sorted]
-    name_to_idx = Dict(name => i for (i, name) in enumerate(all_names))
-
-    fixed_names = collect(keys(fixed))
-    f_idxs = [name_to_idx[n] for n in fixed_names]
-    f_vals = [fixed[n] for n in fixed_names]
-    free_idxs = [name_to_idx[n] for n in list_free_params]
-    d_idxs = [name_to_idx[n] for n in sorted]
-
-    instr = [parse_to_idx(Meta.parse(preprocess(derived[n])), name_to_idx) for n in sorted]
-
-    Resolver(all_names, f_idxs, f_vals, free_idxs, d_idxs, instr)
-end
-
-function (r::Resolver)(x::Vector{Float64})::Dict{String,Float64}
-    # Pre-allocate the results vector
-    vals = Vector{Float64}(undef, length(r.all_names))
-
-    # 1. Load Fixed
-    for i in 1:length(r.fixed_idxs); vals[r.fixed_idxs[i]] = r.fixed_vals[i]; end
-
-    # 2. Load Free
-    for i in 1:length(r.free_idxs);  vals[r.free_idxs[i]] = x[i]; end
-
-    # 3. Compute Derived (no dict lookups)
-    for i in 1:length(r.derived_idxs)
-        vals[r.derived_idxs[i]] = eval_v(r.compiled[i], vals)
-    end
-
-    return Dict(zip(r.all_names, vals))
-end
-
-end
-
-
-##############################################################################
-# IMPLEMENTATION 2: RuntimeGeneratedFunctions.jl
+# The resolver: RuntimeGeneratedFunctions.jl
 ##############################################################################
 module RGF
 
@@ -266,9 +141,30 @@ function preprocess(s::String)::String
     replace(s, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => s -> mangle(s[2:end]))
 end
 
+"""
+The compiled resolver of one model.
+
+- `fn(x, WL, MJD)` returns every parameter's value, ordered as `all_names`: a scalar, or one
+  value per uv point for a parameter whose expression depends on `\$WL`/`\$MJD`.
+- `fill!(s, cols, x, WL, MJD)` writes the same values into typed storage: the scalars into
+  `s` (a `Vector{T}`), the per-point ones into `cols` (a `Vector` of preallocated
+  `Vector{T}`, one per uv point each). `slot[i]` says where `all_names[i]` went: `k > 0` for
+  `s[k]`, `-j` for `cols[j]`.
+
+`fill!` is what `eval_model` calls, so its result is concretely typed whatever the model;
+`fn` serves constraints and priors, which index single values.
+
+A parameter is per-point ("chromatic") when its expression mentions `\$WL` or `\$MJD`, or
+refers to a chromatic parameter; the rest stay scalar, so a chromatic flux does not make a
+fixed diameter a vector.
+"""
 struct Resolver
     all_names ::Vector{String}
     fn        ::Function
+    fill!     ::Function
+    slot      ::Vector{Int}
+    nscalar   ::Int
+    nchromatic::Int
 end
 
 function build_resolver(model_dict::Dict{String}, list_free_params::Vector{String})
@@ -278,47 +174,71 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
     # 1. Define the names that will be returned in the output vector
     all_names = [list_free_params; collect(keys(fixed)); sorted]
 
-    # 2. Check whether any derived expression references WL or MJD.
-    #    If so, the resolver is "chromatic" and all derived expressions
-    #    are compiled with dot-broadcasting so that vector WL/MJD propagate.
-    uses_wl_mjd = any(v -> any(r -> r in IMPLICIT_VARS && r ∉ ("R", "MU"),
-                               extract_refs(v)),
-                      values(derived))
+    # 2. Which derived expressions depend on WL or MJD, directly or through another derived
+    #    parameter (in topological order, so a dependency is classified first).
+    direct(v) = any(r -> r in IMPLICIT_VARS && r ∉ ("R", "MU"), extract_refs(v))
+    chromatic = Set{String}()
+    for name in sorted
+        (direct(derived[name]) || any(r -> r in chromatic, extract_refs(derived[name]))) &&
+            push!(chromatic, name)
+    end
+    uses_wl_mjd = !isempty(chromatic)
 
-    # 3. Build the function body as a single block
-    # We embed fixed values as literals (constants) for the compiler.
-    derived_stmts = if uses_wl_mjd
-        # Broadcast all derived expressions so vector WL/MJD propagate naturally
+    # 3. The body shared by both functions: free parameters from x, fixed ones as literals.
+    head = [[:($(Symbol(mangle(list_free_params[i]))) = x[$i]) for i in eachindex(list_free_params)];
+            [:($(Symbol(mangle(name))) = $val) for (name, val) in fixed]]
+
+    # `fn`: every derived expression broadcast when any is chromatic, as vector WL/MJD then
+    # propagate; plain scalar code otherwise.
+    fn_stmts = if uses_wl_mjd
         [:($(Symbol(mangle(name))) = $(broadcastify(Meta.parse(preprocess(derived[name])))))
          for name in sorted]
     else
-        # Pure scalar path — no broadcasting overhead
         [:($(Symbol(mangle(name))) = $(Meta.parse(preprocess(derived[name]))))
          for name in sorted]
     end
-
-    body = quote
-        # Extract free parameters from the input vector x
-        $([:($(Symbol(mangle(list_free_params[i]))) = x[$i]) for i in eachindex(list_free_params)]...)
-
-        # Embed fixed parameters as local constants
-        $([:($(Symbol(mangle(name))) = $val) for (name, val) in fixed]...)
-
-        # Compute derived parameters in topological order
-        $(derived_stmts...)
-
-        # Return all values (may be a mix of scalars and vectors when chromatic)
+    fn_body = quote
+        $(head...)
+        $(fn_stmts...)
         return $(Expr(:vect, [Symbol(mangle(n)) for n in all_names]...))
     end
-
-    # 4. Compile: (x, WL, MJD) -> Vector
-    fn_expr = :((x, WL, MJD) -> $body)
-    compiled_fn = @RuntimeGeneratedFunction(fn_expr)
-
+    compiled_fn = @RuntimeGeneratedFunction(:((x, WL, MJD) -> $fn_body))
     # Wrap with default NaN for backward compatibility: fn(x) still works
     wrapped_fn(x, WL=NaN, MJD=NaN) = compiled_fn(x, WL, MJD)
 
-    Resolver(all_names, wrapped_fn)
+    # `fill!`: chromatic expressions broadcast in place into their column; the others scalar.
+    slot = zeros(Int, length(all_names))
+    ns = 0; nc = 0
+    for (i, n) in enumerate(all_names)
+        if n in chromatic
+            nc += 1; slot[i] = -nc
+        else
+            ns += 1; slot[i] = ns
+        end
+    end
+    fill_stmts = Expr[]
+    for name in sorted
+        sym = Symbol(mangle(name))
+        ex  = Meta.parse(preprocess(derived[name]))
+        if name in chromatic
+            j = -slot[findfirst(==(name), all_names)]
+            push!(fill_stmts, :($sym = cols[$j]))
+            push!(fill_stmts, :($sym .= $(broadcastify(ex))))
+        else
+            push!(fill_stmts, :($sym = $ex))
+        end
+    end
+    stores = [:(s[$(slot[i])] = $(Symbol(mangle(n))))
+              for (i, n) in enumerate(all_names) if slot[i] > 0]
+    fill_body = quote
+        $(head...)
+        $(fill_stmts...)
+        $(stores...)
+        return nothing
+    end
+    compiled_fill = @RuntimeGeneratedFunction(:((s, cols, x, WL, MJD) -> $fill_body))
+
+    Resolver(all_names, wrapped_fn, compiled_fill, slot, ns, nc)
 end
 
 function (r::Resolver)(x::Vector{Float64}, wl=NaN, mjd=NaN)
@@ -327,87 +247,3 @@ function (r::Resolver)(x::Vector{Float64}, wl=NaN, mjd=NaN)
 end
 
 end # module RGF
-
-
-##############################################################################
-# IMPLEMENTATION 3: Symbolics.jl
-##############################################################################
-module Symbolic
-
-using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
-
-# Lazy-load Symbolics
-const _symbolics_loaded = Ref(false)
-
-function _load_symbolics()
-    _symbolics_loaded[] && return true
-    try
-        @eval using Symbolics
-        _symbolics_loaded[] = true
-        return true
-    catch e
-        @warn "Symbolics.jl not available: $e"
-        return false
-    end
-end
-
-mangle(name::AbstractString) = replace(name, "," => "__")
-
-function preprocess(s::String)::String
-    replace(s, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => s -> mangle(s[2:end]))
-end
-
-struct Resolver
-    all_names ::Vector{String}
-    fn        ::Function
-end
-
-function build_resolver(model_dict::Dict{String}, list_free_params::Vector{String})
-    _load_symbolics() || error("Symbolics.jl required for Symbolic resolver")
-
-    free, fixed, derived = partition_dict(model_dict, list_free_params)
-    sorted = topo_sort(derived)
-
-    # 1. Create symbolic variables for the free parameters only
-    sym_fit = [Symbolics.variable(Symbol(mangle(n))) for n in list_free_params]
-
-    # 2. Build environment: name -> symbolic var OR numeric constant
-    # By putting 'fixed' values here as numbers, they are folded into the expressions.
-    env = Dict{String, Any}()
-    for (i, name) in enumerate(list_free_params)
-        env[name] = sym_fit[i]
-    end
-    for (name, val) in fixed
-        env[name] = val
-    end
-
-    # 3. Build symbolic expressions for derived parameters
-    for name in sorted
-        expr_str = preprocess(derived[name])
-        # We build the graph by evaluating the Julia expression
-        # using the symbols/constants currently in 'env'
-        sym_expr = @eval begin
-            $([:($( Symbol(mangle(k)) ) = $v) for (k,v) in env]...)
-            $(Meta.parse(expr_str))
-        end
-        env[name] = sym_expr
-    end
-
-    # 4. Define the output vector (everything the resolver returns)
-    all_names = [list_free_params; collect(keys(fixed)); sorted]
-    all_exprs = [env[n] for n in all_names]
-
-    # 5. Compile to a native function: f(x) -> Vector{Float64}
-    # build_function returns a tuple (f_out_of_place, f_in_place); we take the first.
-    f_compiled = Symbolics.build_function(all_exprs, sym_fit, expression=Val{false})[1]
-
-    Resolver(all_names, f_compiled)
-end
-
-function (r::Resolver)(x::Vector{Float64})::Dict{String,Float64}
-    # Single native function call replaces the substitution loop
-    vals_vec = r.fn(x)
-    return Dict(zip(r.all_names, vals_vec))
-end
-
-end # module Symbolic

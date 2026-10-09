@@ -40,6 +40,12 @@ UltraNest's batches are small but rarely 2 or 3 (median 15 without a step sample
 """
 const _MIN_THREADED_BATCH = 4
 
+# One fit evaluates one model against one dataset many times, so it keeps the model Jacobian's
+# buffers between evaluations. A polychromatic fit evaluates each channel's uv set in turn and
+# takes no cache.
+_jac_cache_kw(::OIdata) = (; jac_cache = ModelJacCache())
+_jac_cache_kw(_) = (;)
+
 """
     _batch_loglike(f, X) -> Vector
 
@@ -58,9 +64,9 @@ before any worker looks at it. At these batch sizes that copy is a few hundred b
 
 The rows share one `FlatModel`, which is safe because evaluation does not write to it:
 `eval_model` allocates its accumulator per call and never touches `HankelSpec.workspace` —
-those buffers are allocated but currently unused, since `eval_model_grad` goes through
-ForwardDiff rather than the cached-K chain rule they were meant for. Wiring that up would
-make the workspace shared mutable state and this loop a race; `test_python_boundary.jl`
+those buffers are allocated but unused: `eval_model_grad` builds a workspace per call, and
+the Hankel transform matrices it shares across calls sit in a cache behind a lock. Writing to
+`HankelSpec.workspace` would make it shared mutable state and this loop a race; `test_python_boundary.jl`
 asserts the buffers stay untouched so that change fails loudly here rather than silently
 corrupting a posterior. `bootstrap.jl` gives each worker its own model for the same reason.
 """
@@ -244,7 +250,7 @@ function display_model(model_dict  ::Dict{String},
 
         # Detect kind
         kind = "unknown"
-        for gk in ["profile", "diamin", "fwhmin", "crin",
+        for gk in ["image", "profile", "diamin", "fwhmin", "crin",
                    "ud", "fwhm", "ldlin", "ldquad", "ldpow", "resolved"]
             if "$cn,$gk" in params
                 kind = gk == "profile" ? "hankel" :
@@ -471,7 +477,6 @@ Fit a parametric model to interferometric data using NLopt.
 - `method` — NLopt algorithm (default `:LD_LBFGS`; use `:LN_NELDERMEAD` for gradient-free)
 - `maxeval` — maximum function evaluations (default 2000)
 - `ftol_rel`, `xtol_rel` — convergence tolerances
-- `vonmises` — use von Mises statistic for T3phi
 - `nB_workspace` — Hankel workspace size (default: nuv from data)
 - `verb` — print per-evaluation chi2 breakdown
 """
@@ -487,7 +492,6 @@ function fit_model(model_dict   ::Dict{String},
     maxeval      = 2000,
     ftol_rel     = 1e-8,
     xtol_rel     = 1e-6,
-    vonmises     = false,
     nB_workspace = nothing,
     verb         = false,
 )
@@ -518,16 +522,17 @@ function fit_model(model_dict   ::Dict{String},
 
     # ── 5. Build objective ───────────────────────────────────────────────────
     n_evals = Ref(0)
+    jkw = _jac_cache_kw(data)
     function objective(x, g)
         n_evals[] += 1
         if use_grad
-            chi2, grad = chi2_flat_fg(fm, x, data; weights, vonmises, verb)
+            chi2, grad = chi2_flat_fg(fm, x, data; weights, verb, jkw...)
             chi2 += prior_penalty_and_grad!(grad, x, priors, fm, prior_idx)
             # NLopt hands back a zero-length array when it wants the value without the
             # gradient, which AUGLAG does at some of its evaluations.
             length(g) > 0 && (g .= grad)
         else
-            chi2 = chi2_flat(fm, x, data; weights, vonmises, verb)
+            chi2 = chi2_flat(fm, x, data; weights, verb)
             chi2 += prior_penalty(x, priors, fm, prior_idx)
         end
         return chi2
@@ -596,7 +601,6 @@ function fit_model(model        ::FlatModel,
     maxeval      = 2000,
     ftol_rel     = 1e-8,
     xtol_rel     = 1e-6,
-    vonmises     = false,
     verb         = false,
 )
     list_free_params = model.list_free_params
@@ -614,14 +618,15 @@ function fit_model(model        ::FlatModel,
 
     # ── Build objective ──────────────────────────────────────────────────────
     n_evals = Ref(0)
+    jkw = _jac_cache_kw(data)
     function objective(x, g)
         n_evals[] += 1
         if use_grad
-            chi2, grad = chi2_flat_fg(fm, x, data; weights, vonmises, verb)
+            chi2, grad = chi2_flat_fg(fm, x, data; weights, verb, jkw...)
             # NLopt hands back a zero-length array when it wants the value without the gradient.
             length(g) > 0 && (g .= grad)
         else
-            chi2 = chi2_flat(fm, x, data; weights, vonmises, verb)
+            chi2 = chi2_flat(fm, x, data; weights, verb)
         end
         return chi2
     end
@@ -813,7 +818,6 @@ r.posterior              # equally weighted samples, (n_samples, n_params)
 |---|---|---|
 | `lb`, `ub` | — | `Dict{String,Float64}` bounds, **required** for every free parameter: they are the prior |
 | `weights` | `[1,1,1,0,0,0,0]` | observable weights `[V2, T3amp, T3phi, visamp, visphi, flux, diffphase]` |
-| `vonmises` | `false` | use the von Mises statistic for T3phi |
 | `constraints` | `[]` | [`ModelConstraint`](@ref)s, or `(lhs, op, rhs[, tol])` tuples. They enter the log-likelihood as `-penalty/2`, so the posterior and `logz` are both the constrained ones |
 | `nB_workspace` | from the data | Hankel workspace size |
 | `verb` | `true` | print progress |
@@ -929,7 +933,6 @@ through the complex visibility Jacobian), so no finite-difference overhead.
 # Keywords
 - `lb`, `ub` — `Dict{String,Float64}` of lower/upper bounds per parameter
 - `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
-- `vonmises` — use von Mises statistic for T3phi
 - `nB_workspace` — Hankel workspace size
 - `maxIter` — maximum iterations (default 200)
 - `constraints` — relations between parameters that bounds cannot express, as
@@ -946,7 +949,6 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints  = [],
-    vonmises     = false,
     nB_workspace = nothing,
     maxIter      = 200,
     verb         = false,
@@ -969,19 +971,20 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     # one per wavelength where the resolver broadcasts — which is what `curve_fit` requires of a
     # residual vector whose length it fixes from the first call.
     function model_fn(_, p)
-        r = residuals_flat(fm, p, data; weights, vonmises)
+        r = residuals_flat(fm, p, data; weights)
         isempty(cons) ? r : vcat(r, constraint_residuals(p, cons, fm, constraint_idx))
     end
 
+    jkw = _jac_cache_kw(data)
     function jacobian_fn(_, p)
-        _, J = residuals_flat_jac(fm, p, data; weights, vonmises)
+        _, J = residuals_flat_jac(fm, p, data; weights, jkw...)
         isempty(cons) ? J : vcat(J, constraint_jacobian(p, cons, fm, constraint_idx))
     end
 
     # ── 3. Initial parameter vector and bounds ───────────────────────────────
     x0 = Float64[model_dict[p] for p in list_free_params]
     xdata = [1]  # dummy
-    ndata = length(residuals_flat(fm, x0, data; weights, vonmises))
+    ndata = length(residuals_flat(fm, x0, data; weights))
     ydata = zeros(length(model_fn(xdata, x0)))  # target = 0 (residuals)
 
     # Build lower/upper bound vectors
@@ -1015,7 +1018,7 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     end
 
     if verb
-        chi2_flat(fm, minx, data; weights, verb=true, vonmises)
+        chi2_flat(fm, minx, data; weights, verb=true)
     end
 
     return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
@@ -1035,7 +1038,6 @@ function fit_model_lsqfit(model        ::FlatModel,
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints  = [],
-    vonmises     = false,
     maxIter      = 200,
     verb         = false,
 )
@@ -1049,11 +1051,12 @@ function fit_model_lsqfit(model        ::FlatModel,
     !isempty(constraints) && error("Constraints are only supported with the Dict form of fit_model_lsqfit; pass model_dict instead of FlatModel")
 
     function model_fn(_, p)
-        residuals_flat(fm, p, data; weights, vonmises)
+        residuals_flat(fm, p, data; weights)
     end
 
+    jkw = _jac_cache_kw(data)
     function jacobian_fn(_, p)
-        _, J = residuals_flat_jac(fm, p, data; weights, vonmises)
+        _, J = residuals_flat_jac(fm, p, data; weights, jkw...)
         return J
     end
 
@@ -1080,7 +1083,7 @@ function fit_model_lsqfit(model        ::FlatModel,
     end
 
     if verb
-        chi2_flat(fm, minx, data; weights, verb=true, vonmises)
+        chi2_flat(fm, minx, data; weights, verb=true)
     end
 
     return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
@@ -1106,6 +1109,8 @@ function model_to_obs(model::FlatModel, x::AbstractVector, data::OIdata)
     # Per-uv wavelength and MJD, so chromatic expressions (`$WL`, `$MJD`) resolve. Without
     # them the resolver is handed NaN and every observable comes back NaN -- silently, since a
     # NaN model is not an error. `chi2_flat` passes the same pair for the same reason.
+    # A smeared model: the observables averaged over each channel (`eval_model_sub`).
+    _smeared(model, data) && return _model_to_obs_smeared(model, x, data)
     cvis = eval_model(model, x, data.uv;
                       wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing,
                       mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing)
@@ -1135,6 +1140,17 @@ function model_to_obs(model::FlatModel, x::AbstractVector, data::OIdata)
 
     return (v2=v2_model, t3amp=t3amp_model, t3phi=t3phi_model,
             visamp=visamp_model, visphi=visphi_model)
+end
+
+# `model_to_obs` for a smeared model: the observables averaged over each channel.
+function _model_to_obs_smeared(model::FlatModel, x::AbstractVector, data::OIdata)
+    V = first(_smeared_cvis(model, x, data, false))
+    v2, t3, vis = _smeared_observables(V isa AbstractMatrix ? V : reshape(V, :, 1), data)
+    e(n, y) = n > 0 ? y : Float64[]
+    return (v2 = e(data.nv2, v2), t3amp = e(data.nt3amp + data.nt3phi, abs.(t3)),
+            t3phi = e(data.nt3amp + data.nt3phi, angle.(t3) .* (180.0 / π)),
+            visamp = e(data.nvisamp + data.nvisphi, abs.(vis)),
+            visphi = e(data.nvisamp + data.nvisphi, angle.(vis) .* (180.0 / π)))
 end
 
 """

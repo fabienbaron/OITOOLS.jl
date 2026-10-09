@@ -140,7 +140,7 @@ SHOT 01_explore
 # 2004-data1.oifits and the plot-pick coordinates further down stay valid. Picking by pixel
 # silently changed WHICH file was loaded when the picker changed, and every later coordinate
 # went stale with it.
-CL 470 14 3          # "Open OIFITS..."
+CL 382 14 3          # "Open OIFITS..."
 SHOT 02_dialog
 DISPLAY="$DISP" xdotool key Down; sleep 1     # row 1: v1295Aql.oifits (polychromatic)
 DISPLAY="$DISP" xdotool key Return; sleep 8
@@ -150,9 +150,9 @@ DISPLAY="$DISP" xdotool key Return; sleep 8
 SHOT 03_after_open
 
 # -- redraws after the dialog has been open ----------------------------------
-CL 105 73 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3
+CL 133 96 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3   # Plot menu, in the frame
 SHOT 04_plot_kind
-CL 313 73 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3
+CL 133 123 2 ; DISPLAY="$DISP" xdotool key Down; sleep 1; DISPLAY="$DISP" xdotool key Return; sleep 3   # Colour menu
 SHOT 05_colour
 
 # -- click a data point, and reset the view ----------------------------------
@@ -169,7 +169,9 @@ SHOT 05_colour
 # run then reported a broken pick rather than a stale coordinate. Fractions ride the resize,
 # because the axis fills its share of the window either way.
 eval "$(DISPLAY="$DISP" xdotool getwindowgeometry --shell "$WID")"
-PICK_X=$((WIDTH * 40 / 100)); PICK_Y=$((HEIGHT * 49 / 100))
+# 52%: the Explore frame takes the left of the window, so the axis starts a quarter of the
+# way across and the band at ~60 Mλ sits right of the middle.
+PICK_X=$((WIDTH * 52 / 100)); PICK_Y=$((HEIGHT * 50 / 100))
 say "picking at ${PICK_X},${PICK_Y} of ${WIDTH}x${HEIGHT}"
 CL "$PICK_X" "$PICK_Y" 2
 CL "$PICK_X" "$PICK_Y" 3

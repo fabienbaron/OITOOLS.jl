@@ -75,6 +75,9 @@ are **not** filled in from [`default_bounds`](@ref) — an absent bound means ±
 substituting a guess would make two fits from the same file differ by which version of the
 defaults was in the package.
 
+An image component's `c,image` path, when relative, is taken relative to the model file and
+returned absolute.
+
 See also [`write_model_file`](@ref), [`ModelConstraint`](@ref) and [`default_bounds`](@ref).
 """
 function read_model_file(path::AbstractString)
@@ -83,6 +86,11 @@ function read_model_file(path::AbstractString)
 
     haskey(doc, "model") || error("'$path' has no [model] section, so there is no model to read")
     model = Dict{String,Any}(String(k) => v for (k, v) in doc["model"])
+    # An image component's file is named relative to the model file, so the two travel together.
+    for (k, v) in model
+        endswith(k, ",image") && v isa AbstractString && !isabspath(v) &&
+            (model[k] = normpath(joinpath(dirname(abspath(path)), v)))
+    end
 
     free = String[String(p) for p in get(doc, "free", String[])]
     for p in free

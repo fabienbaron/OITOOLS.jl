@@ -118,6 +118,44 @@ const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
         end
     end
 
+    # Explore's Dataset section (GUI_Explore.md, Phase 2): every row equals the number read
+    # directly from the OIdata or the file's tables, for a single-channel file and a
+    # polychromatic merged one -- the panel reports the library's numbers, not its own.
+    @testset "the dataset summary is the data's own numbers" begin
+        G = GUI
+        gd = joinpath(@__DIR__, "data")
+        for (f, kw) in (("2004-data1.oifits", ()), ("v1295Aql.oifits", ()),
+                        ("v1295Aql.oifits", (; polychromatic = true)))
+            s = Session()
+            e = load_dataset!(s, joinpath(gd, f); warn = false, verbose = false, kw...)
+            rows = Dict(G.dataset_summary(e))
+            data = vec(e.data)
+            hdr = OITOOLS.load_oifits(e.path)
+            @test rows["target"] == G._first_few(unique(String[t.target for t in hdr.target]))
+            @test rows["instrument"] == G._first_few(unique(String[i.insname for i in hdr.instr]))
+            used = unique(vcat((vcat(vec(d.v2_sta_index), vec(d.t3_sta_index), vec(d.vis_sta_index))
+                                for d in data)...))
+            @test startswith(rows["stations"], string(length(used), ": "))
+            mjd = vcat((Float64.(d.uv_mjd) for d in data)...)
+            f4(x) = GUI.Printf.@sprintf("%.4f", x)
+            @test occursin(f4(minimum(mjd)), rows["MJD"]) && occursin(f4(maximum(mjd)), rows["MJD"])
+            lam = vcat((Float64.(d.uv_lam) for d in data)...)
+            @test startswith(rows["channels"], string(length(unique(round.(lam; sigdigits = 10)))))
+            nv2 = sum(d.nv2 for d in data); nt3 = sum(d.nt3phi for d in data)
+            @test occursin("V² $nv2", rows["points"]) && occursin("T3φ $nt3", rows["points"])
+            @test haskey(rows, "bins") == (size(e.data) != (1, 1))
+        end
+        # The 2004 file by name: one target, one channel, six stations, no OI_VIS.
+        s = Session()
+        e = load_dataset!(s, joinpath(gd, "2004-data1.oifits"); warn = false, verbose = false)
+        r = Dict(G.dataset_summary(e))
+        @test r["target"] == "FKV0497" && r["instrument"] == "NPOI_2004-04-12"
+        @test r["stations"] == "6: E02 AC0 AE0 AW0 W07 AN0"
+        @test startswith(r["channels"], "1 at ") && !occursin("VIS", r["points"])
+        f = filter_dataset!(s, "data1"; baseline_range = [0.0, 60e6])
+        @test Dict(G.dataset_summary(f))["filtered from"] == "data1"
+    end
+
     @testset "filter_dataset! derives without mutating the source" begin
         s = Session()
         load_dataset!(s, MONO; warn = false, verbose = false)
@@ -132,6 +170,27 @@ const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
         Core.eval(m, :(using OITOOLS))
         Core.eval(m, Meta.parseall(export_script(s)))
         @test Core.eval(m, :(data2[1,1].nv2)) == f.data[1, 1].nv2
+
+        # A binned dataset is filtered bin by bin and stays binned (it used to come back as its
+        # first bin alone, every other channel silently dropped).
+        sp = Session()
+        load_dataset!(sp, joinpath(@__DIR__, "data", "v1295Aql.oifits"); polychromatic = true,
+                      warn = false, verbose = false)
+        src = sp.datasets[1].data
+        @test length(src) > 1
+        fp = filter_dataset!(sp, "data1"; baseline_range = [0.0, 100e6])
+        @test size(fp.data) == size(src)
+        for k in eachindex(src)
+            want = OITOOLS.filter_data(src[k], OITOOLS.set_data_filter(src[k]; baseline_range = [0.0, 100e6]))
+            @test fp.data[k].nv2 == want.nv2 && fp.data[k].nt3phi == want.nt3phi
+            @test fp.data[k].nv2 < src[k].nv2                     # really cut
+        end
+        @test fp.readopts == sp.datasets[1].readopts              # read options, not the filter
+        mp = Module(:ReplayFilterBinned)
+        Core.eval(mp, :(using OITOOLS))
+        Core.eval(mp, Meta.parseall(export_script(sp)))
+        @test Core.eval(mp, :(size(data2))) == size(src)
+        @test Core.eval(mp, :([d.nv2 for d in data2])) == [d.nv2 for d in fp.data]
     end
 
     @testset "export_script writes a file" begin
@@ -171,10 +230,9 @@ end
         c = build_canvas(fig, ax)
         update_canvas!(c, d, :uv; color = :baseline)
         rmax = maximum(hypot.(Float64.(d.uv[1, :]), Float64.(d.uv[2, :]))) / 1e6
-        @test length(c.uvringtext[]) == length(GUI.uv_ring_radii(rmax)) >= 2
-        @test all(endswith("Mλ"), c.uvringtext[])
+        @test count(p -> isnan(p[1]), c.uvrings[]) == length(GUI.uv_ring_radii(rmax)) >= 2
         update_canvas!(c, d, :v2)
-        @test isempty(c.uvrings[]) && isempty(c.uvringtext[])
+        @test isempty(c.uvrings[])
 
         # Baseline colours: no colorbar, so the column is free for the legend below it.
         update_canvas!(c, d, :uv; color = :baseline)
@@ -188,6 +246,23 @@ end
         GUI.hide_image!(c)
         update_canvas!(c, d, :v2)
         @test fig.layout.colsizes[1] isa Makie.Auto
+    end
+
+    # Explore §2.6 D3: per baseline on, then off, left the panels' scatter and error bars drawing
+    # in the collapsed grid row, as coloured dashes around the legend.
+    @testset "turning the panel grid off leaves none of its plots drawing" begin
+        G = GUI
+        fig = Makie.Figure(); ax = Makie.Axis(fig[1, 1])
+        c = build_canvas(fig, ax)
+        G.show_panels!(c, true)
+        n = G.update_panels!(c, d, :v2)
+        @test n > 0 && all(!isempty(c.panels.points[k][]) for k in 1:n)
+        G.show_panels!(c, false)
+        update_canvas!(c, d, :v2; color = :baseline)
+        @test all(isempty(p[]) for p in c.panels.points)
+        @test all(isempty(p[]) for p in c.panels.errpoints)
+        G.show_panels!(c, true)
+        @test G.update_panels!(c, d, :v2) == n && !isempty(c.panels.points[1][])
     end
 
     @testset "zoom is bounded at both ends" begin
@@ -1099,6 +1174,122 @@ end
         end
     end
 
+    # The companion search, through the shell calls the Model panel makes: AX Cir and its shipped
+    # model, the grid preview, the search on a worker, the map in the χ² map chart, Adopt.
+    # PMOIRED finds the companion at (+6.23, −28.49) mas; the best node must be within a step.
+    @testset "the companion search runs from the Model panel and finds AX Cir's companion" begin
+        G = GUI
+        prev = G.SHELL[]
+        sess = Session()
+        load_dataset!(sess, joinpath(pkgdir(OITOOLS), "demos", "data", "AX_Cir.oifits");
+                      warn = false, verbose = false)
+        sh = G.ShellState(sess, nothing, nothing, nothing, String[], Any[], 1,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        cfig = Makie.Figure(); cax = Makie.Axis(cfig[1, 1])
+        sh.chi2map = G.build_chi2_map(cfig, cax)
+        G.SHELL[] = sh
+        try
+            G.shell_open_model(joinpath(pkgdir(OITOOLS), "demos", "models", "AX_Cir_Binary.toml"))
+            @test G.shell_companion_candidates() == "companion"
+
+            # Smearing is a menu, not a row: the model file's "auto" shows there, and the menu
+            # writes the keys back (off removes them).
+            @test G.shell_smearing() == "auto\tincoherent"
+            @test !occursin("smear", G.shell_model_rows())
+            m = G._model(sh)
+            @test G.shell_set_smearing("3", "coherent") == "" && G.shell_smearing() == "3\tcoherent"
+            @test m.dict["smear"] == 3 && m.dict["smear_mode"] == "coherent"
+            @test G.shell_set_smearing("off", "coherent") == "" && !haskey(m.dict, "smear") &&
+                  !haskey(m.dict, "smear_mode") && G.shell_smearing() == "off\tincoherent"
+            @test startswith(G.shell_set_smearing("1", "incoherent"), "!")
+            @test startswith(G.shell_set_smearing("auto", "sideways"), "!")
+            @test G.shell_set_smearing("auto", "incoherent") == "" && m.dict["smear"] == "auto" &&
+                  !haskey(m.dict, "smear_mode")
+            # The dialog's prefill: the default grid to two significant figures, the step and
+            # the inner radius rounded down, the outer radius up.
+            dg = companion_grid(G._model(sh).dict, sess.datasets[1].data[1, 1]; companion = "companion")
+            df = parse.(Float64, split(G.shell_companion_defaults("companion"), '\t'))
+            @test df[1] <= dg.step && df[2] <= dg.rmin && df[3] >= dg.rmax
+            @test all(isapprox.(df, [dg.step, dg.rmin, dg.rmax]; rtol = 0.1))
+            @test G.shell_companion_defaults("companion") == "2\t2\t37"   # AX Cir: 2.02, 2.02, 36.6
+            pv = G.shell_companion_grid("companion", NaN, NaN, NaN, NaN)
+            @test occursin(r"^\d+ nodes · step ", pv)
+            @test startswith(G.shell_companion_grid("companion", NaN, 50.0, 10.0, NaN), "!")
+
+            # The panel's free rows: the companion's position is dropped (the grid sets it), the
+            # flux has to be free, and OI_FLUX is refused.
+            free = "star,ud\t0\t3\ncompanion,f\t0\t0.5\ncompanion,x\t-60\t60\ncompanion,y\t-60\t60"
+            @test startswith(G.shell_companion_search("star,ud\t0\t3", true, false, true,
+                                                      false, false, false, "companion", NaN, NaN,
+                                                      NaN, NaN, NaN, "bradi"), "! free companion,f")
+            @test startswith(G.shell_companion_search(free, true, false, true, false, true,
+                                                      false, "companion", NaN, NaN, NaN, NaN, NaN,
+                                                      "vmlmb"), "! the search fits")
+            @test startswith(G.shell_companion_search(free, true, false, true, false, false, false,
+                                                      "companion", NaN, NaN, NaN, NaN, NaN, "lbfgs"),
+                             "! unknown per-node fitter")
+            # The primary held: only the companion's flux is fitted, by the fast path.
+            @test G.shell_companion_search(free, true, false, true, false, false, false, "companion",
+                                           NaN, NaN, NaN, NaN, NaN, "bradi", false) == "searching…"
+            held = ""
+            for _ in 1:1200
+                r = G.shell_job_poll()
+                startswith(r, "running") || (held = r; break)
+                sleep(0.25)
+            end
+            @test startswith(held, "done\tbest node")
+            @test last(sh.fits).map.free == ["companion,f"] && last(sh.fits).map.path === :fast
+
+            @test G.shell_companion_search(free, true, false, true, false, false, false, "companion",
+                                           NaN, NaN, NaN, NaN, NaN, "vmlmb", true) == "searching…"
+            line = ""
+            for _ in 1:1200
+                r = G.shell_job_poll()
+                startswith(r, "running") || (line = r; break)
+                sleep(0.25)
+            end
+            @test startswith(line, "done\tbest node")
+            f = last(sh.fits)
+            s = f.map
+            @test s isa CompanionSearch && f.optimiser == "companion search"
+            @test s.free == ["star,ud", "companion,f"]
+            @test hypot(s.best.x - 6.23, s.best.y + 28.49) <= s.x[2] - s.x[1]   # one grid step
+            @test s.nsigma > 5
+            # Eight fields per row: `refreshFits()` in ModelTab.qml appends only rows of that length.
+            @test all(length(split(l, '\t')) == 8 for l in split(G.shell_fit_rows(), '\n'))
+            info = split(G.shell_chi2_map_info(), '\t')
+            @test length(info) == 6 && info[6] == "companion"
+            @test sh.chi2map.axis.xreversed[] && sh.chi2map.best[] == [Makie.Point2f(s.best.x, s.best.y)]
+            @test G.shell_companion_progress() == ""             # cleared once it finished
+
+            # Drawn while it runs: half the nodes fitted, the rest blank, the axes already the
+            # grid's, East to the left, the best node so far ringed.
+            part = copy(s.chi2r); part[:, 1:end÷2] .= NaN
+            g = (; x = s.x, y = s.y, chi2r = part, params = s.params, nnodes = s.nnodes)
+            done, total = G.update_companion_progress!(sh.chi2map, g, "companion")
+            @test done == count(isfinite, part) && total == s.nnodes && 0 < done < total
+            @test sh.chi2map.axis.xreversed[] && count(isnan, sh.chi2map.zs[]) == count(isnan, part)
+            @test occursin("of $(s.nnodes) nodes", sh.chi2map.axis.title[])
+            empty = (; g..., chi2r = fill(NaN, size(part)))
+            @test G.update_companion_progress!(sh.chi2map, empty, "companion") == (0, s.nnodes)
+            @test isempty(sh.chi2map.best[])
+            G.update_chi2_map!(sh.chi2map, s)
+
+            G.shell_companion_map_view("flux")
+            @test sh.chi2map.zs[] ≈ Float32.(companion_flux_map(s)) nans = true
+
+            # Adopt: the best node's fitted values and the position the grid set.
+            vals = Dict(split(l, '=')[1] => parse(Float64, split(l, '=')[2])
+                        for l in split(G.shell_fit_values(), '\n'))
+            @test vals["companion,x"] == s.best.x && vals["companion,y"] == s.best.y
+            @test vals["companion,f"] == s.best.f && haskey(vals, "star,ud")
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
     # A global belongs to no component, so no component card can remove one. Open the SPARCO
     # model, delete the star and the disc, and `fs` was left behind -- in the fit vector, with
     # its bounds, and unreachable: `shell_remove_component` only deletes keys prefixed
@@ -1295,6 +1486,131 @@ end
             @test G.shell_remove_component("ring") == ""
             @test !occursin("does not define", G.shell_model_warnings())
             @test runs(m.dict)
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
+    @testset "an image component: added from its file, read back for its card" begin
+        G = GUI
+        prev = G.SHELL[]
+        sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        d = mktempdir()
+        disc(nx, ps, D) = (c = nx ÷ 2 + 1;
+                           [hypot((i - c) * ps, (j - c) * ps) <= D / 2 ? 1.0 : 0.0
+                            for i in 1:nx, j in 1:nx])
+        p1 = joinpath(d, "star.fits"); writefits(disc(64, 0.05, 1.0), p1; pixsize = 0.05)
+        p2 = joinpath(d, "wider.fits"); writefits(disc(64, 0.05, 2.0), p2; pixsize = 0.05)
+        p3 = joinpath(d, "noscale.fits"); writefits(disc(64, 0.05, 1.0), p3)
+        uv = [1e7 2e7; 0.0 0.0]
+        try
+            m = G._model(sh)
+            @test occursin("\tfits_image\t", G.shell_component_kinds())
+            @test startswith(G.shell_add_component("img", "fits_image"), "!")  # needs its file
+
+            @test G.shell_add_image_component("img", p1) == ""
+            @test m.dict["img,image"] == abspath(p1) && m.dict["img,f"] == 1.0
+            @test isempty(m.free)
+            @test startswith(G.shell_add_image_component("img", p1), "!")       # name taken
+            # The file, scale and normalisation are the card's, not rows of the table.
+            @test !occursin("img,image", G.shell_model_rows())
+            @test occursin("img\timage\timage", G.shell_model_components())
+
+            f = split(G.shell_image_info("img"), '\t')
+            @test f[1] == abspath(p1) && occursin("64×64", f[2]) && occursin("grey", f[2])
+            @test parse(Float64, f[3]) ≈ 0.05 && f[4] == "header"
+            @test f[5] == "" && f[6] == "plane"
+
+            # Scale: an override, then back to the header's.
+            @test G.shell_set_image("img", "pixsize", "0.1") == ""
+            @test m.dict["img,pixsize"] == 0.1
+            @test split(G.shell_image_info("img"), '\t')[4] == "model"
+            @test startswith(G.shell_set_image("img", "pixsize", "-1"), "!")
+            @test G.shell_set_image("img", "pixsize", "") == ""
+            @test !haskey(m.dict, "img,pixsize")
+
+            # Normalisation.
+            @test G.shell_set_image("img", "norm", "relative") == ""
+            @test m.dict["img,norm"] == "relative"
+            @test startswith(G.shell_set_image("img", "norm", "peak"), "!")
+            @test G.shell_set_image("img", "norm", "") == "" && !haskey(m.dict, "img,norm")
+
+            # Another file; one that is not there is refused and changes nothing.
+            @test startswith(G.shell_set_image("img", "file", joinpath(d, "nope.fits")), "!")
+            @test m.dict["img,image"] == abspath(p1)
+            @test G.shell_set_image("img", "file", p2) == ""
+            @test m.dict["img,image"] == abspath(p2)
+
+            # Position yes, orientation no: the parser refuses incl/pa on an image.
+            @test startswith(G.shell_set_component_geometry("img", "orientation", true), "!")
+            @test !haskey(m.dict, "img,incl")
+            @test G.shell_set_component_geometry("img", "position", true) == ""
+
+            # A companion beside it shares the flux, and the model evaluates.
+            @test G.shell_add_component("pt", "point") == ""
+            @test m.dict["img,f"] ≈ 0.5 && m.dict["pt,f"] ≈ 0.5
+            @test isempty(G.shell_model_warnings())
+            V = eval_model(dict_to_model(Dict{String,Any}(m.dict), String[]), Float64[], uv)
+            @test abs(V[1]) < 1.0 && all(isfinite, V)
+
+            # A file without a pixel scale is added with a placeholder the card flags.
+            @test G.shell_add_image_component("bare", p3) == ""
+            @test m.dict["bare,pixsize"] == 1.0
+            @test split(G.shell_image_info("bare"), '\t')[4] == "none"
+            @test startswith(G.shell_set_image("bare", "pixsize", ""), "!")
+
+            # A file the reader refuses never enters the model.
+            cube = joinpath(d, "cube3.fits")
+            let ff = OITOOLS.FITSIO.FITS(cube, "w"); write(ff, rand(16, 16, 3)); close(ff); end
+            n = length(m.dict)
+            @test startswith(G.shell_add_image_component("bad", cube), "!")
+            @test length(m.dict) == n
+
+            # Rendered from the model Julia holds: the image's keys are not table rows, and a
+            # model rebuilt from the rows drew this disc as a point.
+            only_img = Dict{String,Any}(k => v for (k, v) in m.dict if startswith(k, "img,"))
+            r = G.render_model_image(only_img, String[], Float64[]; nx = 64, pixsize = 0.05)
+            @test count(>(0.01 * maximum(r.image)), r.image) > 100
+            @test !startswith(G.shell_model_image(64, 0.05, 0, 0), "!")
+
+            # A cube depends on wavelength through its planes, with no $WL anywhere.
+            pc = joinpath(d, "cube.fits")
+            writefits(cat(disc(64, 0.05, 1.0), disc(64, 0.05, 2.0); dims = 3), pc;
+                      pixsize = 0.05, wavelengths = [1.6e-6, 2.2e-6])
+            @test G.model_depends_on(Dict{String,Any}("c,image" => pc, "c,f" => 1.0)).wl
+            @test !G.model_depends_on(Dict{String,Any}("c,image" => p1, "c,f" => 1.0)).wl
+            @test occursin("2 channels 1.6–2.2 µm", G.image_facts(pc).summary)
+
+            # Image › Save FITS… writes what this reads: a reconstruction saved by the Image
+            # tab's own call and loaded as a component has the reconstruction's visibilities
+            # at the data's uv points — same centre, same orientation, same scale.
+            data = readoifits(joinpath(@__DIR__, "data", "2004-data1.oifits");
+                              warn = false, verbose = false, T = Float64)
+            rs = G.ImagingSetup(; nx = 32, pixsize = auto_pixsize(data[1, 1]),
+                                startkind = :gaussian)
+            sh.imaging = G.reconstruct_image(data, rs; maxiter = 30)
+            saved = joinpath(d, "reconstruction.fits")
+            @test startswith(G.shell_save_image(saved), "saved")
+            @test G.shell_add_image_component("rec", saved) == ""
+            plane = G.result_plane(sh.imaging)
+            ft = setup_ft(data, rs.nx, rs.pixsize)
+            Vimg = image_to_vis(plane, ft[1, 1].uv)
+            Vcmp = eval_model(dict_to_model(Dict{String,Any}("rec,image" => m.dict["rec,image"]),
+                                            String[]), Float64[], data[1, 1].uv;
+                              wl = data[1, 1].uv_lam)
+            @test maximum(abs.(Vcmp .- Vimg)) < 1e-5
+            G.shell_remove_component("rec")
+
+            # Saved and read back, the model still names the file.
+            toml = joinpath(d, "m.toml")
+            @test G.shell_save_model(toml) == ""
+            r = read_model_file(toml)
+            @test r.model["img,image"] == abspath(p2)
+            @test dict_to_model(r.model, String[]) isa FlatModel
         finally
             G.SHELL[] = prev
         end

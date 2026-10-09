@@ -71,7 +71,7 @@ _adjoint!(ws::ImageChi2Cache, cell::AbstractVector{<:NFFTPlan}) = mul!(ws.gimg, 
 _adjoint!(ws::ImageChi2Cache, cell::DFTCell) = mul!(vec(ws.gimg), transpose(cell.kernel), ws.src)
 
 """
-    image_chi2_fg!(g, x, cell, data, ws; weights, vonmises=false, cvis=[], verb=false) -> chi2
+    image_chi2_fg!(g, x, cell, data, ws; weights, cvis=[], verb=false) -> chi2
 
 Chi-squared of image `x` against `data`, writing the gradient into `g`.
 
@@ -90,7 +90,6 @@ function image_chi2_fg!(g::AbstractMatrix{<:AbstractFloat},
                         x::AbstractMatrix{<:AbstractFloat},
                         cell, data::OIdata, ws::ImageChi2Cache{T,W};
                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                        vonmises::Bool = false,
                         cvis = [],
                         verb::Bool = false) where {T,W}
 
@@ -112,7 +111,7 @@ function image_chi2_fg!(g::AbstractMatrix{<:AbstractFloat},
         ws.wts[i] = W(weights[i])
     end
 
-    t = _chi2_terms(ws.Vw, data, ws.wts, vonmises)
+    t = _chi2_terms(ws.Vw, data, ws.wts)
     chi2 = _total_chi2(t, ws.wts)
     fill!(ws.g_cvis, zero(Complex{W}))
     _accumulate_g_cvis!(ws.g_cvis, ws.Vw, t, data, ws.wts)
@@ -157,7 +156,7 @@ function _print_chi2_terms(t, data::OIdata, w::AbstractVector{<:Real}, flux::Rea
 end
 
 """
-    image_chi2_f(x, cell, data, ws; weights, vonmises=false, cvis=[], verb=false) -> chi2
+    image_chi2_f(x, cell, data, ws; weights, cvis=[], verb=false) -> chi2
 
 Chi-squared of image `x` against `data`, without the gradient — one forward transform.
 
@@ -169,7 +168,6 @@ is being printed.
 function image_chi2_f(x::AbstractMatrix{<:AbstractFloat},
                       cell, data::OIdata, ws::ImageChi2Cache{T,W};
                       weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                      vonmises::Bool = false,
                       cvis = [],
                       verb::Bool = false) where {T,W}
 
@@ -190,7 +188,7 @@ function image_chi2_f(x::AbstractMatrix{<:AbstractFloat},
         ws.wts[i] = W(weights[i])
     end
 
-    t = _chi2_terms(ws.Vw, data, ws.wts, vonmises)
+    t = _chi2_terms(ws.Vw, data, ws.wts)
     chi2 = _total_chi2(t, ws.wts)
     if ws.wts[6] > 0 && data.nflux > 0
         chi2 += ws.wts[6] * _chi2_flux(flux, data).chi2

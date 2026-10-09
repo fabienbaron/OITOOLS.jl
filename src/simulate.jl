@@ -1206,6 +1206,9 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         # uv is (nuv, nhours, nwavs) flattened: baseline fastest, wavelength slowest
         wl_per_uv  = repeat(λ, inner=nuv*nhours)                          # (nuv*nhours*nwavs,)
         mjd_per_uv = repeat(repeat(datetime_to_mjd.(dates), inner=nuv), outer=nwavs)
+        flat_model.smear >= 2 && @warn "simulate: the model asks for smear = " *
+            "$(flat_model.smear), which is applied when fitting a file's channels; this " *
+            "simulation evaluates each channel at its central wavelength"
         cvis_model = eval_model(flat_model, flat_params, uv; wl=wl_per_uv, mjd=mjd_per_uv)
     else
         @warn("No image nor model definition in call to simulate()")
@@ -1691,16 +1694,30 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
         # Per-uv wavelength and MJD, so a chromatic model simulates its own spectrum rather
         # than a file of NaN: the resolver returns NaN for every `$WL` expression when it is
         # handed no wavelength, and nothing downstream treats that as an error.
-        cvis_model = eval_model(flat_model, flat_params, data.uv;
-                                wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing,
-                                mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing)
+        # A smeared model averages its observables over each channel, as a fit to the file
+        # would.
+        cvis_model = if _smeared(flat_model, data)
+            first(_smeared_cvis(flat_model, flat_params, data, false))
+        else
+            eval_model(flat_model, flat_params, data.uv;
+                       wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing,
+                       mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing)
+        end
     else
         error("Bad image or model definition in call to simulate()")
     end
 
     # Compute model observables
-    v2_model = vis_to_v2(cvis_model, data.indx_v2)
-    _, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+    if cvis_model isa AbstractMatrix
+        v2_model = _rowmean(abs2.(_rows(cvis_model, data.indx_v2)))
+        t3c = _rowmean(_rows(cvis_model, data.indx_t3_1) .* _rows(cvis_model, data.indx_t3_2) .*
+                       _rows(cvis_model, data.indx_t3_3))
+        t3amp_model, t3phi_model = abs.(t3c), angle.(t3c) .* (180 / π)
+        cvis_model = _rowmean(cvis_model)
+    else
+        v2_model = vis_to_v2(cvis_model, data.indx_v2)
+        _, t3amp_model, t3phi_model = vis_to_t3(cvis_model, data.indx_t3_1, data.indx_t3_2, data.indx_t3_3)
+    end
 
     # Compute errors based on mode
     if mode == "copy_errors"

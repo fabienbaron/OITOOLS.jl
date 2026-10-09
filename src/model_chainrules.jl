@@ -131,18 +131,9 @@ Linearly limb-darkened disc, `I(μ) = 1 - u(1-μ)`, of diameter `θ` in mas.
 Units and conventions as [`vis_ud`](@ref).
 """
 function vis_ldlin(θ::VisParam, u::VisParam, ρ::AbstractVector)
-    N = @. 0.5 - u/6
-    ζ = @. π * θ * ρ / MAS2RAD
-    B1  = @. ifelse(ζ < 1e-8, one(ζ)/2, besselj1(ζ)/ζ)
-    B32 = @. ifelse(ζ < 1e-8, one(ζ)/3, besselj(1.5,ζ)/ζ^1.5)
-    # small-ζ limits: J1(ζ)/ζ → 1/2,  J_{3/2}(ζ)/ζ^{3/2} → 1/(3√(π/2)/2)… 
-    # More precisely: x^{-ν}J_ν(x) → 1/(2^ν Γ(ν+1)) as x→0
-    # J1(x)/x  → 1/2,   J_{3/2}(x)/x^{3/2} → 1/(2^{3/2}Γ(5/2)) = 1/(2√2·3√π/4)
-    # At ζ=0: V_num = (1-u)/2 + u√(π/2)/(2^{3/2}Γ(5/2)) = (1-u)/2 + u/3
-    #         N·V → (0.5-u/6)·V → finite, V → 1 (normalised)
-    # The ifelse guards prevent NaN; the exact limit is 1.0.
-    V   = @. ((1-u)*B1 + u*_SQRTPIO2*B32) / N
-    return @. ifelse(ζ < 1e-8, one(V), V)
+    # Point by point through `_ldlin_v` (model_kernels.jl), which evaluates the half-integer
+    # Bessel order in closed form rather than through `besselj`.
+    return _ldlin_v.(π .* θ .* ρ ./ MAS2RAD, u)
 end
 
 # Forward pass variant: returns (V, dV_dθ, dV_du) as element-wise vectors.
@@ -263,14 +254,7 @@ Quadratically limb-darkened disc, `I(μ) = 1 - u(1-μ) - w(1-μ)²`, of diameter
 Units and conventions as [`vis_ud`](@ref).
 """
 function vis_ldquad(θ::VisParam, u::VisParam, w::VisParam, ρ::AbstractVector)
-    N   = @. 0.5 - u/6 - w/12
-    ζ   = @. π * θ * ρ / MAS2RAD
-    B1  = @. ifelse(ζ < 1e-8, 0.5,                  besselj1(ζ)/ζ)
-    B32 = @. ifelse(ζ < 1e-8, 1/(2^1.5*gamma(2.5)),  besselj(1.5,ζ)/ζ^1.5)
-    B2  = @. ifelse(ζ < 1e-8, 0.125,                 besselj(2,ζ)/ζ^2)
-    # J₂(x)/x² → 1/8 as x→0  (x^{-ν}J_ν → 1/(2^ν Γ(ν+1)), ν=2: 1/(4·2)=1/8)
-    V_num = @. (1-u-w)*B1 + (u+2w)*_SQRTPIO2*B32 - 2w*B2
-    return @. ifelse(ζ < 1e-8, one(ζ), V_num/N)
+    return _ldquad_v.(π .* θ .* ρ ./ MAS2RAD, u, w)
 end
 
 function ChainRulesCore.rrule(::typeof(vis_ldquad), θ::VisParam, u::VisParam, w::VisParam, ρ::AbstractVector)
@@ -347,13 +331,7 @@ Square-root limb darkening, `I(μ) = 1 - c(1-μ) - d(1-√μ)`, for a disc of di
 `c` is the linear coefficient and `d` the square-root one, in the order Claret tabulates them.
 """
 function vis_ldsqrt(θ::VisParam, c::VisParam, d::VisParam, ρ::AbstractVector)
-    N   = @. 0.5 - c/6 - d/10
-    ζ   = @. π * θ * ρ / MAS2RAD
-    B1  = @. ifelse(ζ < 1e-8, _b0(1.0),    besselj1(ζ)/ζ)
-    B32 = @. ifelse(ζ < 1e-8, _b0(1.5),    besselj(1.5, ζ)/ζ^1.5)
-    B54 = @. ifelse(ζ < 1e-8, _b0(1.25),   besselj(1.25, ζ)/ζ^1.25)
-    V_num = @. (1-c-d)*B1 + c*_SQRTPIO2*B32 + d*_LDF12*B54
-    return @. ifelse(ζ < 1e-8, one(ζ), V_num/N)
+    return _ldsqrt_v.(π .* θ .* ρ ./ MAS2RAD, c, d)
 end
 
 function ChainRulesCore.rrule(::typeof(vis_ldsqrt), θ::VisParam, c::VisParam, d::VisParam,
@@ -396,16 +374,7 @@ The law most precise work uses, and the one Claret's tables are usually quoted i
 """
 function vis_ldclaret4(θ::VisParam, c1::VisParam, c2::VisParam, c3::VisParam, c4::VisParam,
                        ρ::AbstractVector)
-    N    = @. 0.5 - c1/10 - c2/6 - 3*c3/14 - c4/4
-    ζ    = @. π * θ * ρ / MAS2RAD
-    B1   = @. ifelse(ζ < 1e-8, _b0(1.0),  besselj1(ζ)/ζ)
-    B54  = @. ifelse(ζ < 1e-8, _b0(1.25), besselj(1.25, ζ)/ζ^1.25)
-    B32  = @. ifelse(ζ < 1e-8, _b0(1.5),  besselj(1.5,  ζ)/ζ^1.5)
-    B74  = @. ifelse(ζ < 1e-8, _b0(1.75), besselj(1.75, ζ)/ζ^1.75)
-    B2   = @. ifelse(ζ < 1e-8, _b0(2.0),  besselj(2.0,  ζ)/ζ^2)
-    V_num = @. (1-c1-c2-c3-c4)*B1 + c1*_LDF12*B54 + c2*_SQRTPIO2*B32 +
-               c3*_LDF32*B74 + c4*2*B2
-    return @. ifelse(ζ < 1e-8, one(ζ), V_num/N)
+    return _ldclaret4_v.(π .* θ .* ρ ./ MAS2RAD, c1, c2, c3, c4)
 end
 
 function ChainRulesCore.rrule(::typeof(vis_ldclaret4), θ::VisParam, c1::VisParam, c2::VisParam,
@@ -531,56 +500,27 @@ Power-law limb-darkened disc, `I(μ) = μ^α`, of diameter `θ` in mas.
 Units and conventions as [`vis_ud`](@ref).
 """
 function vis_ldpow(θ::VisParam, α::VisParam, ρ::AbstractVector)
-    ν   = @. α/2 + 1
-    ζ   = @. π * θ * ρ / MAS2RAD
-    Vz  = @. ifelse(ζ < 1e-8,
-                    one(ζ),                              # limit: V → 1 as ζ→0
-                    gamma(ν+1) * besselj(ν,ζ) * (ζ/2)^(-ν))
-    return Vz
+    α isa Real || return @. _ldpow_v(π * θ * ρ / MAS2RAD, α)
+    G = first(_ldpow_consts(α / 2 + 1))            # once, at a fixed α
+    return @. _ldpow_v(π * θ * ρ / MAS2RAD, α, G)
+end
+
+# Value and derivatives from `_ldpow_d` (model_kernels.jl), exact in both θ and α.
+function _ldpow_vjac(θ, α, ρ)
+    out = if α isa Real
+        G, ψ = _ldpow_consts(α / 2 + 1)
+        @. _ldpow_d(π * θ * ρ / MAS2RAD, α, G, ψ)
+    else
+        @. _ldpow_d(π * θ * ρ / MAS2RAD, α)
+    end
+    return first.(out), getindex.(out, 2), last.(out)
 end
 
 function ChainRulesCore.rrule(::typeof(vis_ldpow), θ::VisParam, α::VisParam, ρ::AbstractVector)
-    ν    = @. α/2 + 1
-    ζ    = @. π * θ * ρ / MAS2RAD
-    safe = ζ .> 1e-8
-
-    Jν   = @. ifelse(safe, besselj(ν, ζ),   zero(ζ))
-    Jν1  = @. ifelse(safe, besselj(ν+1, ζ), zero(ζ))
-    pow  = @. ifelse(safe, (ζ/2)^(-ν),      one(ζ))
-    Gν1  = @. gamma(ν+1)
-
-    V = @. ifelse(safe, Gν1 * Jν * pow, one(ζ))
-
-    # ∂V/∂ζ = Γ(ν+1)·2^ν · d/dζ[ζ^{-ν}J_ν] = Γ(ν+1)·2^ν·(-J_{ν+1}/ζ^ν)
-    #        = -Γ(ν+1) · J_{ν+1} · (ζ/2)^{-ν} / (ζ/2)   [absorbing 2^ν factor]
-    # More directly: ∂V/∂ζ = Γ(ν+1)·(-J_{ν+1}(ζ)/ζ^ν)·2^ν
-    #                       = -Gν1 · Jν1 · 2^ν / ζ^ν
-    ζ_safe = @. ifelse(safe, ζ, one(ζ))   # avoid 0^ν below
-    dV_dζ  = @. ifelse(safe, -Gν1 * Jν1 * 2^ν / ζ_safe^ν, zero(ζ))
-
-    # ∂V/∂α: compute ∂J_ν/∂ν via series at each baseline (scalar loop is fine
-    # since nuv is small compared to cost of Bessel evaluations)
-    dJν_dν = map((z,s) -> s ? _dbesselj_dnu(ν, z) : 0.0, ζ, safe)
-
-    # ∂/∂ν [Γ(ν+1)] = ψ(ν+1)·Γ(ν+1)
-    # ∂V/∂ν = ψ(ν+1)·V + Γ(ν+1)·(ζ/2)^{-ν}·[dJν_dν - log(ζ/2)·Jν]
-    #
-    # The log is log(ζ/2), NOT log(ζ): it comes from ∂/∂ν (ζ/2)^{-ν} =
-    # -log(ζ/2)·(ζ/2)^{-ν}. Using log(ζ) makes ∂V/∂α too small by exactly
-    # log(2)·V/2, which is enough to stop a gradient-based fit ~0.015 short in α
-    # while every derivative-free method converges correctly. See the gradient
-    # test in test/test_model_gradients.jl.
-    ψν1 = @. digamma(ν+1)
-    dV_dν = @. ifelse(safe,
-        ψν1*V + Gν1 * 2^ν * (dJν_dν - log(ζ_safe/2)*Jν) / ζ_safe^ν,
-        zero(ζ))
-    # dν/dα = 1/2
-    dV_dα = dV_dν ./ 2
-
+    V, dV_dζ, dV_dα = _ldpow_vjac(θ, α, ρ)
     function vis_ldpow_pullback(ȳ)
-        ȳs = @. ifelse(safe, ȳ, zero(ȳ))
-        ∂θ = _dparam(θ, ȳs .* dV_dζ .* π .* ρ ./ MAS2RAD)
-        ∂α = _dparam(α, ȳs .* dV_dα)
+        ∂θ = _dparam(θ, ȳ .* dV_dζ .* π .* ρ ./ MAS2RAD)
+        ∂α = _dparam(α, ȳ .* dV_dα)
         return NoTangent(), ∂θ, ∂α, NoTangent()
     end
     return V, vis_ldpow_pullback

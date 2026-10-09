@@ -403,6 +403,26 @@ end
 shell_dataset_names() = join([e.name * " — " * basename(e.path)
                               for e in _shell().session.datasets], "\n")
 
+"""Index (1-based) of the dataset every perspective is looking at; 0 with none loaded."""
+shell_current_dataset() = _shell().current
+
+"""
+    shell_dataset_summary() -> String
+
+The current dataset's [`dataset_summary`](@ref) as `label\tvalue` lines, for Explore's Dataset
+section; `""` with none loaded.
+"""
+function shell_dataset_summary()
+    e = current_dataset(_shell())
+    e === nothing && return ""
+    rows = try
+        dataset_summary(e)
+    catch err
+        ["summary" => "! " * _cause(err)]
+    end
+    return join((string(first(r), "\t", last(r)) for r in rows), "\n")
+end
+
 """The command log as a runnable script, for the log panel and 'Export script'."""
 shell_script() = export_script(_shell().session)
 
@@ -571,17 +591,18 @@ _collapse_cr(s::AbstractString) =
     join((last(split(line, '\r')) for line in split(String(s), '\n')), '\n')
 
 """
-    shell_fit_model(model_lines, free_lines, constraint_lines, prior_lines,
+    shell_fit_model(free_lines, constraint_lines, prior_lines,
                     v2, t3amp, t3phi, cvis, flux, diffvis, optimiser, maxeval) -> String
 
-Fit the panel's model to the current dataset. Returns a one-line summary.
+Fit the model the panel is editing (the session's live model) to the current dataset. Returns
+a one-line summary.
 
 The optimiser choice decides more than speed. NLopt takes the constraints as real nonlinear
 constraints, so they hold at the optimum; Levenberg-Marquardt and nested sampling have no such
 machinery and apply a soft penalty that a steep χ² can overrule. That difference is stated in
 the console rather than left to be discovered.
 """
-function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString,
+function shell_fit_model(free_lines::AbstractString,
                          constraint_lines::AbstractString, prior_lines::AbstractString,
                          v2::Bool, t3amp::Bool, t3phi::Bool,
                          cvis::Bool, flux::Bool, diffvis::Bool,
@@ -592,7 +613,8 @@ function shell_fit_model(model_lines::AbstractString, free_lines::AbstractString
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
 
-    md = parse_model_lines(model_lines)
+    # A copy: the fit runs on a worker, and the panel may edit the live model meanwhile.
+    md = copy(_model(sh).dict)
     isempty(md) && return "! no model"
     free, lb, ub = parse_free_lines(free_lines)
     isempty(free) && return "! no free parameters"
@@ -709,6 +731,15 @@ function finish_fit!(sh::ShellState, res)
     for (k, v) in zip(r.list_free_params, r.x_opt)
         console!(sh, @sprintf("    %-22s = %.6g", k, v))
     end
+    if f.map isa CompanionSearch
+        COMPANION_LIVE[] = nothing
+        s = f.map; b = s.best
+        line = @sprintf("best node %+.3f, %+.3f mas (sep %.3f mas, PA %.2f°)   %s,f %.5f (Δm %.2f)   χ²r %.4f, %.4f without   %.1fσ   %d nodes, %.1f s",
+                        b.x, b.y, b.sep, b.pa, s.companion, b.f, b.dmag, b.chi2r, s.chi2r_null,
+                        s.nsigma, s.nnodes, f.seconds)
+        console!(sh, "  " * line)
+        return line
+    end
     it, ev = _fit_work(r)
     start  = isfinite(f.chi2_start) ? f.chi2_start / max(r.ndof, 1) : NaN
     line = @sprintf("chi2r %s -> %.4f   ndof %d   %d free   %s   %.2f s",
@@ -725,8 +756,10 @@ end
 """
     shell_chi2_map_info() -> String
 
-`p1\tp2\tbest1\tbest2\tchi2r` for the most recent grid fit, or `""` when the last fit was not
-one. QML uses it to decide whether the map panel has anything to show.
+`p1\tp2\tbest1\tbest2\tchi2r\tkind` for the most recent fit that drew a map, or `""` when the
+last fit did not. `kind` is `grid` for a χ² map over two parameters and `companion` for a
+companion search, whose axes are the companion's position. QML uses it to decide whether the
+map panel has anything to show, and what its caption and toggle are.
 """
 function shell_chi2_map_info()
     sh = _shell()
@@ -734,9 +767,13 @@ function shell_chi2_map_info()
     f = last(sh.fits)
     m = hasproperty(f, :map) ? f.map : nothing
     m === nothing && return ""
+    if m isa CompanionSearch
+        return join(("x", "y", string(m.best.x), string(m.best.y), string(m.best.chi2r),
+                     "companion"), "\t")
+    end
     b = argmin(m.chi2)
     return join((m.p1, m.p2, string(m.v1[b[1]]), string(m.v2[b[2]]),
-                 string(minimum(m.chi2) / m.ndof)), "\t")
+                 string(minimum(m.chi2) / m.ndof), "grid"), "\t")
 end
 
 """
@@ -751,12 +788,202 @@ function shell_free_names()
     return join(m.free, "\n")
 end
 
-"The fitted values as `key=value` lines, so the table can adopt them."
+"""
+The fitted values as `key=value` lines, so the table can adopt them. After a companion search,
+the best node: its fitted parameters and the companion's position, which the grid set.
+"""
 function shell_fit_values()
     sh = _shell()
     isempty(sh.fits) && return ""
-    r = last(sh.fits).result
-    return join((string(k, "=", v) for (k, v) in zip(r.list_free_params, r.x_opt)), "\n")
+    f = last(sh.fits)
+    r = f.result
+    kv = [string(k, "=", v) for (k, v) in zip(r.list_free_params, r.x_opt)]
+    if f.map isa CompanionSearch
+        push!(kv, string(f.map.companion, ",x=", f.map.best.x),
+                  string(f.map.companion, ",y=", f.map.best.y))
+    end
+    return join(kv, "\n")
+end
+
+# ── the companion search (Model › Optimiser) ─────────────────────────────────────────
+
+"""
+    shell_companion_candidates() -> String
+
+The model's components that can be the searched companion, newline-separated: those with
+`f`, `x` and `y` keys. The search moves one over a grid of positions.
+"""
+function shell_companion_candidates()
+    m = _model()
+    names = String[]
+    for k in keys(m.dict)
+        i = findfirst(',', k)
+        i === nothing && continue
+        c = k[1:prevind(k, i)]
+        (c in names || !all(haskey(m.dict, c * s) for s in (",f", ",x", ",y"))) && continue
+        push!(names, c)
+    end
+    return join(sort(names), "\n")
+end
+
+# NaN from an empty field, which means "the search's own default".
+_or_default(v) = (v isa Real && isfinite(v)) ? Float64(v) : nothing
+
+"""
+    shell_companion_grid(companion, step, rmin, rmax, mask) -> String
+
+How large a search will be, before it runs: "1024 nodes · step 1.81 mas · r 1.81–36.6 mas",
+from [`companion_grid`](@ref) with the same defaults the search takes. An empty field (NaN)
+takes the default, and the readout shows what that default is.
+"""
+function shell_companion_grid(companion, step, rmin, rmax, mask)
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    cn = String(companion)
+    isempty(cn) && return "! the model has no component with f, x and y to search for"
+    g = try
+        companion_grid(_model(sh).dict, e.data[1, 1]; companion = cn, step = _or_default(step),
+                       rmin = _or_default(rmin), rmax = _or_default(rmax),
+                       mask = something(_or_default(mask), 0.01))
+    catch err
+        return "! " * _cause(err)
+    end
+    return @sprintf("%d nodes · step %.3g mas · r %.3g–%.3g mas", length(g.nodes), g.step,
+                    g.rmin, g.rmax)
+end
+
+# `x` to two significant figures, rounded by `r` (floor or ceil).
+function _round2(x::Real, r)
+    (isfinite(x) && x > 0) || return Float64(x)
+    p = 10.0^(floor(log10(x)) - 1)
+    return r(x / p) * p
+end
+
+"""
+    shell_companion_defaults(companion) -> String
+
+The grid the search would take by default, as the dialog prefills it: `"step\trmin\trmax"`,
+in mas, to two significant figures. The step and the inner radius round down, so the grid is
+never coarser and nothing next to the primary is skipped; the outer radius rounds up. `""` when
+there is no grid to compute (no dataset, or a model the grid cannot be laid around).
+"""
+function shell_companion_defaults(companion)
+    sh = _shell()
+    e = current_dataset(sh)
+    (e === nothing || isempty(String(companion))) && return ""
+    g = try
+        companion_grid(_model(sh).dict, e.data[1, 1]; companion = String(companion))
+    catch
+        return ""
+    end
+    f(v) = @sprintf("%g", v)
+    return join((f(_round2(g.step, floor)), f(_round2(g.rmin, floor)), f(_round2(g.rmax, ceil))),
+                "\t")
+end
+
+"""
+    shell_companion_search(free_lines, v2, t3amp, t3phi, cvis, flux, diffvis,
+                           companion, step, rmin, rmax, mask, fmax, fitter,
+                           refit_primary) -> String
+
+Run [`companion_search`](@ref) on the panel's model and the current dataset, on a worker, as a
+fit is run. The panel's free parameters are fitted at every node, less the companion's
+position, which the grid sets. `fitter` is the per-node fitter: `"bradi"` or `"halley"` when
+only the companion's flux is free, `"vmlmb"` for any free set (and the only one when more than
+the flux is). With `refit_primary` false the primary's free parameters are held at their
+current values: only the companion's are fitted at a node, and the significance is against this
+primary as it stands. The map lands in the χ² map panel, the best node in the fits table, and
+"Adopt" writes the best node into the model.
+"""
+function shell_companion_search(free_lines::AbstractString,
+                                v2::Bool, t3amp::Bool, t3phi::Bool,
+                                cvis::Bool, flux::Bool, diffvis::Bool,
+                                companion, step, rmin, rmax, mask, fmax,
+                                fitter::AbstractString = "bradi", refit_primary::Bool = true)
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    md = copy(_model(sh).dict)
+    isempty(md) && return "! no model"
+    cn = String(companion)
+    isempty(cn) && return "! the model has no component with f, x and y to search for"
+    free, lb, ub = parse_free_lines(free_lines)
+    # An empty bound is ±Inf here, and passed on it would override the search's own default.
+    filter!(p -> isfinite(p.second), lb); filter!(p -> isfinite(p.second), ub)
+    kx, ky, kf = cn * ",x", cn * ",y", cn * ",f"
+    dropped = filter(k -> k in (kx, ky), free)
+    free = filter(k -> !(k in (kx, ky)), free)
+    if !refit_primary
+        held = filter(k -> !startswith(k, cn * ","), free)
+        isempty(held) || console!(sh, "  primary held at its current values: $(join(held, ", "))")
+        free = filter(k -> startswith(k, cn * ","), free)
+    end
+    kf in free || return "! free $kf: the search fits the companion's flux at every node"
+    (flux || diffvis) && return "! the search fits V², T3 and VIS; untick OI_FLUX and differential"
+    weights = fitting_weights(; v2, t3amp, t3phi, cvis, flux, diffvis)
+    all(iszero, weights) && return "! no observables selected"
+    data = e.data[1, 1]
+    fz = String(fitter)
+    fz in ("bradi", "halley", "vmlmb") || return "! unknown per-node fitter: " * fz
+    kw = (; companion = cn, free, lb, ub, fmax = something(_or_default(fmax), 0.5),
+            step = _or_default(step), rmin = _or_default(rmin), rmax = _or_default(rmax),
+            mask = something(_or_default(mask), 0.01), weights,
+            solver = fz == "halley" ? :halley : :bradi,
+            path = fz == "vmlmb" ? :general : :auto)
+    isempty(dropped) || console!(sh, "  $(join(dropped, " and ")) set by the grid, not fitted")
+    console!(sh, "> companion_search(model, data; " *
+                 join((string(k, " = ", repr(v)) for (k, v) in pairs(kw)), ", ") * ")")
+    sh.fitlog = ""
+    COMPANION_LIVE[] = nothing
+    start_job!(sh, :fit, function (_stop)
+        t0 = time()
+        chi2_start = try
+            OITOOLS.chi2_flat(parse_model(md, free), Float64[Float64(md[k]) for k in free],
+                              data; weights)
+        catch
+            NaN
+        end
+        s = companion_search(md, data; kw...,
+                             on_grid = g -> (COMPANION_LIVE[] = (; g..., companion = cn)))
+        return (; result = s.fit, map = s, seconds = time() - t0, optimiser = "companion search",
+                  free, chi2_start)
+    end)
+    return "searching…"
+end
+
+# The search in progress: its grid and the arrays its threads fill, set by `companion_search`'s
+# `on_grid` hook on the worker and drawn from the GUI thread by `shell_companion_progress`.
+const COMPANION_LIVE = Ref{Any}(nothing)
+
+"""
+    shell_companion_progress() -> String
+
+Draw the running companion search into the map panel, and say how far it is: `"done\ttotal"`,
+or `""` before the grid exists. Called by the panel's job poll, on the GUI thread, which is where
+Makie has to be touched; the first call, with nothing fitted yet, puts up the axes and the
+grid's extent.
+"""
+function shell_companion_progress()
+    sh = _shell()
+    g = COMPANION_LIVE[]
+    (g === nothing || sh.chi2map === nothing) && return ""
+    done, total = update_companion_progress!(sh.chi2map, g, g.companion)
+    return string(done, "\t", total)
+end
+
+"""
+    shell_companion_map_view(which) -> String
+
+Show the last companion search's χ²ᵣ map (`"chi2r"`) or its fitted-flux map (`"flux"`).
+"""
+function shell_companion_map_view(which::AbstractString)
+    sh = _shell()
+    isempty(sh.fits) && return ""
+    m = last(sh.fits).map
+    (m isa CompanionSearch && sh.chi2map !== nothing) || return ""
+    update_chi2_map!(sh.chi2map, m; show = which == "flux" ? :flux : :chi2r)
+    return ""
 end
 
 """
@@ -927,10 +1154,55 @@ function shell_model_rows()
         console!(_shell(), "! model: " * _cause(err); kind = :err)
         return ""
     end
+    # Smearing is a setting, edited through its own menu (`shell_set_smearing`), not a row.
     return join((join((r.component, r.param, r.key, _mode_name(r.mode),
                        _numv(r.value), r.expr, _num(r.lb), _num(r.ub),
                        string(r.fitindex), string(r.atbound)), "\t")
-                 for r in rows), "\n")
+                 for r in rows if !(r.key in _SMEAR_KEYS)), "\n")
+end
+
+const _SMEAR_KEYS = ("smear", "smear_mode")
+
+"""
+    shell_smearing() -> String
+
+The model's bandwidth smearing as the Smearing menu shows it, `"samples\tmode"`: samples is
+`off`, `auto` or a whole number of sub-wavelengths per channel; mode `incoherent` or
+`coherent`.
+"""
+function shell_smearing()
+    d = _model().dict
+    sm = get(d, "smear", 0)
+    n = sm == "auto" ? "auto" :
+        (sm isa Real && isinteger(sm) && sm > 1) ? string(Int(sm)) : "off"
+    return n * "\t" * string(get(d, "smear_mode", "incoherent"))
+end
+
+"""
+    shell_set_smearing(samples, mode) -> String
+
+Set the model's `"smear"` and `"smear_mode"` from the Smearing menu: `samples` is `off`,
+`auto` or a whole number ≥ 2. Off removes both keys, so a model without smearing is saved
+without them. They are model keys rather than a fit option because every evaluation against
+data reads them -- a fit, χ², the residuals, the companion search -- and a saved model or an
+exported script has to evaluate the same way.
+"""
+function shell_set_smearing(samples::AbstractString, mode::AbstractString)
+    sh = _shell(); m = _model(sh)
+    n, md = String(samples), String(mode)
+    md in ("incoherent", "coherent") || return "! smearing mode is incoherent or coherent"
+    if n == "off"
+        delete!(m.dict, "smear"); delete!(m.dict, "smear_mode")
+        console!(sh, "  bandwidth smearing off"; kind = :cmd)
+        return ""
+    end
+    v = n == "auto" ? "auto" : tryparse(Int, n)
+    (v == "auto" || (v isa Int && v >= 2)) ||
+        return "! smearing takes auto or a whole number of sub-wavelengths ≥ 2"
+    m.dict["smear"] = v
+    md == "incoherent" ? delete!(m.dict, "smear_mode") : (m.dict["smear_mode"] = md)
+    console!(sh, "  bandwidth smearing: $(v) sub-wavelengths per channel, $(md)"; kind = :cmd)
+    return ""
 end
 
 _mode_name(m) = m === PARAM_FREE ? "free" : m === PARAM_EXPR ? "expr" : "fixed"
@@ -1258,28 +1530,20 @@ function shell_export_pmoired(path::AbstractString)
 end
 
 """
-    shell_model_image(model_json, nx, pixsize, wl, mjd) -> String
+    shell_model_image(nx, pixsize, wl, mjd) -> String
 
 Render the current model and put it on the Model perspective's canvas.
 
-`model_json` is `key=value` pairs, one per line — the model dict as the panel holds it. A value
-that parses as a number is one; anything else is an expression, which is exactly the
-distinction the parser itself makes.
+The model is the one Julia holds, not a copy assembled from the panel's rows: the table does
+not show every key (an image component's file is in its card), and a model rebuilt from the
+rows alone would be a different model.
 
 `wl` in metres and `mjd` in days; either ≤ 0 means "not specified", which a model that does not
 reference them ignores anyway.
 """
-function shell_model_image(model_json::AbstractString, nx::Integer, pixsize::Real,
-                           wl::Real, mjd::Real)
+function shell_model_image(nx::Integer, pixsize::Real, wl::Real, mjd::Real)
     sh = _shell()
-    md = Dict{String,Any}()
-    for line in split(String(model_json), "\n")
-        isempty(strip(line)) && continue
-        i = findfirst('=', line)
-        i === nothing && continue
-        k = strip(line[1:i-1]); v = strip(line[nextind(line, i):end])
-        md[String(k)] = something(tryparse(Float64, v), String(v))
-    end
+    md = _model(sh).dict
     isempty(md) && return "! no model"
 
     r = try
@@ -1832,6 +2096,11 @@ const COMPONENT_CHOICES = ComponentChoice[
     ComponentChoice("image", "custom image function", "image_func",
                     "custom image function", "disk"),
 
+    # An image or cube from a FITS file: a reconstruction saved with Save FITS…, a ROTIR cube.
+    # Not written out like the two around it, but read; added through
+    # `shell_add_image_component`, which takes the file.
+    ComponentChoice("fitsimage", "image (FITS file)", "fits_image", "image (FITS file)", "img"),
+
     # You write V(B) directly, in $B. The other direction, and the only kind whose expression
     # is not an image at all.
     ComponentChoice("visfunc", "custom visibility function", "vis_func",
@@ -1910,10 +2179,11 @@ component -- it is a parse error.
 function shell_add_component(name, kind)
     sh = _shell(); m = _model(sh)
     nm = strip(String(name))
-    isempty(nm) && return "! a component needs a name"
-    occursin(',', nm) && return "! a component name cannot contain a comma"
-    nm == GLOBAL_COMPONENT && return "! that name is reserved for globals"
+    problem = _new_component_problem(m, nm)
+    isempty(problem) || return problem
     k = Symbol(String(kind))
+    k === :fits_image && return "! an image component is added with its file: " *
+                                "shell_add_image_component(name, path)"
     k === :ld && return "! choose a limb-darkening law: " *
                         join((l.key for l in LD_LAWS), ", ")
     # Panel ids that are not parser kinds. `image_func` and `ring_profile` are both `:hankel`
@@ -1923,8 +2193,6 @@ function shell_add_component(name, kind)
         haskey(_ANALYTIC_PARAM_SUFFIXES, k) ||
         return "! unknown component kind: " * String(kind)
     pre = nm * ","
-    any(startswith(key, pre) for key in keys(m.dict)) &&
-        return "! there is already a component called " * nm
 
     if k === :vis_func
         # V(B) written out. The seed is a uniform disc's own visibility, which is a real model
@@ -2001,6 +2269,132 @@ function shell_add_component(name, kind)
     isempty(gk) || push!(m.free, pre * gk)
     console!(sh, "  added $(nm): $(k), keys " * join((pre * s for s in suffixes), ", ") *
                  (isempty(gk) ? "" : "; $(pre * gk) is free"))
+    return ""
+end
+
+# Why `nm` cannot name a new component, or "".
+function _new_component_problem(m, nm)
+    isempty(nm) && return "! a component needs a name"
+    occursin(',', nm) && return "! a component name cannot contain a comma"
+    nm == GLOBAL_COMPONENT && return "! that name is reserved for globals"
+    any(startswith(key, nm * ",") for key in keys(m.dict)) &&
+        return "! there is already a component called " * nm
+    return ""
+end
+
+"""
+    shell_add_image_component(name, path) -> String
+
+Add a FITS image or cube as the component `name`: `name,image` holds the file's absolute path
+and `name,f` a share of the flux. Returns `""` or a message beginning with `!`.
+
+The file is read here, so one the reader refuses (a 3-D file that does not say what its third
+axis is, a plane with no flux) is refused before it enters the model. A file with no pixel
+scale is added with `name,pixsize = 1.0` and a console line saying the number is a
+placeholder: refusing it would leave no way to give the scale, which is the card's job.
+Nothing is free: an image has no shape parameter, and `x`/`y` come from the position toggle.
+"""
+function shell_add_image_component(name, path)
+    sh = _shell(); m = _model(sh)
+    nm = strip(String(name))
+    problem = _new_component_problem(m, nm)
+    isempty(problem) || return problem
+    p = abspath(expanduser(String(path)))
+    hdr_ps = try fits_pixsize(p) catch; nothing end
+    mi = try
+        read_model_image(p; pixsize = hdr_ps === nothing ? 1.0 : nothing)
+    catch err
+        return "! " * _cause(err)
+    end
+    pre = nm * ","
+    m.dict[pre * "image"] = p
+    hdr_ps === nothing && (m.dict[pre * "pixsize"] = 1.0)
+    m.dict[pre * "f"] = _share_flux!(m, pre * "f")
+    console!(sh, "  added $(nm): image $(basename(p)), " * _image_summary(mi))
+    hdr_ps === nothing &&
+        console!(sh, "! $(basename(p)) has no pixel scale; $(pre)pixsize = 1.0 mas is a " *
+                     "placeholder, set it in the image card"; kind = :err)
+    return ""
+end
+
+"""
+    shell_image_info(name) -> String
+
+What the image card shows, as `path\tsummary\tpixsize\tpixsource\tnorm\tfilenorm`, or `!`
+and a reason when the file cannot be read.
+
+`pixsource` is `model` when `name,pixsize` overrides the header, `header` otherwise, and
+`none` when the header has no scale (the value shown is then the model's placeholder).
+`norm` is the model's `name,norm` or `""`; `filenorm` is what the file itself says
+(`plane` or `relative`), which applies when `norm` is empty.
+"""
+function shell_image_info(name::AbstractString)
+    m = _model(); cn = String(name)
+    p = get(m.dict, cn * ",image", nothing)
+    p isa AbstractString || return "! " * cn * " is not an image component"
+    ov = get(m.dict, cn * ",pixsize", nothing)
+    facts = image_facts(p)
+    if facts === nothing
+        return "! " * (isfile(p) ? (try read_model_image(p; pixsize = 1.0); "" catch err;
+                                    _cause(err) end)
+                                 : "no such file: " * p)
+    end
+    hdr_ps = try fits_pixsize(p) catch; nothing end
+    ps, src = ov isa Real ? (Float64(ov), hdr_ps === nothing ? "none" : "model") :
+                            (something(hdr_ps, NaN), hdr_ps === nothing ? "none" : "header")
+    nm = get(m.dict, cn * ",norm", "")
+    # Ten significant digits: a scale stored in degrees comes back as 0.05000000000000004 mas.
+    return join((p, facts.summary, string(round(ps; sigdigits = 10)), src, string(nm),
+                 string(facts.normalization)), '\t')
+end
+
+"""
+    shell_set_image(name, field, value) -> String
+
+Change one thing about an image component: `file` (a path), `pixsize` (mas, `""` to use the
+header's) or `norm` (`plane`, `relative`, or `""` for what the file says). Returns `""` or `!`
+and a reason; a file the reader refuses is not put in the model.
+"""
+function shell_set_image(name::AbstractString, field::AbstractString, value::AbstractString)
+    sh = _shell(); m = _model(sh)
+    cn = String(name); k = cn * ","
+    haskey(m.dict, k * "image") || return "! " * cn * " is not an image component"
+    v = strip(String(value))
+    if field == "file"
+        p = abspath(expanduser(v))
+        ov = get(m.dict, k * "pixsize", nothing)
+        mi = try
+            read_model_image(p; pixsize = ov isa Real ? ov : nothing)
+        catch err
+            return "! " * _cause(err)
+        end
+        m.dict[k * "image"] = p
+        console!(sh, "  $(k)image = $(basename(p)), " * _image_summary(mi))
+    elseif field == "pixsize"
+        if isempty(v)
+            fits_pixsize(m.dict[k * "image"]) === nothing &&
+                return "! the file has no pixel scale, so " * k * "pixsize is needed"
+            delete!(m.dict, k * "pixsize")
+            console!(sh, "  $(k)pixsize removed: the header's scale applies")
+        else
+            x = tryparse(Float64, v)
+            (x === nothing || !(x > 0)) && return "! a pixel scale is a positive number of mas"
+            m.dict[k * "pixsize"] = x
+            console!(sh, "  $(k)pixsize = $(x) mas")
+        end
+    elseif field == "norm"
+        if isempty(v)
+            delete!(m.dict, k * "norm")
+            console!(sh, "  $(k)norm removed: the file's normalisation applies")
+        elseif v in ("plane", "relative")
+            m.dict[k * "norm"] = String(v)
+            console!(sh, "  $(k)norm = $(v)")
+        else
+            return "! norm is plane or relative"
+        end
+    else
+        return "! unknown image field: " * String(field)
+    end
     return ""
 end
 
@@ -2496,6 +2890,9 @@ function shell_set_component_geometry(name::AbstractString, which::AbstractStrin
     keys_ = String(which) == "position"    ? ("x", "y") :
             String(which) == "orientation" ? ("incl", "pa") :
             return "! unknown geometry: " * String(which)
+    Bool(on) && keys_[1] == "incl" && haskey(m.dict, cn * ",image") &&
+        return "! " * cn * " is an image, used at the orientation it was made with: it takes " *
+               "no incl or pa"
     if Bool(on)
         for suffix in keys_
             k = cn * "," * suffix
@@ -2731,7 +3128,8 @@ function _param_name_problem(m, cn::AbstractString, nm::AbstractString)
     (nm in OITOOLS.IMPLICIT_VARS || nm == "B") &&
         return "\$" * nm * " is a built-in variable"
     if isempty(cn)
-        nm == "spatial_kernel" && return "spatial_kernel is a setting the parser reads by name"
+        nm in ("spatial_kernel", "smear", "smear_mode") &&
+            return nm * " is a setting the parser reads by name"
         haskey(m.dict, nm) && return "there is already a global called " * nm
     else
         any(k -> startswith(k, cn * ","), keys(m.dict)) || return "no component called " * cn
@@ -3665,6 +4063,10 @@ function shell_rebin(mode::AbstractString, nbins::Integer = 0)
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
+    # Re-reading the file would silently drop the cut; rebinning comes before filtering.
+    e.derived_from === nothing ||
+        return "! $(e.name) is a filtered copy of $(e.derived_from): rebin $(e.derived_from), " *
+               "then filter it again"
     m = String(mode)
 
     kw = Dict{Symbol,Any}()

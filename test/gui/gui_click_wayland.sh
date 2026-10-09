@@ -125,14 +125,14 @@ SHOT() { import -window "$WESTON_WID" "$SHOTDIR/$1.png" 2>/dev/null; }
 
 SHOT 00_start
 CL 480 42 2           # Explore tab
-CL 470 14 3           # "Open OIFITS..."
+CL 382 14 3           # "Open OIFITS..."
 SHOT 01_dialog
 CL 700 342 1          # v1295Aql.oifits
 CL 801 603 8          # the dialog's Open button
 SHOT 02_after_open
-CL 105 73 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3
+CL 133 96 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3   # Plot menu, in the frame
 SHOT 03_kind
-CL 313 73 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3
+CL 133 123 2 ; xdotool key Down; sleep 1; xdotool key Return; sleep 3   # Colour menu
 SHOT 04_colour
 
 wait "$GUI_PID" 2>/dev/null

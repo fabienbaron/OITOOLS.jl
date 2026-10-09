@@ -108,6 +108,10 @@ function model_rows(model_dict::AbstractDict, list_free_params::AbstractVector;
     for key in sort(collect(keys(md)); by = rank)
         comp, par = _split_key(key)
         v = md[key]
+        # An image component's file, pixel scale and normalisation are how it is READ, not
+        # parameters: none can be free and the path is not an expression. The image card
+        # shows them.
+        par in OITOOLS._IMAGE_SUFFIXES && haskey(md, comp * ",image") && continue
         idx = something(findfirst(==(key), free), 0)
 
         if idx > 0
@@ -238,16 +242,76 @@ free_parameter_vector(rows::AbstractVector{ParamRow}) =
 """
     model_depends_on(model_dict) -> (; wl, mjd)
 
-Whether any expression in the model references `\\\$WL` or `\\\$MJD`.
+Whether any expression in the model references `\\\$WL` or `\\\$MJD`, or an image component
+is a cube whose planes differ by wavelength or by epoch.
 
 Separately, not as one `broadcasting` flag: the panel offers a wavelength control and a time
 control, and each should be live only if it changes the answer. Offering both for a model that
 uses neither invites the user to conclude the render is broken when nothing moves.
 """
 function model_depends_on(model_dict::AbstractDict)
-    vals = [v for v in values(model_dict) if v isa AbstractString]
-    return (; wl  = any(v -> occursin("\$WL",  v), vals),
-              mjd = any(v -> occursin("\$MJD", v), vals))
+    vals = [v for (k, v) in model_dict if v isa AbstractString && !endswith(k, ",image")]
+    wl  = any(v -> occursin("\$WL",  v), vals)
+    mjd = any(v -> occursin("\$MJD", v), vals)
+    # A cube depends on wavelength or time through its planes, with no expression saying so.
+    for (k, v) in model_dict
+        endswith(k, ",image") && v isa AbstractString || continue
+        facts = image_facts(v)
+        facts === nothing && continue
+        wl  |= facts.chromatic
+        mjd |= facts.temporal
+    end
+    return (; wl, mjd)
+end
+
+const _IMAGE_FACTS = Dict{Tuple{String,Float64},Any}()
+
+"""
+    image_facts(path) -> (; summary, chromatic, temporal, normalization) or nothing
+
+What an image file holds, for the panel: a one-line summary ("64×64 · 2 channels 1.6–2.2 µm"),
+whether its planes differ by wavelength or by epoch, and the normalisation the file states.
+`nothing` when the file cannot be read.
+
+Remembered per file and modification time, since the panel asks on every refresh and a cube
+can be large.
+"""
+function image_facts(path::AbstractString)
+    p = String(path)
+    isfile(p) || return nothing
+    key = (p, mtime(p))
+    return get!(_IMAGE_FACTS, key) do
+        mi = try
+            read_model_image(p; pixsize = 1.0)      # the scale is not a fact asked for here
+        catch
+            return nothing
+        end
+        nλ, nt = size(mi.image, 3), size(mi.image, 4)
+        (; summary = _image_summary(mi),
+           chromatic = nλ > 1 && all(isfinite, mi.wavelengths),
+           temporal  = nt > 1 && all(isfinite, mi.mjds),
+           normalization = mi.normalization)
+    end
+end
+
+# "144×144 · 2 channels 1.515–1.623 µm · 2 epochs MJD 58696.38–58701.39"; a grey image with
+# no date is "64×64 · grey".
+function _image_summary(mi)
+    nx, ny, nλ, nt = size(mi.image)
+    parts = [string(nx, "×", ny)]
+    λ = mi.wavelengths
+    push!(parts, nλ == 1 ? (isfinite(λ[1]) ? string("1 channel ", round(λ[1] * 1e6; sigdigits = 4), " µm")
+                                           : "grey")
+                         : string(nλ, " channels ", round(minimum(λ) * 1e6; sigdigits = 4), "–",
+                                  round(maximum(λ) * 1e6; sigdigits = 4), " µm"))
+    t = mi.mjds
+    if nt > 1
+        push!(parts, string(nt, " epochs MJD ", round(minimum(t); digits = 2), "–",
+                            round(maximum(t); digits = 2)))
+    elseif isfinite(t[1])
+        push!(parts, string("MJD ", round(t[1]; digits = 2)))
+    end
+    return join(parts, " · ")
 end
 
 """

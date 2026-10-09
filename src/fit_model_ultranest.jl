@@ -15,7 +15,6 @@ function _ultranest_fit(model_dict         ::Dict{String},
     ub                       = Dict{String,Float64}(),
     weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints              = [],
-    vonmises                 = false,
     nB_workspace             = nothing,
     min_num_live_points      = 400,
     cluster_num_live_points  = 100,
@@ -64,10 +63,10 @@ function _ultranest_fit(model_dict         ::Dict{String},
     # A soft constraint states which parameter combinations are admissible, so it belongs in
     # the density being sampled; the posterior and the evidence are then both the constrained
     # ones.
-    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises,
+    loglikelihood = let fm=fm, data=data, weights=weights,
                         cons=cons, constraint_idx=constraint_idx
         param::AbstractVector{<:Real} ->
-            -0.5 * (chi2_flat(fm, param, data; weights, vonmises) +
+            -0.5 * (chi2_flat(fm, param, data; weights) +
                     constraint_penalty(param, cons, fm, constraint_idx))
     end
 
@@ -132,7 +131,7 @@ function _ultranest_fit(model_dict         ::Dict{String},
     minx = pyconvert(Vector{Float64}, result["maximum_likelihood"]["point"])
     # The data chi2, without the constraint penalty that shaped the sampling — the convention
     # the other fitters report.
-    minf = chi2_flat(fm, minx, data; weights, vonmises)
+    minf = chi2_flat(fm, minx, data; weights)
 
     if verb
         @printf("Best-fit χ² = %.4f\n", minf)
@@ -172,7 +171,6 @@ function _ultranest_fit(model             ::FlatModel,
     ub                       = Dict{String,Float64}(),
     weights                  = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints              = [],
-    vonmises                 = false,
     min_num_live_points      = 400,
     cluster_num_live_points  = 100,
     num_bootstraps           = 30,
@@ -217,9 +215,9 @@ function _ultranest_fit(model             ::FlatModel,
     end
 
     # ── Log-likelihood: -0.5 * chi2 ─────────────────────────────────────────
-    loglikelihood = let fm=fm, data=data, weights=weights, vonmises=vonmises
+    loglikelihood = let fm=fm, data=data, weights=weights
         param::AbstractVector{<:Real} -> -0.5 * chi2_flat(fm, param, data;
-                                                           weights, vonmises)
+                                                           weights)
     end
 
     loglikelihood_vectorized = let loglikelihood = loglikelihood
@@ -277,7 +275,7 @@ function _ultranest_fit(model             ::FlatModel,
 
     # ── Extract results ──────────────────────────────────────────────────────
     minx = pyconvert(Vector{Float64}, result["maximum_likelihood"]["point"])
-    minf = chi2_flat(fm, minx, data; weights, vonmises)
+    minf = chi2_flat(fm, minx, data; weights)
 
     if verb
         @printf("Best-fit χ² = %.4f\n", minf)

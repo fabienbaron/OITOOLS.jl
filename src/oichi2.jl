@@ -1031,7 +1031,7 @@ end
            reg_args=[], fixed_regularizers=[["centering", 1e3]],
            pixsize=nothing, pixsize_ref=0.4, use_dimless=false,
            weights=[1.0,1.0,1.0], maxiter=500, restarts=3,
-           verb=false, vonmises=false)
+           verb=false)
 
 Sweep a single regularizer's weight over `mu_range` and return L-curve data.
 
@@ -1051,7 +1051,7 @@ function lcurve(x_start, data, ft, reg_name, mu_range;
     fixed_regularizers = [["centering", 1e3]],
     pixsize = nothing, pixsize_ref = 0.4, use_dimless = false,
     weights = [1.0, 1.0, 1.0], maxiter = 500, restarts = 3,
-    verb = false, vonmises = false)
+    verb = false)
     n = length(mu_range)
     chi2r_vals = zeros(n)
     reg_vals   = zeros(n)
@@ -1074,14 +1074,14 @@ function lcurve(x_start, data, ft, reg_name, mu_range;
         regularizers = vcat(fixed_regularizers, swept_reg)
         # Reconstruct with warm restarts
         x = reconstruct(x_start, data, ft; regularizers=regularizers,
-            weights=weights, verb=verb, maxiter=maxiter, vonmises=vonmises)
+            weights=weights, verb=verb, maxiter=maxiter)
         for _ in 1:restarts
             x = reconstruct(x, data, ft; regularizers=regularizers,
-                weights=weights, verb=verb, maxiter=div(maxiter, 5), vonmises=vonmises)
+                weights=weights, verb=verb, maxiter=div(maxiter, 5))
         end
         # Evaluate reduced chi2
         g = similar(x)
-        chi2_raw = image_to_chi2_fg(x, g, ft, data; weights=weights, vonmises=vonmises)
+        chi2_raw = image_to_chi2_fg(x, g, ft, data; weights=weights)
         chi2r_vals[i] = chi2_raw / ndof
         # Evaluate the swept regularizer only (unweighted)
         g_reg = similar(x)
@@ -1130,7 +1130,7 @@ function lcurve_normalize(chi2_vals, reg_vals; ref_index=nothing)
 end
 
 # DFT version
-function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:normal, verb=true, vonmises=false)
+function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [], printcolor =:normal, verb=true)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -1151,11 +1151,7 @@ function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Compl
         chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
     end
     if weights[3]>0
-        if vonmises == false
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-        else
-            chi2_t3phi =  sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) + data.t3phi_vonmises_chi2_offset)
-        end
+        chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
     end
     if verb==true
         printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
@@ -1167,7 +1163,7 @@ function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Compl
 end
 
 # NFFT version
-function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
+function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan.uv);
     if length(cvis)>0
@@ -1189,11 +1185,7 @@ function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OId
         chi2_t3amp = norm((t3amp_model - data.t3amp)./data.t3amp_err)^2;
     end
     if weights[3]>0
-        if vonmises == false
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-        else
-            chi2_t3phi =  sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi)/180*pi) + data.t3phi_vonmises_chi2_offset)
-        end
+        chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
     end
     if verb==true
         printstyled(@sprintf("V2: %.2f ", chi2_v2/data.nv2), color=:red)
@@ -1205,7 +1197,7 @@ function _chi2_f(x::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OId
 end
 
 # DFT version
-function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:normal, verb=true, vonmises=false)
+function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, dft::AbstractMatrix{<:Complex}, data::OIdata; weights = [1.0,1.0,1.0],  cvis = [],  printcolor =:normal, verb=true)
     flux = sum(x);
     cvis_model = image_to_vis(x, dft);
     if length(cvis)>0
@@ -1234,15 +1226,9 @@ function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstra
     end
 
     if (weights[3]>0)&&(data.nt3phi>0)
-        if vonmises == false
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-            dT3 = T(360/pi)*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
-            g_t3phi = imag(  transpose(dft[data.indx_t3_1,:])*(dT3./abs2.(cvis_model[data.indx_t3_1]).*conj(cvis_model[data.indx_t3_1]))+transpose(dft[data.indx_t3_2,:])*(dT3./abs2.(cvis_model[data.indx_t3_2]).*conj(cvis_model[data.indx_t3_2]))+transpose(dft[data.indx_t3_3,:])*(dT3./abs2.(cvis_model[data.indx_t3_3]).*conj(cvis_model[data.indx_t3_3])))
-        else
-            chi2_t3phi =  sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi).*T(pi/180)) + data.t3phi_vonmises_chi2_offset)
-            dT3 = 2*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi).*T(pi/180))
-            g_t3phi = imag(  transpose(dft[data.indx_t3_1,:])*(dT3./abs2.(cvis_model[data.indx_t3_1]).*conj(cvis_model[data.indx_t3_1]))+transpose(dft[data.indx_t3_2,:])*(dT3./abs2.(cvis_model[data.indx_t3_2]).*conj(cvis_model[data.indx_t3_2]))+transpose(dft[data.indx_t3_3,:])*(dT3./abs2.(cvis_model[data.indx_t3_3]).*conj(cvis_model[data.indx_t3_3])))
-        end
+        chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+        dT3 = T(360/pi)*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
+        g_t3phi = imag(  transpose(dft[data.indx_t3_1,:])*(dT3./abs2.(cvis_model[data.indx_t3_1]).*conj(cvis_model[data.indx_t3_1]))+transpose(dft[data.indx_t3_2,:])*(dT3./abs2.(cvis_model[data.indx_t3_2]).*conj(cvis_model[data.indx_t3_2]))+transpose(dft[data.indx_t3_3,:])*(dT3./abs2.(cvis_model[data.indx_t3_3]).*conj(cvis_model[data.indx_t3_3])))
     end
     g[:] = T(weights[1])*g_v2 .+ T(weights[2])*g_t3amp .+ T(weights[3])*g_t3phi
     # g[:] = (g - sum(vec(x).*g) / flux ) / flux; # gradient correction to take into account the non-normalized image
@@ -1256,7 +1242,7 @@ function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstra
 end
 
 #NFFT version
-function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false, vonmises=false)
+function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:AbstractFloat}, ftplan::NFFTCell, data::OIdata; weights = [1.0,1.0,1.0], cvis = [], printcolor =:normal,  verb = false)
     flux = sum(x);
     cvis_model = image_to_vis(x, ftplan.uv);
     if length(cvis)>0
@@ -1285,15 +1271,9 @@ function _chi2_fg(x::AbstractMatrix{<:AbstractFloat}, g::AbstractMatrix{<:Abstra
     end
 
     if (weights[3]>0)&&(data.nt3phi>0)
-        if vonmises == false
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
-            dT3 = T(-360/pi)*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
-            g_t3phi = imag(adjoint(ftplan.t3_1)*(dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1])+adjoint(ftplan.t3_2)*(dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2])+ adjoint(ftplan.t3_3)*(dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
-        else
-            chi2_t3phi =  sum(-2*data.t3phi_vonmises_err.*cos.((t3phi_model - data.t3phi).*T(pi/180)) + data.t3phi_vonmises_chi2_offset)
-            dT3 = -2*data.t3phi_vonmises_err.*sin.((t3phi_model - data.t3phi).*T(pi/180))
-            g_t3phi = imag(adjoint(ftplan.t3_1)*(dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1]) + adjoint(ftplan.t3_2)*(dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2]) + adjoint(ftplan.t3_3)*(dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
-        end
+        chi2_t3phi = norm(mod360(t3phi_model - data.t3phi)./data.t3phi_err)^2;
+        dT3 = T(-360/pi)*mod360(t3phi_model-data.t3phi)./data.t3phi_err.^2
+        g_t3phi = imag(adjoint(ftplan.t3_1)*(dT3./abs2.(cvis_model[data.indx_t3_1]).*cvis_model[data.indx_t3_1])+adjoint(ftplan.t3_2)*(dT3./abs2.(cvis_model[data.indx_t3_2]).*cvis_model[data.indx_t3_2])+ adjoint(ftplan.t3_3)*(dT3./abs2.(cvis_model[data.indx_t3_3]).*cvis_model[data.indx_t3_3]))
     end
 
     g[:] = T(weights[1])*g_v2 .+ T(weights[2])*g_t3amp .+ T(weights[3])*g_t3phi
@@ -1346,7 +1326,6 @@ function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
                        weights = [1.0, 1.0, 1.0],
                        use_diffphases = false,
                        verb = false,
-                       vonmises = false,
                        caches = nothing)
     nwav, nepoch = size(data)
     T = ft_eltype(ft)
@@ -1375,7 +1354,7 @@ function image_to_chi2(x::AbstractArray{<:AbstractFloat,4},
             verb && nwav_t > 1 && printstyled("Channel $w ", color=:normal)
             ws = caches === nothing ? ImageChi2Cache(ft[w,t], data[w,t]) : caches[w,t]
             chi2_total += T(image_chi2_f((@view x[:,:,w,t]), ft[w,t], data[w,t], ws;
-                cvis=(need_cvis ? cvis[w] : []), verb=verb, weights=weights, vonmises=vonmises))
+                cvis=(need_cvis ? cvis[w] : []), verb=verb, weights=weights))
             # Absolute VISAMP and OI_FLUX arrive through weights[4] and weights[6], which the
             # kernel fits directly. Adding either below as well would count it twice, and would
             # put chi2 that `_ndof` does not count, and no weight can switch off, into the total.
@@ -1402,10 +1381,10 @@ end
 Mono convenience: compute chi-squared for a single 2-D image against a single `OIdata`.
 """
 function image_to_chi2(x::AbstractMatrix{<:AbstractFloat}, ft, data::OIdata;
-                       weights = [1.0, 1.0, 1.0], verb = false, vonmises = false,
+                       weights = [1.0, 1.0, 1.0], verb = false,
                        cache = nothing)
     ws = cache === nothing ? ImageChi2Cache(ft, data) : cache
-    return image_chi2_f(x, ft, data, ws; weights=weights, verb=verb, vonmises=vonmises)
+    return image_chi2_f(x, ft, data, ws; weights=weights, verb=verb)
 end
 
 # ===========================================================================
@@ -1431,7 +1410,6 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
                           weights = [1.0, 1.0, 1.0],
                           use_diffphases = false,
                           verb = false,
-                          vonmises = false,
                           normalize = true,
                           caches = nothing)
     nwav, nepoch = size(data)
@@ -1465,7 +1443,7 @@ function image_to_chi2_fg(x::AbstractArray{<:AbstractFloat,4},
             # Cast back to the plan's precision: the kernel accumulates its adjoint source at
             # Float64, but this function's chi2 keeps the element type it always returned.
             chi2_total += T(image_chi2_fg!(subg, (@view x[:,:,w,t]), ft[w,t], data[w,t], ws;
-                cvis=(need_cvis ? cvis[w] : []), verb=verb, weights=weights, vonmises=vonmises))
+                cvis=(need_cvis ? cvis[w] : []), verb=verb, weights=weights))
             g[:,:,w,t] = subg
             verb && print("\n")
         end
@@ -1512,10 +1490,10 @@ Mono convenience: compute chi-squared and flux-corrected gradient for a single
 function image_to_chi2_fg(x::AbstractMatrix{<:AbstractFloat},
                           g::AbstractMatrix{<:AbstractFloat},
                           ft, data::OIdata;
-                          weights = [1.0, 1.0, 1.0], verb = false, vonmises = false,
+                          weights = [1.0, 1.0, 1.0], verb = false,
                           normalize = true, cache = nothing)
     ws = cache === nothing ? ImageChi2Cache(ft, data) : cache
-    chi2 = image_chi2_fg!(g, x, ft, data, ws; weights=weights, verb=verb, vonmises=vonmises)
+    chi2 = image_chi2_fg!(g, x, ft, data, ws; weights=weights, verb=verb)
     if normalize
         flux = sum(x)
         g .= (g .- sum(x .* g) / flux) ./ flux
@@ -1970,7 +1948,6 @@ Three categories of regularizers, each a list of `["name", μ, ...]` tuples:
 - `epochs_weights = []`: per-epoch scaling (default: uniform)
 - `use_diffphases = false`: force differential-phase fitting
 - `verb = false`: verbose output
-- `vonmises = false`: von Mises loss for closure phases
 """
 function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
                  g4::AbstractArray{<:AbstractFloat,4},
@@ -1983,7 +1960,6 @@ function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
                  epochs_weights = [],
                  use_diffphases = false,
                  verb = false,
-                 vonmises = false,
                  caches = nothing)
     nwav, nepoch = size(data)
     npix = size(x4, 1)
@@ -2019,7 +1995,7 @@ function crit_fg(x4::AbstractArray{<:AbstractFloat,4},
             verb && nwav > 1 && printstyled("Channel $w ", color=:normal)
             ws = caches === nothing ? ImageChi2Cache(ft[w,t], data[w,t]) : caches[w,t]
             f_epoch += image_chi2_fg!(subg, (@view x4[:,:,w,t]), ft[w,t], data[w,t], ws;
-                verb=verb, weights=weights, vonmises=vonmises)
+                verb=verb, weights=weights)
             g_epoch[:,:,w] .= subg
             verb && print("\n")
         end
@@ -2075,8 +2051,7 @@ function crit_f(x4::AbstractArray{<:AbstractFloat,4},
                 temporal_regularizers = [],
                 epochs_weights = [],
                 use_diffphases = false,
-                verb = false,
-                vonmises = false)
+                verb = false)
     nwav, nepoch = size(data)
     npix = size(x4, 1)
     T = eltype(x4)
@@ -2105,7 +2080,7 @@ function crit_f(x4::AbstractArray{<:AbstractFloat,4},
         # Chi2 forward-only (no gradient, no adjoint FFT)
         f_epoch = image_to_chi2(x_t, ft_t, data_t;
             weights=weights, use_diffphases=use_diffphases,
-            verb=verb, vonmises=vonmises)
+            verb=verb)
 
         # 2-D regularization (forward-only, gradient discarded)
         for w in 1:nwav
@@ -2498,7 +2473,6 @@ per cell.
 - `use_diffphases = false`: force differential-phase fitting
 - `verb = false`: verbose output
 - `maxiter = 100`: maximum VMLMB iterations
-- `vonmises = false`: von Mises loss for closure phases
 - `ftol = (0, 1e-8)`, `xtol = (0, 1e-8)`, `gtol = (0, 1e-8)`: VMLMB tolerances
 """
 function reconstruct(x_start::AbstractArray{<:AbstractFloat,4},
@@ -2512,7 +2486,6 @@ function reconstruct(x_start::AbstractArray{<:AbstractFloat,4},
                      use_diffphases = false,
                      verb = false,
                      maxiter = 100,
-                     vonmises = false,
                      ftol = (0, 1e-8),
                      xtol = (0, 1e-8),
                      gtol = (0, 1e-8))
@@ -2529,7 +2502,7 @@ function reconstruct(x_start::AbstractArray{<:AbstractFloat,4},
         temporal_regularizers=temporal_regularizers,
         epochs_weights=epochs_weights,
         use_diffphases=use_diffphases,
-        verb=verb, vonmises=vonmises)
+        verb=verb)
     x_sol = OptimPackNextGen.vmlmb(_crit, x_start, verb=verb, lower=0,
         maxiter=maxiter, blmvm=false, xtol=xtol, ftol=ftol, gtol=gtol)
     return x_sol
@@ -2544,7 +2517,7 @@ See the 4-D method for the full keyword list.
 function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft;
                      weights = [1.0, 1.0, 1.0], printcolor = :normal,
                      verb = false, maxiter = 100,
-                     regularizers = [], vonmises = false,
+                     regularizers = [],
                      ftol = (0, 1e-8), xtol = (0, 1e-8), gtol = (0, 1e-8))
     npix = size(x_start, 1)
     x4 = reshape(x_start, npix, npix, 1, 1)
@@ -2552,7 +2525,7 @@ function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft;
     ft_m = reshape([ft], 1, 1)
     x_sol = reconstruct(x4, data_m, ft_m;
         weights=weights, regularizers=regularizers,
-        verb=verb, maxiter=maxiter, vonmises=vonmises,
+        verb=verb, maxiter=maxiter,
         ftol=ftol, xtol=xtol, gtol=gtol)
     return x_sol[:,:,1,1]
 end

@@ -101,6 +101,48 @@
         model_to_chi2(fm, [1.0], data[1,1], verb=false)
         model_to_obs(fm, [1.0], data[1,1])
 
+        # Every component kind, inclination/PA, a chromatic flux and a derived parameter,
+        # through evaluation and the χ² gradient with one to four free parameters. Evaluation is
+        # typed per kind and the gradient per number of free parameters (ForwardDiff's chunk),
+        # so a kind or a count not seen here is compiled when the Model panel first meets it —
+        # 0.3 to 2 s each, measured.
+        d1 = data[1,1]
+        for (md, free) in (
+                (Dict{String,Any}("a,ud" => 1.0, "b,f" => 0.1, "b,x" => 2.0, "b,y" => 1.0,
+                                  "a,f" => "1 - \$b,f"), ["a,ud", "b,f", "b,x", "b,y"]),
+                (Dict{String,Any}("a,fwhm" => 1.0, "a,incl" => 30.0, "a,pa" => 20.0),
+                 ["a,fwhm", "a,incl", "a,pa"]),
+                (Dict{String,Any}("a,ldlin" => 1.0, "a,u" => 0.3), ["a,ldlin", "a,u"]),
+                (Dict{String,Any}("a,ldquad" => 1.0, "a,u" => 0.3, "a,w" => 0.1), ["a,ldquad"]),
+                (Dict{String,Any}("a,ldsqrt" => 1.0, "a,u" => 0.3, "a,w" => 0.1), ["a,ldsqrt"]),
+                (Dict{String,Any}("a,ldpow" => 1.0, "a,alpha" => 0.15), ["a,ldpow", "a,alpha"]),
+                (Dict{String,Any}("a,ldclaret4" => 1.0, "a,c1" => 0.5, "a,c2" => -0.2,
+                                  "a,c3" => 0.3, "a,c4" => -0.1), ["a,ldclaret4"]),
+                (Dict{String,Any}("a,diamin" => 2.0, "a,diamout" => 3.0), ["a,diamin"]),
+                (Dict{String,Any}("a,fwhmin" => 2.0, "a,fwhmout" => 3.0), ["a,fwhmin"]),
+                (Dict{String,Any}("a,crin" => 2.0, "a,crout" => 3.0, "a,croff" => 0.5,
+                                  "a,crprojang" => 20.0), ["a,crin"]),
+                (Dict{String,Any}("a,resolved" => true, "a,f" => 0.2, "b,ud" => 1.0,
+                                  "b,f" => 0.8), ["b,ud"]),
+                (Dict{String,Any}("a,profile" => "exp(-(\$R/\$s)^2)", "a,s" => 1.0,
+                                  "a,udout" => 6.0, "a,az amp1" => 0.3,
+                                  "a,az projang1" => 40.0), ["a,s", "a,az amp1"]),
+                (Dict{String,Any}("a,visfunc" => "exp(-(\$B*\$q)^2)", "a,q" => 0.01), ["a,q"]),
+                (Dict{String,Any}("a,ud" => 1.0, "a,f" => "\$fs * (\$WL/1.6e-6)^(-4)",
+                                  "fs" => 0.6, "b,fwhm" => 3.0, "b,f" => "1 - \$a,f"),
+                 ["a,ud", "fs"]),
+                (Dict{String,Any}("a,ud" => "2 * \$r", "r" => 0.5), ["r"]))
+            fmz = parse_model(md, free)
+            xz = [Float64(md[k]) for k in free]
+            eval_model(fmz, xz, d1.uv; wl = d1.uv_lam, mjd = d1.uv_mjd)
+            model_to_chi2_fg(fmz, xz, d1)
+            model_to_chi2_fg(fmz, xz, d1; jac_cache = ModelJacCache())   # as fits and searches call it
+            # The closed-form Jacobian, typed per kind and per number of free parameters too,
+            # in both precisions a parameter vector arrives in.
+            eval_model_jac(fmz, xz, d1.uv; wl = d1.uv_lam, mjd = d1.uv_mjd)
+            eval_model_jac(fmz, Float32.(xz), d1.uv; wl = d1.uv_lam, mjd = d1.uv_mjd)
+        end
+
         # The NLopt objective and its gradient, which is what a model fit actually runs — and
         # again not reached by `model_to_chi2` alone.
         fit_model(model_dict, ["c1,ud"], data[1,1];

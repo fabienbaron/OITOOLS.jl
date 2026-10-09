@@ -114,7 +114,6 @@ res = FitResult(map)          # the best grid point, as any other fitter would r
 | `range1`, `range2` | from `lb`/`ub` | `(lo, hi)` for each axis, overriding the bounds |
 | `lb`, `ub` | `Dict()` | bounds; used as the default axis extent |
 | `weights` | `[1,1,1,0,0,0,0]` | as everywhere else in model fitting — seven long |
-| `vonmises` | `false` | passed through to `chi2_flat` |
 | `nB_workspace` | `100` | passed through to `parse_model` |
 
 An axis with no finite bound and no explicit range is an error rather than a guess: a grid
@@ -131,7 +130,6 @@ function chi2_map(model_dict::Dict{String}, list_free_params::AbstractVector{<:A
                   range1 = nothing, range2 = nothing,
                   lb = Dict{String,Float64}(), ub = Dict{String,Float64}(),
                   weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                  vonmises::Bool = false,
                   nB_workspace::Int = 100)
 
     free = String.(list_free_params)
@@ -170,7 +168,7 @@ function chi2_map(model_dict::Dict{String}, list_free_params::AbstractVector{<:A
         x[i2] = v2[j]
         for i in eachindex(v1)
             x[i1] = v1[i]
-            chi2[i, j] = chi2_flat(fm, x, data; weights, verb = false, vonmises)
+            chi2[i, j] = chi2_flat(fm, x, data; weights, verb = false)
         end
     end
 

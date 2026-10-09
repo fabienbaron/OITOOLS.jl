@@ -13,18 +13,18 @@
 #
 # Interface
 # ---------
-#   chi2_flat(model, x, data; weights, verb, vonmises)
+#   chi2_flat(model, x, data; weights, verb)
 #       → T           (forward only — cheap, for initial checks or gradient-free optimizers)
 #
-#   chi2_flat_fg(model, x, data; weights, verb, vonmises)
+#   chi2_flat_fg(model, x, data; weights, verb)
 #       → (T, Vector{T})               (chi2 + gradient — for gradient-based optimizers)
 #
-#   chi2_flat_reduced(model, x, data; weights, vonmises)
+#   chi2_flat_reduced(model, x, data; weights)
 #       → T           (chi2 / ndof — for human-readable goodness-of-fit)
 #
 # Polychromatic interface (data::Vector{<:OIdata}):
-#   chi2_flat(model, x, data_array; weights, verb, vonmises)
-#   chi2_flat_fg(model, x, data_array; weights, verb, vonmises)
+#   chi2_flat(model, x, data_array; weights, verb)
+#   chi2_flat_fg(model, x, data_array; weights, verb)
 #       Evaluates the model at each channel's UV points and optionally computes
 #       differential phase across wavelength channels.
 #
@@ -70,11 +70,72 @@ _pad_weights(w::AbstractVector{<:Real}) = length(w) >= 7 ? w[1:7] : vcat(w, zero
 # Working precision for a chi2 evaluation: whatever the visibilities and the data promote to.
 # The default weights are a Float64 literal vector, so they are converted rather than allowed
 # to drag a Float32 pipeline up to Float64.
-_chi2_eltype(V::AbstractVector{<:Complex}, data::OIdata{T}) where {T} =
+_chi2_eltype(V::AbstractVecOrMat{<:Complex}, data::OIdata{T}) where {T} =
     promote_type(real(eltype(V)), T)
 
-_pad_weights(w::AbstractVector{<:Real}, ::Type{T}) where {T<:AbstractFloat} =
+# `Real`, not `AbstractFloat`: a ForwardDiff Dual is the working type when a gradient is taken
+# through the χ² itself, as it is for a smeared model.
+_pad_weights(w::AbstractVector{<:Real}, ::Type{T}) where {T<:Real} =
     convert(Vector{T}, _pad_weights(w))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bandwidth smearing: observables from visibilities across each channel
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# A smeared model gives an N × nsub matrix (`eval_model_sub`), one column per sub-wavelength.
+# Every observable is formed per column and averaged over the columns: V² as the mean |V|², a
+# triple product as the mean product, a visibility as the mean visibility. For an N-vector the
+# same expressions reduce to the plain ones exactly, so one code path serves both.
+
+_rows(V::AbstractVector, i) = V[i]
+_rows(V::AbstractMatrix, i) = V[i, :]
+_rowmean(A::AbstractVector) = A
+_rowmean(A::AbstractMatrix) = vec(sum(A; dims = 2)) ./ size(A, 2)
+
+"""Whether `model` smears over `data`'s channels: `smear` ≥ 2 or auto, and channel widths."""
+_smeared(model::FlatModel, data::OIdata) =
+    (model.smear >= 2 || model.smear == -1) && hasproperty(data, :uv_dlam) &&
+    any(d -> isfinite(d) && d > 0, data.uv_dlam)
+
+"""
+    smear_samples(model, data) -> Int
+
+How many sub-wavelengths per channel `model` uses on `data`: `smear` as given, or for
+`"smear" => "auto"` CANDID's rule (`_estimateNsmear`), four samples per cycle of the largest
+phase change across a channel, at least 3. The phase change is that of a point at the model's
+extent (`FlatModel.smear_radius`, fixed when the model is compiled, so a fit never sees the
+sampling change) on the data's longest projected baseline.
+"""
+function smear_samples(model::FlatModel, data::OIdata)
+    model.smear == -1 || return model.smear
+    cycles = maximum(hypot(data.uv[1, i], data.uv[2, i]) * model.smear_radius / _MAS2RAD_PM *
+                     data.uv_dlam[i] / data.uv_lam[i] for i in axes(data.uv, 2); init = 0.0)
+    return max(3, ceil(Int, 4 * cycles))
+end
+
+# For a criterion that forms its observables from one visibility per point: a smeared model is
+# refused rather than evaluated at the channels' centres without saying so.
+_refuse_smear(model::FlatModel, what) = (model.smear >= 2 || model.smear == -1) && throw(ArgumentError(
+    "$what does not apply bandwidth smearing; remove \"smear\" from the model or set it to 0"))
+
+# The smeared visibilities of `data`'s uv points, and the zero-baseline flux when asked for.
+function _smeared_cvis(model::FlatModel, x::AbstractVector, data::OIdata, need_flux::Bool)
+    wl  = data.uv_lam
+    mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    V = eval_model_sub(model, x, data.uv; wl, mjd, dlam = data.uv_dlam,
+                       nsub = smear_samples(model, data))
+    # Coherent: the visibility averaged over the channel and the observables formed from that,
+    # as an ABCD / coherent-flux measurement gives them (and as CANDID models it).
+    model.smear_coherent && (V = _rowmean(V))
+    flux = if need_flux
+        real(eval_model(model, x, zeros(eltype(data.uv), 2, 1); wl = wl[1:1],
+                        mjd = mjd === nothing ? nothing : mjd[1:1])[1])
+    else
+        NaN
+    end
+    return V, flux
+end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,8 +155,7 @@ end
 
 function _chi2_terms(V::AbstractVector{<:Complex},
                      data::OIdata,
-                     weights::AbstractVector{<:Real},
-                     vonmises::Bool)
+                     weights::AbstractVector{<:Real})
 
     T = _chi2_eltype(V, data)
     w = _pad_weights(weights, T)
@@ -137,16 +197,9 @@ function _chi2_terms(V::AbstractVector{<:Complex},
     end
 
     if w_t3phi > 0 && data.nt3phi > 0
-        if !vonmises
-            dphi       = _mod360(t3phi_model .- data.t3phi)
-            r_t3phi    = T(360 / π) .* dphi ./ data.t3phi_err.^2
-            chi2_t3phi = sum(dphi .* dphi ./ data.t3phi_err.^2)
-        else
-            dphi_rad   = (t3phi_model .- data.t3phi) .* T(π / 180)
-            r_t3phi    = T(2) .* data.t3phi_vonmises_err .* sin.(dphi_rad)
-            chi2_t3phi = sum(T(-2) .* data.t3phi_vonmises_err .* cos.(dphi_rad)
-                             .+ data.t3phi_vonmises_chi2_offset)
-        end
+        dphi       = _mod360(t3phi_model .- data.t3phi)
+        r_t3phi    = T(360 / π) .* dphi ./ data.t3phi_err.^2
+        chi2_t3phi = sum(dphi .* dphi ./ data.t3phi_err.^2)
     end
 
     # ── Absolute VISAMP / VISPHI ───────────────────────────────────────────────
@@ -186,6 +239,96 @@ function _chi2_terms(V::AbstractVector{<:Complex},
         # per-leg cvis slices (needed for gradient)
         V1, V2=V2c, V3, Vvis,
     )
+end
+
+
+# ── the smeared χ², kept apart from the unsmeared path ──────────────────────────────────
+#
+# Separate functions rather than branches inside the unsmeared ones: a branch that assigns
+# the visibilities a matrix in one arm widens their type in the other, and the unsmeared path
+# then pays for dispatch it never needed.
+
+# The averaged observables of an N × nsub matrix: V² = mean |V|², T3 = mean of the products,
+# VIS = mean V.
+function _smeared_observables(V::AbstractMatrix, data::OIdata)
+    v2  = _rowmean(abs2.(_rows(V, data.indx_v2)))
+    t3  = _rowmean(_rows(V, data.indx_t3_1) .* _rows(V, data.indx_t3_2) .* _rows(V, data.indx_t3_3))
+    vis = _rowmean(_rows(V, data.indx_vis))
+    return v2, t3, vis
+end
+
+"""`_chi2_terms` for smeared visibilities: the χ² components of the averaged observables."""
+function _chi2_terms(V::AbstractMatrix{<:Complex}, data::OIdata, weights::AbstractVector{<:Real})
+    T = real(eltype(V))
+    w = _pad_weights(weights, T)
+    v2, t3, vis = _smeared_observables(V, data)
+    sq(x) = sum(abs2, x)
+    t3amp, t3phi = abs.(t3), angle.(t3) .* T(180 / π)
+    visamp, visphi = abs.(vis), angle.(vis) .* T(180 / π)
+    return (;
+        chi2_v2     = w[1] > 0 && data.nv2 > 0    ? sq((v2 .- data.v2) ./ data.v2_err) : zero(T),
+        chi2_t3amp  = w[2] > 0 && data.nt3amp > 0 ? sq((t3amp .- data.t3amp) ./ data.t3amp_err) : zero(T),
+        chi2_t3phi  = w[3] > 0 && data.nt3phi > 0 ? sq(_mod360(t3phi .- data.t3phi) ./ data.t3phi_err) : zero(T),
+        chi2_visamp = w[4] > 0 && data.nvisamp > 0 ? sq((visamp .- data.visamp) ./ data.visamp_err) : zero(T),
+        chi2_visphi = w[5] > 0 && data.nvisphi > 0 ? sq(_mod360(visphi .- data.visphi) ./ data.visphi_err) : zero(T),
+        v2_model = v2, t3amp_model = t3amp, t3phi_model = t3phi,
+        visamp_model = visamp, visphi_model = visphi)
+end
+
+function _chi2_flat_smeared(model, x, data::OIdata, weights, verb)
+    w = _pad_weights(weights)
+    need_flux = w[6] > 0 && data.nflux > 0
+    V, model_flux = _smeared_cvis(model, x, data, need_flux)
+    t = _chi2_terms(V, data, w)
+    chi2_fl = need_flux ? _chi2_flux(model_flux, data).chi2 : zero(real(eltype(V)))
+    chi2 = _total_chi2(t, w; chi2_flux = chi2_fl)
+    verb && _verb_print(t, data, w, chi2; chi2_flux = chi2_fl,
+                        C_flux = need_flux ? _chi2_flux(model_flux, data).C : NaN)
+    return chi2
+end
+
+function _chi2_flat_smeared(model, x, data::Vector{<:OIdata}, w, need_flux, Tp, verb)
+    nwavs = length(data)
+    chi2 = zero(Tp)
+    model_fluxes = need_flux ? Vector{Tp}(undef, nwavs) : Tp[]
+    vmean = Vector{Any}(undef, nwavs)                  # each channel's mean V, for diffphase
+    for (i, d) in enumerate(data)
+        if _smeared(model, d)
+            V, fl = _smeared_cvis(model, x, d, need_flux)
+        else
+            V = eval_model(model, x, d.uv; wl = d.uv_lam,
+                           mjd = hasproperty(d, :uv_mjd) ? d.uv_mjd : nothing)
+            fl = need_flux ? real(eval_model(model, x, zeros(eltype(d.uv), 2, 1);
+                                             wl = d.uv_lam[1:1])[1]) : NaN
+        end
+        chi2 += _total_chi2(_chi2_terms(V, d, w), w)
+        need_flux && (model_fluxes[i] = fl)
+        vmean[i] = _rowmean(V)
+    end
+    need_flux && (chi2 += w[6] * Tp(_chi2_flux_polychromatic(model_fluxes, data).chi2))
+    # A differential phase is a phase of a visibility, so a smeared channel gives its mean.
+    w[7] > 0 && nwavs > 1 && (chi2 += w[7] * Tp(_diffphase_chi2(vmean, data, nwavs)))
+    verb && printstyled(@sprintf("χ²r: %.3f\n", chi2 / _ndof(data, w)), color = :white)
+    return chi2
+end
+
+function _residuals_smeared(model, x, data::OIdata, w, need_flux)
+    V, model_flux = _smeared_cvis(model, x, data, need_flux)
+    Vm = V isa AbstractMatrix ? V : reshape(V, :, 1)
+    v2, t3, vis = _smeared_observables(Vm, data)
+    r = promote_type(Float64, real(eltype(V)))[]
+    w[1] > 0 && data.nv2 > 0 && append!(r, sqrt(w[1]) .* (v2 .- data.v2) ./ data.v2_err)
+    w[2] > 0 && data.nt3amp > 0 && append!(r, sqrt(w[2]) .* (abs.(t3) .- data.t3amp) ./ data.t3amp_err)
+    w[3] > 0 && data.nt3phi > 0 &&
+        append!(r, sqrt(w[3]) .* _mod360(angle.(t3) .* (180 / π) .- data.t3phi) ./ data.t3phi_err)
+    w[4] > 0 && data.nvisamp > 0 && append!(r, sqrt(w[4]) .* (abs.(vis) .- data.visamp) ./ data.visamp_err)
+    w[5] > 0 && data.nvisphi > 0 &&
+        append!(r, sqrt(w[5]) .* _mod360(angle.(vis) .* (180 / π) .- data.visphi) ./ data.visphi_err)
+    if need_flux
+        fl = _chi2_flux(model_flux, data)
+        append!(r, sqrt(w[6]) .* (fill(fl.C * model_flux, data.nflux) .- data.flux) ./ data.flux_err)
+    end
+    return r
 end
 
 
@@ -378,7 +521,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    cvis_to_chi2_f(V, data; weights=[1,1,1,0,0,0,0], vonmises=false, model_flux=NaN) -> chi2
+    cvis_to_chi2_f(V, data; weights=[1,1,1,0,0,0,0], model_flux=NaN) -> chi2
 
 Chi-squared from complex visibilities `V` and interferometric data `data`, without the
 gradient.
@@ -394,11 +537,10 @@ accuracy even for millions of residuals.
 """
 function cvis_to_chi2_f(V::AbstractVector{<:Complex}, data::OIdata;
                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                        vonmises::Bool = false,
                         model_flux::Real = NaN)
     T = _chi2_eltype(V, data)
     w = _pad_weights(weights, T)
-    t = _chi2_terms(V, data, w, vonmises)
+    t = _chi2_terms(V, data, w)
     chi2_fl = zero(T)
     if w[6] > 0 && data.nflux > 0 && isfinite(model_flux)
         chi2_fl = T(_chi2_flux(model_flux, data).chi2)
@@ -407,7 +549,7 @@ function cvis_to_chi2_f(V::AbstractVector{<:Complex}, data::OIdata;
 end
 
 """
-    cvis_to_chi2_fg(V, data; weights=[1,1,1,0,0,0,0], vonmises=false) -> (chi2, g_cvis)
+    cvis_to_chi2_fg(V, data; weights=[1,1,1,0,0,0,0]) -> (chi2, g_cvis)
 
 Compute chi-squared and the complex adjoint source `g_cvis` from complex
 visibilities `V` and interferometric data `data`.
@@ -428,17 +570,86 @@ The adjoint source `g_cvis` satisfies:
 - `g_image  = real(NFFT^H · conj(g_cvis))` for NFFT image reconstruction
 """
 function cvis_to_chi2_fg(V::AbstractVector{<:Complex}, data::OIdata;
-                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                         vonmises::Bool = false)
+                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
     T = _chi2_eltype(V, data)
     w = _pad_weights(weights, T)
-    t = _chi2_terms(V, data, w, vonmises)
+    t = _chi2_terms(V, data, w)
     chi2 = _total_chi2(t, w)
     g_cvis = zeros(Complex{T}, length(V))
     _accumulate_g_cvis!(g_cvis, V, t, data, w)
     return chi2, g_cvis
 end
 
+
+# `cvis_to_chi2_fg` as loops into a caller's `g_cvis`, allocating nothing: the same terms as
+# `_chi2_terms` and the same cotangents as `scatter_obs_cotangent!`, accumulated point by point
+# rather than summed pairwise, so the two agree to rounding. `w` holds the seven weights in
+# the working precision `T`; the χ² sums run in at least Float64, since a sequential Float32
+# sum over thousands of terms would lose the accuracy `sum`'s pairwise order keeps. Model fitting calls this once per gradient, from many threads at
+# once in the companion search, where the garbage collector is what stops them scaling.
+function _cvis_to_chi2_fg!(g_cvis::AbstractVector{Complex{T}}, V::AbstractVector{<:Complex},
+                           data::OIdata, w::NTuple{7,T}) where {T}
+    fill!(g_cvis, zero(Complex{T}))
+    ε = eps(real(eltype(V)))
+    d2r = T(180 / π); r2 = T(360 / π)
+    wrap(x) = mod(mod(x + T(180), T(360)) + T(360), T(360)) - T(180)
+    A = promote_type(T, Float64)
+    c2v2 = zero(A); c2ta = zero(A); c2tp = zero(A); c2va = zero(A); c2vp = zero(A)
+    @inbounds begin
+        if w[1] > 0 && data.nv2 > 0
+            for j in eachindex(data.indx_v2)
+                k = data.indx_v2[j]
+                m = T(abs2(V[k])) - T(data.v2[j]); e2 = T(data.v2_err[j])^2
+                c2v2 += m * m / e2
+                g_cvis[k] += 2 * w[1] * 2 * (m / e2) * conj(V[k])
+            end
+        end
+        doa = w[2] > 0 && data.nt3amp > 0
+        dop = w[3] > 0 && data.nt3phi > 0
+        if doa || dop
+            for j in eachindex(data.indx_t3_1)
+                k1 = data.indx_t3_1[j]; k2 = data.indx_t3_2[j]; k3 = data.indx_t3_3[j]
+                z1 = V[k1]; z2 = V[k2]; z3 = V[k3]
+                t3 = z1 * z2 * z3
+                if doa
+                    m = T(abs(t3)) - T(data.t3amp[j]); e2 = T(data.t3amp_err[j])^2
+                    c2ta += m * m / e2
+                    a1 = abs(z1); a2 = abs(z2); a3 = abs(z3)
+                    c = w[2] * (2 * m / e2)
+                    g_cvis[k1] += c * conj(z1) / max(a1, ε) * a2 * a3
+                    g_cvis[k2] += c * conj(z2) / max(a2, ε) * a1 * a3
+                    g_cvis[k3] += c * conj(z3) / max(a3, ε) * a1 * a2
+                end
+                if dop
+                    dφ = wrap(T(angle(t3)) * d2r - T(data.t3phi[j])); e2 = T(data.t3phi_err[j])^2
+                    c2tp += dφ * dφ / e2
+                    c = -im * (w[3] * (r2 * dφ / e2))
+                    g_cvis[k1] += c * conj(z1) / max(abs2(z1), ε)
+                    g_cvis[k2] += c * conj(z2) / max(abs2(z2), ε)
+                    g_cvis[k3] += c * conj(z3) / max(abs2(z3), ε)
+                end
+            end
+        end
+        doa = w[4] > 0 && data.nvisamp > 0
+        dop = w[5] > 0 && data.nvisphi > 0
+        if doa || dop
+            for j in eachindex(data.indx_vis)
+                k = data.indx_vis[j]; z = V[k]
+                if doa
+                    m = T(abs(z)) - T(data.visamp[j]); e2 = T(data.visamp_err[j])^2
+                    c2va += m * m / e2
+                    g_cvis[k] += w[4] * (2 * m / e2) * conj(z) / max(abs(z), ε)
+                end
+                if dop
+                    dφ = wrap(T(angle(z)) * d2r - T(data.visphi[j])); e2 = T(data.visphi_err[j])^2
+                    c2vp += dφ * dφ / e2
+                    g_cvis[k] += -im * (w[5] * (r2 * dφ / e2)) * conj(z) / max(abs2(z), ε)
+                end
+            end
+        end
+    end
+    return T(w[1] * c2v2 + w[2] * c2ta + w[3] * c2tp + w[4] * c2va + w[5] * c2vp)
+end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # _chi2_flux: compute flux chi2.
@@ -525,7 +736,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat(model, x, data::OIdata; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+    chi2_flat(model, x, data::OIdata; weights=[1,1,1,0,0,0,0], verb=false)
         -> T
 
 Evaluate the weighted chi-squared for `model` at parameter vector `x` against
@@ -541,9 +752,9 @@ function chi2_flat(model::FlatModel,
                    x::AbstractVector,
                    data::OIdata;
                    weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                   verb::Bool = false,
-                   vonmises::Bool = false)
+                   verb::Bool = false)
 
+    _smeared(model, data) && return _chi2_flat_smeared(model, x, data, weights, verb)
     w = _pad_weights(weights)
     need_flux = w[6] > 0 && data.nflux > 0
 
@@ -563,10 +774,10 @@ function chi2_flat(model::FlatModel,
         model_flux = NaN
     end
 
-    chi2 = cvis_to_chi2_f(V, data; weights=w, vonmises=vonmises, model_flux=model_flux)
+    chi2 = cvis_to_chi2_f(V, data; weights=w, model_flux=model_flux)
 
     if verb
-        t = _chi2_terms(V, data, w, vonmises)
+        t = _chi2_terms(V, data, w)
         chi2_fl = 0.0; C_fl = NaN
         if need_flux
             fl = _chi2_flux(model_flux, data)
@@ -583,8 +794,8 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat_fg(model, x, data::OIdata; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
-        -> (T, Vector{T})
+    chi2_flat_fg(model, x, data::OIdata; weights=[1,1,1,0,0,0,0], verb=false,
+                 jac_cache=nothing) -> (T, Vector{T})
 
 Evaluate chi-squared and its gradient w.r.t. `x`.
 
@@ -592,14 +803,16 @@ The gradient is computed analytically via the Wirtinger chain rule applied to
 the complex visibility Jacobian J = ∂V/∂x from `eval_model_grad`.
 
 Returns `(chi2, grad)`; the element type follows `x` and `data.uv`, so Float32 inputs give a Float32 gradient.
+A [`ModelJacCache`](@ref) as `jac_cache` keeps the Jacobian's buffers between calls.
 """
 function chi2_flat_fg(model::FlatModel,
                       x::AbstractVector,
                       data::OIdata;
                       weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
                       verb::Bool = false,
-                      vonmises::Bool = false)
+                      jac_cache::Union{Nothing,ModelJacCache} = nothing)
 
+    _smeared(model, data) && return _smeared_chi2_fg(model, x, data, _pad_weights(weights), jac_cache)
     w = _pad_weights(weights)
     w_flux = w[6]
     need_flux = w_flux > 0 && data.nflux > 0
@@ -611,18 +824,20 @@ function chi2_flat_fg(model::FlatModel,
         uv_aug  = hcat(zeros(2, 1), data.uv)
         wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
         mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
-        V_aug, J_aug = eval_model_grad(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
+        V_aug, J_aug = _model_jac(jac_cache, model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
         model_flux = real(V_aug[1])
         J_zero = J_aug[1:1, :]
         V = V_aug[2:end]
         J = J_aug[2:end, :]
     else
-        V, J = eval_model_grad(model, x, data.uv; wl=_wl, mjd=_mjd)
+        V, J = _model_jac(jac_cache, model, x, data.uv; wl=_wl, mjd=_mjd)
         model_flux = NaN
     end
 
     # ── Per-channel chi2 + adjoint source ──────────────────────────────────
-    chi2_obs, g_cvis = cvis_to_chi2_fg(V, data; weights=w, vonmises=vonmises)
+    T = _chi2_eltype(V, data)
+    g_cvis = Vector{Complex{T}}(undef, length(V))
+    chi2_obs = _cvis_to_chi2_fg!(g_cvis, V, data, ntuple(i -> T(w[i]), Val(7)))
 
     # ── Flux chi2 ───────────────────────────────────────────────────────────
     Tc = typeof(chi2_obs)
@@ -643,7 +858,7 @@ function chi2_flat_fg(model::FlatModel,
     end
 
     if verb
-        t = _chi2_terms(V, data, w, vonmises)
+        t = _chi2_terms(V, data, w)
         _verb_print(t, data, w, chi2; chi2_flux=chi2_fl, C_flux=C_fl)
     end
     return chi2, g
@@ -655,7 +870,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+    chi2_flat(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false)
         -> T
 
 Polychromatic chi-squared.  Evaluates the model at each channel's UV points and
@@ -669,8 +884,7 @@ function chi2_flat(model::FlatModel,
                    x::AbstractVector,
                    data::Vector{<:OIdata};
                    weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                   verb::Bool = false,
-                   vonmises::Bool = false)
+                   verb::Bool = false)
 
     nwavs = length(data)
     # Precision follows the caller, as in the monochromatic path.
@@ -679,6 +893,8 @@ function chi2_flat(model::FlatModel,
 
     # Evaluate model at each channel's UV points
     need_flux = w[6] > 0 && any(d.nflux > 0 for d in data)
+    any(d -> _smeared(model, d), data) &&
+        return _chi2_flat_smeared(model, x, data, w, need_flux, Tp, verb)
     if need_flux
         cvis = Vector{Vector{Complex{Tp}}}(undef, nwavs)
         model_fluxes = Vector{Tp}(undef, nwavs)
@@ -703,7 +919,7 @@ function chi2_flat(model::FlatModel,
     # Per-channel V2, T3, visamp, visphi
     chi2 = zero(Tp)
     for i in 1:nwavs
-        t = _chi2_terms(cvis[i], data[i], w, vonmises)
+        t = _chi2_terms(cvis[i], data[i], w)
         chi2 += _total_chi2(t, w)  # flux/diffphase weights handled separately below
     end
 
@@ -718,6 +934,8 @@ function chi2_flat(model::FlatModel,
     # Differential phase across channels
     chi2_dp = zero(Tp)
     if w[7] > 0 && nwavs > 1
+        # A differential phase is a phase of a visibility, so a smeared channel contributes its
+        # mean visibility.
         chi2_dp = Tp(_diffphase_chi2(cvis, data, nwavs))
         chi2 += w[7] * chi2_dp
     end
@@ -755,7 +973,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat_fg(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+    chi2_flat_fg(model, x, data::Vector{<:OIdata}; weights=[1,1,1,0,0,0,0], verb=false)
         -> (T, Vector{T})
 
 Polychromatic chi-squared and gradient.  Computes per-channel V2/T3/visamp/visphi/flux
@@ -765,9 +983,23 @@ function chi2_flat_fg(model::FlatModel,
                       x::AbstractVector,
                       data::Vector{<:OIdata};
                       weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                      verb::Bool = false,
-                      vonmises::Bool = false)
+                      verb::Bool = false)
 
+    if any(d -> _smeared(model, d), data)
+        wp = _pad_weights(weights)
+        # Channel by channel through the smeared residuals, unless a term couples the channels
+        # (one flux scale for all of them, differential phase).
+        if wp[6] == 0 && wp[7] == 0
+            c = zero(Float64); g = zeros(length(x))
+            for d in data
+                cd, gd = chi2_flat_fg(model, x, d; weights = wp)
+                c += cd; g .+= gd
+            end
+            return c, g
+        end
+        f = p -> chi2_flat(model, p, data; weights)
+        return f(x), ForwardDiff.gradient(f, x)
+    end
     nwavs = length(data)
     nparams = length(x)
     Tp = promote_type(float(eltype(x)), eltype(first(data).uv))
@@ -807,7 +1039,7 @@ function chi2_flat_fg(model::FlatModel,
     g = zeros(Tp, nparams)
 
     for i in 1:nwavs
-        chi2_i, g_cvis_i = cvis_to_chi2_fg(cvis[i], data[i]; weights=w, vonmises=vonmises)
+        chi2_i, g_cvis_i = cvis_to_chi2_fg(cvis[i], data[i]; weights=w)
         chi2 += chi2_i
         g .+= real.(transpose(Jac[i]) * g_cvis_i)
     end
@@ -865,7 +1097,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    residuals_flat(model, x, data; weights, vonmises) -> Vector{Float64}
+    residuals_flat(model, x, data; weights) -> Vector{Float64}
 
 Compute the weighted residual vector `r` such that `chi2 = dot(r, r)`.
 
@@ -875,14 +1107,14 @@ in order: [V2; T3amp; T3phi; visamp; visphi; flux].
 function residuals_flat(model::FlatModel,
                         x::AbstractVector,
                         data::OIdata;
-                        weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                        vonmises::Bool = false)
+                        weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
 
     w = _pad_weights(weights)
     need_flux = w[6] > 0 && data.nflux > 0
 
     _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
     _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    _smeared(model, data) && return _residuals_smeared(model, x, data, w, need_flux)
     if need_flux
         uv_aug  = hcat(zeros(2, 1), data.uv)
         wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
@@ -940,18 +1172,24 @@ end
 
 
 """
-    residuals_flat_jac(model, x, data; weights, vonmises) -> (Vector{Float64}, Matrix{Float64})
+    residuals_flat_jac(model, x, data; weights, jac_cache = nothing)
+        -> (Vector{Float64}, Matrix{Float64})
 
 Compute the weighted residual vector and its Jacobian `J[i,j] = ∂r_i/∂x_j`.
 
-Returns `(r, J)` where `chi2 = dot(r, r)` and `∂chi2/∂x = 2 Jᵀ r`.
+Returns `(r, J)` where `chi2 = dot(r, r)` and `∂chi2/∂x = 2 Jᵀ r`. A
+[`ModelJacCache`](@ref) as `jac_cache` keeps the model Jacobian's buffers between calls.
 """
 function residuals_flat_jac(model::FlatModel,
                             x::AbstractVector,
                             data::OIdata;
                             weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                            vonmises::Bool = false)
+                            jac_cache::Union{Nothing,ModelJacCache} = nothing)
 
+    if _smeared(model, data)
+        r, J = _smeared_residuals_jac(model, x, data, _pad_weights(weights), jac_cache)
+        return Float64.(r), Float64.(J)                # LsqFit consumes these
+    end
     w = _pad_weights(weights)
     w_v2, w_t3amp, w_t3phi, w_visamp, w_visphi, w_flux = w[1], w[2], w[3], w[4], w[5], w[6]
     need_flux = w_flux > 0 && data.nflux > 0
@@ -963,12 +1201,12 @@ function residuals_flat_jac(model::FlatModel,
         uv_aug  = hcat(zeros(2, 1), data.uv)
         wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
         mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
-        V_aug, dV_aug = eval_model_grad(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
+        V_aug, dV_aug = _model_jac(jac_cache, model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
         model_flux = real(V_aug[1])
         V  = V_aug[2:end]
         dV = dV_aug[2:end, :]
     else
-        V, dV = eval_model_grad(model, x, data.uv; wl=_wl, mjd=_mjd)
+        V, dV = _model_jac(jac_cache, model, x, data.uv; wl=_wl, mjd=_mjd)
         model_flux = NaN
     end
 
@@ -1062,12 +1300,272 @@ function residuals_flat_jac(model::FlatModel,
 end
 
 
+# The sub-wavelength points of a smeared evaluation, and the adjoint buffer that goes with them:
+# kept in the cache, since they depend only on the data and the number of samples.
+function _smeared_points(::Nothing, data, ns, mjd, ::Type{C}) where {C}
+    return (_sub_points(data.uv, data.uv_lam, data.uv_dlam, mjd, ns)...,
+            Vector{C}(undef, size(data.uv, 2) * ns))
+end
+function _smeared_points(c::ModelJacCache, data, ns, mjd, ::Type{C}) where {C}
+    sp = c.sub
+    if !(sp isa Tuple && sp[1] === data && sp[2] == ns && sp[7] isa Vector{C})
+        sp = c.sub = (data, ns, _sub_points(data.uv, data.uv_lam, data.uv_dlam, mjd, ns)...,
+                      Vector{C}(undef, size(data.uv, 2) * ns))
+    end
+    return sp[3], sp[4], sp[5], sp[6], sp[7]
+end
+
+"""
+    _smeared_chi2_fg(model, x, data, w, jac_cache = nothing) -> (chi2, grad)
+
+`chi2_flat_fg` for a smeared model. The chain rule of `_smeared_residuals_jac`,
+contracted before it is materialised: each averaged observable's cotangent goes back to every
+sub-wavelength visibility it averages (`G`, one entry per sub-point), and the gradient is
+`real(Jᵀ G)` over the sub-points' model Jacobian. χ² is `Σ r²` over the same residuals.
+"""
+function _smeared_chi2_fg(model::FlatModel, x::AbstractVector, data::OIdata, w,
+                          jac_cache = nothing)
+    N  = size(data.uv, 2)
+    ns = smear_samples(model, data)
+    mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    # The precision `eval_model_grad` works in: the parameters' and the uv coordinates'.
+    C  = Complex{promote_type(float(eltype(x)), eltype(data.uv))}
+    uvs, wls, mjds, plane, G = _smeared_points(jac_cache, data, ns, mjd, C)
+    Vf, Jf = _model_jac(jac_cache, model, x, uvs; wl = wls, mjd = mjds, plane_wl = plane)
+    T  = real(C)
+    chi2, g = _smeared_chi2_g(G, reshape(convert(Vector{C}, Vf), N, ns),
+                              convert(Matrix{C}, Jf), data, ntuple(i -> T(w[i]), Val(7)),
+                              model.smear_coherent)
+    if w[6] > 0 && data.nflux > 0
+        # As in `_smeared_residuals_jac`: the zero-baseline visibility, the scale held fixed.
+        Vz, Jz = eval_model_grad(model, x, zeros(eltype(data.uv), 2, 1);
+                                 wl = data.uv_lam[1:1],
+                                 mjd = mjd === nothing ? nothing : mjd[1:1])
+        fl = _chi2_flux(real(Vz[1]), data)
+        sw = sqrt(w[6])
+        r  = sw .* (fl.C * real(Vz[1]) .- data.flux) ./ data.flux_err
+        chi2 += sum(abs2, r)
+        g .+= 2 * sum(r .* sw .* fl.C ./ data.flux_err) .* real.(vec(Jz))
+    end
+    return chi2, g
+end
+
+# The averaged observables' χ² and the cotangent of every sub-point visibility, into `G`,
+# then the gradient. Typed by `T` behind this barrier, since the cache's buffers are not.
+function _smeared_chi2_g(G::Vector{Complex{T}}, V::Matrix{Complex{T}}, Jf::Matrix{Complex{T}},
+                         data::OIdata, w::NTuple{7,T}, coherent::Bool) where {T}
+    N, ns = size(V)
+    fill!(G, zero(Complex{T}))
+    Gm = reshape(G, N, ns)
+    ε = eps(T); d2r = T(180 / π); r2 = T(360 / π); inv_ns = inv(T(ns))
+    wrap(x) = mod(mod(x + T(180), T(360)) + T(360), T(360)) - T(180)
+    vc(q) = (s = zero(Complex{T}); @inbounds(for k in 1:ns; s += V[q, k]; end); s * inv_ns)
+    A = promote_type(T, Float64)
+    chi2 = zero(A)
+    @inbounds begin
+        if w[1] > 0 && data.nv2 > 0
+            for (j, q) in enumerate(data.indx_v2)
+                v2 = zero(T); z = zero(Complex{T})
+                if coherent
+                    z = vc(q); v2 = abs2(z)
+                else
+                    for k in 1:ns; v2 += abs2(V[q, k]); end
+                    v2 *= inv_ns
+                end
+                m = v2 - T(data.v2[j]); e2 = T(data.v2_err[j])^2
+                chi2 += w[1] * m * m / e2
+                c = w[1] * 2 * m / e2 * 2 * inv_ns
+                for k in 1:ns
+                    Gm[q, k] += c * conj(coherent ? z : V[q, k])
+                end
+            end
+        end
+        doa = w[2] > 0 && data.nt3amp > 0
+        dop = w[3] > 0 && data.nt3phi > 0
+        if doa || dop
+            for j in eachindex(data.indx_t3_1)
+                q1 = data.indx_t3_1[j]; q2 = data.indx_t3_2[j]; q3 = data.indx_t3_3[j]
+                a = b = c3 = zero(Complex{T})
+                if coherent
+                    a = vc(q1); b = vc(q2); c3 = vc(q3); t3 = a * b * c3
+                else
+                    t3 = zero(Complex{T})
+                    for k in 1:ns; t3 += V[q1, k] * V[q2, k] * V[q3, k]; end
+                    t3 *= inv_ns
+                end
+                γ = zero(Complex{T})
+                if doa
+                    amp = abs(t3)
+                    m = amp - T(data.t3amp[j]); e2 = T(data.t3amp_err[j])^2
+                    chi2 += w[2] * m * m / e2
+                    γ += w[2] * 2 * m / e2 * conj(t3) / max(amp, ε)
+                end
+                if dop
+                    dφ = wrap(angle(t3) * d2r - T(data.t3phi[j])); e2 = T(data.t3phi_err[j])^2
+                    chi2 += w[3] * dφ * dφ / e2
+                    γ += -im * (w[3] * r2 * dφ / e2) * conj(t3) / max(abs2(t3), ε)
+                end
+                γ *= inv_ns
+                for k in 1:ns
+                    v1, v2, v3 = coherent ? (a, b, c3) : (V[q1, k], V[q2, k], V[q3, k])
+                    Gm[q1, k] += γ * v2 * v3
+                    Gm[q2, k] += γ * v1 * v3
+                    Gm[q3, k] += γ * v1 * v2
+                end
+            end
+        end
+        doa = w[4] > 0 && data.nvisamp > 0
+        dop = w[5] > 0 && data.nvisphi > 0
+        if doa || dop
+            for (j, q) in enumerate(data.indx_vis)
+                z = vc(q)
+                γ = zero(Complex{T})
+                if doa
+                    amp = abs(z)
+                    m = amp - T(data.visamp[j]); e2 = T(data.visamp_err[j])^2
+                    chi2 += w[4] * m * m / e2
+                    γ += w[4] * 2 * m / e2 * conj(z) / max(amp, ε)
+                end
+                if dop
+                    dφ = wrap(angle(z) * d2r - T(data.visphi[j])); e2 = T(data.visphi_err[j])^2
+                    chi2 += w[5] * dφ * dφ / e2
+                    γ += -im * (w[5] * r2 * dφ / e2) * conj(z) / max(abs2(z), ε)
+                end
+                γ *= inv_ns
+                for k in 1:ns
+                    Gm[q, k] += γ
+                end
+            end
+        end
+    end
+    return T(chi2), real.(transpose(Jf) * G)
+end
+
+"""
+    _smeared_residuals_jac(model, x, data, w, jac_cache = nothing) -> (r, J)
+
+`residuals_flat_jac` for a smeared model, by the chain rule rather than by differentiating the
+χ²: `eval_model_grad` at every sub-wavelength point gives each `V_k` and `∂V_k/∂x`, and the
+averaged observables differentiate term by term,
+
+    ∂⟨|V_k|²⟩ = ⟨2 Re(V̄_k ∂V_k)⟩,   ∂⟨V₁V₂V₃⟩ = ⟨V₂V₃ ∂V₁ + V₁V₃ ∂V₂ + V₁V₂ ∂V₃⟩,   ∂⟨V⟩ = ⟨∂V⟩;
+
+in the coherent mode `V_k` and `∂V_k` are averaged first. Amplitudes and phases then follow
+as in the unsmeared Jacobian.
+"""
+function _smeared_residuals_jac(model::FlatModel, x::AbstractVector, data::OIdata, w,
+                                jac_cache = nothing)
+    N  = size(data.uv, 2)
+    ns = smear_samples(model, data)
+    mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    uvs, wls, mjds, plane = _sub_points(data.uv, data.uv_lam, data.uv_dlam, mjd, ns)
+    Vf, Jf = _model_jac(jac_cache, model, x, uvs; wl = wls, mjd = mjds, plane_wl = plane)
+    p  = length(x)
+    # The precision `eval_model_grad` works in: the parameters' and the uv coordinates'.
+    C  = Complex{promote_type(float(eltype(x)), eltype(data.uv))}
+    V  = reshape(convert(Vector{C}, Vf), N, ns)
+    Jd = reshape(convert(Matrix{C}, Jf), N, ns, p)
+    if model.smear_coherent
+        V  = reshape(vec(sum(V; dims = 2)) ./ ns, N, 1)
+        Jd = reshape(dropdims(sum(Jd; dims = 2); dims = 2) ./ ns, N, 1, p)
+    end
+    r, J = _smeared_obs_jac(V, Jd, data, w)
+    if w[6] > 0 && data.nflux > 0
+        # The flux is the zero-baseline visibility, which smearing does not change. For an
+        # uncalibrated flux the scale C is at its optimum, so holding it fixed gives the exact
+        # gradient of the χ² minimised over C.
+        Vz, Jz = eval_model_grad(model, x, zeros(eltype(data.uv), 2, 1);
+                                 wl = data.uv_lam[1:1],
+                                 mjd = mjd === nothing ? nothing : mjd[1:1])
+        fl = _chi2_flux(real(Vz[1]), data)
+        r = vcat(r, sqrt(w[6]) .* (fill(fl.C * real(Vz[1]), data.nflux) .- data.flux) ./
+                    data.flux_err)
+        J = vcat(J, sqrt(w[6]) .* fl.C .* repeat(real.(Jz[1:1, :]), data.nflux, 1) ./
+                    data.flux_err)
+    end
+    return r, J
+end
+
+# The averaged observables' residuals and Jacobian from concretely typed visibilities: the
+# loops run behind this function barrier, since what `eval_model_grad` returns is not inferred.
+function _smeared_obs_jac(V::Matrix{Complex{T}}, Jd::Array{Complex{T},3}, data::OIdata,
+                          w) where {T}
+    N, ns, p = size(Jd)
+    ε = eps(T)
+    r_parts = Vector{T}[]
+    J_parts = Matrix{T}[]
+
+    if w[1] > 0 && data.nv2 > 0
+        n = length(data.indx_v2)
+        v2 = zeros(T, n); dv2 = zeros(T, n, p)
+        @inbounds for (j, q) in enumerate(data.indx_v2), k in 1:ns
+            v2[j] += abs2(V[q, k]) / ns
+            for l in 1:p
+                dv2[j, l] += 2real(conj(V[q, k]) * Jd[q, k, l]) / ns
+            end
+        end
+        push!(r_parts, T(sqrt(w[1])) .* (v2 .- data.v2) ./ data.v2_err)
+        push!(J_parts, T(sqrt(w[1])) .* dv2 ./ data.v2_err)
+    end
+
+    if (w[2] > 0 && data.nt3amp > 0) || (w[3] > 0 && data.nt3phi > 0)
+        n = length(data.indx_t3_1)
+        t3 = zeros(Complex{T}, n); dt3 = zeros(Complex{T}, n, p)
+        @inbounds for j in 1:n, k in 1:ns
+            q1, q2, q3 = data.indx_t3_1[j], data.indx_t3_2[j], data.indx_t3_3[j]
+            a, b, c = V[q1, k], V[q2, k], V[q3, k]
+            t3[j] += a * b * c / ns
+            for l in 1:p
+                dt3[j, l] += (b * c * Jd[q1, k, l] + a * c * Jd[q2, k, l] +
+                              a * b * Jd[q3, k, l]) / ns
+            end
+        end
+        if w[2] > 0 && data.nt3amp > 0
+            A = abs.(t3)
+            push!(r_parts, T(sqrt(w[2])) .* (A .- data.t3amp) ./ data.t3amp_err)
+            push!(J_parts, T(sqrt(w[2])) .* real.(conj.(t3) ./ max.(A, ε) .* dt3) ./ data.t3amp_err)
+        end
+        if w[3] > 0 && data.nt3phi > 0
+            φ = angle.(t3) .* T(180 / π)
+            push!(r_parts, T(sqrt(w[3])) .* _mod360(φ .- data.t3phi) ./ data.t3phi_err)
+            push!(J_parts, T(sqrt(w[3])) .* T(180 / π) .*
+                           imag.(conj.(t3) ./ max.(abs2.(t3), ε) .* dt3) ./ data.t3phi_err)
+        end
+    end
+
+    if (w[4] > 0 && data.nvisamp > 0) || (w[5] > 0 && data.nvisphi > 0)
+        n = length(data.indx_vis)
+        vv = zeros(Complex{T}, n); dvv = zeros(Complex{T}, n, p)
+        @inbounds for (j, q) in enumerate(data.indx_vis), k in 1:ns
+            vv[j] += V[q, k] / ns
+            for l in 1:p
+                dvv[j, l] += Jd[q, k, l] / ns
+            end
+        end
+        if w[4] > 0 && data.nvisamp > 0
+            A = abs.(vv)
+            push!(r_parts, T(sqrt(w[4])) .* (A .- data.visamp) ./ data.visamp_err)
+            push!(J_parts, T(sqrt(w[4])) .* real.(conj.(vv) ./ max.(A, ε) .* dvv) ./ data.visamp_err)
+        end
+        if w[5] > 0 && data.nvisphi > 0
+            φ = angle.(vv) .* T(180 / π)
+            push!(r_parts, T(sqrt(w[5])) .* _mod360(φ .- data.visphi) ./ data.visphi_err)
+            push!(J_parts, T(sqrt(w[5])) .* T(180 / π) .*
+                           imag.(conj.(vv) ./ max.(abs2.(vv), ε) .* dvv) ./ data.visphi_err)
+        end
+    end
+
+    return reduce(vcat, r_parts; init = T[]),
+           isempty(J_parts) ? zeros(T, 0, p) : reduce(vcat, J_parts)
+end
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # chi2_flat_reduced  (chi2 / ndof — for display)
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat_reduced(model, x, data; weights=[1,1,1,0,0,0,0], vonmises=false)
+    chi2_flat_reduced(model, x, data; weights=[1,1,1,0,0,0,0])
         -> T
 
 Return chi2 / ndof (reduced chi-squared).  Useful for assessing goodness of fit.
@@ -1076,9 +1574,8 @@ Works with both monochromatic (OIdata) and polychromatic (Vector{<:OIdata}) data
 function chi2_flat_reduced(model::FlatModel,
                            x::AbstractVector,
                            data::Union{OIdata, Vector{<:OIdata}};
-                           weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                           vonmises::Bool = false)
-    chi2 = chi2_flat(model, x, data; weights, vonmises)
+                           weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+    chi2 = chi2_flat(model, x, data; weights)
     return chi2 / _ndof(data, weights)
 end
 
@@ -1088,21 +1585,20 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    chi2_flat_print(model, x, data; weights=[1,1,1,0,0,0,0], vonmises=false)
+    chi2_flat_print(model, x, data; weights=[1,1,1,0,0,0,0])
 
 Print a per-observable chi2 breakdown.  Does a single forward pass.
 """
 function chi2_flat_print(model::FlatModel,
                          x::AbstractVector,
                          data::Union{OIdata, Vector{<:OIdata}};
-                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                         vonmises::Bool = false)
-    chi2_flat(model, x, data; weights, verb=true, vonmises)
+                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+    chi2_flat(model, x, data; weights, verb=true)
     nothing
 end
 
 """
-    model_to_chi2(model, x, data; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+    model_to_chi2(model, x, data; weights=[1,1,1,0,0,0,0], verb=false)
 
 Alias for `chi2_flat`.  Compute the weighted chi-squared of a parametric
 model against data, for consistency with the `model_to_obs` / `model_to_vis` family.
@@ -1110,7 +1606,7 @@ model against data, for consistency with the `model_to_obs` / `model_to_vis` fam
 const model_to_chi2 = chi2_flat
 
 """
-    model_to_chi2_fg(model, x, data; weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+    model_to_chi2_fg(model, x, data; weights=[1,1,1,0,0,0,0], verb=false)
 
 Alias for `chi2_flat_fg`.  Compute chi-squared and its gradient w.r.t. `x`,
 for consistency with the `model_to_obs` / `model_to_vis` family.
@@ -1161,7 +1657,7 @@ function _weights_tuple(weights::AbstractVector{<:Real})
 end
 
 function _cvis_to_chi2(V::AbstractVector{<:Complex}, data::OIdata,
-                       w::NTuple{7,Float64}, vonmises::Bool)
+                       w::NTuple{7,Float64})
     chi2 = 0.0
 
     # ── V2 ────────────────────────────────────────────────────────────────────
@@ -1192,15 +1688,9 @@ function _cvis_to_chi2(V::AbstractVector{<:Complex}, data::OIdata,
             end
             if do_t3phi
                 phi = Float64(angle(t3)) * _RAD2DEG
-                if !vonmises
-                    dphi = _mod360s(phi - Float64(data.t3phi[i]))
-                    e = Float64(data.t3phi_err[i])
-                    s_phi += dphi * dphi / (e * e)
-                else
-                    dphi_rad = (phi - Float64(data.t3phi[i])) * _DEG2RAD
-                    s_phi += -2.0 * Float64(data.t3phi_vonmises_err[i]) * cos(dphi_rad) +
-                             Float64(data.t3phi_vonmises_chi2_offset[i])
-                end
+                dphi = _mod360s(phi - Float64(data.t3phi[i]))
+                e = Float64(data.t3phi_err[i])
+                s_phi += dphi * dphi / (e * e)
             end
         end
         chi2 += w[2] * s_amp + w[3] * s_phi
@@ -1233,20 +1723,19 @@ function _cvis_to_chi2(V::AbstractVector{<:Complex}, data::OIdata,
 end
 
 """
-    cvis_to_chi2_noalloc(V, data; weights=[1,1,1,0,0,0,0], vonmises=false)
+    cvis_to_chi2_noalloc(V, data; weights=[1,1,1,0,0,0,0])
 
 Weighted chi2 of model complex visibilities `V` against `data`, computed **without
 allocating**.
 
 Returns the same value as [`cvis_to_chi2_f`](@ref) (and as
-`cvis_to_chi2_fg(V, data; weights, vonmises)[1]`) to round-off, but fuses every
+`cvis_to_chi2_fg(V, data; weights)[1]`) to round-off, but fuses every
 observable into a single pass with no gathered temporaries.  Intended for inner
 sampler loops that evaluate chi2 millions of times — see `reconstruct_squeeze`.
 Prefer [`cvis_to_chi2_f`](@ref) for ordinary use: it is clearer and additionally
 handles the flux term (`weights[6]`), which this does not.
 """
 function cvis_to_chi2_noalloc(V::AbstractVector{<:Complex}, data::OIdata;
-                              weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                              vonmises::Bool = false)
-    return _cvis_to_chi2(V, data, _weights_tuple(weights), vonmises)
+                              weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+    return _cvis_to_chi2(V, data, _weights_tuple(weights))
 end

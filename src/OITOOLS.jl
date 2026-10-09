@@ -20,20 +20,24 @@ include("resources.jl")          # where shipped QML, configs and demo data are 
 include("graphics.jl")           # GL driver environment; must be callable before GLMakie
 include("gui_launcher.jl")       # oitoolsgui(): loads the GUI stack in the required order
 include("readoifits.jl")
+include("image_component.jl")   # FITS images and cubes as model components (convention shared with ROTIR)
 include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
 include("plot_data.jl")      # what to draw: groups, colours, labels, click text -- no toolkit
 include("model_chainrules.jl")
+include("model_kernels.jl")          # component visibilities point by point, with closed-form derivatives
 
 # ── Flat-dict model fitting stack ────────────────────────────────────────────
 include("resolvers.jl")          # SharedUtils, RGF, HandRolled, Symbolic
 include("hankel.jl")             # Hankel transform + chainrules + profile compiler
 include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
+include("model_jacobian.jl")     # eval_model_jac!: the Jacobian from the closed-form kernels
 include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
 include("constraints.jl")        # ModelConstraint: NLopt constraints, and penalties elsewhere
 include("model_file.jl")         # TOML model files: model + free + bounds + constraints + priors
 include("fit_model.jl")          # fit_model (NLopt), fit_model_nested, display_model
 include("chi2_map.jl")           # grid search over two free parameters, and its chi2 surface
 include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
+include("companion_search.jl")    # grid search for a companion around any primary, and its significance
 
 
 include("utils.jl")
@@ -43,7 +47,6 @@ include("image_chi2_kernel.jl")  # image chi2+gradient: one adjoint, all observa
 include("sparco_flat.jl")
 include("astrometry.jl")
 include("atmosphere.jl")     # bands, seeing, AO Strehl — used by simulate.jl
-include("vonmises.jl")
 include("simulate.jl")
 include("oifitslib.jl")
 include("maximent.jl")
@@ -174,7 +177,7 @@ export oitoolsgui
 # ── Reading OIFITS data ─────────────────────────────────────────────────────
 export OIdata
 export readoifits, readoifits_multiepochs, list_oifits_targets
-export readfits, writefits, fits_pixsize
+export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_image_plane, model_image_vis
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
 
@@ -201,7 +204,9 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
        imdisp, imdisp_multi, plot_facility
 
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
-export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
+export companion_search, companion_grid, CompanionSearch, companion_flux_map, detection_sigma
+export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, eval_model_grad_ad,
+       eval_model_jac, eval_model_jac!, ModelJacWorkspace, ModelJacCache, eval_model_sub, smear_samples, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
 export fit_model, fit_model_lsqfit, fit_model_nested, fit_model_ultranest
 export nested_backend, set_nested_backend!
 export ModelConstraint, parse_constraints, check_constraints, DEFAULT_CONSTRAINT_TOL

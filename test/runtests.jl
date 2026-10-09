@@ -20,6 +20,7 @@ BLAS.set_num_threads(1)
 @testset "OITOOLS" begin
     include("test_aqua.jl")              # package hygiene: exports, compat, ambiguities, piracy
     include("test_resources.jl")         # where shipped QML/configs/demo data are found
+    include("test_data_filter.jl")       # set_data_filter: stations, baselines, triangles by name
     include("test_bsmem_precision.jl")   # cheap structural checks first
     include("test_chromatic_params.jl")  # $WL / $MJD / $B model parameters
     include("test_model_gradients.jl")   # analytic model gradients vs finite differences
@@ -53,5 +54,12 @@ BLAS.set_num_threads(1)
 
     include("test_obs_cotangent.jl")     # the shared cvis<-observables adjoint, general form
     include("test_image_orientation.jl") # East/North of an image array, and of its displays
+    include("test_model_image.jl")       # FITS images/cubes as model components (shared with ROTIR)
+    include("test_image_component.jl")   # c,image: an image or cube as a component, against exact answers
+    include("test_smearing.jl")          # "smear": observables averaged over each channel, against closed forms
+    include("test_companion_search.jl")  # AX Cir companion search against PMOIRED/CANDID
+    include("test_model_typed.jl")       # J1: the resolver typed, eval_model inferred
+    include("test_model_kernels.jl")     # J2: component kernels and their closed-form derivatives
+    include("test_model_jacobian.jl")    # J3: the closed-form Jacobian against ForwardDiff
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end

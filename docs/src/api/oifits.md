@@ -10,7 +10,10 @@
 | `filter_data(data; kwargs...)` | Filter data by baseline, wavelength, etc. |
 | `set_data_filter(data; kwargs...)` | Set persistent data filters |
 | `readfits(file)` | Read a FITS image into a matrix |
-| `writefits(data, file; pixsize, wavelengths)` | Write an image or a cube to FITS, with its WCS |
+| `writefits(data, file; pixsize, wavelengths, bandwidths, mjds)` | Write an image or a cube to FITS, with its WCS, in the convention shared with ROTIR |
+| `read_model_image(file)` | Read a FITS image or cube for use as a model component: East-first, with its pixel scale, wavelengths and epochs |
+| `model_image_plane(image, λ, mjd)` | Which plane of a model image a data point uses |
+| `model_image_vis(image, uv; wl, mjd)` | Its complex visibilities at uv points, plane by plane |
 | `fits_pixsize(file)` | Pixel scale of a FITS image in mas, from its WCS keywords, or `nothing` |
 | `oifits_prep(data; kwargs...)` | Inflate error bars (additive/relative floors, multiplicative scaling) |
 | `updatefits_aspro(in, out, pixsize)` | Add ASPRO-compatible WCS headers to a FITS image |
@@ -19,10 +22,15 @@
 OIdata
 writefits
 fits_pixsize
+ModelImage
+read_model_image
+model_image_plane
+model_image_vis
 readoifits
 readoifits_multiepochs
 filter_data
 set_data_filter
+oifits_prep
 ```
 
 ## Writing

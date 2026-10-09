@@ -1,0 +1,34 @@
+# AX Cir, a Cepheid with a faint companion: the binary that `demos/data/AX_Cir.oifits` (PIONIER,
+# H band, PMOIRED's example 3) is fitted with, and the model to open in the Modeling
+# perspective before a companion search.
+#
+# The primary is a uniform disc; the companion a point source carrying the flux fraction
+# `companion,f`, the primary the rest. `companion,x` and `companion,y` are its offset in mas
+# (x towards East). A companion search scans them over a grid, so their values here matter only
+# to a plain fit, and are the fitted ones.
+#
+# "smear" = "auto": PIONIER's channels are wide (R ≈ 18), and at 29 mas the companion's fringes
+# wash out across a channel. The observables are averaged over each channel, which is what
+# moves the fit from χ²r 0.7348 (unsmeared) to 0.7305 here.
+#
+# Fitted with fit_model_lsqfit, V² and T3φ (weights [1, 0, 1]), from three starts that all
+# converge to the same point: θ_UD = 0.8248 mas, f = 0.00862, (x, y) = (6.225, -28.494) mas,
+# i.e. a separation of 29.17 mas at PA 167.7°.
+
+name = "AX Cir binary"
+
+free = ["star,ud", "companion,f", "companion,x", "companion,y"]
+
+[model]
+"star,ud"     = 0.8248
+"star,f"      = "1 - $companion,f"
+"companion,f" = 0.00862
+"companion,x" = 6.225
+"companion,y" = -28.494
+"smear"       = "auto"
+
+[bounds]
+"star,ud"     = [0.0, 3.0]
+"companion,f" = [0.0, 0.5]
+"companion,x" = [-60.0, 60.0]
+"companion,y" = [-60.0, 60.0]

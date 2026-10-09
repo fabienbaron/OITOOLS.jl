@@ -54,11 +54,12 @@ const _MAS2RAD_PM = 2.0626480624709636e8    # 1 radian in milli-arcseconds
 # Geometry key → component kind
 # ─────────────────────────────────────────────────────────────────────────────
 
-const _GEOMETRY_KEYS = ["visfunc", "profile", "diamin", "fwhmin", "crin",
+const _GEOMETRY_KEYS = ["image", "visfunc", "profile", "diamin", "fwhmin", "crin",
                        "ud", "fwhm", "ldlin", "ldquad", "ldsqrt", "ldclaret4",
                        "ldpow", "resolved"]
 
 const _KIND_GEOMETRY = Dict{Symbol,String}(
+    :image         => "image",        # a FITS image or cube (image_component.jl)
     :visfunc       => "visfunc",      # V(B) written out, in $B (Mlambda)
     :hankel        => "profile",
     :ring          => "diamin",       # uniform ring (analytic)
@@ -270,43 +271,22 @@ function _vis_ldpow(params::AbstractVector, ρ::AbstractVector)
     vis_ldpow(params[1], params[2], ρ)
 end
 
-# ForwardDiff specialization: besselj(ν, x) returns NaN when ν is a Dual,
-# so we compute the analytic derivatives manually and construct Dual output.
+# ForwardDiff specialization: the order ν = α/2 + 1 moves with α, so the derivatives come from
+# `_ldpow_d`'s closed forms and are packed into Duals. ρ carries partials too when an
+# inclination or position angle is differentiated.
 function _vis_ldpow(params::AbstractVector{D}, ρ::AbstractVector) where {T, V, N, D<:ForwardDiff.Dual{T,V,N}}
-    θ = ForwardDiff.value(params[1])
-    α = ForwardDiff.value(params[2])
-
-    ν  = α/2 + 1
-    ζ  = @. π * θ * ρ / MAS2RAD
-    safe    = ζ .> 1e-8
-    ζ_safe  = @. ifelse(safe, ζ, one(ζ))
-
-    Jν  = @. ifelse(safe, besselj(ν, ζ),   zero(ζ))
-    Jν1 = @. ifelse(safe, besselj(ν+1, ζ), zero(ζ))
-    Gν1 = gamma(ν+1)
-
-    V_val = @. ifelse(safe, Gν1 * Jν * (ζ_safe/2)^(-ν), one(ζ))
-
-    # ∂V/∂θ per baseline (chain rule through ζ = πθρ/C)
-    dV_dζ  = @. ifelse(safe, -Gν1 * Jν1 * 2^ν / ζ_safe^ν, zero(ζ))
-    dV_dθ  = @. dV_dζ * π * ρ / MAS2RAD
-
-    # ∂V/∂α per baseline (chain rule through ν = α/2 + 1)
-    # log(ζ/2), not log(ζ) — see the note on the matching expression in the
-    # vis_ldpow rrule in model_chainrules.jl.
-    dJν_dν = map((z, s) -> s ? _dbesselj_dnu(ν, z) : 0.0, ζ, safe)
-    ψν1    = digamma(ν + 1)
-    dV_dν  = @. ifelse(safe,
-        ψν1 * V_val + Gν1 * 2^ν * (dJν_dν - log(ζ_safe/2) * Jν) / ζ_safe^ν,
-        zero(ζ))
-    dV_dα  = dV_dν ./ 2
-
-    # Propagate partials: dV[j] = dV_dθ[j] * ∂θ + dV_dα[j] * ∂α
+    θ  = ForwardDiff.value(params[1])
+    α  = ForwardDiff.value(params[2])
+    ρv = ForwardDiff.value.(ρ)
+    W, dV_dζ, dV_dα = _ldpow_vjac(θ, α, ρv)
     θ_p = ForwardDiff.partials(params[1])
     α_p = ForwardDiff.partials(params[2])
-    return [ForwardDiff.Dual{T}(V_val[j], dV_dθ[j] * θ_p + dV_dα[j] * α_p)
+    return [ForwardDiff.Dual{T}(W[j], dV_dζ[j] * π * ρv[j] / MAS2RAD * θ_p + dV_dα[j] * α_p +
+                                      dV_dζ[j] * π * θ / MAS2RAD * _partials_of(ρ[j], D))
             for j in eachindex(ρ)]
 end
+_partials_of(r::ForwardDiff.Dual, ::Type{D}) where {D} = ForwardDiff.partials(r)
+_partials_of(r::Real, ::Type{D}) where {D} = zero(ForwardDiff.partials(zero(D)))
 
 function _vis_point(params::AbstractVector, ρ::AbstractVector)
     ones(eltype(ρ), length(ρ))
@@ -386,6 +366,11 @@ const _ANALYTIC_VIS = Dict{Symbol, Function}(
     :point         => _vis_point,
 )
 
+# The same table as methods, so `AnalyticSpec{K}` reaches its kernel by static dispatch.
+for (k, fn) in _ANALYTIC_VIS
+    @eval @inline _vis_kernel(::Val{$(QuoteNode(k))}, params, ρ) = $fn(params, ρ)
+end
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Component specification structs
@@ -393,8 +378,12 @@ const _ANALYTIC_VIS = Dict{Symbol, Function}(
 
 abstract type AbstractComponentSpec end
 
-"""Analytic component: uniform disk, Gaussian, limb-darkened disk, point, resolved."""
-struct AnalyticSpec <: AbstractComponentSpec
+"""
+Analytic component: uniform disk, Gaussian, limb-darkened disk, point, resolved. `K` is the
+kind as a type parameter, so evaluation dispatches to the kind's visibility function
+statically once the component's own type is known.
+"""
+struct AnalyticSpec{K} <: AbstractComponentSpec
     comp_name ::String
     kind      ::Symbol
     vis_fn    ::Function          # (params::Vector, ρ_rad::Vector) -> Vector
@@ -428,6 +417,7 @@ struct HankelSpec{T<:AbstractFloat} <: AbstractComponentSpec
     mu_grid          ::Vector{T}        # sqrt(1-(r/r_max)^2)
     workspace        ::HankelWorkspace{T}
     az_modes         ::Vector{AzMode}   # azimuthal variation modes (empty = none)
+    kcache           ::HankelKernelCache  # the transform matrices, per uv set
     incl_idx         ::Int
     pa_idx           ::Int
     x_idx            ::Int
@@ -452,13 +442,70 @@ struct VisFuncSpec <: AbstractComponentSpec
     y_idx        ::Int
 end
 
+"""
+A FITS image or cube as a component: `c,image` names the file, `c,pixsize` (mas) overrides
+its header and `c,norm` (`plane` or `relative`) its `NORMALIZ`.
+
+The image is read once, when the model is compiled, and its visibilities are cached per uv set
+(`ImageVisCache`), since nothing a fit varies changes them: `f`, `x` and `y` are applied after.
+Inclination and position angle would, and are refused. `incl_idx`/`pa_idx` are always 0 and
+exist so that the evaluation loop reads every component the same way.
+"""
+struct ImageSpec <: AbstractComponentSpec
+    comp_name ::String
+    f_idx     ::Int
+    image     ::ModelImage
+    cache     ::ImageVisCache
+    incl_idx  ::Int
+    pa_idx    ::Int
+    x_idx     ::Int
+    y_idx     ::Int
+end
+
 """Top-level compiled model."""
 struct FlatModel
-    resolver   ::Any                           # RGF.Resolver
+    resolver   ::RGF.Resolver                  # concrete; its generated functions are the dynamic calls
     components ::Vector{AbstractComponentSpec}
     all_names  ::Vector{String}                # resolver output names (for debug)
     list_free_params ::Vector{String}
     kernel_idx ::Int                           # spatial_kernel FWHM index (0 = none)
+    smear      ::Int                           # sub-wavelengths per channel (< 2 = none, -1 = auto)
+    smear_radius   ::Float64                   # mas: the model's extent, for smear = "auto"
+    smear_coherent ::Bool                      # average V over the channel, not the observables
+    chromatic  ::Vector{Bool}                  # per component: any of its parameters per uv point
+end
+
+"""
+    ResolvedParams{T}
+
+A model's parameter values for one evaluation, concretely typed whatever the model: scalars
+in `s`, per-uv-point values in `cols` (one `Vector{T}` per chromatic parameter), and `slot`,
+the resolver's map from a parameter's index in `all_names` to `s[k]` (`k > 0`) or `cols[-k]`.
+"""
+struct ResolvedParams{T}
+    s    :: Vector{T}
+    cols :: Vector{Vector{T}}
+    slot :: Vector{Int}
+    n    :: Int
+end
+
+# The resolver is the model's one dynamic call: a RuntimeGeneratedFunction, a new one for
+# every compiled model. It writes into storage typed by `T` alone, so nothing downstream
+# depends on the model instance and a rebuilt model reuses every compiled method.
+function _resolve(model::FlatModel, x, wl, mjd, n::Int, ::Type{T}) where {T}
+    r = model.resolver
+    s = Vector{T}(undef, r.nscalar)
+    cols = [Vector{T}(undef, n) for _ in 1:r.nchromatic]
+    r.fill!(s, cols, x, wl, mjd)
+    return ResolvedParams{T}(s, cols, r.slot, n)
+end
+
+# A parameter's value: a scalar for a component evaluated on the scalar path (`Val(false)`),
+# one value per uv point on the chromatic path (`Val(true)`), where a scalar is spread.
+@inline _par(rp::ResolvedParams, i::Int, ::Val{false}) = rp.s[rp.slot[i]]
+@inline function _par(rp::ResolvedParams, i::Int, ::Val{true})
+    k = rp.slot[i]
+    return k > 0 ? fill(rp.s[k], rp.n) : rp.cols[-k]
 end
 
 
@@ -484,7 +531,7 @@ end
 function _identify_kind(comp_name::String, model_dict::Dict{String})::Symbol
     for gk in _GEOMETRY_KEYS
         haskey(model_dict, "$comp_name,$gk") && return get(
-            Dict("visfunc"=>:visfunc,
+            Dict("image"=>:image, "visfunc"=>:visfunc,
                  "profile"=>:hankel, "diamin"=>:ring, "fwhmin"=>:gaussian_ring,
                  "ldsqrt"=>:ldsqrt, "ldclaret4"=>:ldclaret4,
                  "crin"=>:crescent, "ud"=>:ud, "fwhm"=>:gaussian,
@@ -582,7 +629,8 @@ const _HANKEL_META_SUFFIXES = ["profile", "r_max", "nr"]
 function _resolver_dict(model_dict::Dict{String}, comp_names::Vector{String})
     # Exclude profile strings, Hankel grid-config keys, and resolved markers
     # from the resolver.  udout IS kept — it may be a fit param.
-    exclude = Set{String}()
+    # `smear` is a setting read when the model is compiled, not a parameter.
+    exclude = Set{String}(["smear", "smear_mode"])
     for cn in comp_names
         push!(exclude, "$cn,profile")
         # A visibility expression is compiled by `compile_visfunc` against the baseline, not
@@ -592,6 +640,11 @@ function _resolver_dict(model_dict::Dict{String}, comp_names::Vector{String})
         push!(exclude, "$cn,r_max")
         push!(exclude, "$cn,nr")
         push!(exclude, "$cn,resolved")
+        # An image component's file and how to read it are consumed when the model is
+        # compiled; a path is not an expression.
+        if haskey(model_dict, "$cn,image")
+            push!(exclude, "$cn,image", "$cn,pixsize", "$cn,norm")
+        end
     end
     return Dict{String,Any}(k => v for (k, v) in model_dict if k ∉ exclude)
 end
@@ -652,6 +705,7 @@ end
 const _UNIVERSAL_SUFFIXES = Set(["f", "x", "y", "incl", "pa", "projang"])
 const _SUGAR_SUFFIXES     = Set(["diam", "thick", "spectrum"])
 const _HANKEL_SUFFIXES    = Set(["profile", "r_max", "nr", "udout", "diamin", "diamout"])
+const _IMAGE_SUFFIXES     = Set(["image", "pixsize", "norm"])
 
 """
     reserved_suffix(suffix) -> Bool
@@ -665,7 +719,7 @@ its own, used from an expression.
 """
 reserved_suffix(suffix::AbstractString) =
     suffix in _UNIVERSAL_SUFFIXES || suffix in _SUGAR_SUFFIXES || suffix in _HANKEL_SUFFIXES ||
-    suffix in _GEOMETRY_KEYS ||
+    suffix in _IMAGE_SUFFIXES || suffix in _GEOMETRY_KEYS ||
     any(s -> suffix in s, values(_ANALYTIC_PARAM_SUFFIXES)) ||
     startswith(suffix, "az amp") || startswith(suffix, "az projang")
 
@@ -693,6 +747,7 @@ function _warn_unrecognised_keys(pd::Dict{String})
         ok = union(_UNIVERSAL_SUFFIXES, _SUGAR_SUFFIXES,
                    Set{String}(get(_ANALYTIC_PARAM_SUFFIXES, kind, String[])))
         kind === :hankel && union!(ok, _HANKEL_SUFFIXES)
+        kind === :image  && union!(ok, _IMAGE_SUFFIXES)
         gk = get(_KIND_GEOMETRY, kind, "")
         isempty(gk) || push!(ok, gk)
 
@@ -771,6 +826,21 @@ function dict_to_model(model_dict::Dict{String},
     # ── Spatial kernel ───────────────────────────────────────────────────────
     kernel_idx = get(n2i, "spatial_kernel", 0)
 
+    # ── Bandwidth smearing ───────────────────────────────────────────────────
+    "smear" in list_free_params &&
+        error("smear is the number of sub-wavelengths per channel, a setting, not a parameter " *
+              "to fit")
+    sm = get(pd, "smear", 0)
+    sm = sm == "auto" ? -1 :
+         (sm isa Real && isinteger(sm) && sm >= 0) ? Int(sm) :
+         error("smear must be a whole number of sub-wavelengths per channel (0 or 1 for none) " *
+               "or \"auto\", not $(repr(sm))")
+    smode = get(pd, "smear_mode", "incoherent")
+    smode in ("incoherent", "coherent") ||
+        error("smear_mode must be \"incoherent\" (the observables averaged over a channel) or " *
+              "\"coherent\" (the visibility averaged, then the observables), not $(repr(smode))")
+    smear_radius = sm == -1 ? _model_extent(pd, comp_names) : 0.0
+
     # ── Build component specs ────────────────────────────────────────────────
     components = AbstractComponentSpec[]
 
@@ -790,7 +860,10 @@ function dict_to_model(model_dict::Dict{String},
         x_idx = get(n2i, "$cn,x", 0)
         y_idx = get(n2i, "$cn,y", 0)
 
-        if kind == :visfunc
+        if kind == :image
+            push!(components, _image_spec(cn, pd, f_idx, incl_idx, pa_idx, x_idx, y_idx))
+
+        elseif kind == :visfunc
             vis_expr = pd["$cn,visfunc"]
             vis_expr isa String ||
                 error("$cn,visfunc must be a String expression")
@@ -886,7 +959,7 @@ function dict_to_model(model_dict::Dict{String},
             sort!(az_modes; by = m -> m.order)
 
             push!(components, HankelSpec(
-                cn, f_idx, profile_fn, prof_idx, r, mu, ws, az_modes,
+                cn, f_idx, profile_fn, prof_idx, r, mu, ws, az_modes, HankelKernelCache(),
                 incl_idx, pa_idx, x_idx, y_idx
             ))
 
@@ -901,7 +974,7 @@ function dict_to_model(model_dict::Dict{String},
                 n2i[k]
             end
 
-            push!(components, AnalyticSpec(
+            push!(components, AnalyticSpec{:crescent}(
                 cn, :crescent, _vis_point, f_idx, param_idx,
                 incl_idx, pa_idx, x_idx, y_idx
             ))
@@ -918,14 +991,71 @@ function dict_to_model(model_dict::Dict{String},
 
             vis_fn = _ANALYTIC_VIS[kind]
 
-            push!(components, AnalyticSpec(
+            push!(components, AnalyticSpec{kind}(
                 cn, kind, vis_fn, f_idx, param_idx,
                 incl_idx, pa_idx, x_idx, y_idx
             ))
         end
     end
 
-    return FlatModel(resolver, components, resolver.all_names, list_free_params, kernel_idx)
+    # A component is evaluated on the chromatic path when any parameter it reads is per uv
+    # point. A radial profile's own parameters must be scalars: its I(r) is on the r grid.
+    ischrom(i) = i != 0 && resolver.slot[i] < 0
+    chromatic = map(components) do c
+        idx = [c.f_idx, c.incl_idx, c.pa_idx, c.x_idx, c.y_idx]
+        if c isa AnalyticSpec || c isa VisFuncSpec
+            append!(idx, c.param_idx)
+        elseif c isa HankelSpec
+            any(ischrom, c.profile_param_idx) && error(
+                "$(c.comp_name): a radial profile's parameters cannot depend on \$WL or \$MJD " *
+                "(its I(r) is computed once, on the r grid); give the component a chromatic " *
+                "flux instead")
+            for az in c.az_modes
+                push!(idx, az.amp_idx, az.phi_idx)
+            end
+        end
+        any(ischrom, idx)
+    end
+    return FlatModel(resolver, components, resolver.all_names, list_free_params, kernel_idx,
+                     sm, smear_radius, smode == "coherent", chromatic)
+end
+
+# The image component's spec: the file read with the overrides its keys give.
+function _image_spec(cn, pd, f_idx, incl_idx, pa_idx, x_idx, y_idx)
+    path = pd["$cn,image"]
+    path isa AbstractString ||
+        error("$cn,image must be the path of a FITS file, not $(repr(path))")
+    (incl_idx != 0 || pa_idx != 0) &&
+        error("$cn is an image: it is used at the orientation it was made with, so it takes " *
+              "no incl or pa. Rotate or tilt the image itself and save it again.")
+    ps = get(pd, "$cn,pixsize", nothing)
+    ps === nothing || ps isa Real ||
+        error("$cn,pixsize must be a number of mas per pixel, not $(repr(ps))")
+    nm = get(pd, "$cn,norm", nothing)
+    norm = nm === nothing ? nothing :
+           nm in ("plane", "relative") ? Symbol(nm) :
+           error("$cn,norm must be \"plane\" or \"relative\", not $(repr(nm))")
+    mi = read_model_image(path; pixsize = ps, normalization = norm)
+    return ImageSpec(cn, f_idx, mi, ImageVisCache(), incl_idx, pa_idx, x_idx, y_idx)
+end
+
+# How far the model reaches from the phase centre, in mas, at the values the dict holds: each
+# component's offset plus half its largest size. A value that cannot be resolved without data
+# (an expression in `\$WL`, say) counts as 0. `smear = "auto"` sizes its sampling from this.
+function _model_extent(pd, comp_names)
+    num(k) = haskey(pd, k) ? (try _resolve_numeric(k, pd) catch; 0.0 end) : 0.0
+    r = 0.0
+    for cn in comp_names
+        off  = hypot(num("$cn,x"), num("$cn,y"))
+        sz  = maximum((abs(num("$cn,$s")) for s in _SIZE_KEYS); init = 0.0)
+        if haskey(pd, "$cn,image")
+            mi = try read_model_image(pd["$cn,image"]; pixsize = get(pd, "$cn,pixsize", nothing))
+                 catch; nothing end
+            mi === nothing || (sz = max(sz, size(mi.image, 1) * mi.pixsize))
+        end
+        r = max(r, off + sz / 2)
+    end
+    return r
 end
 
 """Backward-compatible alias for [`dict_to_model`](@ref)."""
@@ -949,6 +1079,10 @@ uv    : 2×N matrix of (u,v) spatial frequencies in cycles/rad
 wl    : wavelength per UV point (metres), length N  — enables `\$WL` in expressions
 mjd   : MJD per UV point, length N  — enables `\$MJD` in expressions
 n     : Bessel order for Hankel components (default 0)
+plane_wl : the wavelength an image component chooses its plane by (default `wl`)
+
+`eval_model` returns one visibility per uv point and does not smear. A model with
+`"smear" => n` is averaged over its channels by [`eval_model_sub`](@ref) and the χ² functions.
 
 Returns
 -------
@@ -959,120 +1093,174 @@ function eval_model(model::FlatModel,
                     uv::AbstractMatrix;
                     wl  = nothing,
                     mjd = nothing,
-                    n::Int = 0)
+                    n::Int = 0,
+                    plane_wl = wl)
 
-    # Resolve all params → raw vector (no Dict allocation)
-    # Elements may be scalars or vectors (when expressions reference $WL/$MJD)
+    # `$WL`/`$MJD` are NaN when the caller passes none, as in a derived parameter.
     _wl  = isnothing(wl)  ? NaN : wl
     _mjd = isnothing(mjd) ? NaN : mjd
-    pv = model.resolver.fn(x, _wl, _mjd)
 
+    # Precision follows the caller: the parameters and the uv coordinates. Float32 against
+    # Float32 gives Float32, Float64 gives Float64, and a ForwardDiff Dual parameter vector
+    # promotes to Dual so gradients flow. The resolved parameters are stored in it too.
+    T  = eltype(x) <: Real ? promote_type(eltype(x), float(eltype(uv))) : Float64
+    rp = _resolve(model, x, _wl, _mjd, size(uv, 2), T)
+    return _eval_model(model, rp, uv, _wl, _mjd, n, plane_wl)
+end
+
+# Everything after the resolver, behind a function barrier: concretely typed by the
+# parameters' element type and the uv matrix, never by the model instance.
+function _eval_model(model::FlatModel, rp::ResolvedParams{T}, uv::AbstractMatrix,
+                     _wl, _mjd, n::Int, plane_wl) where {T}
     nB = size(uv, 2)
     u_raw = @view uv[1,:]
     v_raw = @view uv[2,:]
     ρ  = @. sqrt(u_raw^2 + v_raw^2)   # cycles/rad
     B  = ρ ./ _MAS2RAD_PM             # cycles/mas (for Hankel)
-
-    # Accumulator precision follows the caller: the parameters and the uv coordinates.
-    # Float32 parameters against Float32 uv give a Float32 result, Float64 gives Float64, and
-    # a ForwardDiff Dual parameter vector promotes to Dual so gradients still flow.
-    #
-    # eltype(pv) may be Any for chromatic models (mix of scalars and vectors), and the
-    # per-component f/Vi may be Float64 regardless (model constants are parsed as Float64).
-    # That is fine: V is preallocated and every component is accumulated with an in-place
-    # `@. V += ...`, so the accumulator's element type governs the result.
-    T  = eltype(x) <: Real ? promote_type(eltype(x), float(eltype(uv))) : Float64
     V  = zeros(Complex{T}, nB)
 
-    for comp in model.components
-        f = comp.f_idx == 0 ? 1.0 : pv[comp.f_idx]
-
-        # ── UV stretching for inclination / position angle ──────────────
-        if comp.incl_idx != 0 || comp.pa_idx != 0
-            incl_rad = (comp.incl_idx != 0 ? pv[comp.incl_idx] : 0.0) * π / 180
-            pa_rad   = (comp.pa_idx   != 0 ? pv[comp.pa_idx]   : 0.0) * π / 180
-            # PMOIRED convention: rot = -PA, compress u' by cos(incl)
-            # u' = cos(incl) * ( cos(PA)*u - sin(PA)*v )
-            # v' = sin(PA)*u + cos(PA)*v
-            u_comp = @. cos(incl_rad) * (cos(pa_rad) * u_raw - sin(pa_rad) * v_raw)
-            v_comp = @. sin(pa_rad) * u_raw + cos(pa_rad) * v_raw
-            ρ_comp = @. sqrt(u_comp^2 + v_comp^2)
-            B_comp = ρ_comp ./ _MAS2RAD_PM
-        else
-            u_comp = u_raw
-            v_comp = v_raw
-            ρ_comp = ρ
-            B_comp = B
-        end
-
-        # ── Compute visibility for this component ──────────────────────
-        if comp isa VisFuncSpec
-            # `$B` is in Mλ: ρ is cycles/rad, which IS baseline/λ, and the observable plots
-            # divide it by 1e6 and label the axis Mλ. A formula copied from a paper is written
-            # in those units, so the expression is evaluated in them.
-            # `$WL` and `$MJD` are the same per-uv-point values the resolver was given, or NaN
-            # when the caller passed none -- as they are in a derived parameter.
-            params = pv[comp.param_idx]
-            Vi = comp.vis_fn(ρ_comp ./ 1e6, _wl, _mjd, params...)
-
-        elseif comp isa AnalyticSpec && comp.kind == :crescent
-            # Crescent needs (u,v) for internal offset phase shifts
-            params = pv[comp.param_idx]
-            Vi = _vis_crescent(params, u_comp, v_comp)
-
-        elseif comp isa AnalyticSpec
-            params = pv[comp.param_idx]          # small Vector, on stack
-            Vi = comp.vis_fn(params, ρ_comp)
-
-        elseif comp isa HankelSpec
-            prof_params = pv[comp.profile_param_idx]
-            I_raw = comp.profile_fn(comp.r_grid, comp.mu_grid, prof_params...)
-            # Ensure I is a vector (constant profiles like "1" return a scalar)
-            I = I_raw isa Number ? fill(Float64(I_raw), length(comp.r_grid)) : I_raw
-
-            if isempty(comp.az_modes)
-                Vi = hankel_vis(I, comp.r_grid, B_comp; n)
-            else
-                # Azimuthal variations: V = H₀/N + Σ amp·(-j)^n·Hₙ/N·cos(n·(ψ+φ-π/2))
-                #
-                # PMOIRED's convention, term for term: `_Vazvar` in its oimodels.py computes
-                # `amp * (-1j)**n * Hankel(n) * cos(n*(_PA + phi*pi/180 - pi/2))` with
-                # `_PA = arctan2(_v, _u)`, and its image-domain brightness is the matching
-                # `1 + amp*cos(n*(PA + phi*pi/180 - pi/2))`. A `projang` therefore means the
-                # same angle in both packages and a model can move between them unchanged.
-                N_h = hankel_norm(I, comp.r_grid)
-                Vi  = complex.(hankel_transform(I, comp.r_grid, B_comp; n=0) ./ N_h)
-                ψ   = @. atan(v_comp, u_comp)    # UV position angle
-                for az in comp.az_modes
-                    amp_val = pv[az.amp_idx]
-                    phi_rad = pv[az.phi_idx] * π / 180
-                    Hn = hankel_transform(I, comp.r_grid, B_comp; n=az.order) ./ N_h
-                    @. Vi += amp_val * (-1im)^az.order * Hn *
-                             cos(az.order * (ψ + phi_rad - π/2))
-                end
-            end
-        end
-
-        # ── Position offset → phase shift ──────────────────────────────
-        if comp.x_idx != 0 || comp.y_idx != 0
-            dx = comp.x_idx != 0 ? pv[comp.x_idx] : 0.0
-            dy = comp.y_idx != 0 ? pv[comp.y_idx] : 0.0
-            phase = @. -2π * (u_raw * dx + v_raw * dy) / _MAS2RAD_PM
-            @. V += f * Vi * cis(phase)
-        else
-            @. V += f * Vi
-        end
+    # One dynamic dispatch per component, on its type and on whether any of its parameters is
+    # per uv point (the chromatic path, where every one of its parameters is a vector).
+    for (c, comp) in enumerate(model.components)
+        _add_component!(V, comp, rp, Val(model.chromatic[c]), uv, u_raw, v_raw, ρ, B,
+                        _wl, _mjd, n, plane_wl)
     end
 
     # ── Spatial kernel (Gaussian smoothing in visibility space) ─────────
     if model.kernel_idx != 0
-        kern_fwhm = pv[model.kernel_idx]
-        σ_kern = kern_fwhm / 2          # half-width; see `_vis_gaussian`
-        t_kern = @. π * σ_kern * ρ / _MAS2RAD_PM
-        @. V *= exp(-t_kern^2 / log(2))
+        k = rp.slot[model.kernel_idx]
+        k > 0 ? _apply_kernel!(V, rp.s[k], ρ) : _apply_kernel!(V, rp.cols[-k], ρ)
     end
-
     return V
+end
+
+function _apply_kernel!(V, kern_fwhm, ρ)
+    σ_kern = kern_fwhm / 2          # half-width; see `_vis_gaussian`
+    t_kern = @. π * σ_kern * ρ / _MAS2RAD_PM
+    @. V *= exp(-t_kern^2 / log(2))
+    return V
+end
+
+@inline _one(::ResolvedParams{T}, ::Val{false}) where {T} = one(T)
+@inline _one(rp::ResolvedParams{T}, ::Val{true}) where {T} = fill(one(T), rp.n)
+@inline _zero(::ResolvedParams{T}, ::Val{false}) where {T} = zero(T)
+@inline _zero(rp::ResolvedParams{T}, ::Val{true}) where {T} = fill(zero(T), rp.n)
+
+function _add_component!(V, comp, rp, ch, uv, u_raw, v_raw, ρ, B, _wl, _mjd, n, plane_wl)
+    # ── UV stretching for inclination / position angle ──────────────
+    geom = (comp.incl_idx != 0 || comp.pa_idx != 0) ? _stretch(comp, rp, ch, u_raw, v_raw) :
+                                                        (u_raw, v_raw, ρ, B)
+    # ── Compute visibility for this component ──────────────────────
+    Vi = _component_vis(comp, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
+    f  = comp.f_idx == 0 ? _one(rp, ch) : _par(rp, comp.f_idx, ch)
+    _shift_add!(V, f, Vi, comp, rp, ch, u_raw, v_raw)
+    return V
+end
+
+function _stretch(comp, rp, ch, u_raw, v_raw)
+    incl_rad = (comp.incl_idx != 0 ? _par(rp, comp.incl_idx, ch) : _zero(rp, ch)) * π / 180
+    pa_rad   = (comp.pa_idx   != 0 ? _par(rp, comp.pa_idx,   ch) : _zero(rp, ch)) * π / 180
+    # PMOIRED convention: rot = -PA, compress u' by cos(incl)
+    # u' = cos(incl) * ( cos(PA)*u - sin(PA)*v )
+    # v' = sin(PA)*u + cos(PA)*v
+    u_comp = @. cos(incl_rad) * (cos(pa_rad) * u_raw - sin(pa_rad) * v_raw)
+    v_comp = @. sin(pa_rad) * u_raw + cos(pa_rad) * v_raw
+    ρ_comp = @. sqrt(u_comp^2 + v_comp^2)
+    B_comp = ρ_comp ./ _MAS2RAD_PM
+    return (u_comp, v_comp, ρ_comp, B_comp)
+end
+
+# ── Position offset → phase shift, and the flux-weighted sum ──────────
+function _shift_add!(V, f, Vi, comp, rp, ch, u_raw, v_raw)
+    if comp.x_idx != 0 || comp.y_idx != 0
+        dx = comp.x_idx != 0 ? _par(rp, comp.x_idx, ch) : _zero(rp, ch)
+        dy = comp.y_idx != 0 ? _par(rp, comp.y_idx, ch) : _zero(rp, ch)
+        phase = @. -2π * (u_raw * dx + v_raw * dy) / _MAS2RAD_PM
+        @. V += f * Vi * cis(phase)
+    else
+        @. V += f * Vi
+    end
+    return V
+end
+
+_params(rp, idx, ch) = [_par(rp, i, ch) for i in idx]
+
+function _component_vis(comp::ImageSpec, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
+    # Computed once per uv set and cached: only f and the shift change in a fit. The plane by
+    # `plane_wl`, which is `wl` except within a smeared channel: there every sub-wavelength
+    # belongs to the channel's own plane.
+    return model_image_vis(comp.image, uv; wl = plane_wl, mjd = _mjd, cache = comp.cache,
+                           name = comp.comp_name)
+end
+
+function _component_vis(comp::VisFuncSpec, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
+    # `$B` is in Mλ: ρ is cycles/rad, which IS baseline/λ, and the observable plots divide it
+    # by 1e6 and label the axis Mλ. A formula copied from a paper is written in those units,
+    # so the expression is evaluated in them. `$WL` and `$MJD` are the same per-uv-point
+    # values the resolver was given, or NaN when the caller passed none.
+    ρ_comp = geom[3]
+    return comp.vis_fn(ρ_comp ./ 1e6, _wl, _mjd, _params(rp, comp.param_idx, ch)...)
+end
+
+function _component_vis(comp::AnalyticSpec{:crescent}, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
+    # Crescent needs (u,v) for internal offset phase shifts
+    return _vis_crescent(_params(rp, comp.param_idx, ch), geom[1], geom[2])
+end
+
+function _component_vis(comp::AnalyticSpec{K}, rp, ch, geom, uv, _wl, _mjd, n,
+                        plane_wl) where {K}
+    return _vis_kernel(Val(K), _params(rp, comp.param_idx, ch), geom[3])
+end
+
+function _component_vis(comp::HankelSpec, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
+    # A profile's parameters are scalars (`dict_to_model` refuses chromatic ones).
+    prof_params = _params(rp, comp.profile_param_idx, Val(false))
+    I_raw = comp.profile_fn(comp.r_grid, comp.mu_grid, prof_params...)
+    # A vector of a known type, whatever the generated profile returned: a constant profile
+    # like "1" returns a scalar, and the call itself is not inferred.
+    Ti = promote_type(eltype(prof_params), eltype(comp.r_grid))
+    I = I_raw isa Number ? fill(Ti(I_raw), length(comp.r_grid)) : convert(Vector{Ti}, I_raw)
+    return _hankel_component_vis(comp, I::Vector{Ti}, rp, ch, geom, n)
+end
+
+function _hankel_component_vis(comp::HankelSpec, I, rp, ch, geom, n)
+    u_comp, v_comp, _, B_comp = geom
+    # The data's own baselines: the transform matrices are cached per uv set. With an
+    # inclination or position angle B moves with the parameters, and the transform is direct.
+    if comp.incl_idx == 0 && comp.pa_idx == 0
+        cache = comp.kcache
+        N_h = hankel_norm(I, comp.r_grid)
+        V0  = (_hkernel(cache, comp.r_grid, B_comp, n, false) * I) ./ N_h
+        isempty(comp.az_modes) && return V0
+        Vi  = complex.(_hkernel(cache, comp.r_grid, B_comp, 0, false) * I ./ N_h)
+        ψ   = @. atan(v_comp, u_comp)
+        for az in comp.az_modes
+            amp_val = _par(rp, az.amp_idx, ch)
+            phi_rad = _par(rp, az.phi_idx, ch) * π / 180
+            Hn = (_hkernel(cache, comp.r_grid, B_comp, az.order, false) * I) ./ N_h
+            @. Vi += amp_val * (-1im)^az.order * Hn * cos(az.order * (ψ + phi_rad - π/2))
+        end
+        return Vi
+    end
+    isempty(comp.az_modes) && return hankel_vis(I, comp.r_grid, B_comp; n)
+    # Azimuthal variations: V = H₀/N + Σ amp·(-j)^n·Hₙ/N·cos(n·(ψ+φ-π/2))
+    #
+    # PMOIRED's convention, term for term: `_Vazvar` in its oimodels.py computes
+    # `amp * (-1j)**n * Hankel(n) * cos(n*(_PA + phi*pi/180 - pi/2))` with
+    # `_PA = arctan2(_v, _u)`, and its image-domain brightness is the matching
+    # `1 + amp*cos(n*(PA + phi*pi/180 - pi/2))`. A `projang` therefore means the
+    # same angle in both packages and a model can move between them unchanged.
+    N_h = hankel_norm(I, comp.r_grid)
+    Vi  = complex.(hankel_transform(I, comp.r_grid, B_comp; n=0) ./ N_h)
+    ψ   = @. atan(v_comp, u_comp)    # UV position angle
+    for az in comp.az_modes
+        amp_val = _par(rp, az.amp_idx, ch)
+        phi_rad = _par(rp, az.phi_idx, ch) * π / 180
+        Hn = hankel_transform(I, comp.r_grid, B_comp; n=az.order) ./ N_h
+        @. Vi += amp_val * (-1im)^az.order * Hn *
+                 cos(az.order * (ψ + phi_rad - π/2))
+    end
+    return Vi
 end
 
 """
@@ -1085,7 +1273,83 @@ const model_to_vis = eval_model
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# eval_model_grad  (Jacobian ∂V/∂x via ForwardDiff)
+# eval_model_sub  (bandwidth smearing: the model across each channel)
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    sub_scales(wl, dlam, nsub) -> Matrix{Float64}
+
+How a channel is sampled for bandwidth smearing: `N × nsub` factors by which each point's uv
+(its baseline over the channel's central wavelength `wl`) is multiplied at each
+sub-wavelength, which is `wl / factor`. The channel `wl ± dlam/2` is cut into `nsub` equal
+steps in wavenumber and sampled at their midpoints. A point with no width keeps factor 1.
+"""
+function sub_scales(λ::AbstractVector, Δ::AbstractVector, ns::Integer)
+    T = float(promote_type(eltype(λ), eltype(Δ)))
+    S = ones(T, length(λ), ns)
+    for k in 1:ns, i in eachindex(λ)
+        λi, Δi = T(λ[i]), T(Δ[i])
+        isfinite(Δi) && 0 < Δi < 2λi || continue
+        σlo, σhi = 1 / (λi + Δi / 2), 1 / (λi - Δi / 2)
+        S[i, k] = λi * (σlo + (k - 0.5) / ns * (σhi - σlo))
+    end
+    return S
+end
+
+"""
+    eval_model_sub(model, x, uv; wl, dlam, mjd = nothing, nsub = model.smear, n = 0)
+        -> Matrix{Complex{T}}
+
+The model's visibilities across each spectral channel: an `N × nsub` matrix whose column `k`
+holds every uv point at its channel's `k`-th sub-wavelength.
+
+A channel is `wl ± dlam/2` (metres, per point or one value for all), sampled at the midpoints
+of `nsub` equal steps in WAVENUMBER, a flat spectrum across the channel. A point's uv,
+which is its baseline over the channel's central wavelength, is rescaled to each
+sub-wavelength, and `\$WL` takes the sub-wavelength. An image component keeps the channel's
+own plane at every sub-wavelength. A point with no width (`dlam` 0 or not finite) repeats its
+central value.
+
+The observables are averaged over the columns — V² as the mean of |V|², a triple product as
+the mean of the products — which is what a power-spectrum estimator measures across a channel
+and how PMOIRED and CANDID model bandwidth smearing. The χ² functions, `residuals_flat` and
+`model_to_obs` do that for a model with `"smear" => nsub` (2 or more) when the data carry
+channel widths.
+"""
+function eval_model_sub(model::FlatModel, x::AbstractVector, uv::AbstractMatrix;
+                        wl, dlam, mjd = nothing, nsub::Integer = model.smear, n::Int = 0)
+    N  = size(uv, 2)
+    ns = max(Int(nsub), 1)
+    λ  = wl isa AbstractVector ? wl : fill(wl, N)
+    Δ  = dlam isa AbstractVector ? dlam : fill(dlam, N)
+    length(λ) == N && length(Δ) == N ||
+        throw(DimensionMismatch("eval_model_sub: $N uv points, $(length(λ)) wavelengths, " *
+                                "$(length(Δ)) channel widths"))
+    uvs, wls, mjds, plane = _sub_points(uv, λ, Δ, mjd, ns)
+    V = eval_model(model, x, uvs; wl = wls, mjd = mjds, n, plane_wl = plane)
+    return reshape(V, N, ns)
+end
+
+# The sub-wavelength points of `eval_model_sub`, all `nsub` of them in one array: point `i` at
+# sub-wavelength `k` is column `(k-1)N + i`. With the wavelength each is evaluated at, its
+# epoch, and the channel wavelength its image plane is chosen by.
+function _sub_points(uv, λ, Δ, mjd, ns)
+    N = size(uv, 2)
+    S = sub_scales(λ, Δ, ns)
+    uvs = similar(uv, size(uv, 1), N * ns)
+    wls = Vector{eltype(S)}(undef, N * ns)
+    for k in 1:ns, i in 1:N
+        j = (k - 1) * N + i
+        @views uvs[:, j] .= uv[:, i] .* S[i, k]
+        wls[j] = λ[i] / S[i, k]
+    end
+    mjds = mjd === nothing ? nothing : repeat(mjd isa AbstractVector ? mjd : fill(mjd, N), ns)
+    return uvs, wls, mjds, repeat(λ, ns)
+end
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# eval_model_grad  (Jacobian ∂V/∂x)
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
@@ -1098,32 +1362,38 @@ Returns
 V : complex visibility vector (length nB)
 J : Jacobian, Matrix{Complex{T}} of shape (nB, length(x)); T follows x and uv
 
-Uses ForwardDiff for the resolver and analytic components; for Hankel
-components uses the cached-K chain rule via hankel_vis_fwd! + pullback.
-This is more efficient than naive ForwardDiff through the full Hankel loop
-when nB is large, since Bessel evaluations are shared across parameters.
+From closed-form derivatives, by [`eval_model_jac`](@ref). Parameters that are not
+floating-point numbers (a ForwardDiff Dual, when a Hessian is taken through this function)
+and Bessel orders `n ≠ 0` go through [`eval_model_grad_ad`](@ref).
 """
-function eval_model_grad(model::FlatModel,
-                          x::AbstractVector,
-                          uv::AbstractMatrix;
-                          wl  = nothing,
-                          mjd = nothing,
-                          n::Int = 0)
+function eval_model_grad(model::FlatModel, x::AbstractVector, uv::AbstractMatrix;
+                         n::Int = 0, kw...)
+    (n == 0 && eltype(x) <: Union{AbstractFloat, Integer} &&
+     eltype(uv) <: Union{AbstractFloat, Integer}) ||
+        return eval_model_grad_ad(model, x, uv; n, kw...)
+    return eval_model_jac(model, x, uv; kw...)
+end
+
+"""
+    eval_model_grad_ad(model, x, uv; wl=nothing, mjd=nothing, n=0) -> (V, J)
+
+[`eval_model_grad`](@ref) by ForwardDiff through [`eval_model`](@ref): the reference the
+closed-form [`eval_model_jac!`](@ref) is tested against.
+"""
+function eval_model_grad_ad(model::FlatModel,
+                            x::AbstractVector,
+                            uv::AbstractMatrix;
+                            wl  = nothing,
+                            mjd = nothing,
+                            n::Int = 0,
+                            plane_wl = wl)
 
     nB    = size(uv, 2)
-    n_par = length(x)
 
-    # ── Strategy: ForwardDiff through the full eval_model call ──────────────
-    # This is correct and simple.  For Hankel components with many params,
-    # the hankel_vis_fwd! + pullback strategy (Strategy B in the benchmark)
-    # would be faster; that upgrade path is left for a later iteration.
-    #
-    # We split real and imaginary parts because ForwardDiff works on real
-    # arrays; ComplexF64 dual numbers are not directly supported.
+    # ForwardDiff works on real arrays, so the real and imaginary parts are stacked.
     # wl and mjd are captured as constants — not differentiated.
-
     function eval_real(x_)
-        V = eval_model(model, x_, uv; wl, mjd, n)
+        V = eval_model(model, x_, uv; wl, mjd, n, plane_wl)
         return [real.(V); imag.(V)]   # 2nB-vector, eltype follows x and uv
     end
 
@@ -1134,21 +1404,9 @@ function eval_model_grad(model::FlatModel,
     J_im = J_ri[nB+1:end, :]
     J    = complex.(J_re, J_im)
 
-    V = eval_model(model, x, uv; wl, mjd, n)
+    V = eval_model(model, x, uv; wl, mjd, n, plane_wl)
     return V, J
 end
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# eval_model_grad_hankel!  (zero-allocation Hankel gradient, for later)
-# ─────────────────────────────────────────────────────────────────────────────
-# Stub — to be filled when the full chi2 loop is implemented.
-# The pattern is:
-#   for each HankelSpec:
-#     N = hankel_vis_fwd!(ws.V, ws.K, I, r, B)
-#     ForwardDiff.jacobian!(ws.dI_dp, p -> profile_fn(r, mu, p...), prof_params)
-#     hankel_grad_params!(dL_dp_comp, ȳ_f, ws.V, ws.K, N, ws.w, r, ws.dI_dp)
-#     accumulate into full ∂L/∂x via resolver Jacobian
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1161,6 +1419,10 @@ function Base.show(io::IO, model::FlatModel)
         if comp isa AnalyticSpec
             println(io, "  $(comp.comp_name) [$(comp.kind)]  " *
                     "param_idx=$(comp.param_idx)  f_idx=$(comp.f_idx)")
+        elseif comp isa ImageSpec
+            mi = comp.image
+            println(io, "  $(comp.comp_name) [image]  $(basename(mi.path))  " *
+                    "$(join(size(mi.image), "×"))  $(mi.pixsize) mas/px  f_idx=$(comp.f_idx)")
         elseif comp isa HankelSpec
             Nr = length(comp.r_grid)
             println(io, "  $(comp.comp_name) [hankel]  " *
@@ -1171,6 +1433,11 @@ function Base.show(io::IO, model::FlatModel)
     if model.kernel_idx != 0
         println(io, "  spatial_kernel: idx=$(model.kernel_idx)")
     end
+    model.smear >= 2 && println(io, "  smear: $(model.smear) sub-wavelengths per channel" *
+                                    (model.smear_coherent ? ", coherent" : ""))
+    model.smear == -1 && println(io, "  smear: auto, for an extent of " *
+                                     "$(round(model.smear_radius; sigdigits = 3)) mas" *
+                                     (model.smear_coherent ? ", coherent" : ""))
     println(io, "  list_free_params: $(model.list_free_params)")
     println(io, "  all_names:  $(model.all_names)")
 end

@@ -7,6 +7,9 @@
 | `dict_to_model(model_dict, list_free_params)` | Compile a flat parameter dict into a `FlatModel` |
 | `model_to_vis(model, x, uv)` | Evaluate complex visibilities for a model (alias: `eval_model`) |
 | `eval_model_grad(model, x, uv)` | Evaluate visibilities + Jacobian |
+| `eval_model_jac!(V, J, ws, model, x, uv)` | Visibilities + Jacobian from closed-form derivatives, in place (`ws = ModelJacWorkspace(model, x, uv)`) |
+| `ModelJacCache()` | The Jacobian's buffers kept between calls; `jac_cache` of `chi2_flat_fg` and `residuals_flat_jac` |
+| `eval_model_sub(model, x, uv; wl, dlam)` | Visibilities across each spectral channel, for bandwidth smearing |
 | `display_model(model_dict, list_free_params)` | Pretty-print model parameters |
 | `fit_model(model, x0, data)` | Fit a `FlatModel` via NLopt |
 | `fit_model_lsqfit(model, x0, data)` | Fit a `FlatModel` via Levenberg-Marquardt |
@@ -25,6 +28,53 @@ Which package each fitter needs is tabulated under
 | `model_to_image(model, x; nx, pixsize)` | Synthesize a model image via inverse FFT |
 | `model_to_sed(model, x, wl_grid)` | Compute spectral energy distribution |
 | `model_to_flux(model, x; wl)` | Total flux at zero baseline: `real(V(0,0))` |
+
+### Bandwidth smearing
+
+A model with the global key `"smear" => n` (2 or more) is averaged over each spectral channel
+wherever it meets data: `model_to_chi2`, its gradient, `residuals_flat`, `model_to_obs`, every
+fitter built on them, and `simulate_from_oifits`. Each channel, `EFF_WAVE ± EFF_BAND/2`, is
+sampled at `n` sub-wavelengths, evenly in wavenumber; V² is the channel mean of |V|², a triple
+product the mean of the products, a visibility the mean visibility. That is what a
+power-spectrum estimator measures across a channel, and how PMOIRED and CANDID model it. It
+matters for a companion near or beyond the smearing radius `R λ / (2 B_max)` and for a
+visibility null, which it fills in. Absent, 0 or 1, nothing changes. SPARCO's image + model
+criterion refuses a smeared model.
+
+`"smear" => "auto"` chooses `n` per dataset by CANDID's rule — four samples per cycle of the
+largest phase change across a channel, at least 3 — for a point at the model's extent (each
+component's offset plus half its size, as the dict holds them when the model is compiled);
+[`smear_samples`](@ref) reports the number.
+
+`"smear_mode" => "coherent"` averages the visibility over the channel instead and forms the
+observables from that average: what an ABCD / coherent-flux measurement gives (GRAVITY), and
+how CANDID models smearing. The default, `"incoherent"`, suits power-spectrum estimators
+(fringe-scanning combiners). Lachaume & Berger (2013, MNRAS 435, 2501) show the smearing of
+V² and closure phase depends on the fringe encoding and the estimator; each is an
+approximation to a given instrument. For a binary the two differ by f²(1 − sinc²).
+
+## Companion search
+
+| Function | Description |
+|----------|-------------|
+| `companion_search(model_dict, data; companion, free, ...)` | Grid search for a companion around any primary (a disc, an image, anything): the companion fitted at every node, a χ² map, the best node and its significance |
+| `companion_grid(model_dict, data; companion, step, rmin, rmax, mask)` | The grid `companion_search` would search, with its defaults, and how many nodes it holds |
+| `companion_flux_map(search)` | The companion's fitted flux at every node |
+| `detection_sigma(chi2r_null, chi2r_best, ndof)` | CANDID's significance convention: the null model's χ² against a χ² distribution, as Gaussian σ |
+
+Only the companion's flux free is the fast path (CANDID's `chi2Map`): the model is linear in
+it, so a node is a 1-D fit (BraDi, or Halley with a BraDi fallback). Anything else free at a
+node — the primary's diameter, a companion diameter — runs VMLMB with bounds. The grid
+defaults come from the data: step λ/(2B_max), out to the smearing radius Rλ/(2B_max); an image
+primary's bright pixels are masked. Bandwidth smearing follows the model's `"smear"`.
+
+```@docs
+companion_search
+companion_grid
+CompanionSearch
+companion_flux_map
+detection_sigma
+```
 
 ## Bounds, constraints and model files
 
@@ -111,6 +161,13 @@ parse_model
 model_to_vis
 eval_model
 eval_model_grad
+eval_model_grad_ad
+eval_model_jac!
+eval_model_jac
+ModelJacWorkspace
+ModelJacCache
+eval_model_sub
+smear_samples
 display_model
 default_bounds
 DEFAULT_MAX_SIZE_MAS

@@ -21,15 +21,21 @@ cd "$(dirname "$0")/../.."
 WIN_W=1400;          WIN_H=950
 DATASET_BOX="216 14"
 TAB_EXPLORE="175 40"; TAB_MODEL="875 40";  TAB_IMAGE="1224 40"
-KIND_BOX="80 68";    COLOR_BOX="253 68"
-RESID_MODEL="333 68"; RESID_IMAGE="441 68"; OVER_MODEL="549 68"; OVER_IMAGE="641 68"
-MAX_BL="735 68";     LOG_Y="842 68";       PER_GROUP="905 68"; SAVE_PNG="1022 68"
-PLOT_CENTRE="740 415"                       # inside the axis on every view used below
-PICK_AT="327 567"                           # an AC0-AE0 point on the V² plot of 2004-data1
+# The frame: Plot and Colour menus, the three ticks, the Compare radio group (the Dataset
+# section is below them, so its length never moves these).
+KIND_BOX="133 96";   COLOR_BOX="133 123"
+LOG_Y="26 152";      PER_GROUP="26 182";   MAX_BL="26 212"
+DATA_ONLY="26 284";  OVER_MODEL="26 311";  OVER_IMAGE="26 338"
+RESID_MODEL="26 365"; RESID_IMAGE="26 392"
+SAVE_PNG="1355 66"                          # on the plot, top right
+KIND_MENU_VISAMP="100 206"                  # the visamp row of the open Plot menu
+PLOT_CENTRE="840 415"                       # inside the axis on every view used below
+PICK_AT="514 598"                           # an AC0-AE0 point on the V² plot of 2004-data1
 MODEL_OPEN="147 68"; MODEL_CARD_REMOVE="214 103"
 # The model picker's field is read-only when opening, so a model is chosen from the list: the
-# "OITOOLS models" place, then its first row (Limb_Darkened_Disk_Claret4.toml).
-MODEL_PLACE="428 432"; MODEL_FIRST_ROW="595 371"
+# "OITOOLS models" place, then its second file row (Limb_Darkened_Disk_Claret4.toml; the first
+# is AX_Cir_Binary.toml).
+MODEL_PLACE="428 432"; MODEL_ROW="595 389"
 NEUTRAL="1300 900"                          # somewhere no tooltip lives
 SAVE_NAME_FIELD="645 630"                   # the Save PNG picker's name field
 IMAGE_RUN="18 893"
@@ -132,9 +138,9 @@ for c in wav mjd; do KIND v2; COLOR "$c"; SHOT "08_v2_colour_$c"; done
 COLOR baseline
 
 # ── C2: a kind the file lacks is disabled and says why ─────────────────────────────────
-CL "$KIND_BOX" 1; HOVER "70 177"; SHOT 09_kind_menu_visamp_disabled; KEY Escape
+CL "$KIND_BOX" 1; HOVER "$KIND_MENU_VISAMP"; SHOT 09_kind_menu_visamp_disabled; KEY Escape
 
-# ── C6: compare ticks disabled with their reasons, before any model or image ───────────
+# ── C6: compare choices disabled with their reasons, before any model or image ─────────
 KIND v2
 HOVER "$RESID_IMAGE"; SHOT 10_resid_image_tooltip_no_image
 
@@ -157,7 +163,7 @@ KEY ctrl+a; TYPE "$WORK/explore_v2.png"; KEY Return
 sleep 6; SHOT 16_after_save
 
 # ── a model, opened through the Model tab ──────────────────────────────────────────────
-CL "$TAB_MODEL" 2; CL "$MODEL_OPEN" 2; CL "$MODEL_PLACE" 1.5; CL "$MODEL_FIRST_ROW" 1
+CL "$TAB_MODEL" 2; CL "$MODEL_OPEN" 2; CL "$MODEL_PLACE" 1.5; CL "$MODEL_ROW" 1
 KEY Return; sleep 4; SHOT 17_model_loaded
 CL "$TAB_EXPLORE" 2
 
@@ -165,15 +171,15 @@ CL "$TAB_EXPLORE" 2
 KIND v2
 CL "$OVER_MODEL" 3;  SHOT 18_v2_model_obs
 CL "$RESID_MODEL" 3; SHOT 19_v2_resid_model_clears_model_obs
-# D5: unticking the residual box leaves the residuals on screen (GUI_Explore.md §2.6).
-CL "$RESID_MODEL" 3; SHOT 19b_untick_resid_model_D5
+# D5 (fixed): back to "data only" returns to the data, not the residuals.
+CL "$DATA_ONLY" 3; SHOT 19b_untick_resid_model_D5
 KIND uv; HOVER "$RESID_MODEL"; SHOT 20_uv_compare_tooltip
 KIND v2
 
 # ── an image, reconstructed in the Image tab ───────────────────────────────────────────
 CL "$TAB_IMAGE" 2; CL "$IMAGE_RUN" 25; SHOT 21_image_done
 CL "$TAB_EXPLORE" 2
-# D4: the image boxes stay disabled until Explore itself does something.
+# D4 (fixed): the image choices are enabled as soon as Explore is shown again.
 HOVER "$OVER_IMAGE"; SHOT 21b_image_obs_still_disabled_D4
 KIND v2
 CL "$OVER_IMAGE" 3;  SHOT 22_v2_image_obs
@@ -185,8 +191,8 @@ MENU "$DATASET_BOX" 0; sleep 3; SHOT 26_data1_after_visamp
 KIND v2
 
 # ── C7: the model goes away while its residuals are shown ──────────────────────────────
-# Last, because today it leaves Explore stuck (D6): the tick clears but the shell stays in
-# residual mode, and every later view fails with "! no model".
+# Last: it used to leave Explore stuck (D6) -- the choice cleared but the shell stayed in
+# residual mode, and every later view failed with "! no model". Checked below.
 CL "$RESID_MODEL" 3; SHOT 23b_resid_model_on
 CL "$TAB_MODEL" 2; CL "$MODEL_CARD_REMOVE" 3; CL "$TAB_EXPLORE" 3
 SHOT 24_after_model_removed
@@ -228,11 +234,11 @@ if awk '/plot visamp, coloured by baseline/{f=1; next} f && /> plot /{print; exi
        | grep -qF "plot uv, coloured by baseline"; then
     echo "  PASS  C3 falls back to uv on a file without visamp"
 else echo "  FAIL  C3 no fall-back to uv after switching to a file without visamp"; FAIL=1; fi
-# Known defect D6, reported rather than failed: when fixed, this line says so.
+# D6, fixed: after the model is removed, Explore's next view is drawn, not "! no model".
 if tail -6 "$DUMP" | grep -q "! no model"; then
-    echo "  KNOWN D6 Explore stuck on '! no model' after the model was removed"
+    echo "  FAIL  D6 Explore stuck on '! no model' after the model was removed"; FAIL=1
 else
-    echo "  NOTE  D6 no longer reproduces — update GUI_Explore.md §2.6"; fi
+    echo "  PASS  D6 Explore recovers after the model is removed"; fi
 
 # P3: the reset view is the view before zooming, pixel for pixel, apart from the pick label.
 if command -v compare >/dev/null; then

@@ -90,7 +90,7 @@
 #     during the run, per thread, exactly as `_nested_pieces` does for UltraNest.
 
 """
-    _nautilus_pieces(fm, data, weights, vonmises, cons, constraint_idx, lbounds, ubounds)
+    _nautilus_pieces(fm, data, weights, cons, constraint_idx, lbounds, ubounds)
 
 The prior transform and log-likelihood closures, plus the per-thread slots that track the best
 point seen.
@@ -101,7 +101,7 @@ safe index here for the usual reason: a task can only migrate at a yield point, 
 none between reading the id and writing the slot. `maxthreadid()` rather than `nthreads()`,
 since thread ids are numbered across every pool.
 """
-function _nautilus_pieces(fm, data, weights, vonmises, cons, constraint_idx, lbounds, ubounds)
+function _nautilus_pieces(fm, data, weights, cons, constraint_idx, lbounds, ubounds)
     Δx = ubounds .- lbounds
     prior_transform = u -> u .* Δx .+ lbounds
 
@@ -110,7 +110,7 @@ function _nautilus_pieces(fm, data, weights, vonmises, cons, constraint_idx, lbo
     best_x    = [Float64[] for _ in 1:nt]
 
     loglikelihood = function (param)
-        ll = -0.5 * (chi2_flat(fm, param, data; weights, vonmises) +
+        ll = -0.5 * (chi2_flat(fm, param, data; weights) +
                      constraint_penalty(param, cons, fm, constraint_idx))
         t = Threads.threadid()
         # `>` and not `>=`, so a NaN likelihood never becomes the best point.
@@ -124,7 +124,7 @@ function _nautilus_pieces(fm, data, weights, vonmises, cons, constraint_idx, lbo
 end
 
 function _nautilus_run(fm, list_free_params, data, lbounds, ubounds;
-                       weights, vonmises, cons, constraint_idx,
+                       weights, cons, constraint_idx,
                        n_live, n_eff, f_live, n_networks, discard_exploration,
                        n_like_max, timeout, equal_weight_boost, threaded, seed,
                        verb, cornerplot)
@@ -132,7 +132,7 @@ function _nautilus_run(fm, list_free_params, data, lbounds, ubounds;
     ndims = length(list_free_params)
 
     prior_transform, loglikelihood, best_logl, best_x =
-        _nautilus_pieces(fm, data, weights, vonmises, cons, constraint_idx, lbounds, ubounds)
+        _nautilus_pieces(fm, data, weights, cons, constraint_idx, lbounds, ubounds)
 
     smplr = Nautilus.Sampler(prior_transform, loglikelihood;
                              n_dim = ndims, n_live = n_live, n_networks = n_networks,
@@ -155,7 +155,7 @@ function _nautilus_run(fm, list_free_params, data, lbounds, ubounds;
 
     # The data chi2, without the constraint penalty that shaped the sampling — the convention
     # every other fitter reports.
-    minf = chi2_flat(fm, minx, data; weights, vonmises)
+    minf = chi2_flat(fm, minx, data; weights)
     ndof = _ndof(data, weights)
 
     # Equal-weight samples, so `NestedResult.posterior` means the same thing whichever backend
@@ -190,7 +190,6 @@ function _nautilus_fit(model_dict        ::Dict{String},
     ub                  = Dict{String,Float64}(),
     weights             = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints         = [],
-    vonmises            = false,
     nB_workspace        = nothing,
     n_live              = 500,
     n_eff               = 2000,
@@ -220,7 +219,7 @@ function _nautilus_fit(model_dict        ::Dict{String},
     constraint_idx  = [findfirst(==(k), fm.all_names) for k in constraint_keys]
 
     return _nautilus_run(fm, list_free_params, data, lbounds, ubounds;
-                         weights, vonmises, cons, constraint_idx,
+                         weights, cons, constraint_idx,
                          n_live, n_eff, f_live, n_networks, discard_exploration,
                          n_like_max, timeout, equal_weight_boost, threaded, seed,
                          verb, cornerplot)
@@ -234,7 +233,6 @@ function _nautilus_fit(model             ::FlatModel,
     ub                  = Dict{String,Float64}(),
     weights             = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints         = [],
-    vonmises            = false,
     n_live              = 500,
     n_eff               = 2000,
     f_live              = 0.01,
@@ -260,7 +258,7 @@ function _nautilus_fit(model             ::FlatModel,
     end
 
     return _nautilus_run(model, list_free_params, data, lbounds, ubounds;
-                         weights, vonmises, cons = ModelConstraint[], constraint_idx = Int[],
+                         weights, cons = ModelConstraint[], constraint_idx = Int[],
                          n_live, n_eff, f_live, n_networks, discard_exploration,
                          n_like_max, timeout, equal_weight_boost, threaded, seed,
                          verb, cornerplot)

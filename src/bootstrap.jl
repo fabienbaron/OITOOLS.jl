@@ -334,10 +334,6 @@ function apply_block_weights(data::OIdata, blocks::DataBlocks, w::AbstractVector
         for i in blocks.idx_t3[b]
             d.t3amp_err[i] /= s
             d.t3phi_err[i] /= s
-            if !isempty(d.t3phi_vonmises_err)
-                d.t3phi_vonmises_err[i] *= w[b]
-                d.t3phi_vonmises_chi2_offset[i] *= w[b]
-            end
         end
         for i in blocks.idx_flux[b]
             d.flux_err[i] /= s
@@ -423,8 +419,6 @@ function apply_block_counts(data::OIdata, blocks::DataBlocks, counts::Vector{Int
     d.t3amp_err                 = _reidx(data.t3amp_err,                  i3)
     d.t3phi                     = _reidx(data.t3phi,                      i3)
     d.t3phi_err                 = _reidx(data.t3phi_err,                  i3)
-    d.t3phi_vonmises_err        = _reidx(data.t3phi_vonmises_err,         i3)
-    d.t3phi_vonmises_chi2_offset= _reidx(data.t3phi_vonmises_chi2_offset, i3)
     d.t3_baseline               = _reidx(data.t3_baseline,                i3)
     d.t3_maxbaseline            = _reidx(data.t3_maxbaseline,             i3)
     d.t3_mjd                    = _reidx(data.t3_mjd,                     i3)
@@ -729,7 +723,7 @@ Monte Carlo or the analytic errors are the better tool.
   PMOIRED's scheme and is biased low by about √2 — comparison only
 - `granularity` — `:config` (default), `:epoch` or `:point`; see [`data_blocks`](@ref)
 - `fitter` — `:lsqfit` (default, Levenberg-Marquardt with analytic Jacobian) or `:nlopt`
-- `lb`, `ub`, `weights`, `vonmises`, `nB_workspace` — passed through to the fitter
+- `lb`, `ub`, `weights`, `nB_workspace` — passed through to the fitter
 - `method`, `maxeval` — NLopt settings (`fitter=:nlopt`)
 - `maxIter` — LsqFit iterations (`fitter=:lsqfit`)
 - `start_scatter` — perturb each replicate's starting point by this many σ of
@@ -765,7 +759,6 @@ function bootstrap_fit(model_dict       ::Dict{String},
     lb                      = Dict{String,Float64}(),
     ub                      = Dict{String,Float64}(),
     weights                 = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-    vonmises       ::Bool   = false,
     nB_workspace            = nothing,
     method         ::Symbol = :LD_LBFGS,
     maxeval        ::Int    = 2000,
@@ -786,12 +779,12 @@ function bootstrap_fit(model_dict       ::Dict{String},
     verb && println("Fitting the full dataset...")
     x_opt, x_sigma = if fitter == :lsqfit
         f = fit_model_lsqfit(model_dict, list_free_params, data;
-                             lb=lb, ub=ub, weights=weights, vonmises=vonmises,
+                             lb=lb, ub=ub, weights=weights,
                              nB_workspace=nB, maxIter=maxIter)
         f.x_opt, f.stderror
     else
         f = fit_model(model_dict, list_free_params, data;
-                      lb=lb, ub=ub, weights=weights, vonmises=vonmises,
+                      lb=lb, ub=ub, weights=weights,
                       nB_workspace=nB, method=method, maxeval=maxeval)
         f.x_opt, fill(NaN, npar)
     end
@@ -799,7 +792,7 @@ function bootstrap_fit(model_dict       ::Dict{String},
     if start_scatter > 0 && any(isnan, x_sigma)
         # need per-parameter scales for the starting-point perturbation
         f = fit_model_lsqfit(model_dict, list_free_params, data;
-                             lb=lb, ub=ub, weights=weights, vonmises=vonmises,
+                             lb=lb, ub=ub, weights=weights,
                              nB_workspace=nB, maxIter=maxIter)
         x_sigma = f.stderror
     end
@@ -824,9 +817,9 @@ function bootstrap_fit(model_dict       ::Dict{String},
              x_opt .+ start_scatter .* x_sigma .* randn(rng, npar) : x_opt
         r = fitter == :lsqfit ?
             fit_model_lsqfit(fm, x0, rd; lb=lb, ub=ub, weights=weights,
-                             vonmises=vonmises, maxIter=maxIter) :
+                             maxIter=maxIter) :
             fit_model(fm, x0, rd; lb=lb, ub=ub, weights=weights,
-                      vonmises=vonmises, method=method, maxeval=maxeval)
+                      method=method, maxeval=maxeval)
         return r.x_opt, r.chi2r
     end
 

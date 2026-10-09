@@ -162,6 +162,38 @@ Item {
         }
     }
 
+    // The selected image component's card, read back from Julia: what the file holds and how it
+    // is being read. Empty when the selection is not an image.
+    property var imageInfo: ({})
+    // True while the card's controls are being set FROM the model, so their change handlers
+    // do not send the same value straight back as an edit.
+    property bool imageSyncing: false
+
+    function refreshImage() {
+        root.imageInfo = {}
+        if (root.selectedComponent.length === 0 || root.selectedGeometryKey !== "image") return
+        var r = Julia.shell_image_info(root.selectedComponent)
+        if (r.charAt(0) === "!") { root.imageInfo = { error: r }; return }
+        var f = r.split("\t")
+        if (f.length !== 6) return
+        root.imageInfo = { path: f[0], summary: f[1], pixsize: parseFloat(f[2]),
+                           pixsource: f[3], norm: f[4], filenorm: f[5] }
+        // Set rather than bound: an edit breaks a binding, and the next component's values
+        // would then not show.
+        root.imageSyncing = true
+        imagePixField.text = isFinite(root.imageInfo.pixsize) ? String(root.imageInfo.pixsize) : ""
+        imageNormBox.currentIndex = f[4] === "plane" ? 1 : f[4] === "relative" ? 2 : 0
+        root.imageSyncing = false
+    }
+
+    function setImage(field, value) {
+        var e = Julia.shell_set_image(root.selectedComponent, field, value)
+        root.consoleChanged()
+        if (e.length > 0 && e.charAt(0) === "!") { root.fitText = e; refreshImage(); return }
+        root.modelDirty = true
+        refreshModel()
+    }
+
     function setGeometry(which, on) {
         var e = Julia.shell_set_component_geometry(root.selectedComponent, which, on)
         root.consoleChanged()
@@ -333,6 +365,52 @@ Item {
 
     property string chi2MapP1: ""
     property string chi2MapP2: ""
+    // "grid" for a χ² map over two parameters, "companion" for a companion search: the caption,
+    // the contours and the χ²ᵣ / flux toggle differ between the two.
+    property string chi2MapKind: ""
+    property string companionMapView: "chi2r"
+
+    // Components the companion search can move: those with f, x and y. Refreshed with the model.
+    property var companionNames: []
+    // How large the search will be, from the same defaults it takes.
+    property string companionGridText: ""
+    function refreshCompanionGrid() {
+        if (!companionDialog.visible) return
+        root.companionGridText = Julia.shell_companion_grid(companionBox.currentText,
+            root.numOrNaN(compStep.text), root.numOrNaN(compRmin.text),
+            root.numOrNaN(compRmax.text), root.numOrNaN(compMask.text))
+    }
+    function numOrNaN(t) { var v = parseFloat(t); return isNaN(v) ? NaN : v }
+
+    // What a search fits at each node: the free parameters less the companion's position,
+    // which the grid sets, and less the primary's when it is held (`refitPrimary` false).
+    function nodeFreeNames(cn, refitPrimary) {
+        var out = []
+        for (var i = 0; i < root.freeNames.length; ++i) {
+            var k = root.freeNames[i]
+            if (k === cn + ",x" || k === cn + ",y") continue
+            if (!refitPrimary && k.indexOf(cn + ",") !== 0) continue
+            out.push(k)
+        }
+        return out
+    }
+    // Whether anything outside the companion is free (a primary's parameter, or a global it
+    // uses), i.e. whether there is a primary to refit.
+    function primaryHasFree(cn) {
+        for (var i = 0; i < root.freeNames.length; ++i)
+            if (root.freeNames[i].indexOf(cn + ",") !== 0) return true
+        return false
+    }
+    // The per-node fitters `companion_search` has. With the companion's flux alone free the
+    // model is linear in it, and a 1-D search does each node; anything else free needs VMLMB.
+    function companionFitters(cn, refitPrimary) {
+        var nf = nodeFreeNames(cn, refitPrimary)
+        if (nf.length === 1 && nf[0] === cn + ",f")
+            return [{ key: "bradi",  name: "BraDi  ·  global 1-D search in the flux (default)" },
+                    { key: "halley", name: "Halley  ·  Newton steps, BraDi where they fail" },
+                    { key: "vmlmb",  name: "VMLMB  ·  bounded gradient" }]
+        return [{ key: "vmlmb", name: "VMLMB  ·  bounded gradient" }]
+    }
 
     // Which nested sampler is available, and what to call it. Empty when neither extension is
     // loaded, which is what the entry is gated on.
@@ -423,17 +501,8 @@ Item {
     // though it were the parameter.
     property real displayWl: NaN
 
-    function modelAsLines() {
-        var out = []
-        for (var i = 0; i < paramModel.count; ++i) {
-            var r = paramModel.get(i)
-            out.push(r.key + "=" + (r.mode === "expr" ? r.expr : r.value))
-        }
-        return out.join("\n")
-    }
-
     function renderModel() {
-        renderText = Julia.shell_model_image(modelAsLines(), imgNx, imgPixsize,
+        renderText = Julia.shell_model_image(imgNx, imgPixsize,
                                              dependsWl ? imgWl : 0, dependsMjd ? imgMjd : 0)
         hasRender = renderText.indexOf("!") !== 0
         modelArea.update()
@@ -522,7 +591,20 @@ Item {
     function startFit() {
         if (!canRun) return
         running = true
+        searchPending = false
         fitText = "fitting…"
+        fitTimer.restart()
+    }
+
+    // The companion search runs on the same worker and lands in the same table and map panel
+    // as a fit, but it is not an optimiser: it maps χ² over the companion's position. It is
+    // started from its own section, and this says which of the two the timer below starts.
+    property bool searchPending: false
+    function startSearch() {
+        if (!canRun || root.companionNames.length === 0) return
+        running = true
+        searchPending = true
+        fitText = "searching…"
         fitTimer.restart()
     }
 
@@ -530,13 +612,22 @@ Item {
         id: fitTimer
         interval: 120; repeat: false
         onTriggered: {
-            root.fitText = Julia.shell_fit_model(
-                root.modelAsLines(), root.freeAsLines(),
-                root.constraintsAsLines(), root.priorsAsLines(),
-                root.useV2, root.useT3amp, root.useT3phi,
-                root.useCvis, root.useFlux, root.useDiffvis,
-                root.optimiser, root.maxeval,
-                gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value)
+            root.fitText = root.searchPending
+                ? Julia.shell_companion_search(
+                      root.freeAsLines(),
+                      root.useV2, root.useT3amp, root.useT3phi,
+                      root.useCvis, root.useFlux, root.useDiffvis,
+                      companionBox.currentText, root.numOrNaN(compStep.text),
+                      root.numOrNaN(compRmin.text), root.numOrNaN(compRmax.text),
+                      root.numOrNaN(compMask.text), root.numOrNaN(compFmax.text),
+                      companionDialog.fitterKey, companionDialog.refitPrimary)
+                : Julia.shell_fit_model(
+                      root.freeAsLines(),
+                      root.constraintsAsLines(), root.priorsAsLines(),
+                      root.useV2, root.useT3amp, root.useT3phi,
+                      root.useCvis, root.useFlux, root.useDiffvis,
+                      root.optimiser, root.maxeval,
+                      gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value)
             root.fitOutput = ""
             if (root.fitText.length > 0 && root.fitText.charAt(0) === "!") {
                 root.running = false
@@ -556,7 +647,22 @@ Item {
         running: false
         onTriggered: {
             var f = Julia.shell_job_poll().split("\t")
-            if (f[0] === "running") { root.fitOutput = f[1]; return }
+            if (f[0] === "running") {
+                root.fitOutput = f[1]
+                // A companion search draws its map as it goes: the axes as soon as the grid
+                // exists, then each node as it is fitted.
+                if (root.searchPending) {
+                    var p = Julia.shell_companion_progress().split("\t")
+                    if (p.length === 2) {
+                        root.chi2MapP1 = "x"; root.chi2MapP2 = "y"
+                        root.chi2MapKind = "companion"
+                        root.diagView = "chi2map"
+                        root.fitText = "searching… " + p[0] + " of " + p[1] + " nodes"
+                        chi2MapArea.update()
+                    }
+                }
+                return
+            }
             stop()
             root.running = false
             root.fitOutput = Julia.shell_fit_output()
@@ -573,8 +679,9 @@ Item {
         if (rows.length === 0) return
         var lines = rows.split("\n")
         for (var i = 0; i < lines.length; ++i) {
+            // The eight fields of `shell_fit_rows`, in its order.
             var f = lines[i].split("\t")
-            if (f.length === 10)
+            if (f.length === 8)
                 fitModel.append({ label: f[0], optimiser: f[1],
                                   chi2rStart: parseFloat(f[2]), chi2r: parseFloat(f[3]),
                                   work: f[4],
@@ -682,7 +789,7 @@ Item {
           !hasDataset        ? "no dataset — open an OIFITS first"
         : nFree === 0        ? "no free parameters"
         : !anyObservable     ? "no observables selected"
-        : running            ? "a fit is running"
+        : running            ? (searchPending ? "a companion search is running" : "a fit is running")
         : ""
     readonly property bool canRun: blockedReason === ""
 
@@ -825,11 +932,9 @@ Item {
                     wrapMode: Text.WordWrap
                     color: root.cWarn
                     font.pointSize: root.pt(root.baseFontPt - 1)
-                    text: "Nothing uses " + root.unrecognisedKeys.join(", ") +
-                          ", so the parser ignores " + (root.unrecognisedKeys.length === 1 ? "it" : "them") +
-                          ". Refer to a parameter from an expression to use it; a misspelt shape key " +
-                          "means the component is not the shape you meant."
+                    text: "Not used: " + root.unrecognisedKeys.join(", ")
                 }
+                InfoTip { tip: "The parser ignores these keys. Refer to a parameter from an expression to use it; a misspelt shape key means the component is not the shape you meant." }
                 // The model is the same without them, so clearing them is one click; the
                 // console names each key, so a misspelling removed here can be retyped.
                 Button {
@@ -852,11 +957,14 @@ Item {
             color: "#fff6e0"
             border.color: root.cWarn
             radius: dp(3)
-            implicitHeight: bcLabel.implicitHeight + dp(10)
+            implicitHeight: bcRow.implicitHeight + dp(10)
+            RowLayout {
+            id: bcRow
+            anchors.fill: parent
+            anchors.margins: dp(5)
             Label {
                 id: bcLabel
-                anchors.fill: parent
-                anchors.margins: dp(5)
+                Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: root.cWarn
                 font.pointSize: root.pt(root.baseFontPt - 1)
@@ -866,15 +974,12 @@ Item {
                 // The table has to show a single number per row, so it shows the value at one
                 // wavelength; naming it here is what stops that number being read as the
                 // parameter itself.
-                text: "A parameter expression uses $WL or $MJD, so EVERY parameter is now " +
-                      "worked out separately at each data point instead of once — including " +
-                      "the ones that do not depend on wavelength or time." +
-                      (isNaN(root.displayWl)
-                        ? "  The table needs one number per row, so load a dataset and it will " +
-                          "show each parameter at one wavelength."
-                        : "  The table needs one number per row, so it shows each parameter at " +
-                          "λ = " + (root.displayWl * 1e6).toFixed(3) + " µm; on a dataset with " +
-                          "one wavelength that is the whole story.")
+                text: isNaN(root.displayWl)
+                      ? "$WL/$MJD in use: values vary per data point"
+                      : "$WL/$MJD in use: values shown at λ = " +
+                        (root.displayWl * 1e6).toFixed(3) + " µm"
+            }
+            InfoTip { tip: "An expression uses $WL or $MJD, so every parameter is worked out at each data point rather than once. The table shows one number per row: each parameter at the dataset's first wavelength." }
             }
         }
 
@@ -1553,38 +1658,144 @@ Item {
                                             CheckBox {
                                                 text: "inclination & PA"
                                                 checked: root.hasOrientation
+                                                // An image is used at the orientation it was
+                                                // made with; the parser refuses incl/pa on one.
+                                                enabled: root.selectedGeometryKey !== "image"
                                                 ToolTip.visible: hovered
-                                                ToolTip.text: "project the component on sky: " +
-                                                              "incl in degrees (0 = face-on), " +
-                                                              "PA north through east"
+                                                ToolTip.text: enabled
+                                                    ? "project the component on sky: " +
+                                                      "incl in degrees (0 = face-on), " +
+                                                      "PA north through east"
+                                                    : "an image is used at the orientation " +
+                                                      "it was made with; rotate or tilt the " +
+                                                      "image itself and save it again"
                                                 onToggled: root.setGeometry("orientation", checked)
                                             }
                                             Item { Layout.fillWidth: true }
-                                            Label {
-                                                text: "seeded at 0, which leaves the component " +
-                                                      "exactly as it was"
-                                                color: "#666"
-                                                font.pointSize: root.pt(root.baseFontPt - 2)
-                                            }
+                                            InfoTip { tip: "Added at 0, which leaves the component exactly as it was." }
                                         }
                                     }
 
-                                    // Only a Hankel component HAS a radial profile. Offering the
-                                    // I(r) box for a Gaussian invites writing one, which would add
-                                    // a `profile` key and silently re-identify the component as
-                                    // :hankel -- the same class of quiet misparse the Structure
-                                    // panel exists to catch.
-                                    Label {
-                                        Layout.fillWidth: true
-                                        visible: root.selectedComponent !== "" &&
-                                                 root.selectedGeometryKey !== "profile"
-                                        wrapMode: Text.WordWrap
-                                        color: "#666"
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                        text: root.selectedComponent + " is a " + root.selectedKind +
-                                              ", which has no radial profile and no azimuthal " +
-                                              "modes. Both belong to a component built from a " +
-                                              "`profile` key."
+                                    // ── the image's file, and how it is read ─────────
+                                    //
+                                    // Not parameter rows: none of these can be free, and the
+                                    // path is not an expression. What the file holds is read
+                                    // back from it rather than remembered here.
+                                    GroupBox {
+                                        Layout.preferredWidth: root.dp(380)
+                                        visible: root.selectedGeometryKey === "image"
+                                        title: "Image"
+
+                                        ColumnLayout {
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            spacing: root.dp(4)
+                                            Label {
+                                                Layout.fillWidth: true
+                                                visible: root.imageInfo.error !== undefined
+                                                wrapMode: Text.WordWrap
+                                                color: root.cBad
+                                                text: root.imageInfo.error || ""
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    elide: Text.ElideMiddle
+                                                    font.family: "monospace"
+                                                    text: root.imageInfo.path
+                                                          ? root.imageInfo.path.split("/").pop() : ""
+                                                    ToolTip.visible: imgPathHover.hovered
+                                                    ToolTip.text: root.imageInfo.path || ""
+                                                    HoverHandler { id: imgPathHover }
+                                                }
+                                                Button {
+                                                    text: "Change file…"
+                                                    onClicked: changeImageFileDialog.openAt("")
+                                                }
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.WordWrap
+                                                    color: "#666"
+                                                    text: root.imageInfo.summary || ""
+                                                }
+                                                InfoTip { tip: "Used at the scale and orientation it was made with; x and y shift it. Each data point uses the cube plane nearest in wavelength and epoch." }
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Label { text: "pixel scale" }
+                                                TextField {
+                                                    id: imagePixField
+                                                    Layout.preferredWidth: root.dp(90)
+                                                    selectByMouse: true
+                                                    onEditingFinished: {
+                                                        if (!root.imageSyncing &&
+                                                            text !== String(root.imageInfo.pixsize))
+                                                            root.setImage("pixsize", text)
+                                                    }
+                                                }
+                                                Label {
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.WordWrap
+                                                    color: root.imageInfo.pixsource === "none"
+                                                           ? root.cWarn : "#666"
+                                                    text: root.imageInfo.pixsource === "header"
+                                                          ? "mas (header)"
+                                                          : root.imageInfo.pixsource === "model"
+                                                          ? "mas (set here)"
+                                                          : "mas — not in the file"
+                                                    ToolTip.visible: imgPixHover.hovered
+                                                    ToolTip.text: root.imageInfo.pixsource === "model"
+                                                        ? "overrides the header's scale; Use header goes back to it"
+                                                        : root.imageInfo.pixsource === "none"
+                                                        ? "the file gives no pixel scale, so this number is what the model uses: check it"
+                                                        : "read from the file's WCS"
+                                                    HoverHandler { id: imgPixHover }
+                                                }
+                                                Button {
+                                                    visible: root.imageInfo.pixsource === "model"
+                                                    text: "Use header"
+                                                    onClicked: root.setImage("pixsize", "")
+                                                }
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Label { text: "normalisation" }
+                                                ComboBox {
+                                                    id: imageNormBox
+                                                    Layout.fillWidth: true
+                                                    textRole: "label"
+                                                    valueRole: "key"
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: "the file says: " +
+                                                        (root.imageInfo.filenorm === "relative"
+                                                         ? "keep the cube's spectrum"
+                                                         : "each plane sums to 1")
+                                                    // A fixed list: a model that changed with
+                                                    // the selection would reset the index and
+                                                    // fire the handler with a value nobody chose.
+                                                    model: [
+                                                        { key: "", label: "as the file says" },
+                                                        { key: "plane", label: "each plane sums to 1" },
+                                                        { key: "relative", label: "keep the cube's spectrum" }
+                                                    ]
+                                                    // currentIndexChanged with a guard, not
+                                                    // activated: activated does not reach Julia.
+                                                    onCurrentIndexChanged: {
+                                                        if (root.imageSyncing) return
+                                                        if (currentIndex < 0 || currentIndex > 2) return
+                                                        if (root.imageInfo.path === undefined) return
+                                                        var k = ["", "plane", "relative"][currentIndex]
+                                                        if (k !== (root.imageInfo.norm || ""))
+                                                            root.setImage("norm", k)
+                                                    }
+                                                }
+                                            }
+
+                                        }
                                     }
 
                                     // ── the limb-darkening law ───────────────────────
@@ -2237,8 +2448,7 @@ Item {
                         Label {
                             Layout.fillWidth: true
                             visible: !root.dependsWl && !root.dependsMjd
-                            text: "this model references neither $WL nor $MJD, so it is the same at every " +
-                                  "wavelength and epoch"
+                            text: "same at every λ and epoch"
                             color: "#888"
                             font.pointSize: pt(baseFontPt - 1)
                             wrapMode: Text.WordWrap
@@ -2354,6 +2564,44 @@ Item {
                                         enabled: root.haveFlux; checked: false
                                         ToolTip.visible: hovered && !enabled
                                         ToolTip.text: "the file has no OI_FLUX"
+                                    }
+
+                                    // Bandwidth smearing: how the model is compared with
+                                    // channel-averaged data. Kept in the model (`smear`,
+                                    // `smear_mode`), so a fit, the χ² readout, the residuals, the
+                                    // companion search and a saved model all evaluate alike.
+                                    Label { text: "Smearing"; font.bold: true; Layout.leftMargin: root.dp(12) }
+                                    ComboBox {
+                                        id: smearBox
+                                        Layout.preferredWidth: root.dp(80)
+                                        model: ["off", "auto", "2", "3", "5", "8"]
+                                        onActivated: root.applySmearing()
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "sub-wavelengths per channel; auto takes enough to sample " +
+                                                      "the phase change across a channel at the model's extent"
+                                    }
+                                    ComboBox {
+                                        id: smearModeBox
+                                        Layout.preferredWidth: root.dp(120)
+                                        model: ["incoherent", "coherent"]
+                                        enabled: smearBox.currentIndex > 0
+                                        onActivated: root.applySmearing()
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "incoherent: the observables averaged over a channel; " +
+                                                      "coherent: the visibility averaged, then the observables"
+                                    }
+                                    // Its own button, not an optimiser: a companion search maps χ²
+                                    // over a companion's position rather than fitting the model.
+                                    Button {
+                                        id: companionButton
+                                        Layout.leftMargin: root.dp(12)
+                                        text: "Companion search…"
+                                        enabled: !root.running && root.canRun && root.companionNames.length > 0
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: root.companionNames.length > 0
+                                            ? "map χ² over a companion's position around the primary"
+                                            : "needs a component with f, x and y to move"
+                                        onClicked: companionDialog.open()
                                     }
 
                                     Item { Layout.fillWidth: true }
@@ -2527,27 +2775,6 @@ Item {
                                         onActivated: root.uncertainty =
                                             ["none", "jacobian", "bootstrap", "posterior"][index]
                                     }
-                                    Label {
-                                        visible: root.uncertainty === "jacobian" && root.optimiser !== "lsqfit"
-                                        text: "Jacobian covariance comes from Levenberg-Marquardt only"
-                                        color: root.cWarn
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                    }
-                                    Label {
-                                        visible: root.uncertainty === "posterior" && root.optimiser !== "nested"
-                                        text: "a posterior needs nested sampling"
-                                        color: root.cWarn
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                    }
-
-                                    Item { Layout.fillWidth: true }
-
-                                    Label {
-                                        visible: !root.canRun
-                                        text: root.blockedReason
-                                        color: root.cBad
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                    }
                                     Button {
                                         id: fitButton
                                         text: root.running ? "…" : "Fit"
@@ -2571,6 +2798,27 @@ Item {
                                             verticalAlignment: Text.AlignVCenter
                                             color: (root.running || fitButton.enabled) ? "white" : "#a0a0a0"
                                         }
+                                    }
+                                    Label {
+                                        visible: root.uncertainty === "jacobian" && root.optimiser !== "lsqfit"
+                                        text: "Jacobian covariance comes from Levenberg-Marquardt only"
+                                        color: root.cWarn
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                    Label {
+                                        visible: root.uncertainty === "posterior" && root.optimiser !== "nested"
+                                        text: "a posterior needs nested sampling"
+                                        color: root.cWarn
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    Label {
+                                        visible: !root.canRun
+                                        text: root.blockedReason
+                                        color: root.cBad
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
                                 }
 
@@ -2891,7 +3139,7 @@ Item {
                                     }
                                     Label {
                                         Layout.alignment: Qt.AlignHCenter
-                                        text: "run a grid search to see the surface"
+                                        text: "run a grid search or a companion search to see a map"
                                         color: "#aaa"
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
@@ -2899,8 +3147,34 @@ Item {
                             }
 
                             // The contours are the quantitative part, so they are named.
+                            // A companion map shows χ²ᵣ or the fitted flux at each node; the
+                            // two are views of one search, so switching does not rerun it.
+                            RowLayout {
+                                visible: root.diagView === "chi2map" && root.chi2MapKind === "companion"
+                                enabled: !root.running            // the map is still being drawn
+                                anchors.left: parent.left
+                                anchors.bottom: parent.bottom
+                                anchors.margins: root.dp(6)
+                                spacing: root.dp(4)
+                                Button {
+                                    text: "χ²ᵣ"
+                                    checkable: true; checked: root.companionMapView === "chi2r"
+                                    implicitHeight: root.dp(22)
+                                    onClicked: { root.companionMapView = "chi2r"
+                                                 Julia.shell_companion_map_view("chi2r"); chi2MapArea.update() }
+                                }
+                                Button {
+                                    text: "flux"
+                                    checkable: true; checked: root.companionMapView === "flux"
+                                    implicitHeight: root.dp(22)
+                                    onClicked: { root.companionMapView = "flux"
+                                                 Julia.shell_companion_map_view("flux"); chi2MapArea.update() }
+                                }
+                            }
+
                             Label {
-                                visible: root.diagView === "chi2map" && root.chi2MapP1.length > 0
+                                visible: root.diagView === "chi2map" && root.chi2MapP1.length > 0 &&
+                                         root.chi2MapKind === "grid"
                                 anchors.left: parent.left
                                 anchors.bottom: parent.bottom
                                 anchors.margins: root.dp(6)
@@ -2933,7 +3207,7 @@ Item {
     // ═════════════════════════════════════════════════════════════════════════
 
     property string selectedComponent: ""
-    onSelectedComponentChanged: { refreshProfile(); refreshLdLaw(); refreshGeometry() }
+    onSelectedComponentChanged: { refreshProfile(); refreshLdLaw(); refreshGeometry(); refreshImage() }
 
     // The geometry key that DECIDED the selected component's kind, or "" when nothing is
     // selected. `_identity_kind` searches the keys in order and the first match wins, so this
@@ -2983,6 +3257,26 @@ Item {
     // Re-read the whole model from Julia. QML keeps no model of its own -- every edit goes to
     // the shell and comes back through here, so the table cannot drift from what a fit or an
     // exported script would use.
+    // The Smearing menus follow the model (a model file can carry smearing), and write to it.
+    function refreshSmearing() {
+        var f = Julia.shell_smearing().split("\t")
+        if (f.length !== 2) return
+        var i = smearBox.model.indexOf(f[0])
+        if (i < 0) {                         // a sample count the menu does not list
+            smearBox.model = smearBox.model.concat([f[0]])
+            i = smearBox.model.length - 1
+        }
+        smearBox.currentIndex = i
+        smearModeBox.currentIndex = Math.max(0, smearModeBox.model.indexOf(f[1]))
+    }
+    function applySmearing() {
+        var err = Julia.shell_set_smearing(smearBox.currentText, smearModeBox.currentText)
+        if (err.length > 0 && err.charAt(0) === "!") { root.fitText = err; refreshSmearing(); return }
+        root.modelDirty = true
+        refreshModel()
+        root.consoleChanged()
+    }
+
     function refreshModel() {
         paramModel.clear()
         var rows = Julia.shell_model_rows()
@@ -3036,12 +3330,17 @@ Item {
         refreshLdLaw()
         refreshGeometry()
         refreshAzModes()
+        refreshImage()
 
         var chi2 = Julia.shell_model_chi2()
         root.currentChi2r = chi2.length > 0 ? parseFloat(chi2) : NaN
 
         var fn = Julia.shell_free_names()
         root.freeNames = fn.length > 0 ? fn.split("\n") : []
+        var cc = Julia.shell_companion_candidates()
+        root.companionNames = cc.length > 0 ? cc.split("\n") : []
+        refreshCompanionGrid()
+        refreshSmearing()
 
         // What is wrong with the model before anyone fits it. The flux-sum check is the one
         // that matters most: a second component added with f = 1 doubles the model's flux, and
@@ -3079,9 +3378,11 @@ Item {
         var info = Julia.shell_chi2_map_info()
         if (info.length === 0) { root.chi2MapP1 = ""; root.chi2MapP2 = ""; return }
         var f = info.split("\t")
-        if (f.length !== 5) { root.chi2MapP1 = ""; root.chi2MapP2 = ""; return }
+        if (f.length !== 6) { root.chi2MapP1 = ""; root.chi2MapP2 = ""; return }
         root.chi2MapP1 = f[0]
         root.chi2MapP2 = f[1]
+        root.chi2MapKind = f[5]
+        root.companionMapView = "chi2r"
         chi2MapArea.update()
     }
 
@@ -3276,6 +3577,161 @@ Item {
     // dialogs
     // ═════════════════════════════════════════════════════════════════════════
 
+    // The companion search's settings. Not an optimiser: it maps χ² over the companion's
+    // position, fitting what is free at every node of a grid, and its result lands in the fits
+    // table and the map panel like a fit's. An empty field takes the search's own default,
+    // which the readout at the bottom then states.
+    Dialog {
+        id: companionDialog
+        title: "Companion search"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        property var fitters: []
+        readonly property string fitterKey:
+            fitters.length > 0 && fitterBox.currentIndex >= 0 ? fitters[fitterBox.currentIndex].key : "bradi"
+        // Refit the primary at every node, or hold it at its current values. Only offered when
+        // the primary has free parameters; an image primary has none.
+        readonly property bool refitPrimary:
+            root.primaryHasFree(companionBox.currentText) && primaryModeBox.currentIndex === 1
+        function refreshChoices() {
+            fitters = root.companionFitters(companionBox.currentText, refitPrimary)
+            fitterBox.currentIndex = 0
+            prefill()
+            root.refreshCompanionGrid()
+        }
+        // The default grid, rounded, written into the fields so it can be seen and edited. A
+        // field the user has typed into is theirs and is left alone; one still holding the last
+        // prefill follows the dataset and the model.
+        property var prefilled: ["", "", ""]
+        function prefill() {
+            var d = Julia.shell_companion_defaults(companionBox.currentText).split("\t")
+            if (d.length !== 3) return
+            var f = [compStep, compRmin, compRmax]
+            for (var i = 0; i < 3; ++i)
+                if (f[i].text.length === 0 || f[i].text === prefilled[i]) f[i].text = d[i]
+            prefilled = d
+        }
+        onOpened: {
+            var ok = standardButton(Dialog.Ok)
+            if (ok) ok.text = "Search"
+            refreshChoices()
+        }
+        onAccepted: root.startSearch()
+
+        GridLayout {
+            columns: 2
+            columnSpacing: root.dp(10)
+            rowSpacing: root.dp(6)
+
+            Label { text: "Companion" }
+            ComboBox {
+                id: companionBox
+                Layout.preferredWidth: root.dp(180)
+                model: root.companionNames
+                onActivated: companionDialog.refreshChoices()
+            }
+
+            Label { text: "Primary" }
+            ComboBox {
+                id: primaryModeBox
+                Layout.preferredWidth: root.dp(300)
+                model: ["held at its current values", "refitted at every node"]
+                currentIndex: 1
+                enabled: root.primaryHasFree(companionBox.currentText)
+                onActivated: companionDialog.refreshChoices()
+                ToolTip.visible: hovered
+                ToolTip.text: enabled
+                    ? "held: only the companion is fitted at a node, and the significance is against " +
+                      "this primary alone; refitted: its free parameters are fitted too, at every node " +
+                      "and for the no-companion model"
+                    : "the primary has no free parameters to refit"
+            }
+
+            Label { text: "Fitted at each node" }
+            Label {
+                text: root.nodeFreeNames(companionBox.currentText, companionDialog.refitPrimary).join(", ")
+                color: "#444"
+                Layout.maximumWidth: root.dp(420)
+                wrapMode: Text.WordWrap
+                ToolTip.visible: nodeFreeHover.hovered
+                ToolTip.text: "the free parameters, less the companion's position, which the grid sets"
+                HoverHandler { id: nodeFreeHover }
+            }
+
+            Label { text: "Per-node fitter" }
+            ComboBox {
+                id: fitterBox
+                Layout.preferredWidth: root.dp(390)
+                model: companionDialog.fitters
+                textRole: "name"
+            }
+
+            Label { text: ""; visible: companionDialog.fitters.length === 1 }
+            Label {
+                visible: companionDialog.fitters.length === 1
+                text: "BraDi and Halley fit the companion's flux alone: hold the primary, and free nothing else of the companion"
+                color: "#888"
+                font.pointSize: root.pt(root.baseFontPt - 2)
+            }
+
+            Label { text: "Grid step (mas)" }
+            TextField {
+                id: compStep
+                Layout.preferredWidth: root.dp(120)
+                placeholderText: "λ/(2 B_max)"
+                onEditingFinished: root.refreshCompanionGrid()
+            }
+
+            Label { text: "Radius (mas)" }
+            RowLayout {
+                spacing: root.dp(6)
+                TextField {
+                    id: compRmin
+                    Layout.preferredWidth: root.dp(120)
+                    placeholderText: "primary"
+                    onEditingFinished: root.refreshCompanionGrid()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "inner radius; default the primary's extent, at least one step"
+                }
+                Label { text: "–"; color: "#666" }
+                TextField {
+                    id: compRmax
+                    Layout.preferredWidth: root.dp(120)
+                    placeholderText: "R λ/(2 B_max)"
+                    onEditingFinished: root.refreshCompanionGrid()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "outer radius; default the bandwidth-smearing radius"
+                }
+            }
+
+            Label { text: "Mask" }
+            TextField {
+                id: compMask
+                Layout.preferredWidth: root.dp(120)
+                text: "0.01"
+                onEditingFinished: root.refreshCompanionGrid()
+                ToolTip.visible: hovered
+                ToolTip.text: "nodes where an image primary, convolved with the beam, is above this " +
+                              "fraction of its peak are not searched; 0 turns it off"
+            }
+
+            Label { text: "Flux fraction ≤" }
+            TextField {
+                id: compFmax
+                Layout.preferredWidth: root.dp(120)
+                text: "0.5"
+            }
+
+            Label { text: "" }
+            Label {
+                text: root.companionGridText.length > 0 && root.companionGridText.charAt(0) !== "!"
+                      ? "= " + root.companionGridText : root.companionGridText
+                color: root.companionGridText.charAt(0) === "!" ? root.cBad : "#666"
+            }
+        }
+    }
+
     Dialog {
         id: seedDialog
         property int row: -1
@@ -3288,7 +3744,7 @@ Item {
         ColumnLayout {
             spacing: root.dp(6)
             Label {
-                text: "A free parameter must be numeric — the resolver raises on an expression."
+                text: "A free parameter must be numeric."
                 wrapMode: Text.WordWrap
                 Layout.maximumWidth: root.dp(360)
             }
@@ -3378,8 +3834,7 @@ Item {
                 spacing: root.dp(6)
                 Label {
                     // The count changing behind the user's back is the thing to prevent.
-                    text: "This removes the parameter from the fit vector: " +
-                          Math.max(0, root.nFree - 1) + " free parameters will remain."
+                    text: Math.max(0, root.nFree - 1) + " free parameters will remain."
                     wrapMode: Text.WordWrap
                     Layout.maximumWidth: root.dp(360)
                     visible: !exprDialog.editKey.endsWith(",profile")
@@ -3560,11 +4015,8 @@ Item {
                 text: addParamDialog.problem.length > 0
                       ? addParamDialog.problem
                       : paramNameField.text.length === 0 ? ""
-                      : "refer to it as $" + (addParamDialog.owner === "__global__" ? ""
-                                              : addParamDialog.owner + ",") + paramNameField.text +
-                        (addParamDialog.owner === "__global__" ? ""
-                         : ", or as $" + paramNameField.text + " inside " +
-                           addParamDialog.owner + "'s own profile or visibility function")
+                      : "use as $" + (addParamDialog.owner === "__global__" ? ""
+                                      : addParamDialog.owner + ",") + paramNameField.text
             }
         }
         onAccepted: {
@@ -3662,9 +4114,10 @@ Item {
                 font.pointSize: root.pt(root.baseFontPt - 2)
                 color: linkDialog.problem.length > 0 ? root.cBad : "#666"
                 text: linkDialog.problem.length > 0 ? linkDialog.problem
-                      : "each ticked row becomes $" + linkNameField.text +
-                        "; the global starts at the first one's value and bounds, and is free " +
-                        "if any of them was"
+                      : "ticked rows become $" + linkNameField.text
+                ToolTip.visible: linkHintHover.hovered && linkDialog.problem.length === 0
+                ToolTip.text: "The global starts at the first row's value and bounds, and is free if any of them was."
+                HoverHandler { id: linkHintHover }
             }
         }
         onAccepted: {
@@ -3792,12 +4245,48 @@ Item {
                         return "I(r) written in $R and $MU, Hankel-transformed to a visibility"
                     if (addComponentDialog.chosenId === "vis_func")
                         return "V written directly in $B, the baseline in Mλ"
+                    if (addComponentDialog.chosenId === "fits_image")
+                        return "the FITS file is chosen next"
                     return ""
                 }
             }
         }
 
-        onAccepted: root.addComponent(nameField.text, chosenId)
+        onAccepted: {
+            if (chosenId === "fits_image") {
+                addImageFileDialog.pendingName = nameField.text
+                addImageFileDialog.openAt("")
+            } else {
+                root.addComponent(nameField.text, chosenId)
+            }
+        }
+    }
+
+    // The file of an image component being added: the name was chosen in the dialog above.
+    FilePicker {
+        id: addImageFileDialog
+        property string pendingName: ""
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Image or cube (FITS)"
+        filters: [{ label: "FITS images (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            var err = Julia.shell_add_image_component(addImageFileDialog.pendingName, path)
+            root.consoleChanged()
+            if (err.length > 0) { root.fitText = err; return }
+            root.selectedComponent = addImageFileDialog.pendingName
+            root.modelDirty = true
+            root.refreshModel()
+        }
+    }
+
+    FilePicker {
+        id: changeImageFileDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Image or cube (FITS)"
+        filters: [{ label: "FITS images (*.fits *.fit)", patterns: "*.fits,*.fit" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.setImage("file", path) }
     }
 
     // FilePicker, not QtQuick.Dialogs.FileDialog. That dialog sets `visible = false` and

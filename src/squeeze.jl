@@ -658,7 +658,7 @@ annealing temperature.
 function flat_chi2(data::OIdata{T}, w::NTuple{7,Float64}; seed::Integer = 1) where {T}
     rng = Xoshiro(seed)
     V = [Complex{T}(exp(-10.0) * cis(rand(rng, 0:999) * 0.006283)) for _ in 1:data.nuv]
-    return _cvis_to_chi2(V, data, w, false)
+    return _cvis_to_chi2(V, data, w)
 end
 
 """
@@ -777,7 +777,7 @@ function run_chain!(s::SqueezeState{T}, regs::SqueezeRegs,
                     niter::Int, ndf::Float64, chi2_temp::Float64,
                     chi2_target::Float64, tmin::Float64,
                     f_anywhere::Float64, f_copycat::Float64,
-                    resync_every::Int64, vonmises::Bool,
+                    resync_every::Int64,
                     flatchi2::Float64, model::Union{Nothing,SqueezeSparco} = nothing,
                     verb::Bool = false, print_every::Int = 0, chain::Int = 1,
                     monitor::Union{Nothing,SqueezeMonitor} = nothing) where {T}
@@ -798,7 +798,7 @@ function run_chain!(s::SqueezeState{T}, regs::SqueezeRegs,
     end
     resync_raw_im_vis!(s, A)
     form_mod_vis!(s.mod_vis, s.raw_im_vis, s)
-    s.lLikelihood = 0.5 * _cvis_to_chi2(s.mod_vis, data, w, vonmises)
+    s.lLikelihood = 0.5 * _cvis_to_chi2(s.mod_vis, data, w)
     recompute_regs!(regs, s)
     s.lPrior = lprior(regs)
 
@@ -828,14 +828,14 @@ function run_chain!(s::SqueezeState{T}, regs::SqueezeRegs,
 
     verb && print_every > 0 &&
         _print_squeeze_diagnostics(stdout, chain, 0, niter, s, regs, model,
-                                   data, w, vonmises, burn_in)
+                                   data, w, burn_in)
 
     for sweep in 1:niter
         for _ in 1:nelements
             # ── Parametric-model move ────────────────────────────────────────
             if nparams_free > 0 && (target = rand(rng, 1:ntargets)) > nelements
                 _param_move!(s, regs, model, data, w, rng;
-                             vonmises = vonmises, ndf = ndf, target = target,
+                             ndf = ndf, target = target,
                              nelements = nelements)
                 continue
             end
@@ -853,7 +853,7 @@ function run_chain!(s::SqueezeState{T}, regs::SqueezeRegs,
 
             rank1_update!(s.new_raw_im_vis, s.raw_im_vis, A, p_new, p_old)
             form_mod_vis!(s.new_mod_vis, s.new_raw_im_vis, s)
-            new_lLikelihood = 0.5 * _cvis_to_chi2(s.new_mod_vis, data, w, vonmises)
+            new_lLikelihood = 0.5 * _cvis_to_chi2(s.new_mod_vis, data, w)
 
             s.prob_movement *= (1.0 - 1.0 / SQ_DAMPING_TIME)
             s.nproposed += 1
@@ -890,7 +890,7 @@ function run_chain!(s::SqueezeState{T}, regs::SqueezeRegs,
                 if s.since_resync >= resync_every
                     resync_raw_im_vis!(s, A)
                     form_mod_vis!(s.mod_vis, s.raw_im_vis, s)
-                    s.lLikelihood = 0.5 * _cvis_to_chi2(s.mod_vis, data, w, vonmises)
+                    s.lLikelihood = 0.5 * _cvis_to_chi2(s.mod_vis, data, w)
                 end
             else
                 # Reverse the centroid mutation made by cent_change!
@@ -923,7 +923,7 @@ function run_chain!(s::SqueezeState{T}, regs::SqueezeRegs,
         end
         if verb && print_every > 0 && (sweep % print_every == 0 || sweep == niter)
             _print_squeeze_diagnostics(stdout, chain, sweep, niter, s, regs, model,
-                                       data, w, vonmises, burn_in)
+                                       data, w, burn_in)
         end
         if monitor !== nothing && sweep % monitor.every == 0
             monitor_update!(monitor, Float64.(s.histogram) ./ nelements, sweep;
@@ -936,7 +936,7 @@ function run_chain!(s::SqueezeState{T}, regs::SqueezeRegs,
     # Guard against maintained-state drift going unnoticed.
     resync_raw_im_vis!(s, A)
     form_mod_vis!(s.mod_vis, s.raw_im_vis, s)
-    final_chi2 = _cvis_to_chi2(s.mod_vis, data, w, vonmises)
+    final_chi2 = _cvis_to_chi2(s.mod_vis, data, w)
 
     img = nsamples > 0 ? Float64.(mean_image) ./ (nsamples * nelements) :
                          Float64.(s.histogram) ./ nelements
@@ -979,7 +979,7 @@ for an optimizer; under tempering the Gaussian variant is used instead
 """
 function _param_move!(s::SqueezeState{T}, regs::SqueezeRegs, model::SqueezeSparco,
                       data::OIdata{T}, w::NTuple{7,Float64}, rng::AbstractRNG;
-                      vonmises::Bool, ndf::Float64, target::Int,
+                      ndf::Float64, target::Int,
                       nelements::Int) where {T}
 
     j = model.free[((target - nelements - 1) >> 1) + 1]   # PARAMS_PER_ELT = 2
@@ -990,7 +990,7 @@ function _param_move!(s::SqueezeState{T}, regs::SqueezeRegs, model::SqueezeSparc
                                    model.params, data)
     form_mod_vis!(s.new_mod_vis, s.raw_im_vis,
                   s.new_param_vis, s.new_fluxratio_image, nelements)
-    new_lLikelihood = 0.5 * _cvis_to_chi2(s.new_mod_vis, data, w, vonmises)
+    new_lLikelihood = 0.5 * _cvis_to_chi2(s.new_mod_vis, data, w)
 
     new_lPrior = s.lPrior + regs.λ_modelparam * (new_v_modelparam - regs.v_modelparam)
 
@@ -1053,7 +1053,6 @@ struct SqueezeTarget{T<:AbstractFloat}
     nx::Int
     nelements::Int
     weights::NTuple{7,Float64}
-    vonmises::Bool
     regularizers::Vector{Any}
     prior_penalty::Vector{Float64}
     fov::Float64
@@ -1170,7 +1169,7 @@ function squeeze_refresh!(st::SqueezePTState{T}, target::SqueezeTarget{T}) where
     resync_raw_im_vis!(st.s, target.A)
     form_mod_vis!(st.s.mod_vis, st.s.raw_im_vis, st.s)
     st.s.lLikelihood = 0.5 * _cvis_to_chi2(st.s.mod_vis, target.data,
-                                           target.weights, target.vonmises)
+                                           target.weights)
     recompute_regs!(st.regs, st.s)
     st.s.lPrior = lprior(st.regs)
     return st
@@ -1218,7 +1217,7 @@ function squeeze_step!(st::SqueezePTState{T}, target::SqueezeTarget{T},
         rank1_update!(s.new_raw_im_vis, s.raw_im_vis, A, p_new, p_old)
         form_mod_vis!(s.new_mod_vis, s.new_raw_im_vis, s)
         new_lLikelihood = 0.5 * _cvis_to_chi2(s.new_mod_vis, target.data,
-                                              target.weights, target.vonmises)
+                                              target.weights)
 
         s.nproposed += 1
         Δ = (new_lLikelihood - s.lLikelihood) + (new_lPrior - s.lPrior)
@@ -1282,7 +1281,7 @@ function _param_step_tempered!(st::SqueezePTState{T}, target::SqueezeTarget{T},
     form_mod_vis!(s.new_mod_vis, s.raw_im_vis,
                   s.new_param_vis, s.new_fluxratio_image, nelements)
     new_lLikelihood = 0.5 * _cvis_to_chi2(s.new_mod_vis, target.data,
-                                          target.weights, target.vonmises)
+                                          target.weights)
     new_lPrior = s.lPrior + regs.λ_modelparam * (new_v_modelparam - regs.v_modelparam)
 
     Δ = (new_lLikelihood - s.lLikelihood) + (new_lPrior - s.lPrior)
@@ -1393,7 +1392,6 @@ function reconstruct_squeeze(x_start, data::OIdata{T}, ft;
         nchains::Integer = 1,
         regularizers = [],
         weights = [1.0, 1.0, 1.0],
-        vonmises::Bool = false,
         tmin::Real = 1.0,
         chi2_temp::Real = 4.0,
         chi2_target::Real = 0.0,
@@ -1507,7 +1505,7 @@ function reconstruct_squeeze(x_start, data::OIdata{T}, ft;
                                 f_anywhere = Float64(f_anywhere),
                                 f_copycat = Float64(f_copycat),
                                 resync_every = Int64(resync_every),
-                                vonmises = vonmises, flatchi2 = fchi2, model = m,
+                                flatchi2 = fchi2, model = m,
                                 verb = verb, chain = c, monitor = mon,
                                 print_every = Int(print_every) > 0 ? Int(print_every) :
                                               (nchains == 1 ? max(1, Int(niter) ÷ 10) : 0))
@@ -1543,7 +1541,7 @@ function reconstruct_squeeze(x_start, data::OIdata{T}, ft;
                 V[k] = pv[k] + V[k] * fr[k]
             end
         end
-        chi2r_mean[c] = _cvis_to_chi2(V, data, w, vonmises) / ndf
+        chi2r_mean[c] = _cvis_to_chi2(V, data, w) / ndf
     end
     best = argmin(chi2r_mean)
 
@@ -1681,7 +1679,7 @@ function _squeeze_operator(ft, data::OIdata{T}, pixsize::Real; verb::Bool = true
 end
 
 """
-    _print_squeeze_diagnostics(io, chain, iter, niter, s, regs, model, data, w, vonmises, burn_in)
+    _print_squeeze_diagnostics(io, chain, iter, niter, s, regs, model, data, w, burn_in)
 
 Per-sweep diagnostic line, matching C's `print_diagnostics` (squeeze.c:3234) field
 for field.  `lPost`/`lPrior`/`lLike` are the un-reduced log-posterior terms; the
@@ -1693,14 +1691,14 @@ function _print_squeeze_diagnostics(io::IO, chain::Int, iter::Int, niter::Int,
                                     s::SqueezeState{T}, regs::SqueezeRegs,
                                     model::Union{Nothing,SqueezeSparco},
                                     data::OIdata{T}, w::NTuple{7,Float64},
-                                    vonmises::Bool, burn_in::Int) where {T}
+                                    burn_in::Int) where {T}
     lPost = s.lLikelihood + s.lPrior
     @printf(io, "Chain: %d lPost:%8.1f lPrior:%8.1f lLike:%9.1f ",
             chain, lPost, s.lPrior, s.lLikelihood)
 
     # Per-observable reduced chi2.  This is the allocating `_chi2_terms` path, but
     # it runs once per `print_every` sweeps, not once per proposal.
-    t = _chi2_terms(s.mod_vis, data, collect(w), vonmises)
+    t = _chi2_terms(s.mod_vis, data, collect(w))
     w[1] > 0 && data.nv2    > 0 && printstyled(io, @sprintf("V2:%5.2f ",  t.chi2_v2    / data.nv2),    color=:red)
     w[2] > 0 && data.nt3amp > 0 && printstyled(io, @sprintf("T3A:%5.2f ", t.chi2_t3amp / data.nt3amp), color=:blue)
     w[3] > 0 && data.nt3phi > 0 && printstyled(io, @sprintf("T3P:%5.2f ", t.chi2_t3phi / data.nt3phi), color=:green)

@@ -1386,6 +1386,42 @@ Item {
                                 Item { Layout.fillWidth: true }
                             }
 
+                            // Bandwidth smearing, as the Modeling perspective offers it. No
+                            // reconstruction engine averages its visibilities over a channel
+                            // yet, so every choice but "off" is listed and greyed: the row says
+                            // what is coming and that it is not there.
+                            Label { text: "smearing" }
+                            ComboBox {
+                                id: imSmearBox
+                                Layout.preferredWidth: dp(150)
+                                model: ["off", "auto", "2", "3", "5", "8"]
+                                currentIndex: 0
+                                // The text is dimmed by hand: this style draws a disabled
+                                // ItemDelegate exactly like an enabled one.
+                                delegate: ItemDelegate {
+                                    id: imSmearItem
+                                    required property int index
+                                    required property string modelData
+                                    width: imSmearBox.width
+                                    enabled: index === 0
+                                    highlighted: imSmearBox.highlightedIndex === index
+                                    contentItem: Label {
+                                        text: imSmearItem.modelData
+                                        opacity: imSmearItem.enabled ? 1.0 : 0.4
+                                    }
+                                }
+                            }
+                            Label {
+                                text: "not modelled by the reconstruction engines yet"
+                                color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                ToolTip.visible: imSmearHover.hovered
+                                ToolTip.text: "no reconstruction engine averages its visibilities over a " +
+                                              "channel yet, so only \"off\" can be chosen"
+                                HoverHandler { id: imSmearHover }
+                            }
+
                             // Both cells share one visibility. A GridLayout SKIPS invisible
                             // items rather than reserving their cells, so a hidden note beside
                             // a visible spacer left the row one cell wide and every row after

@@ -6,7 +6,7 @@
 function __init__()
     # Callbacks must be registered before any QML file that calls them is loaded.
     QML.@qmlfunction(shell_open, shell_set_view, shell_select_dataset,
-                     shell_dataset_names, shell_script, shell_export, shell_pick,
+                     shell_dataset_names, shell_current_dataset, shell_dataset_summary, shell_script, shell_export, shell_pick,
                      shell_console, shell_ready, shell_reset_zoom, shell_pick_text,
                      shell_observables, shell_plot_kinds, shell_grouping_noun, shell_gantt_hover, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
@@ -31,6 +31,7 @@ function __init__()
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component,
+                     shell_add_image_component, shell_image_info, shell_set_image,
                      shell_remove_param, shell_add_param, shell_link_params, shell_param_name_problem,
                      shell_param_removable, shell_remove_unused,
                      shell_rename_component, shell_save_figure,
@@ -49,7 +50,11 @@ function __init__()
                      shell_sparco_converged,
                      shell_result_ensemble, shell_show_result,
                      shell_bin_info, shell_rebin,
-                     shell_chi2_map_info, shell_free_names, shell_nested_backend, shell_sim_band,
+                     shell_chi2_map_info, shell_free_names,
+                     shell_companion_candidates, shell_companion_grid, shell_companion_search,
+                     shell_companion_map_view, shell_companion_progress,
+                     shell_companion_defaults,
+                     shell_smearing, shell_set_smearing, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
                      shell_import_pmoired, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on

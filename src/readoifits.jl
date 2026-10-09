@@ -280,7 +280,6 @@ mutable struct OIdata{T<:AbstractFloat}
     # T3
     t3amp::Vector{T};              t3amp_err::Vector{T}
     t3phi::Vector{T};              t3phi_err::Vector{T}
-    t3phi_vonmises_err::Vector{T}; t3phi_vonmises_chi2_offset::Vector{T}
     t3_baseline::Vector{T};        t3_maxbaseline::Vector{T}
     t3_mjd::Vector{Float64};       t3_lam::Vector{T};    t3_dlam::Vector{T}
     t3_flag::Vector{Bool}
@@ -381,8 +380,16 @@ function Base.display(data::Array{<:OIdata})
 end
 
 # ---------------------------------------------------------------------------
-# set_data_filter / filter_data — post-load filtering (unchanged logic)
+# set_data_filter / filter_data — post-load filtering
 # ---------------------------------------------------------------------------
+
+# Every FLAG column set to false, in place.
+function _clear_flags!(d)
+    fill!(d.vis_flag, false); fill!(d.v2_flag, false); fill!(d.t3_flag, false)
+    fill!(d.flux_flag, false)
+    return d
+end
+
 
 """
     set_data_filter(data; kwargs...) -> [uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]
@@ -397,6 +404,7 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `baseline_range` — `[min, max]` spatial frequency B/λ in cycles/rad (the same units as
   `uv_baseline`, so e.g. `[5e6, 300e6]` is 5–300 Mλ). Default: keep all.
 - `filter_bad_data` — apply quality cuts (flags, NaN, SNR, amplitude range). Default: `false`.
+- `ignore_flags` — the quality cuts disregard the FLAG columns. Default: `false`.
 - `filter_vis`, `filter_v2`, `filter_t3amp`, `filter_t3phi`, `filter_flux` — enable cuts per observable type.
 - `cutoff_minv2`, `cutoff_maxv2` — V² range cut. Default: `(-1, 2.0)`.
 - `cutoff_mint3amp`, `cutoff_maxt3amp` — T3 amplitude range cut. Default: `(-1.0, 1.5)`.
@@ -406,6 +414,17 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `special_filter_diffvis` — enable differential visibility filtering mode.
 - `uv_bad` — pre-supplied list of UV indices to remove.
 - `filter_visphi`, `filter_visamp` — enable visibility phase/amplitude filtering.
+- `exclude_stations` — station names (`sta_name`, e.g. `["E1", "W2"]`): every V², VIS, T3 and
+  flux point that uses one is removed.
+- `exclude_baselines` — baselines as `"S1-S2"` in either order: the V² and VIS points on them,
+  and every T3 point with one of them among its three baselines.
+- `exclude_triangles` — triangles as `"S1-S2-S3"` in any order: those T3 points.
+- `max_v2_err`, `max_t3amp_err`, `max_t3phi_err` (degrees), `max_visamp_err`,
+  `max_visphi_err` (degrees), `max_flux_err` — remove points whose error bar is above this.
+  `max_v2_err_rel`, `max_t3amp_err_rel`, `max_visamp_err_rel`, `max_flux_err_rel` — above this
+  fraction of the value's magnitude. Default `Inf`: no cap. A T3 or VIS point holds its
+  amplitude and phase together, so a cap on either removes the point. (Floors and multipliers,
+  which inflate rather than remove, are `oifits_prep`'s.)
 
 Returns `[uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]` — five `Vector{Int64}` of indices to discard.
 """
@@ -413,12 +432,18 @@ function set_data_filter(data::OIdata{T};
         wav_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
         mjd_range::Union{Vector{Float64}, Vector{Vector{Float64}}} = [-1.0, 1e99],
         baseline_range::Vector{Float64} = [0.0, 1e99],
-        filter_bad_data = false, filter_vis = true, filter_v2 = true,
+        filter_bad_data = false, ignore_flags = false, filter_vis = true, filter_v2 = true,
         filter_t3amp = true, filter_t3phi = true, filter_flux = true,
         cutoff_minv2 = -1, cutoff_maxv2 = 2.0, cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
         special_filter_diffvis = false, force_full_vis = false, force_full_t3 = false,
         filter_v2_snr_threshold = 0.01, uv_bad = Int64[],
-        filter_visphi = false, filter_visamp = false) where T
+        filter_visphi = false, filter_visamp = false,
+        exclude_stations::AbstractVector{<:AbstractString} = String[],
+        exclude_baselines::AbstractVector{<:AbstractString} = String[],
+        exclude_triangles::AbstractVector{<:AbstractString} = String[],
+        max_v2_err = Inf, max_v2_err_rel = Inf, max_t3amp_err = Inf, max_t3amp_err_rel = Inf,
+        max_t3phi_err = Inf, max_visamp_err = Inf, max_visamp_err_rel = Inf,
+        max_visphi_err = Inf, max_flux_err = Inf, max_flux_err_rel = Inf) where T
 
     !isempty(wav_range) && typeof(wav_range) == Vector{Float64} && (wav_range = [wav_range])
     !isempty(mjd_range) && typeof(mjd_range) == Vector{Float64} && (mjd_range = [mjd_range])
@@ -431,37 +456,41 @@ function set_data_filter(data::OIdata{T};
     vis_bad = Int64[]; v2_bad = Int64[]; t3_bad = Int64[]; flux_bad = Int64[]
 
     if filter_bad_data
+        # The flags the cuts read: the file's, or all false with `ignore_flags`.
+        flag(v) = ignore_flags ? falses(length(v)) : v
+        vis_flag, v2_flag, t3_flag, flux_flag =
+            flag(data.vis_flag), flag(data.v2_flag), flag(data.t3_flag), flag(data.flux_flag)
         if use_vis
             va_ok = (.!isnan.(data.visamp)) .& (.!isnan.(data.visamp_err)) .& (data.visamp_err .> 0)
             vp_ok = (.!isnan.(data.visphi)) .& (.!isnan.(data.visphi_err)) .& (data.visphi_err .> 0)
             vis_good = force_full_vis ?
-                findall(.!data.vis_flag .& (va_ok .& vp_ok)) :
-                findall(.!data.vis_flag .& (va_ok .| vp_ok))
-            special_filter_diffvis && (vis_good = findall(data.vis_flag .!= 2))
-            vis_bad = setdiff(1:length(data.vis_flag), vis_good)
+                findall(.!vis_flag .& (va_ok .& vp_ok)) :
+                findall(.!vis_flag .& (va_ok .| vp_ok))
+            special_filter_diffvis && (vis_good = findall(vis_flag .!= 2))
+            vis_bad = setdiff(1:length(vis_flag), vis_good)
         end
         if use_v2
             v2_good = findall(
-                (.!data.v2_flag) .& (data.v2_err .> 0) .& (data.v2_err .< 1) .&
+                (.!v2_flag) .& (data.v2_err .> 0) .& (data.v2_err .< 1) .&
                 (data.v2 .> cutoff_minv2) .& (data.v2 .< cutoff_maxv2) .&
                 .!isnan.(data.v2) .& .!isnan.(data.v2_err) .&
                 (abs.(data.v2 ./ data.v2_err) .> filter_v2_snr_threshold))
-            v2_bad = setdiff(1:length(data.v2_flag), v2_good)
+            v2_bad = setdiff(1:length(v2_flag), v2_good)
         end
         if use_t3
             ta_ok = (.!isnan.(data.t3amp)) .& (.!isnan.(data.t3amp_err)) .& (data.t3amp_err .> 0)
             tp_ok = (.!isnan.(data.t3phi)) .& (.!isnan.(data.t3phi_err)) .& (data.t3phi_err .> 0)
             t3_good = force_full_t3 ?
-                findall(.!data.t3_flag .& (ta_ok .& tp_ok) .& (data.t3amp .> cutoff_mint3amp) .& (data.t3amp .< cutoff_maxt3amp)) :
-                findall(.!data.t3_flag .& (ta_ok .| tp_ok))
-            t3_bad = setdiff(1:length(data.t3_flag), t3_good)
+                findall(.!t3_flag .& (ta_ok .& tp_ok) .& (data.t3amp .> cutoff_mint3amp) .& (data.t3amp .< cutoff_maxt3amp)) :
+                findall(.!t3_flag .& (ta_ok .| tp_ok))
+            t3_bad = setdiff(1:length(t3_flag), t3_good)
         end
         if use_flux
             flux_good = findall(
-                (.!data.flux_flag) .&
+                (.!flux_flag) .&
                 .!isnan.(data.flux) .& .!isnan.(data.flux_err) .&
                 (data.flux_err .> 0))
-            flux_bad = setdiff(1:length(data.flux_flag), flux_good)
+            flux_bad = setdiff(1:length(flux_flag), flux_good)
         end
     end
 
@@ -498,7 +527,46 @@ function set_data_filter(data::OIdata{T};
         flux_bad = union(flux_bad, setdiff(1:data.nflux, flux_good_range))
     end
 
+    # Error-bar caps: above an absolute value, or above a fraction of the value's magnitude.
+    capped(err, val, a, r) = findall(i -> err[i] > a || err[i] > r * abs(val[i]), eachindex(err))
+    v2_bad  = union(v2_bad,  capped(data.v2_err, data.v2, max_v2_err, max_v2_err_rel))
+    vis_bad = union(vis_bad, capped(data.visamp_err, data.visamp, max_visamp_err, max_visamp_err_rel),
+                             findall(>(max_visphi_err), data.visphi_err))
+    t3_bad  = union(t3_bad,  capped(data.t3amp_err, data.t3amp, max_t3amp_err, max_t3amp_err_rel),
+                             findall(>(max_t3phi_err), data.t3phi_err))
+    flux_bad = union(flux_bad, capped(data.flux_err, data.flux, max_flux_err, max_flux_err_rel))
+
+    # Stations, baselines and triangles by name.
+    if !isempty(exclude_stations) || !isempty(exclude_baselines) || !isempty(exclude_triangles)
+        sb = _station_cuts(data, exclude_stations, exclude_baselines, exclude_triangles)
+        vis_bad  = union(vis_bad,  findall(sb.pair, eachcol(data.vis_sta_index)))
+        v2_bad   = union(v2_bad,   findall(sb.pair, eachcol(data.v2_sta_index)))
+        t3_bad   = union(t3_bad,   findall(sb.triple, eachcol(data.t3_sta_index)))
+        flux_bad = union(flux_bad, findall(k -> k in sb.stations, data.flux_sta_index))
+    end
+
     return [uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]
+end
+
+# What `exclude_stations`, `exclude_baselines` and `exclude_triangles` remove, as predicates on a
+# point's station indices. Names are matched against `sta_name`; a name the data does not have
+# is an error rather than a cut that silently removes nothing.
+function _station_cuts(data::OIdata, stations, baselines, triangles)
+    idx = Dict(n => i for (n, i) in zip(data.sta_name, data.sta_index))
+    station(n) = haskey(idx, n) ? idx[n] :
+        throw(ArgumentError("no station $(repr(n)) in this data; it has $(join(data.sta_name, ", "))"))
+    function parts(s, k, what)
+        p = split(String(s), '-')
+        length(p) == k || throw(ArgumentError("a $what is written $(join(fill("S", k), "-")), not $(repr(s))"))
+        return sort!([station(strip(x)) for x in p])
+    end
+    st  = Set(station(n) for n in stations)
+    bls = Set(parts(b, 2, "baseline") for b in baselines)
+    tri = Set(parts(t, 3, "triangle") for t in triangles)
+    pair(c)   = any(in(st), c) || sort!(collect(c)) in bls
+    triple(c) = any(in(st), c) || sort!(collect(c)) in tri ||
+                any(sort!([c[i], c[j]]) in bls for (i, j) in ((1, 2), (2, 3), (1, 3)))
+    return (; stations = st, pair, triple)
 end
 
 """
@@ -1446,7 +1514,6 @@ function make_oidata(bd::BinData{T}, station_info, filename::String) where T
         bd.v2, bd.v2_err, bd.v2_baseline, bd.v2_mjd, bd.mean_mjd,
         bd.v2_lam, bd.v2_dlam, bd.v2_flag,
         bd.t3amp, bd.t3amp_err, bd.t3phi, bd.t3phi_err,
-        T[], T[],            # vonmises fields (computed separately)
         bd.t3_baseline, bd.t3_maxbaseline,
         bd.t3_mjd, bd.t3_lam, bd.t3_dlam, bd.t3_flag,
         bd.flux, bd.flux_err, bd.flux_mjd, bd.flux_lam, bd.flux_dlam, bd.flux_flag,
@@ -1481,6 +1548,9 @@ data in a single bin.
 
 ## Target selection
 - `targetname` — select a single target by name. Default: all targets combined.
+- `insname` — select one instrument (an OI_WAVELENGTH table's `INSNAME`, e.g. GRAVITY's
+  science or fringe-tracker channel): only its wavelength table and the observable tables that
+  refer to it are read. Default: every instrument.
 
 ## Spectral / temporal binning
 - `spectralbin` — vector of `[λ_min, λ_max]` windows in metres. Default: single bin
@@ -1501,6 +1571,9 @@ data in a single bin.
 - `use_vis`, `use_v2`, `use_t3`, `use_flux` — load each observable type. Default: all `true`.
 ## Quality filtering
 - `filter_bad_data` — apply quality cuts on load. Default: `true`.
+- `ignore_flags` — reset the file's FLAG columns to false on load, so a flagged point is kept
+  unless it fails another cut (oimodeler's `oimResetFlagsFilter`). The flags are cleared in the
+  returned data too. Default: `false`.
 - `force_full_vis` — require both visamp and visphi to be valid. Default: `false`.
 - `force_full_t3` — require both t3amp and t3phi. Default: `false`.
 - `cutoff_minv2`, `cutoff_maxv2` — V² range cut. Default: `(-1, 2.0)`.
@@ -1533,6 +1606,7 @@ data = readoifits("multi.oifits"; targetname="Betelgeuse") # one target
 """
 function readoifits(oifitsfile;
         targetname        = "",
+        insname           = "",
         spectralbin       = [[]],
         temporalbin       = [[]],
         splitting         = false,
@@ -1543,6 +1617,7 @@ function readoifits(oifitsfile;
         redundance_remove = true,
         uvtol             = 2e2,
         filter_bad_data   = true,
+        ignore_flags      = false,
         force_full_vis    = false,
         force_full_t3     = false,
         filter_v2_snr_threshold = 0.01,
@@ -1573,6 +1648,12 @@ function readoifits(oifitsfile;
 
     # ---- Validate and extract tables ----------------------------------------
     wavtables    = ds.instr;  isempty(wavtables)   && error("No OI_WAVELENGTH table in $oifitsfile")
+    if insname != ""
+        have = unique([db.insname for db in wavtables])
+        insname in have || error("Instrument '$insname' not found in $oifitsfile; it has " *
+                                 join(repr.(have), ", "))
+        wavtables = [db for db in wavtables if db.insname == insname]
+    end
     arraytables  = ds.array;  isempty(arraytables)  && error("No OI_ARRAY table in $oifitsfile")
     wavtableref  = [db.insname for db in wavtables]
     arraytableref = [db.arrname for db in arraytables]
@@ -1592,10 +1673,11 @@ function readoifits(oifitsfile;
     end
 
     # ---- Observable table availability --------------------------------------
-    fluxtables = ds.flux;  use_flux = use_flux && !isempty(fluxtables)
-    vistables  = ds.vis;   use_vis  = use_vis  && !isempty(vistables)
-    v2tables   = ds.vis2;  use_v2   = use_v2   && !isempty(v2tables)
-    t3tables   = ds.t3;    use_t3   = use_t3   && !isempty(t3tables)
+    ofins(tabs) = insname == "" ? tabs : [db for db in tabs if db.insname == insname]
+    fluxtables = ofins(ds.flux);  use_flux = use_flux && !isempty(fluxtables)
+    vistables  = ofins(ds.vis);   use_vis  = use_vis  && !isempty(vistables)
+    v2tables   = ofins(ds.vis2);  use_v2   = use_v2   && !isempty(v2tables)
+    t3tables   = ofins(ds.t3);    use_t3   = use_t3   && !isempty(t3tables)
 
     # ---- Verbose: table summary ---------------------------------------------
     if verbose
@@ -1709,6 +1791,7 @@ function readoifits(oifitsfile;
                           bin_vis, bin_v2, bin_t3, bin_flux;
                           use_vis, use_v2, use_t3, use_flux, T)
 
+        ignore_flags && _clear_flags!(bd)
         filter_bad_data && filter_bad_observables!(bd;
             use_vis, use_v2, use_t3, force_full_vis, force_full_t3,
             special_filter_diffvis, cutoff_minv2, cutoff_maxv2,
@@ -1808,11 +1891,12 @@ Reads `CDELT2` (then `CDELT1`, then the `CD2_2`/`CD1_1` matrix form) and convert
 axis's own `CUNIT` when it has one — `deg` is what the FITS standard says and what other tools
 write.
 
-Without a `CUNIT` the number is ambiguous, and the ambiguity is real: `writefits` writes
-RADIANS per pixel with no unit at all, while a file from elsewhere is usually degrees, and both
-are tiny numbers for an interferometric image. The reading that lands in a plausible range for
-one — 1e-4 to 1e4 mas — is taken, radians first because that is this package's own convention;
-if neither is plausible, `nothing`, because a wrong pixel size is worse than an absent one.
+Without a `CUNIT` the number is ambiguous, and the ambiguity is real: older files of this
+package carry RADIANS per pixel with the unit only in the `CDELT` comment ("Radians per
+Pixel"), while a file from elsewhere is usually degrees, and both are tiny numbers for an
+interferometric image. A comment naming radians is taken at its word; otherwise degrees, the
+FITS default, but only when that lands in a plausible range (1e-4 to 1e4 mas) — if not,
+`nothing`, because a wrong pixel size is worse than an absent one.
 """
 function fits_pixsize(fitsfile)
     hdr = try
@@ -1858,72 +1942,105 @@ function fits_pixsize(fitsfile)
 end
 
 """
-    writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[])
+    writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[], bandwidths = Float64[],
+              mjds = Float64[])
 
-Write an image or a cube to a FITS file, with a WCS when there is enough information for one.
+Write an image or a cube to a FITS file, in the convention shared with ROTIR's
+`write_sky_cube` so that what is written here loads back as a model component
+([`read_model_image`](@ref)) and in any WCS-aware viewer.
 
-`data` may be a matrix or an N-D array; a reconstruction is `(nx, nx, nwav, nepoch)`.
+`data` keeps its own dimensionality: a matrix is written 2-D, a reconstruction
+`(nx, nx, nwav, nepoch)` 4-D. Dimension 1 is East and dimension 2 North, as everywhere in this
+package.
 
-`pixsize` is in MILLIARCSECONDS and is what turns the file from an array into an image: without
-it no WCS is written at all. `CDELT1`/`CDELT2` are written in RADIANS with an explicit `CUNIT`,
-because the FITS default for a celestial axis is degrees and the two differ by 5.7e4 — a reader
-with no unit to go on has to guess.
+`pixsize` is in MILLIARCSECONDS and is what turns the array into an image: without it no WCS is
+written at all. With it:
 
-`wavelengths` are the centre wavelength of each channel, in METRES, and are what make a cube
-readable: given them, `CTYPE3 = 'WAVE'`, `CRVAL3` and `CDELT3` are written, and without them a
-cube has a third axis that nothing can interpret. `CDELT3` is a LINEAR step, so for bins that
-are not evenly spaced it is the mean and the header comment says by how much they depart — FITS
-cannot express an irregular axis without the `-TAB` convention and a lookup table.
+| key | value |
+|---|---|
+| `CTYPE1`, `CTYPE2` | `'RA---SIN'`, `'DEC--SIN'` |
+| `CUNIT1`, `CUNIT2` | `'deg'` — the FITS default for a celestial axis, written anyway |
+| `CDELT1`, `CDELT2` | `+pixsize/3.6e6`: POSITIVE, because index increases East and North |
+| `CRPIX1`, `CRPIX2` | `nx÷2+1`, the NFFT's phase centre; `CRVAL1/2 = 0`, offsets from it |
+| `PIXSIZE` | the pixel size in mas, as a convenience |
 
-See also [`fits_pixsize`](@ref), which reads the pixel scale back out of a file written
-here. `readfits` and `updatefits_aspro` are the other half of this pair but carry no
-docstrings, so they cannot be cross-referenced yet.
+`wavelengths` (METRES, one per plane of axis 3) make axis 3 `WAVE`; `bandwidths` (metres)
+are optional. `mjds` (one per plane of axis 4) make axis 4 `TIME`, in days, UTC. Each axis
+gets `CRPIX`/`CRVAL`/`CDELT` only when its values are evenly spaced to 1%; otherwise
+`WAVEIRR = T` / `TIMEIRR = T` and no linear WCS, which would misplace the planes. The exact
+values always go into a `CHANNELS` (`EFF_WAVE`, `EFF_BAND`) or `EPOCHS` (`MJD`) table, which is
+the authority.
+
+`NORMALIZ = 'PLANE'` is written when every plane sums to 1, which is what a reconstruction is.
+
+See also [`fits_pixsize`](@ref), which reads the pixel scale back. Files written before this
+convention — radians, a negative `CDELT1`, `CRPIX = nx/2` — still read: the unit is honoured,
+and `read_model_image` recognises the old pair and warns.
 """
-function writefits(data, fitsfile; pixsize=-1, wavelengths=Float64[])
+function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
+                   bandwidths = Float64[], mjds = Float64[])
     f = FITS(fitsfile, "w")
-    if pixsize != -1
-        # CUNIT is written because CDELT here is in RADIANS and the FITS standard's default for
-        # a celestial axis is DEGREES -- a reader with no unit to go on has to guess, and the
-        # two differ by 5.7e4. Older files carry the unit only in the comment, which is why
-        # `fits_pixsize` reads that too.
-        header = FITSHeader(
-            ["CDELT1","CDELT2","CUNIT1","CUNIT2","CRVAL1","CRVAL2","CRPIX1","CRPIX2"],
-            Any[-(pixsize/1000.0)/206265.0, (pixsize/1000.0)/206265.0, "rad", "rad", 0.0, 0.0,
-                size(data,1)/2, size(data,1)/2],
-            ["Radians per Pixel","Radians per Pixel",
-             "unit of CDELT1","unit of CDELT2",
-             "X-coordinate of reference pixel","Y-coordinate of reference pixel",
-             "reference pixel in X","reference pixel in Y"])
-        # The spectral axis, when the array has one and the caller can say what it means. A
-        # cube written without it has a third axis that no reader can interpret -- the channels
-        # are there and nothing says which wavelength each one is.
-        #
-        # CDELT3 is a LINEAR step, which a set of bin centres need not be. It is written as the
-        # mean spacing and the header says so, because FITS cannot express an irregular axis
-        # without the -TAB convention and a lookup table; a reader that assumes linear is then
-        # wrong by the amount the comment names rather than by an unknown amount.
-        if ndims(data) >= 3 && length(wavelengths) == size(data, 3) && length(wavelengths) > 1
-            lam = Float64.(wavelengths)
-            step = (lam[end] - lam[1]) / (length(lam) - 1)
-            dev = maximum(abs.(diff(lam) .- step)) / abs(step)
-            header["CTYPE3"] = "WAVE"
-            header["CUNIT3"] = "m"
-            header["CRPIX3"] = 1.0
-            header["CRVAL3"] = lam[1]
-            header["CDELT3"] = step
-            set_comment!(header, "CTYPE3", "wavelength axis")
-            set_comment!(header, "CUNIT3", "unit of CRVAL3 and CDELT3")
-            set_comment!(header, "CRPIX3", "reference pixel in wavelength")
-            set_comment!(header, "CRVAL3", "centre wavelength of channel 1")
-            set_comment!(header, "CDELT3",
-                         dev > 0.01 ? "mean step; channels differ from linear by $(round(100*dev))%" :
-                                      "metres per channel")
+    try
+        if pixsize == -1
+            write(f, data)
+            return nothing
         end
-        write(f, data, header=header)
-    else
-        write(f, data)
+        nx, ny = size(data, 1), size(data, 2)
+        deg = Float64(pixsize) / 3.6e6
+        header = FITSHeader(
+            ["CTYPE1", "CUNIT1", "CDELT1", "CRPIX1", "CRVAL1",
+             "CTYPE2", "CUNIT2", "CDELT2", "CRPIX2", "CRVAL2", "PIXSIZE"],
+            Any["RA---SIN", "deg", deg, Float64(nx ÷ 2 + 1), 0.0,
+                "DEC--SIN", "deg", deg, Float64(ny ÷ 2 + 1), 0.0, Float64(pixsize)],
+            ["axis 1 increases EAST", "", "positive: RA increases with pixel index",
+             "phase centre: NFFT zero offset, pixel nx/2+1", "offset from the phase centre",
+             "axis 2 increases NORTH", "", "", "phase centre", "", "pixel size in mas"])
+
+        # A linear axis only when it IS linear: a CDELT that is merely the mean step puts
+        # every plane but the first at the wrong value, and the table says it exactly anyway.
+        linear(v) = length(v) == 1 ||
+                    (s = (v[end] - v[1]) / (length(v) - 1);
+                     s != 0 && maximum(abs.(diff(v) .- s)) <= 0.01 * abs(s))
+        function axis!(n, ctype, cunit, v, irr)
+            header["CTYPE$n"] = ctype; header["CUNIT$n"] = cunit
+            if linear(v)
+                header["CRPIX$n"] = 1.0
+                header["CRVAL$n"] = v[1]
+                header["CDELT$n"] = length(v) > 1 ? (v[end] - v[1]) / (length(v) - 1) : 0.0
+            else
+                header[irr] = true
+                set_comment!(header, irr, "irregular: the table is the authority")
+            end
+        end
+
+        lam = Float64.(wavelengths)
+        haslam = ndims(data) >= 3 && length(lam) == size(data, 3) && !isempty(lam)
+        haslam && axis!(3, "WAVE", "m", lam, "WAVEIRR")
+        mjd = Float64.(mjds)
+        hasmjd = ndims(data) == 4 && length(mjd) == size(data, 4) && !isempty(mjd)
+        if hasmjd
+            axis!(4, "TIME", "d", mjd, "TIMEIRR")
+            header["TIMESYS"] = "UTC"; header["MJDREF"] = 0.0
+            set_comment!(header, "MJDREF", "TIME axis values are MJD")
+        end
+
+        planes = reshape(data, nx, ny, :)
+        if all(abs(sum(@view planes[:, :, k]) - 1) <= 1e-4 for k in 1:size(planes, 3))
+            header["NORMALIZ"] = "PLANE"
+            set_comment!(header, "NORMALIZ", "each plane sums to 1")
+        end
+
+        write(f, data; header = header)
+        if haslam
+            cols = Dict{String,Any}("EFF_WAVE" => lam)
+            length(bandwidths) == length(lam) && (cols["EFF_BAND"] = Float64.(bandwidths))
+            write(f, cols; name = "CHANNELS")
+        end
+        hasmjd && write(f, Dict{String,Any}("MJD" => mjd); name = "EPOCHS")
+    finally
+        close(f)
     end
-    close(f)
+    return nothing
 end
 
 function updatefits_aspro(fitsfile_in, fitsfile_out, res)
@@ -1947,39 +2064,61 @@ end
 # Error inflation / oifits_prep
 # ===========================================================================
 
+# One observable's error bars after a floor and a multiplier. Linear: the larger of
+# `mult·err` and `|val·rel| + add`. In quadrature: √((val·rel)² + (mult·err)² + add²). A phase
+# has no relative floor (`rel = nothing`), and its value is then not read at all -- a NaN value
+# times zero would still be NaN.
+function _err_floor(err::AbstractVector{T}, val, add, rel, mult, quad) where {T}
+    if quad
+        r2 = rel === nothing ? zero(T) : (val .* T(rel)).^2
+        return sqrt.(r2 .+ (T(mult) .* err).^2 .+ T(add)^2)
+    end
+    temperr = T(mult) .* err
+    newerr  = rel === nothing ? fill(T(add), length(err)) : abs.(val .* T(rel)) .+ T(add)
+    temperr[newerr .> temperr] .= newerr[newerr .> temperr]
+    return temperr
+end
+
+"""
+    oifits_prep(data; quad = false, kwargs...) -> data
+
+Inflate error bars in place: per observable, a floor (absolute `min_*_err_add`, relative
+`min_*_err_rel`, a fraction of the value) and a multiplier (`*_err_mult`). Linear by default,
+each error bar becoming the larger of `mult·σ` and `|value·rel| + add`; with `quad = true` the
+terms add in quadrature, `√((value·rel)² + (mult·σ)² + add²)`. Phases (T3φ, VISφ) take no
+relative floor; their absolute floor is in degrees.
+
+| observable | floor | relative floor | multiplier |
+|---|---|---|---|
+| V² | `min_v2_err_add` | `min_v2_err_rel` | `v2_err_mult` |
+| T3amp | `min_t3amp_err_add` | `min_t3amp_err_rel` | `t3amp_err_mult` |
+| T3φ | `min_t3phi_err_add` | — | `t3phi_err_mult` |
+| VISamp | `min_visamp_err_add` | `min_visamp_err_rel` | `visamp_err_mult` |
+| VISφ | `min_visphi_err_add` | — | `visphi_err_mult` |
+| flux | `min_flux_err_add` | `min_flux_err_rel` | `flux_err_mult` |
+
+The defaults change nothing. Error bars ABOVE a cap are a removal rather than an inflation, so
+they are `set_data_filter`'s `max_*_err` keywords.
+"""
 function oifits_prep(data::OIdata{T};
         min_v2_err_add=0, min_v2_err_rel=0, v2_err_mult=1,
         min_t3amp_err_add=0, min_t3amp_err_rel=0, t3amp_err_mult=1,
-        min_t3phi_err_add=0, t3phi_err_mult=1, quad=false) where T
-
-    if quad
-        data.v2_err = sqrt.((data.v2 .* min_v2_err_rel).^2 .+
-                            (v2_err_mult .* data.v2_err).^2 .+ T(min_v2_err_add)^2)
-    else
-        temperr = v2_err_mult .* data.v2_err
-        newerr  = abs.(data.v2 .* min_v2_err_rel) .+ min_v2_err_add
-        temperr[newerr .> temperr] .= newerr[newerr .> temperr]
-        data.v2_err = temperr
-    end
-
-    if quad
-        data.t3amp_err = sqrt.((data.t3amp .* min_t3amp_err_rel).^2 .+
-                               (t3amp_err_mult .* data.t3amp_err).^2 .+ T(min_t3amp_err_add)^2)
-    else
-        temperr = t3amp_err_mult .* data.t3amp_err
-        newerr  = abs.(data.t3amp .* min_t3amp_err_rel) .+ min_t3amp_err_add
-        temperr[newerr .> temperr] .= newerr[newerr .> temperr]
-        data.t3amp_err = temperr
-    end
-
-    if quad
-        data.t3phi_err = sqrt.((t3phi_err_mult .* data.t3phi_err).^2 .+ T(min_t3phi_err_add)^2)
-    else
-        temperr = t3phi_err_mult .* data.t3phi_err
-        newerr  = T(min_t3phi_err_add) .* ones(T, length(data.t3phi_err))
-        temperr[newerr .> temperr] .= newerr[newerr .> temperr]
-        data.t3phi_err = temperr
-    end
+        min_t3phi_err_add=0, t3phi_err_mult=1,
+        min_visamp_err_add=0, min_visamp_err_rel=0, visamp_err_mult=1,
+        min_visphi_err_add=0, visphi_err_mult=1,
+        min_flux_err_add=0, min_flux_err_rel=0, flux_err_mult=1,
+        quad=false) where T
+    data.v2_err     = _err_floor(data.v2_err, data.v2, min_v2_err_add, min_v2_err_rel, v2_err_mult, quad)
+    data.t3amp_err  = _err_floor(data.t3amp_err, data.t3amp, min_t3amp_err_add, min_t3amp_err_rel,
+                                 t3amp_err_mult, quad)
+    data.t3phi_err  = _err_floor(data.t3phi_err, data.t3phi, min_t3phi_err_add, nothing,
+                                 t3phi_err_mult, quad)
+    data.visamp_err = _err_floor(data.visamp_err, data.visamp, min_visamp_err_add, min_visamp_err_rel,
+                                 visamp_err_mult, quad)
+    data.visphi_err = _err_floor(data.visphi_err, data.visphi, min_visphi_err_add, nothing,
+                                 visphi_err_mult, quad)
+    data.flux_err   = _err_floor(data.flux_err, data.flux, min_flux_err_add, min_flux_err_rel,
+                                 flux_err_mult, quad)
     return data
 end
 

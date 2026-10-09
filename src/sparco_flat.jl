@@ -108,6 +108,7 @@ end
 
 function _sparco_flat_forward(model::FlatModel, x, x_img, ftplan, data, w_idx::Int)
     wl = data.uv_lam
+    _refuse_smear(model, "SPARCO image + model")
     V_model = eval_model(model, x, data.uv; wl=wl)
     W = _eval_W(model, x, wl, w_idx)
     V_image = image_to_vis(x_img, ftplan[1])
@@ -122,7 +123,7 @@ end
 
 """
     chi2_sparco_flat_f(x_img, params, model, ftplan, data;
-                       w_name="env,f", weights=[1,1,1], verb=true, vonmises=false)
+                       w_name="env,f", weights=[1,1,1], verb=true)
 
 Evaluate chi2 for the SPARCO-flat model (no gradient).
 """
@@ -133,8 +134,7 @@ function chi2_sparco_flat_f(x_img::AbstractMatrix{<:AbstractFloat},
         data::OIdata;
         w_name::String = "W",
         weights = [1.0, 1.0, 1.0],
-        verb::Bool = true,
-        vonmises::Bool = false)
+        verb::Bool = true)
 
     w_idx = _resolve_w_idx(model, w_name)
     m = _sparco_flat_forward(model, params, x_img, ftplan, data, w_idx)
@@ -151,11 +151,7 @@ function chi2_sparco_flat_f(x_img::AbstractMatrix{<:AbstractFloat},
         chi2_t3amp = norm((t3amp_model - data.t3amp) ./ data.t3amp_err)^2
     end
     if (weights[3] > 0) && (data.nt3phi > 0)
-        if !vonmises
-            chi2_t3phi = norm(mod360(t3phi_model - data.t3phi) ./ data.t3phi_err)^2
-        else
-            chi2_t3phi = sum(-2 * data.t3phi_vonmises_err .* cos.((t3phi_model - data.t3phi) / 180 * pi) .+ data.t3phi_vonmises_chi2_offset)
-        end
+        chi2_t3phi = norm(mod360(t3phi_model - data.t3phi) ./ data.t3phi_err)^2
     end
     if verb
         printstyled(@sprintf("V2: %.2f ", chi2_v2 / data.nv2), color=:red)
@@ -173,7 +169,7 @@ end
 
 """
     chi2_sparco_flat_fg(x, g, model, ftplan, data, nparams;
-                        w_name="env,f", weights=[1,1,1], verb=true, vonmises=false)
+                        w_name="env,f", weights=[1,1,1], verb=true)
 
 Chi2 and gradient for the combined [params; image_pixels] vector.
 
@@ -189,8 +185,7 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
         nparams::Int;
         w_name::String = "W",
         weights = [1.0, 1.0, 1.0],
-        verb::Bool = true,
-        vonmises::Bool = false)
+        verb::Bool = true)
 
     params = x[1:nparams]
     nx = Int(sqrt(length(x) - nparams))
@@ -201,6 +196,7 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
     wl = data.uv_lam
 
     # ── Forward pass ──────────────────────────────────────────────────────────
+    _refuse_smear(model, "SPARCO image + model")
     V_model, J_model = eval_model_grad(model, params, data.uv; wl=wl)
     W = _eval_W(model, params, wl, w_idx)
     J_W = _jacobian_W(model, params, wl, w_idx)
@@ -212,7 +208,7 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
 
     # ── Chi2 + adjoint source ─────────────────────────────────────────────────
     w = _pad_weights(weights)
-    chi2, g_cvis = cvis_to_chi2_fg(V_total, data; weights=w, vonmises=vonmises)
+    chi2, g_cvis = cvis_to_chi2_fg(V_total, data; weights=w)
 
     # ── Parameter gradient ────────────────────────────────────────────────────
     g[1:nparams] = real.(transpose(J_total) * g_cvis)
@@ -223,7 +219,7 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
 
     # ── Verbose output ────────────────────────────────────────────────────────
     if verb
-        t = _chi2_terms(V_total, data, w, vonmises)
+        t = _chi2_terms(V_total, data, w)
         printstyled(@sprintf("V2: %.2f ", t.chi2_v2 / data.nv2), color=:red)
         printstyled(@sprintf("T3A: %.2f ", t.chi2_t3amp / data.nt3amp), color=:blue)
         printstyled(@sprintf("T3P: %.2f ", t.chi2_t3phi / data.nt3phi), color=:green)
@@ -267,7 +263,7 @@ end
 
 """
     model_and_image_to_chi2_fg(model, x_params, image, g_image, ft, data::OIdata;
-                                w_name=nothing, weights=[1,1,1], verb=false, vonmises=false)
+                                w_name=nothing, weights=[1,1,1], verb=false)
 
 Hybrid chi2+gradient combining a parametric model with an image (monochromatic).
 
@@ -285,7 +281,7 @@ function model_and_image_to_chi2_fg(
         ft, data::OIdata;
         w_name::Union{String,Nothing} = nothing,
         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0],
-        verb::Bool = false, vonmises::Bool = false)
+        verb::Bool = false)
 
     w = _pad_weights(weights)
 
@@ -294,6 +290,7 @@ function model_and_image_to_chi2_fg(
 
     # 2. Model → cvis + Jacobian
     wl = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
+    _refuse_smear(model, "SPARCO image + model")
     cvis_model, J = eval_model_grad(model, x_params, data.uv; wl=wl)
 
     if !isnothing(w_name)
@@ -303,7 +300,7 @@ function model_and_image_to_chi2_fg(
         J_W = _jacobian_W(model, x_params, wl, w_idx)
         cvis_total = cvis_model .+ W .* cvis_image
 
-        chi2, g_cvis = cvis_to_chi2_fg(cvis_total, data; weights=w, vonmises=vonmises)
+        chi2, g_cvis = cvis_to_chi2_fg(cvis_total, data; weights=w)
 
         # Image gradient: W * adjoint + flux normalization
         _backprop_image_gradient!(g_image, W .* g_cvis, image, ft)
@@ -320,7 +317,7 @@ function model_and_image_to_chi2_fg(
 
         cvis_total = f_env .* cvis_image .+ cvis_model
 
-        chi2, g_cvis = cvis_to_chi2_fg(cvis_total, data; weights=w, vonmises=vonmises)
+        chi2, g_cvis = cvis_to_chi2_fg(cvis_total, data; weights=w)
 
         _backprop_image_gradient!(g_image, g_cvis, image, ft, f_env)
 
@@ -333,7 +330,7 @@ function model_and_image_to_chi2_fg(
     end
 
     if verb
-        t = _chi2_terms(cvis_total, data, w, vonmises)
+        t = _chi2_terms(cvis_total, data, w)
         _verb_print(t, data, w, chi2)
     end
     return chi2, g_params
@@ -348,7 +345,7 @@ end
 
 """
     model_and_image_to_chi2_fg(model, x_params, image, g_image, ft, data::Vector{<:OIdata};
-                                w_name="W", weights=[1,1,1,0,0,0,0], verb=false, vonmises=false)
+                                w_name="W", weights=[1,1,1,0,0,0,0], verb=false)
 
 Polychromatic hybrid chi2+gradient for a parametric model + power-law grey image.
 
@@ -363,7 +360,7 @@ function model_and_image_to_chi2_fg(
         ft, data::Vector{<:OIdata};
         w_name::String = "W",
         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        verb::Bool = false, vonmises::Bool = false)
+        verb::Bool = false)
 
     w = _pad_weights(weights)
     nwavs = length(data)
@@ -379,12 +376,13 @@ function model_and_image_to_chi2_fg(
 
     for i in 1:nwavs
         wl_i = data[i].uv_lam
+        _refuse_smear(model, "SPARCO image + model")
         V_model_i, J_i = eval_model_grad(model, x_params, data[i].uv; wl=wl_i)
         W_i = _eval_W(model, x_params, wl_i, w_idx)
         J_W_i = _jacobian_W(model, x_params, wl_i, w_idx)
         V_total_i = V_model_i .+ W_i .* cvis_image
 
-        chi2_i, g_cvis_i = cvis_to_chi2_fg(V_total_i, data[i]; weights=w, vonmises=vonmises)
+        chi2_i, g_cvis_i = cvis_to_chi2_fg(V_total_i, data[i]; weights=w)
         chi2 += chi2_i
 
         # Parameter gradient: J_total = J_model + cvis_image .* J_W
@@ -417,11 +415,10 @@ function crit_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
         weights = [1.0, 1.0, 1.0],
         printcolor = :normal,
         regularizers = [],
-        verb::Bool = true,
-        vonmises::Bool = false)
+        verb::Bool = true)
 
     chi2 = chi2_sparco_flat_fg(x, g, model, ftplan, data, nparams;
-        w_name=w_name, weights=weights, verb=verb, vonmises=vonmises)
+        w_name=w_name, weights=weights, verb=verb)
 
     nx = Int(sqrt(length(x) - nparams))
     reg_g = zeros(eltype(x), nx, nx)
@@ -504,7 +501,7 @@ end
 """
     reconstruct_hybrid(x_start, params_start, model, data, ft;
                               w_name="W", regularizers=[], weights=[1,1,1],
-                              maxiter=200, rounds=5, verb=false, vonmises=false,
+                              maxiter=200, rounds=5, verb=false,
                               params_lower=nothing, params_upper=nothing, ...)
 
 SPARCO image reconstruction using a flat-model parametric component.
@@ -532,7 +529,6 @@ function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
         rounds::Int = 5,
         regularizers = [],
         weights = [1.0, 1.0, 1.0],
-        vonmises::Bool = false,
         params_lower::Union{Nothing, Vector{Float64}} = nothing,
         params_upper::Union{Nothing, Vector{Float64}} = nothing,
         ftol = (0, 1e-8),
@@ -558,7 +554,7 @@ function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
         function crit_image(x_flat, g_flat)
             img = reshape(x_flat, nx, nx)
             chi2, _ = model_and_image_to_chi2_fg(model, x_params, img, g_image, ft_use, data;
-                w_name=w_name, weights=w, verb=verb, vonmises=vonmises)
+                w_name=w_name, weights=w, verb=verb)
             reg_g = zeros(T, nx, nx)
             reg_f = regularization(img, reg_g; regularizers=regularizers,
                 printcolor=printcolor, verb=verb)
@@ -603,7 +599,6 @@ function reconstruct_sparco_flat(x_start::AbstractMatrix{<:AbstractFloat},
         maxiter::Int = 100,
         regularizers = [],
         weights = [1.0, 1.0, 1.0],
-        vonmises::Bool = false,
         params_lower::Union{Nothing, Vector{Float64}} = nothing,
         params_upper::Union{Nothing, Vector{Float64}} = nothing,
         ftol = (0, 1e-8),
@@ -615,7 +610,7 @@ function reconstruct_sparco_flat(x_start::AbstractMatrix{<:AbstractFloat},
 
     crit = (x, g) -> crit_sparco_flat_fg(x, g, model, ft, data, nparams;
         w_name=w_name, regularizers=regularizers, verb=verb,
-        weights=weights, vonmises=vonmises)
+        weights=weights)
 
     # Parameter bounds: default to unconstrained; image pixels are non-negative
     plb = params_lower === nothing ? fill(-Inf, nparams) : params_lower
@@ -678,7 +673,6 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
         maxiter::Int = 200,
         rounds::Int = 3,
         verb::Bool = false,
-        vonmises::Bool = false,
         printcolor = :normal,
         ftol = (0, 1e-8),
         xtol = (0, 1e-8),
@@ -726,7 +720,7 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
     # Reconstruct
     x_params, x_img = reconstruct_hybrid(x_start, x_params, model, data, ft;
         w_name="W", regularizers=regularizers, weights=weights,
-        maxiter=maxiter, rounds=rounds, verb=verb, vonmises=vonmises,
+        maxiter=maxiter, rounds=rounds, verb=verb,
         printcolor=printcolor, params_lower=lb, params_upper=ub,
         ftol=ftol, xtol=xtol, gtol=gtol)
 

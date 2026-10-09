@@ -215,7 +215,6 @@ ApplicationWindow {
     visibility: fullscreenOnStart ? Window.FullScreen : Window.Windowed
 
     property string status: initialStatus
-    property string pickText: ""
 
 
     // Saves the Exploring plot. Each perspective carries its own, because the picker's title,
@@ -246,7 +245,7 @@ ApplicationWindow {
         savePngDialog.pxh = Math.min(1800, Math.max(480, area.height))
         // The dataset and the view are what distinguish one of these files from the next.
         savePngDialog.suggestedName = Julia.picker_suggest(
-            (datasetBox.currentText || "plot") + "\t" + (kindBox.currentText || ""), "png")
+            (datasetBox.currentText || "plot") + "\t" + (exploreTab.currentKind || ""), "png")
         savePngDialog.openAt("")
     }
 
@@ -259,35 +258,12 @@ ApplicationWindow {
     // itself ask Qt for a new frame. The old code repainted only as a side effect of creating
     // plots -- the same side effect that was corrupting the GL context. MakieArea's own mouse
     // handlers call update() for exactly this reason.
-    function redrawPlot() { if (typeof makieArea !== "undefined") makieArea.update() }
+    function redrawPlot() { exploreTab.redraw() }
 
     function afterAction() { refreshConsole(); redrawPlot(); refreshObservables()
-                             refreshCompareAvailability() }
-
-    // What one panel of the per-group view would hold, for whichever observable is selected.
-    property string groupingNoun: ""
-
-    // The kind actually plotted. `t3phi`/`t3amp` each have a `_max` twin in `OBS_SPECS` that
-    // differs only in which baseline it plots against, so the tick selects the twin rather
-    // than adding a second axis convention anywhere.
-    function effectiveKind() {
-        return (maxBlBox.enabled && maxBlBox.checked) ? kindBox.currentText + "_max"
-                                                      : kindBox.currentText
-    }
-
-    // Both are "", "model" or "image", and at most one of the four ticks is ever on: a
-    // residual has the model subtracted already, so overplotting it there would draw the
-    // prediction against its own difference.
-    property string residualView: ""
-    property string overlayView: ""
-
-    // uv coverage is geometry, not an observable — there is nothing for a model to predict and
-    // nothing to subtract. The ticks are disabled there rather than hidden, like every other
-    // control in this bar.
-    // Whether there is anything to compare against. Refreshed with the observables, so it
-    // follows a fit, a reconstruction and a dataset change without a signal of its own.
-    property bool haveModelObs: false
-    property bool haveImageObs: false
+                             exploreTab.refreshCompareAvailability()
+                             exploreTab.datasetName = datasetBox.currentText
+                             exploreTab.refreshSummary() }
 
     // Plot scale, marker size and zoom step live in Julia, so ask it rather than trusting the
     // numbers the spin boxes were built with. The first field is the scale in FORCE, which is
@@ -304,98 +280,10 @@ ApplicationWindow {
         zoomSpin.value       = Math.round(win.zoomStepUser * 100)
     }
 
-    function refreshCompareAvailability() {
-        var parts = Julia.shell_compare_available().split(",")
-        for (var i = 0; i < parts.length; ++i) {
-            var kv = parts[i].split("=")
-            if (kv[0] === "model") win.haveModelObs = (kv[1] === "1")
-            if (kv[0] === "image") win.haveImageObs = (kv[1] === "1")
-        }
-        // A tick that has just lost its source stops claiming to show it.
-        if (!win.haveModelObs && (residModelBox.checked || overModelBox.checked)) {
-            residModelBox.checked = false; overModelBox.checked = false; win.setCompareView()
-        }
-        if (!win.haveImageObs && (residImageBox.checked || overImageBox.checked)) {
-            residImageBox.checked = false; overImageBox.checked = false; win.setCompareView()
-        }
-    }
-
-    function comparableKind() {
-        return ["v2", "t3amp", "t3phi", "visamp", "visphi"].indexOf(kindBox.currentText) >= 0
-    }
-
-    // Why a compare box is disabled. BOTH reasons can hold at once -- a uv plot with no model
-    // built -- and a tooltip naming only the first sends the user to fix the wrong one, so this
-    // reports every reason it finds. `needModel` picks which of the two artefacts is wanted.
-    function compareWhy(needModel) {
-        var why = []
-        if (!comparableKind())
-            why.push("'" + kindBox.currentText + "' is not a comparable observable; " +
-                     "plot v2, t3amp, t3phi, visamp or visphi")
-        if (needModel  && !haveModelObs) why.push("no model defined")
-        if (!needModel && !haveImageObs) why.push("no image reconstructed")
-        return why.join(" — ")
-    }
-
-    function setCompareView() {
-        win.residualView = residModelBox.checked ? "model"
-                         : residImageBox.checked ? "image" : ""
-        win.overlayView  = overModelBox.checked  ? "model"
-                         : overImageBox.checked  ? "image" : ""
-        win.status = win.residualView.length > 0
-                   ? Julia.shell_set_residual_mode(win.residualView)
-                   : Julia.shell_set_overlay_mode(win.overlayView)
-        win.afterAction()
-    }
-
-    function setView() {
-        win.groupingNoun = Julia.shell_grouping_noun(effectiveKind())
-        win.status = Julia.shell_set_view(effectiveKind(), colorBox.currentText,
-                                          logyBox.enabled && logyBox.checked,
-                                          panelsBox.enabled && panelsBox.checked)
-        win.afterAction()
-    }
-
     // Which observables the loaded file actually holds. Julia counts VALID points, not tables,
     // and pushes the answer to every panel that gates a tick box on it. Without this the boxes
     // stay off after a load and the run buttons never enable — they have no other source of
     // truth, and defaulting them to on would offer observables the file does not contain.
-    // Plot kinds, with whether the loaded file can supply each. Julia decides availability so
-    // the menu and `canvas_data` cannot disagree; see `shell_plot_kinds`.
-    ListModel {
-        id: kindModel
-        ListElement { name: "uv";         available: true }
-        ListElement { name: "v2";         available: true }
-        ListElement { name: "t3phi";      available: true }
-        ListElement { name: "t3amp";      available: true }
-        ListElement { name: "visamp";     available: true }
-        ListElement { name: "visphi";     available: true }
-        ListElement { name: "diffphi";    available: true }
-        ListElement { name: "diffvisamp"; available: true }
-        ListElement { name: "flux";       available: true }
-    }
-
-    function refreshPlotKinds() {
-        var s = Julia.shell_plot_kinds()
-        if (s.length === 0) return                    // no dataset: leave everything selectable
-        var have = {}
-        var parts = s.split(",")
-        for (var i = 0; i < parts.length; ++i) {
-            var kv = parts[i].split("=")
-            if (kv.length === 2) have[kv[0]] = (kv[1] === "1")
-        }
-        for (var r = 0; r < kindModel.count; ++r) {
-            var n = kindModel.get(r).name
-            kindModel.setProperty(r, "available", have[n] === true)
-        }
-        // If the current view just became unavailable — a new file without that table — fall
-        // back to uv rather than leaving a selection that cannot be drawn.
-        if (!kindModel.get(kindBox.currentIndex).available) {
-            kindBox.currentIndex = 0
-            win.setView()
-        }
-    }
-
     function refreshObservables() {
         var have = { v2: false, t3amp: false, t3phi: false,
                      cvis: false, flux: false, diffvis: false }
@@ -414,8 +302,8 @@ ApplicationWindow {
         imageTab.haveFlux    = have.flux
         imageTab.haveDiffvis = have.diffvis
         imageTab.resetObservables()
-        win.refreshPlotKinds()
-        win.groupingNoun = Julia.shell_grouping_noun(effectiveKind())
+        exploreTab.refreshPlotKinds()
+        exploreTab.refreshGroupingNoun()
 
         // Geometry the data suggests. A constant pixel size is not a neutral default: too
         // coarse and the image cannot represent what the data resolves, too fine and it is
@@ -445,6 +333,7 @@ ApplicationWindow {
         modelTab.haveFlux    = have.flux
         modelTab.haveDiffvis = have.diffvis
         modelTab.hasDataset  = s.length > 0
+        exploreTab.hasDataset = s.length > 0
     }
 
     // Printed once at startup so the scale is diagnosable on a machine nobody can inspect
@@ -509,7 +398,9 @@ ApplicationWindow {
     function refreshDatasets() {
         var names = Julia.shell_dataset_names().split("\n").filter(function (s) { return s.length > 0 })
         datasetBox.model = names
-        datasetBox.currentIndex = names.length - 1
+        // The dataset Julia is showing, not the newest: with several loaded before the window
+        // opened, the newest is not the one every perspective is looking at.
+        datasetBox.currentIndex = Math.max(0, Julia.shell_current_dataset() - 1)
         // Observing's "Copy existing OIFITS structure" simulates through the loaded file's uv
         // points, so it needs to know there IS one — and to say so beside the button rather
         // than after Simulate is pressed.
@@ -603,16 +494,6 @@ ApplicationWindow {
             // while one of our handlers runs.
             loadTimer.path = path
             loadTimer.restart()
-        }
-    }
-
-    // Poll the last identified point. Julia produces it from Makie's event stream, so there
-    // is no QML signal to connect to; 150 ms is imperceptible for a label and costs nothing.
-    Timer {
-        interval: 150; running: true; repeat: true
-        onTriggered: {
-            var t = Julia.shell_pick_text()
-            if (t !== win.pickText) win.pickText = t
         }
     }
 
@@ -1038,6 +919,10 @@ ApplicationWindow {
             // it would otherwise never render: a tab that is never current is constructed but
             // never laid out, so its layout warnings never appear.
             currentIndex: initialTab
+            // A model fitted or an image reconstructed in another perspective is something
+            // Explore can compare against, and a model removed is something it no longer can:
+            // its compare boxes are re-read whenever it is shown.
+            onCurrentIndexChanged: if (currentIndex === 0) exploreTab.refreshCompareAvailability()
             TabButton { text: "Exploring" }
             TabButton { text: "Observing" }
             TabButton { text: "Modeling" }
@@ -1051,182 +936,14 @@ ApplicationWindow {
             currentIndex: tabs.currentIndex
 
             // ── Explore ──────────────────────────────────────────────────────
-            ColumnLayout {
-                spacing: dp(6)
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.margins: dp(6)
-                    spacing: dp(8)
-                    Label { text: "Plot:" }
-                    ComboBox {
-                        id: kindBox
-                        Layout.preferredWidth: dp(130)
-                        textRole: "name"
-                        // `diffphi` is `visphi` against WAVELENGTH — OIFITS carries differential
-                        // phase in OI_VIS with PHITYP=differential, so there is no separate
-                        // field, only a more useful axis.
-                        //
-                        // Entries the loaded file cannot supply are shown but disabled, rather
-                        // than hidden: which observables a file carries is worth seeing, and a
-                        // list that changes length between files is hard to aim at.
-                        model: kindModel
-                        delegate: ItemDelegate {
-                            required property var model
-                            required property int index
-                            width: kindBox.width
-                            text: model.name
-                            enabled: model.available
-                            highlighted: kindBox.highlightedIndex === index
-                            // The greyed rows still need a reason, or an unavailable kind looks
-                            // like a broken menu rather than a file without that table.
-                            ToolTip.visible: hovered && !model.available
-                            ToolTip.text: "this file has no " + model.name + " data"
-                        }
-                        onActivated: win.setView()
-                    }
-                    Label { text: "Colour by:" }
-                    ComboBox {
-                        id: colorBox
-                        model: ["baseline", "wav", "mjd", "none"]
-                        onActivated: win.setView()
-                    }
-                    // Residuals and the model/image overplot live here rather than inside
-                    // Modeling and Imaging. They are views OF the data, so they belong beside
-                    // the other views of it, and the two perspectives that produce them are
-                    // dense enough already. Both follow the kind menu: ticking one turns `v2`
-                    // into v2 residuals, `t3phi` into t3phi residuals, and so on, on the same
-                    // axes and in the same groups.
-                    CheckBox {
-                        id: residModelBox
-                        text: "Resid (model)"
-                        enabled: win.comparableKind() && win.haveModelObs
-                        ToolTip.visible: hovered && !enabled
-                        ToolTip.text: win.compareWhy(true)
-                        onToggled: { if (checked) { residImageBox.checked = false
-                                                    overModelBox.checked = false
-                                                    overImageBox.checked = false }
-                                     win.setCompareView() }
-                    }
-                    CheckBox {
-                        id: residImageBox
-                        text: "Resid (image)"
-                        enabled: win.comparableKind() && win.haveImageObs
-                        ToolTip.visible: hovered && !enabled
-                        ToolTip.text: win.compareWhy(false)
-                        onToggled: { if (checked) { residModelBox.checked = false
-                                                    overModelBox.checked = false
-                                                    overImageBox.checked = false }
-                                     win.setCompareView() }
-                    }
-                    CheckBox {
-                        id: overModelBox
-                        text: "Model obs"
-                        enabled: win.comparableKind() && win.haveModelObs
-                        ToolTip.visible: hovered && !enabled
-                        ToolTip.text: win.compareWhy(true)
-                        onToggled: { if (checked) { overImageBox.checked = false
-                                                    residModelBox.checked = false
-                                                    residImageBox.checked = false }
-                                     win.setCompareView() }
-                    }
-                    CheckBox {
-                        id: overImageBox
-                        text: "Image obs"
-                        enabled: win.comparableKind() && win.haveImageObs
-                        ToolTip.visible: hovered && !enabled
-                        ToolTip.text: win.compareWhy(false)
-                        onToggled: { if (checked) { overModelBox.checked = false
-                                                    residModelBox.checked = false
-                                                    residImageBox.checked = false }
-                                     win.setCompareView() }
-                    }
-                    CheckBox {
-                        id: maxBlBox
-                        text: "max baseline"
-                        // Closure quantities have three baselines and one x position. The
-                        // default is the geometric mean; this plots them against the LONGEST
-                        // leg instead, which is what sets the resolution the triangle actually
-                        // reaches. On the 2004 contest data the two differ by a factor 1.6, so
-                        // it is not a cosmetic choice.
-                        //
-                        // Enabled rather than hidden, like every other entry in this bar: the
-                        // toolbar keeps its width, and which options exist stays visible.
-                        enabled: ["t3phi", "t3amp"].indexOf(kindBox.currentText) >= 0
-                        onToggled: win.setView()
-                    }
-                    CheckBox {
-                        id: logyBox
-                        text: "log y"
-                        // Only where it means something. A phase takes both signs, and a log
-                        // axis on one drops half the points rather than rescaling them.
-                        enabled: ["v2", "visamp", "t3amp", "flux", "diffvisamp"]
-                                 .indexOf(kindBox.currentText) >= 0
-                        onToggled: win.setView()
-                    }
-                    CheckBox {
-                        id: panelsBox
-                        // Labelled from Julia, because the grouping is not always a baseline:
-                        // closure quantities group by triplet and flux by station, and a tick
-                        // reading "per baseline" over a grid of triangles is simply wrong.
-                        text: "per " + (win.groupingNoun.length > 0 ? win.groupingNoun : "group")
-                        // uv coverage has no groups to split by — it is geometry, not an
-                        // observable — and a single-wavelength file gives one point per panel.
-                        enabled: win.groupingNoun.length > 0
-                        onToggled: win.setView()
-                    }
-                    // Explore's plot is a layout child rather than a child of a mount, so
-                    // its Save PNG sits in the toolbar with the other view controls instead of
-                    // being overlaid the way the other perspectives' are.
-                    Button {
-                        text: "Save PNG"
-                        enabled: modelTab.hasDataset
-                        ToolTip.visible: hovered
-                        ToolTip.text: "write this plot to a PNG file"
-                        onClicked: win.savePng("explore", makieArea)
-                    }
-                    Item { Layout.fillWidth: true }
-                    // Takes the slack so the controls stay left-aligned and the row never
-                    // grows past the window. A minimum of 0 means this is what gives way when
-                    // the window is narrow, rather than the controls being clipped.
-                    Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                }
-
-                MakieArea {
-                    id: makieArea
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    scene: plot
-
-                    // Picking uses a TapHandler, NOT a MouseArea laid over the scene.
-                    //
-                    // MakieArea's own input handling lives in a MouseArea whose `visible` is
-                    // bound to `parent.activeFocus`, and focus is granted by a TapHandler in
-                    // MakieArea that fires on the first press. A MouseArea of ours stacked on
-                    // top consumed that press, so MakieArea never took focus, its MouseArea
-                    // never became visible, and Makie received nothing at all: no zoom, no
-                    // pan, no picking. `propagateComposedEvents` does not help -- it forwards
-                    // only composed events (clicked/doubleClicked/pressAndHold), never the
-                    // press, the drag, or the wheel that zoom and pan are built from.
-                    //
-                    // Pointer handlers cooperate instead of stealing: this one coexists with
-                    // MakieArea's TapHandler, and its default DragThreshold gesture policy
-                    // bows out as soon as the pointer moves, so a drag still pans.
-                    // No pointer handlers here on purpose. MakieArea fills itself with a
-                    // MouseArea accepting all buttons, and a MouseArea takes an exclusive
-                    // grab on press, which cancels any TapHandler of ours the moment the
-                    // plot has focus. Clicks are read from Makie's event stream instead --
-                    // see install_interactions! in src/shell.jl -- and the result is polled
-                    // below.
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    Layout.margins: dp(6)
-                    text: win.pickText.length > 0 ? win.pickText : "click a point to identify it"
-                    color: win.pickText.length > 0 ? "#000" : "#888"
-                    font.family: "monospace"
-                    elide: Text.ElideRight
-                }
+            ExploreTab {
+                id: exploreTab
+                uiScale:    win.uiScale
+                fontScale:  win.fontScale
+                baseFontPt: win.baseFontPt
+                onStatusReported: function (text) { win.status = text }
+                onActionDone: win.afterAction()
+                onSavePngRequested: function (area) { win.savePng("explore", area) }
             }
 
             // ── Observe ──────────────────────────────────────────────────────

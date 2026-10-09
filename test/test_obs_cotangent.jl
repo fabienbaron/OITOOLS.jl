@@ -59,7 +59,7 @@ using OITOOLS: scatter_obs_cotangent!, _pad_weights, _chi2_terms, _accumulate_g_
         x = abs.(randn(nx, nx)) .+ 0.1
         V = OITOOLS.image_to_vis(x, cell.uv)
         w = _pad_weights([1.0, 1, 1, 1, 1, 0, 0], Float64)
-        t = _chi2_terms(V, d, w, false)
+        t = _chi2_terms(V, d, w)
 
         viachi2 = zeros(ComplexF64, length(V))
         _accumulate_g_cvis!(viachi2, V, t, d, w)

@@ -37,8 +37,8 @@ weights = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]
         # than == 0 so a different inlining decision on another platform/Julia
         # version is not a failure -- anything real is orders of magnitude above 64.
         wt = SQ._weights_tuple(weights)
-        SQ._cvis_to_chi2(V, data, wt, false)
-        @test (@allocated SQ._cvis_to_chi2(V, data, wt, false)) < 64
+        SQ._cvis_to_chi2(V, data, wt)
+        @test (@allocated SQ._cvis_to_chi2(V, data, wt)) < 64
     end
 end
 

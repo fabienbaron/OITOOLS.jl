@@ -188,7 +188,6 @@ function OITOOLS.reconstruct_squeeze_tempered(
         n_chains::Integer = 10,
         regularizers = [],
         weights = [1.0, 1.0, 1.0],
-        vonmises::Bool = false,
         prior_image = nothing,
         fov::Real = 1.0, cent_mult::Real = 1.0, tv_eps::Real = 0.0,
         auto_centering::Bool = true,
@@ -251,7 +250,7 @@ function OITOOLS.reconstruct_squeeze_tempered(
         end
     end
 
-    target = SqueezeTarget{T}(data, A, nx, nelem, w, vonmises, effective,
+    target = SqueezeTarget{T}(data, A, nx, nelem, w, effective,
                               prior_penalty, Float64(fov), Float64(cent_mult),
                               Float64(tv_eps), x_start, model, lo, hi)
 
@@ -335,7 +334,7 @@ function OITOOLS.reconstruct_squeeze_tempered(
             V[k] = pv[k] + V[k] * fr[k]
         end
     end
-    chi2r_mean = _cvis_to_chi2(V, data, w, vonmises) / ndf
+    chi2r_mean = _cvis_to_chi2(V, data, w) / ndf
     lz = try
         Pigeons.stepping_stone(pt)
     catch
