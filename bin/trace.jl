@@ -151,6 +151,9 @@ if r_nested !== nothing &&
    Base.get_extension(OITOOLS, :OITOOLSPairPlotsExt) !== nothing
     traced("corner plot") do
         Makie.save(OUT, plot_corner_makie(r_nested.posterior, r_nested.list_free_params).figure)
+        # Two columns and a marked best fit, as the Modeling tab's Corner view draws them: one
+        # parameter gives no 2-D panel, so the contour code would go untraced.
+        Makie.save(OUT, plot_corner_makie(randn(400, 2), ["a", "b"]; truth = [0.0, 0.0]).figure)
     end
 else
     @info "PairPlots is not in this environment; the corner plot is not traced"

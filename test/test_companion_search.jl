@@ -42,6 +42,38 @@
         @test occursin("general path", sprint(show, g))
     end
 
+    # Refinement: LM from the best local minima, the position free. PMOIRED's final fit is
+    # x = 6.228 ± 0.058, y = −28.487 ± 0.079 mas.
+    @testset "refining the best minima reaches PMOIRED's fit" begin
+        r = companion_search(md, ax; weights = w, free = ["comp,f", "star,ud"], refine = 5)
+        @test isequal(r.chi2r, g.chi2r) && isequal(r.params, g.params)   # the map is the same
+        @test isempty(g.refined) && 1 <= length(r.refined) <= 5
+        @test issorted([q.chi2r for q in r.refined])
+        b = r.refined[1]
+        @test (r.best.x, r.best.y, r.best.chi2r) == (b.x, b.y, b.chi2r)
+        @test hypot(b.x - truth[1], b.y - truth[2]) < 0.2
+        @test b.stderror[end - 1] ≈ 0.058 rtol = 0.25
+        @test b.stderror[end] ≈ 0.079 rtol = 0.25
+        @test b.chi2r < g.best.chi2r && r.nsigma > g.nsigma
+        @test r.fit isa LsqFitResult && r.fit.list_free_params == ["comp,f", "star,ud", "comp,x", "comp,y"]
+        # The same fit, made directly from the node it started at.
+        i = findfirst(==(b.start[1]), g.x); j = findfirst(==(b.start[2]), g.y)
+        d = merge(md, Dict{String,Any}("comp,f" => g.params[1, i, j], "star,ud" => g.params[2, i, j],
+                                       "comp,x" => g.x[i], "comp,y" => g.y[j]))
+        rmax = companion_grid(md, ax; companion = "comp").rmax
+        dlb, dub = default_bounds(d, ["star,ud"]; data = ax)
+        direct = fit_model_lsqfit(d, ["comp,f", "star,ud", "comp,x", "comp,y"], ax; weights = w,
+                                  lb = Dict("comp,f" => 0.0, "star,ud" => dlb["star,ud"],
+                                            "comp,x" => -rmax, "comp,y" => -rmax),
+                                  ub = Dict("comp,f" => 0.5, "star,ud" => dub["star,ud"],
+                                            "comp,x" => rmax, "comp,y" => rmax))
+        @test direct.x_opt ≈ r.fit.x_opt rtol = 1e-6
+        # Minima over searched neighbours only (NaN is not searched), lowest first, n of them.
+        @test OITOOLS._local_minima([1.0 5.0 2.0; NaN 6.0 0.2; 4.0 7.0 8.0], 2) ==
+              CartesianIndex.([(2, 3), (1, 1)])
+        @test occursin("refined: ", sprint(show, r))
+    end
+
     @testset "the mirror position is decisively worse" begin
         i = findfirst(==(g.best.x), g.x); j = findfirst(==(g.best.y), g.y)
         mirror = g.chi2r[length(g.x) + 1 - i, length(g.y) + 1 - j]

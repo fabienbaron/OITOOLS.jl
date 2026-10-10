@@ -1162,10 +1162,15 @@ function finish_fit!(sh::ShellState, res)
     if f.map isa CompanionSearch
         COMPANION_LIVE[] = nothing
         s = f.map; b = s.best
-        line = @sprintf("best node %+.3f, %+.3f mas (sep %.3f mas, PA %.2f°)   %s,f %.5f (Δm %.2f)   χ²r %.4f, %.4f without   %.1fσ   %d nodes, %.1f s",
-                        b.x, b.y, b.sep, b.pa, s.companion, b.f, b.dmag, b.chi2r, s.chi2r_null,
+        line = @sprintf("%s %+.3f, %+.3f mas (sep %.3f mas, PA %.2f°)   %s,f %.5f (Δm %.2f)   χ²r %.4f, %.4f without   %.1fσ   %d nodes, %.1f s",
+                        isempty(s.refined) ? "best node" : "best refined minimum", b.x, b.y, b.sep, b.pa, s.companion, b.f, b.dmag, b.chi2r, s.chi2r_null,
                         s.nsigma, s.nnodes, f.seconds)
         console!(sh, "  " * line)
+        for (k, q) in enumerate(s.refined)
+            console!(sh, @sprintf("    minimum %d: %+.3f ± %.3f, %+.3f ± %.3f mas   f %.5f   χ²r %.4f   (from node %+.2f, %+.2f)",
+                                  k, q.x, q.stderror[end - 1], q.y, q.stderror[end], q.f, q.chi2r,
+                                  q.start...))
+        end
         return line
     end
     it, ev = _fit_work(r)
@@ -1227,10 +1232,134 @@ function shell_fit_values()
     r = f.result
     kv = [string(k, "=", v) for (k, v) in zip(r.list_free_params, r.x_opt)]
     if f.map isa CompanionSearch
-        push!(kv, string(f.map.companion, ",x=", f.map.best.x),
-                  string(f.map.companion, ",y=", f.map.best.y))
+        # A refined minimum's fit has the position among its parameters already.
+        for (a, v) in ((",x", f.map.best.x), (",y", f.map.best.y))
+            k = f.map.companion * a
+            k in r.list_free_params || push!(kv, string(k, "=", v))
+        end
     end
     return join(kv, "\n")
+end
+
+"""
+    _fit_correlation(f) -> (names, matrix) or nothing
+
+The correlation matrix of a fits entry, from the same source as its `±`: the bootstrap's after
+a bootstrap; LM's covariance after a Jacobian fit (and for a refined companion minimum); the
+nested posterior's. `nothing` when the entry has no uncertainty -- "skip", NLopt, the grid, an
+unrefined companion search -- since a correlation without a covariance has nothing behind it.
+"""
+function _fit_correlation(f)
+    r = f.result
+    get(f, :boot, nothing) isa BootstrapResult && return (f.boot.list_free_params, f.boot.correlation)
+    f.sigma === nothing && return nothing
+    if r isa LsqFitResult
+        s = r.stderror
+        return (r.list_free_params, r.covar ./ (s * s'))
+    elseif hasproperty(r, :posterior) && r.posterior isa AbstractMatrix && size(r.posterior, 1) > 1
+        return (r.list_free_params, cor(r.posterior))
+    end
+    return nothing
+end
+
+"""
+    shell_fit_correlation() -> String
+
+The latest fit's correlation matrix for the panel under the fits table: the parameter names on
+the first line, then one row of the matrix per line, tab-separated, to two decimals. `""` when
+the fit has no uncertainty to correlate (see `_fit_correlation`).
+"""
+function shell_fit_correlation()
+    sh = _shell()
+    isempty(sh.fits) && return ""
+    c = _fit_correlation(last(sh.fits))
+    c === nothing && return ""
+    names, R = c
+    rows = [join((@sprintf("%.2f", R[i, j]) for j in axes(R, 2)), "\t") for i in axes(R, 1)]
+    return join(vcat(join(names, "\t"), rows), "\n")
+end
+
+"""
+    _fit_samples(f) -> (samples, names, best) or nothing
+
+The samples a corner plot of a fits entry is drawn from: a bootstrap's kept replicates, or a
+nested sampler's posterior, with the fit's optimum to mark. `nothing` for a fit with neither.
+"""
+function _fit_samples(f)
+    b = get(f, :boot, nothing)
+    b isa BootstrapResult && return (b.samples[b.mask, :], b.list_free_params, b.x_opt)
+    r = f.result
+    hasproperty(r, :posterior) && r.posterior isa AbstractMatrix && size(r.posterior, 1) > 1 &&
+        return (r.posterior, r.list_free_params, r.x_opt)
+    return nothing
+end
+
+# The corner PNG on screen, so "Save corner…" writes the picture that was looked at.
+const CORNER_PNG = Ref("")
+
+"""
+    shell_corner_plot(width, height) -> String
+
+Draw the latest fit's corner plot (PairPlots, through `plot_corner_makie`) to a PNG and return
+its path, or a message beginning with `!`.
+
+The figure is never put on screen as a Makie scene: no plot may be created once the QML window
+holds the GL context, and a corner plot is a grid of new axes. It is built offscreen and saved,
+as "Save PNG" does, and the panel shows the file. Each call writes a new file name, so the
+panel's `Image` cannot show a cached older one.
+"""
+function shell_corner_plot(width::Real = 800, height::Real = 800)
+    sh = _shell()
+    isempty(sh.fits) && return "! no fit yet"
+    Base.get_extension(OITOOLS, :OITOOLSPairPlotsExt) === nothing &&
+        return "! corner plots need PairPlots"
+    src = _fit_samples(last(sh.fits))
+    src === nothing &&
+        return "! the latest fit has no samples: fit with Uncertainty › bootstrap, or nested sampling"
+    S, names, best = src
+    fig = try
+        pd = plot_corner_makie(S, names; truth = best)
+        Makie.resize!(pd.figure, max(320, round(Int, width)), max(320, round(Int, height)))
+        pd.figure
+    catch err
+        msg = "! could not draw the corner plot: " * _cause(err)
+        console!(sh, msg; kind = :err); return msg
+    end
+    dir = joinpath(tempdir(), "oitoolsgui-corner")
+    mkpath(dir)
+    isempty(CORNER_PNG[]) || rm(CORNER_PNG[]; force = true)
+    p = joinpath(dir, string("corner-", getpid(), "-", time_ns(), ".png"))
+    try
+        Makie.save(p, fig; backend = GLMakie)
+    catch err
+        msg = "! could not write the corner plot: " * _cause(err)
+        console!(sh, msg; kind = :err); return msg
+    end
+    CORNER_PNG[] = p
+    console!(sh, "> plot_corner_makie(" *
+                 (get(last(sh.fits), :boot, nothing) isa BootstrapResult ? "boot" : "result") *
+                 "; truth = fit.x_opt)")
+    return p
+end
+
+"""
+    shell_save_corner(path) -> String
+
+Copy the corner plot on screen to `path` (`.png` added if missing). `""` on success.
+"""
+function shell_save_corner(path::AbstractString)
+    sh = _shell()
+    isfile(CORNER_PNG[]) || return "! no corner plot drawn yet"
+    p = String(strip(strip_file_url(String(path))))
+    isempty(p) && return "! no file name"
+    endswith(lowercase(p), ".png") || (p = p * ".png")
+    try
+        cp(CORNER_PNG[], p; force = true)
+    catch err
+        return "! could not write " * p * ": " * _cause(err)
+    end
+    console!(sh, "> save(\"" * p * "\", plot_corner_makie(...).figure)")
+    return ""
 end
 
 # ── the companion search (Model › Optimiser) ─────────────────────────────────────────
@@ -1292,9 +1421,10 @@ end
     shell_companion_defaults(companion) -> String
 
 The grid the search would take by default, as the dialog prefills it: `"step\trmin\trmax"`,
-in mas, to two significant figures. The step and the inner radius round down, so the grid is
-never coarser and nothing next to the primary is skipped; the outer radius rounds up. `""` when
-there is no grid to compute (no dataset, or a model the grid cannot be laid around).
+in mas. The step to six significant figures, so the dialog's grid is the default grid (a node
+is where it would be to 1e-5 mas); the radii to two, the inner one rounded down and the outer
+one up, which only widens the annulus. `""` when there is no grid to compute (no dataset, or a
+model the grid cannot be laid around).
 """
 function shell_companion_defaults(companion)
     sh = _shell()
@@ -1306,14 +1436,14 @@ function shell_companion_defaults(companion)
         return ""
     end
     f(v) = @sprintf("%g", v)
-    return join((f(_round2(g.step, floor)), f(_round2(g.rmin, floor)), f(_round2(g.rmax, ceil))),
+    return join((@sprintf("%.6g", g.step), f(_round2(g.rmin, floor)), f(_round2(g.rmax, ceil))),
                 "\t")
 end
 
 """
     shell_companion_search(free_lines, v2, t3amp, t3phi, cvis, flux, diffvis,
                            companion, step, rmin, rmax, mask, fmax, fitter,
-                           refit_primary) -> String
+                           refit_primary, refine) -> String
 
 Run [`companion_search`](@ref) on the panel's model and the current dataset, on a worker, as a
 fit is run. The panel's free parameters are fitted at every node, less the companion's
@@ -1321,14 +1451,16 @@ position, which the grid sets. `fitter` is the per-node fitter: `"bradi"` or `"h
 only the companion's flux is free, `"vmlmb"` for any free set (and the only one when more than
 the flux is). With `refit_primary` false the primary's free parameters are held at their
 current values: only the companion's are fitted at a node, and the significance is against this
-primary as it stands. The map lands in the χ² map panel, the best node in the fits table, and
-"Adopt" writes the best node into the model.
+primary as it stands. `refine` is `companion_search`'s: the best `refine` local minima fitted
+again with the position free (0 for none). The map lands in the χ² map panel, the best node (or
+refined minimum) in the fits table, and "Adopt" writes it into the model.
 """
 function shell_companion_search(free_lines::AbstractString,
                                 v2::Bool, t3amp::Bool, t3phi::Bool,
                                 cvis::Bool, flux::Bool, diffvis::Bool,
                                 companion, step, rmin, rmax, mask, fmax,
-                                fitter::AbstractString = "bradi", refit_primary::Bool = true)
+                                fitter::AbstractString = "bradi", refit_primary::Bool = true,
+                                refine::Integer = 0)
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
@@ -1358,7 +1490,7 @@ function shell_companion_search(free_lines::AbstractString,
             step = _or_default(step), rmin = _or_default(rmin), rmax = _or_default(rmax),
             mask = something(_or_default(mask), 0.01), weights,
             solver = fz == "halley" ? :halley : :bradi,
-            path = fz == "vmlmb" ? :general : :auto)
+            path = fz == "vmlmb" ? :general : :auto, refine = max(0, Int(refine)))
     isempty(dropped) || console!(sh, "  $(join(dropped, " and ")) set by the grid, not fitted")
     console!(sh, "> companion_search(model, data; " *
                  join((string(k, " = ", repr(v)) for (k, v) in pairs(kw)), ", ") * ")")
@@ -5026,7 +5158,8 @@ end
 """
     shell_optional_engines() -> String
 
-Which optional imaging engines this build can actually run, as `"vi=1,tempering=0"`.
+Which optional engines this build can actually run, as `"vi=1,tempering=0,corner=1"`: the two
+stochastic imaging engines, and the Model tab's corner plot (PairPlots).
 
 Both are gated on a package extension rather than a dependency, so whether they work is a
 property of the session and not of the data. The panel greys the entry and says which package
@@ -5036,7 +5169,8 @@ even with its package installed — the reason the VI entry has never been reach
 function shell_optional_engines()
     vi   = Base.get_extension(OITOOLS, :OITOOLSVarInfExt)  !== nothing
     temp = Base.get_extension(OITOOLS, :OITOOLSPigeonsExt) !== nothing
-    return string("vi=", vi ? 1 : 0, ",tempering=", temp ? 1 : 0)
+    corner = Base.get_extension(OITOOLS, :OITOOLSPairPlotsExt) !== nothing
+    return string("vi=", vi ? 1 : 0, ",tempering=", temp ? 1 : 0, ",corner=", corner ? 1 : 0)
 end
 
 """

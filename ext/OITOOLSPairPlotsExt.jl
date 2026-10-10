@@ -18,7 +18,7 @@ using Makie
 
 import OITOOLS: plot_corner_makie
 
-using OITOOLS: PlotData, PLOT_FONTS
+using OITOOLS: PlotData, PLOT_FONTS, BootstrapResult
 
 """
     plot_corner_makie(posterior, names; kwargs...) -> PlotData
@@ -31,12 +31,13 @@ r = fit_model_nested(model_dict, free, data; lb, ub)
 Makie.save("corner.png", plot_corner_makie(r.posterior, r.list_free_params).figure)
 ```
 
+`truth`, one value per column, marks those values (the best fit, say) on every panel.
 `kwargs` are passed to `PairPlots.pairplot`. A parameter whose samples are all identical is
 dropped with a warning rather than passed on: a zero-width column has no density to estimate,
 and PairPlots fails inside the KDE rather than at the call.
 """
 function plot_corner_makie(posterior::AbstractMatrix{<:Real},
-                       names::AbstractVector{<:AbstractString}; kwargs...)
+                       names::AbstractVector{<:AbstractString}; truth = nothing, kwargs...)
     size(posterior, 2) == length(names) || throw(ArgumentError(
         "got $(length(names)) names for $(size(posterior, 2)) columns"))
     size(posterior, 1) > 1 || throw(ArgumentError(
@@ -55,11 +56,22 @@ function plot_corner_makie(posterior::AbstractMatrix{<:Real},
               Tuple(Vector{Float64}(@view posterior[:, j]) for j in keep))
 
     fig = Makie.Figure(fonts = PLOT_FONTS)
-    PairPlots.pairplot(fig[1, 1], tbl; kwargs...)
+    if truth === nothing
+        PairPlots.pairplot(fig[1, 1], tbl; kwargs...)
+    else
+        length(truth) == length(names) || throw(ArgumentError(
+            "got $(length(truth)) truth values for $(length(names)) columns"))
+        t = NamedTuple{keys(tbl)}(Tuple(Float64(truth[j]) for j in keep))
+        PairPlots.pairplot(fig[1, 1], tbl, PairPlots.Truth(t; label = "best fit"); kwargs...)
+    end
     return PlotData(fig, nothing, nothing, String[])
 end
 
-# A `NestedResult`, a `BootstrapResult` — anything carrying `posterior` and the names beside it.
+# A bootstrap: the replicates its clipping kept, which are what its σ and correlations are of.
+plot_corner_makie(r::BootstrapResult; kwargs...) =
+    plot_corner_makie(r.samples[r.mask, :], r.list_free_params; kwargs...)
+
+# A `NestedResult` — anything carrying `posterior` and the names beside it.
 plot_corner_makie(r; kwargs...) =
     plot_corner_makie(r.posterior, r.list_free_params; kwargs...)
 

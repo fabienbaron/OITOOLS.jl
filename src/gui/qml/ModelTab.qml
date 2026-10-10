@@ -523,8 +523,10 @@ Item {
         filters: [{ label: "PNG images (*.png)", patterns: "*.png" },
                   { label: "All files", patterns: "*" }]
         onAccepted: function (path) {
-            Julia.shell_save_figure(savePngDialog.which, path,
-                                    savePngDialog.pxw, savePngDialog.pxh, false)
+            // The corner plot is already a file: saving it copies the picture on screen.
+            if (savePngDialog.which === "corner") Julia.shell_save_corner(path)
+            else Julia.shell_save_figure(savePngDialog.which, path,
+                                         savePngDialog.pxw, savePngDialog.pxh, false)
             root.consoleChanged()
         }
     }
@@ -620,7 +622,8 @@ Item {
                       companionBox.currentText, root.numOrNaN(compStep.text),
                       root.numOrNaN(compRmin.text), root.numOrNaN(compRmax.text),
                       root.numOrNaN(compMask.text), root.numOrNaN(compFmax.text),
-                      companionDialog.fitterKey, companionDialog.refitPrimary)
+                      companionDialog.fitterKey, companionDialog.refitPrimary,
+                      compRefine.value)
                 : Julia.shell_fit_model(
                       root.freeAsLines(),
                       root.constraintsAsLines(), root.priorsAsLines(),
@@ -671,6 +674,10 @@ Item {
             if (f[0] === "done") root.fitText = f[1]
             root.refreshFits()
             root.refreshChi2Map()
+            root.refreshCorrelation()
+            // A corner plot on screen follows the latest fit; an older one would be another fit's.
+            if (root.diagView === "corner") root.showCorner()
+            else root.cornerPath = ""
             root.consoleChanged()
         }
     }
@@ -2961,6 +2968,24 @@ Item {
                                                 : "run the Grid search optimiser to produce one"
                                             onClicked: root.diagView = "chi2map"
                                         }
+                                        Button {
+                                            text: "Correlations"; implicitHeight: root.dp(20)
+                                            enabled: root.corrNames.length > 1
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: root.corrNames.length > 1
+                                                ? "the latest fit's parameter correlations, from the same source as its ±"
+                                                : "fit with an uncertainty (Jacobian, bootstrap or posterior) to see them"
+                                            onClicked: root.diagView = "correlations"
+                                        }
+                                        Button {
+                                            text: "Corner"; implicitHeight: root.dp(20)
+                                            enabled: root.cornerAvailable && fitModel.count > 0 && !root.running
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: !root.cornerAvailable
+                                                ? "corner plots need PairPlots, which this build does not load"
+                                                : "the latest fit's bootstrap replicates or posterior, the best fit marked"
+                                            onClicked: root.showCorner()
+                                        }
                                         // Not a second image surface. The Model visualization tab
                                         // already renders `model_to_image` of the current values,
                                         // and "Adopt" writes a fit's values into the table — so
@@ -3149,17 +3174,21 @@ Item {
                                     anchors.right: parent.right
                                     anchors.top: parent.top
                                     anchors.margins: root.dp(6)
+                                    z: 2                  // over the corner view, declared later
                                     text: "Save PNG"
-                                    // Saves whichever of the two is on screen. One button in
+                                    // Saves whichever plot is on screen. One button in
                                     // the corner every other plot area puts one in, rather than
                                     // a second that appears and disappears with the view.
+                                    visible: root.diagView !== "correlations"
                                     enabled: root.diagView === "sed" ? root.sedText.length > 0
-                                                                     : root.chi2MapP1.length > 0
+                                           : root.diagView === "corner" ? root.cornerPath.length > 0
+                                                                        : root.chi2MapP1.length > 0
                                     opacity: hovered ? 1.0 : 0.5
                                     ToolTip.visible: hovered
                                     ToolTip.text: "write this plot to a PNG file"
                                     onClicked: root.diagView === "sed" ? root.savePng("sed", sedArea)
-                                                                       : root.savePng("chi2map", chi2MapArea)
+                                             : root.diagView === "corner" ? root.savePng("corner", cornerBox)
+                                                                          : root.savePng("chi2map", chi2MapArea)
                                 }
 
                             // Covers the chart until there is one. The Makie figure exists from
@@ -3236,6 +3265,85 @@ Item {
 
                             // rms per observable, which is what the ±1 and ±3 lines are drawn
                             // at -- so the caption and the picture say the same thing.
+
+                            Rectangle {
+                                id: cornerBox
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                visible: root.diagView === "corner"
+                                color: "white"
+                                Image {
+                                    anchors.fill: parent
+                                    anchors.margins: root.dp(4)
+                                    source: root.cornerPath.length > 0 ? "file://" + root.cornerPath : ""
+                                    fillMode: Image.PreserveAspectFit
+                                    asynchronous: true
+                                    cache: false
+                                    smooth: true
+                                    mipmap: true
+                                }
+                                Label {
+                                    anchors.centerIn: parent
+                                    width: parent.width - root.dp(40)
+                                    visible: root.cornerPath.length === 0
+                                    text: root.cornerMsg.length > 0 ? root.cornerMsg : "drawing…"
+                                    color: "#999"
+                                    wrapMode: Text.WordWrap
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                            }
+
+                            // The correlation matrix, lower triangle as PMOIRED prints it: red
+                            // positive, blue negative, the shade |ρ|. Labels, not a plot.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                visible: root.diagView === "correlations"
+                                color: "#f4f4f4"
+                                Label {
+                                    anchors.centerIn: parent
+                                    visible: root.corrNames.length < 2
+                                    text: "no correlations: the latest fit has no uncertainty"
+                                    color: "#aaa"
+                                }
+                                GridLayout {
+                                    id: corrGrid
+                                    visible: root.corrNames.length > 1
+                                    anchors.centerIn: parent
+                                    readonly property int n: root.corrNames.length
+                                    columns: n + 1
+                                    columnSpacing: root.dp(2)
+                                    rowSpacing: root.dp(2)
+                                    Repeater {
+                                        model: (corrGrid.n + 1) * (corrGrid.n + 1)
+                                        delegate: Rectangle {
+                                            readonly property int i: Math.floor(index / (corrGrid.n + 1)) - 1
+                                            readonly property int j: index % (corrGrid.n + 1) - 1
+                                            readonly property bool cell: i >= 0 && j >= 0 && j <= i
+                                            readonly property real rho: cell ? root.corrRows[i][j] : 0
+                                            // Wide enough for a name like "companion,f"
+                                            // over each column, where the label would elide.
+                                            Layout.preferredWidth: root.dp(96)
+                                            Layout.preferredHeight: root.dp(24)
+                                            color: !cell ? "transparent"
+                                                 : i === j ? "#e8e8e8"
+                                                 : rho >= 0 ? Qt.rgba(0.85, 0.2, 0.15, 0.75 * Math.abs(rho))
+                                                            : Qt.rgba(0.15, 0.35, 0.85, 0.75 * Math.abs(rho))
+                                            Label {
+                                                anchors.centerIn: parent
+                                                text: (i < 0 && j >= 0) ? root.corrNames[j]
+                                                    : (j < 0 && i >= 0) ? root.corrNames[i]
+                                                    : parent.cell && parent.i !== parent.j ? parent.rho.toFixed(2) : ""
+                                                font.pointSize: root.pt(root.baseFontPt - 1)
+                                                font.bold: i < 0 || j < 0
+                                                elide: Text.ElideRight
+                                                width: parent.width - root.dp(4)
+                                                horizontalAlignment: Text.AlignHCenter
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -3411,6 +3519,34 @@ Item {
         }
         root.diagView = "sed"
         sedArea.update()
+    }
+
+    // The corner plot of the latest fit's samples (a bootstrap's replicates or a posterior), a
+    // PNG drawn offscreen by PairPlots: no Makie plot is created once the window exists.
+    property bool cornerAvailable: false          // set from `shell_optional_engines`
+    property string cornerPath: ""
+    property string cornerMsg: ""
+    function showCorner() {
+        root.diagView = "corner"
+        var r = Julia.shell_corner_plot(cornerBox.width, cornerBox.height)
+        if (r.length > 0 && r.charAt(0) === "!") { root.cornerPath = ""; root.cornerMsg = r.substring(2) }
+        else { root.cornerPath = r; root.cornerMsg = "" }
+        root.consoleChanged()
+    }
+
+    // The latest fit's correlation matrix, from the same source as its ± (the bootstrap's, LM's
+    // covariance, or the posterior's); empty when the fit has none.
+    property var corrNames: []
+    property var corrRows: []
+    function refreshCorrelation() {
+        var t = Julia.shell_fit_correlation()
+        if (t.length === 0) { root.corrNames = []; root.corrRows = []; return }
+        var lines = t.split("\n")
+        var rows = []
+        for (var i = 1; i < lines.length; ++i)
+            rows.push(lines[i].split("\t").map(function (v) { return parseFloat(v) }))
+        root.corrNames = lines[0].split("\t")
+        root.corrRows = rows
     }
 
     // Whether the most recent fit left a χ² map behind, and over what.
@@ -3769,6 +3905,22 @@ Item {
                 id: compFmax
                 Layout.preferredWidth: root.dp(120)
                 text: "0.5"
+            }
+
+            // A node is up to half a step from the minimum it sits next to; refining fits the
+            // best few again with the position free, which is where the answer is.
+            Label { text: "Refine the best" }
+            RowLayout {
+                spacing: root.dp(6)
+                SpinBox {
+                    id: compRefine
+                    from: 0; to: 50; value: 5
+                    implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
+                }
+                Label {
+                    text: compRefine.value === 0 ? "no refinement" : "local minima, position free (Levenberg-Marquardt)"
+                    color: "#666"
+                }
             }
 
             Label { text: "" }

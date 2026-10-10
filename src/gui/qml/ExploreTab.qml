@@ -219,7 +219,7 @@ Item {
         ScrollView {
             id: frame
             visible: root.frameOpen
-            SplitView.preferredWidth: root.dp(330)
+            SplitView.preferredWidth: root.dp(420)
             SplitView.minimumWidth: root.dp(220)
             contentWidth: availableWidth
             clip: true

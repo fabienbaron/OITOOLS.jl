@@ -97,9 +97,12 @@ function set_oiplot_defaults end
 function plot_ultranest_corner end
 
 """
-    plot_corner_makie(posterior, names)
+    plot_corner_makie(posterior, names; truth = nothing, kwargs...)
+    plot_corner_makie(result; kwargs...)
 
-Corner plot of a posterior sample matrix, `(n_samples, n_params)`, with one label per column.
+Corner plot of a posterior sample matrix, `(n_samples, n_params)`, with one label per column;
+`truth`, one value per column, is marked on every panel. `result` is a `BootstrapResult` (its
+kept replicates) or a `NestedResult` (its posterior).
 
 Backend-agnostic on purpose: [`plot_ultranest_corner`](@ref) takes UltraNest's own result
 object and so can only ever serve that sampler, while this takes the samples any of them

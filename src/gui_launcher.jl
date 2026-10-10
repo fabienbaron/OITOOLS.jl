@@ -48,7 +48,8 @@ const _GUI_OPTIONAL = (
      "greyed without it",
      :path),
     ("PairPlots", "43a3c2be-4208-490b-832a-a21dcd55d7da",
-     "plot_corner_makie for sampler posteriors, from the REPL. Not reachable from the GUI",
+     "corner plots: the Model tab's \"Corner\" view of a bootstrap or nested fit, and " *
+     "plot_corner_makie from the REPL",
      :registered),
 )
 

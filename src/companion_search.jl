@@ -28,15 +28,16 @@ What [`companion_search`](@ref) returns.
 | `params` | `(length(free), length(x), length(y))`, the free parameters fitted at each node |
 | `free` | their names, `companion,f` among them |
 | `companion` | the companion component's name |
-| `best` | the best node: `(x, y, sep, pa, f, dmag, chi2r, params)`; `pa` in degrees East of North, `dmag` = −2.5 log₁₀(f/(1−f)) |
+| `best` | the best node: `(x, y, sep, pa, f, dmag, chi2r, params)`; `pa` in degrees East of North, `dmag` = −2.5 log₁₀(f/(1−f)); the best refined minimum when the search refined |
 | `chi2r_null` | reduced χ² of the model without the companion (`f = 0`) |
 | `nsigma` | the best node's significance against it (CANDID's convention) |
 | `ndof` | the degrees of freedom the significance uses: data points − 1 |
-| `fit` | a [`FitResult`](@ref) for the best node, the companion's position fixed |
+| `fit` | a [`FitResult`](@ref) for the best node, the companion's position fixed; with refinement, the best refined minimum's `LsqFitResult`, the position among its free parameters |
 | `path` | `:fast` or `:general` |
 | `solver` | the 1-D solver of the fast path (`:bradi` or `:halley`), `:vmlmb` for the general path |
 | `fallbacks` | nodes where Halley did not converge and BraDi was used instead |
 | `nnodes`, `seconds` | how many nodes were fitted, and how long it took |
+| `refined` | the refined minima, best first: `(x, y, sep, pa, f, dmag, chi2r, params, stderror, start)`, where `params` are the `free` parameters, `stderror` LM's σ for them then x and y, and `start` the node it started from; empty without refinement |
 """
 struct CompanionSearch
     x          :: Vector{Float64}
@@ -49,12 +50,13 @@ struct CompanionSearch
     chi2r_null :: Float64
     nsigma     :: Float64
     ndof       :: Int
-    fit        :: FitResult
+    fit        :: Union{FitResult, LsqFitResult}
     path       :: Symbol
     solver     :: Symbol
     fallbacks  :: Int
     nnodes     :: Int
     seconds    :: Float64
+    refined    :: Vector{NamedTuple}
 end
 
 """The fitted companion flux at every node, `(length(x), length(y))`."""
@@ -69,6 +71,9 @@ function Base.show(io::IO, s::CompanionSearch)
             b.x, b.y, b.sep, b.pa)
     @printf(io, "        %s,f = %.5f (Δm = %.3f), χ²ᵣ = %.4f\n", s.companion, b.f, b.dmag,
             b.chi2r)
+    isempty(s.refined) ||
+        @printf(io, "  refined: %d distinct minima; the best from the node at (%+.3f, %+.3f) mas\n",
+                length(s.refined), s.refined[1].start...)
     @printf(io, "  without companion: χ²ᵣ = %.4f;  significance %.1fσ (ndof %d)\n",
             s.chi2r_null, s.nsigma, s.ndof)
 end
@@ -96,7 +101,7 @@ end
     companion_search(model_dict, data; companion = "comp", free = [companion * ",f"],
                      lb = Dict(), ub = Dict(), fmax = 0.5,
                      step = nothing, rmin = nothing, rmax = nothing, mask = 0.01,
-                     weights = [1, 1, 1], solver = :bradi, threads = true,
+                     weights = [1, 1, 1], solver = :bradi, refine = 0, threads = true,
                      on_grid = nothing) -> CompanionSearch
 
 Search for a companion around the model's primary: on a grid of positions, fit the companion
@@ -130,6 +135,14 @@ at any node where it does not converge in the bounds.
 `path = :general` uses VMLMB even when only the flux is free, which is how the two paths are
 compared.
 
+`refine`: after the grid, the `refine` best local minima of the map (nodes no worse than any
+searched neighbour) are each fitted again with `fit_model_lsqfit`, the companion's position
+free as well as `free`: x and y within `[-rmax, rmax]`, the flux within `[0, fmax]`, the rest
+within `lb`/`ub` or `default_bounds`. Minima that converge within half a step of a better one
+are merged. The node values are a grid's, at most half a step from the minimum; refining puts
+the best position, its flux and its significance at the minimum itself, with LM's σ. The map is
+unchanged. `0` (the default) skips it.
+
 `on_grid`, when given, is called once the grid is laid out and before any node is fitted, with
 `(; x, y, chi2r, params, nnodes)`: the axes, and the arrays the search then fills node by node
 (`NaN` until a node is done). It is how a window draws the map while the search runs; the
@@ -143,7 +156,7 @@ function companion_search(model_dict::AbstractDict, data::OIdata;
                           step = nothing, rmin = nothing, rmax = nothing, mask::Real = 0.01,
                           weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0],
                           solver::Symbol = :bradi, path::Symbol = :auto,
-                          threads::Bool = true, on_grid = nothing)
+                          refine::Integer = 0, threads::Bool = true, on_grid = nothing)
     t0 = time()
     md = Dict{String,Any}(String(k) => v for (k, v) in model_dict)
     cn = String(companion)
@@ -234,10 +247,93 @@ function companion_search(model_dict::AbstractDict, data::OIdata;
     c2b = model_to_chi2(fm, pb, data; weights = w)
     fit = FitResult(pb, free, c2b, c2b / (ndata - nfit), ndata, length(nodes), :GRID, fm)
 
+    refined = NamedTuple[]
+    if refine > 0
+        refined, fits = _refine_minima(md, data, cn, free, lb, ub, fmax, w, xs, ys, chi2r,
+                                       params, g.rmax, refine, ndata - nfit, threads)
+        if !isempty(refined) && refined[1].chi2r <= best.chi2r
+            r1 = refined[1]
+            best = (x = r1.x, y = r1.y, sep = r1.sep, pa = r1.pa, f = r1.f, dmag = r1.dmag,
+                    chi2r = r1.chi2r, params = r1.params)
+            fit = fits[1]
+        end
+    end
+
     return CompanionSearch(xs, ys, chi2r, params, free, cn, best, chi2r_null,
                            detection_sigma(chi2r_null, best.chi2r, ndof), ndof, fit, path,
                            path === :fast ? solver : :vmlmb, fallbacks[], length(nodes),
-                           time() - t0)
+                           time() - t0, refined)
+end
+
+"""
+    _local_minima(chi2r, n) -> Vector{CartesianIndex{2}}
+
+The `n` lowest nodes of a χ²r map that are no worse than any searched neighbour in their 3×3,
+lowest first. `NaN` marks a node that was not searched, and is neither a minimum nor compared.
+"""
+function _local_minima(chi2r::AbstractMatrix, n::Integer)
+    R = CartesianIndices(chi2r)
+    one1 = oneunit(first(R))
+    mins = [c for c in R if !isnan(chi2r[c]) &&
+            all(isnan(chi2r[d]) || chi2r[c] <= chi2r[d]
+                for d in max(first(R), c - one1):min(last(R), c + one1))]
+    sort!(mins; by = c -> chi2r[c])
+    return mins[1:min(n, length(mins))]
+end
+
+"""
+    _refine_minima(md, data, cn, free, lb, ub, fmax, w, xs, ys, chi2r, params, rmax, n,
+                   ndof_map, threads) -> (refined, fits)
+
+`companion_search`'s refinement: Levenberg-Marquardt from each of the map's `n` best local
+minima with the companion's position free too, merged where two converge within half a step,
+best first. χ²r is over `ndof_map`, the map's own normalisation.
+"""
+function _refine_minima(md, data, cn, free, lb, ub, fmax, w, xs, ys, chi2r, params, rmax, n,
+                        ndof_map, threads)
+    kx, ky, kf = cn * ",x", cn * ",y", cn * ",f"
+    starts = _local_minima(chi2r, n)
+    isempty(starts) && return (NamedTuple[], LsqFitResult[])
+    allfree = vcat(free, [kx, ky])
+    dlb, dub = default_bounds(md, free; data)
+    lo = Dict{String,Float64}(k => Float64(get(lb, k, get(dlb, k, -Inf))) for k in free)
+    hi = Dict{String,Float64}(k => Float64(get(ub, k, get(dub, k, Inf))) for k in free)
+    lo[kf] = 0.0; hi[kf] = Float64(fmax)
+    lo[kx] = lo[ky] = -Float64(rmax); hi[kx] = hi[ky] = Float64(rmax)
+
+    # Compiled here, one model per start: compiling is not thread-safe, a fit on its own model is.
+    models = map(starts) do c
+        d = merge(md, Dict{String,Any}(zip(free, params[:, c[1], c[2]])),
+                  Dict{String,Any}(kx => xs[c[1]], ky => ys[c[2]]))
+        dict_to_model(d, allfree)
+    end
+    x0s = [vcat(params[:, c[1], c[2]], xs[c[1]], ys[c[2]]) for c in starts]
+    fits = Vector{LsqFitResult}(undef, length(starts))
+    fitone(k) = (fits[k] = fit_model_lsqfit(models[k], x0s[k], data; lb = lo, ub = hi,
+                                            weights = w))
+    if threads
+        @sync for k in eachindex(starts)
+            Threads.@spawn fitone(k)
+        end
+    else
+        foreach(fitone, eachindex(starts))
+    end
+
+    nf = length(free)
+    step = length(xs) > 1 ? xs[2] - xs[1] : Inf
+    out = NamedTuple[]; kept = LsqFitResult[]
+    for k in sortperm([f.chi2 for f in fits])
+        f = fits[k]
+        x, y = f.x_opt[nf + 1], f.x_opt[nf + 2]
+        any(r -> hypot(r.x - x, r.y - y) < step / 2, out) && continue
+        fv = f.x_opt[findfirst(==(kf), free)]
+        push!(out, (x = x, y = y, sep = hypot(x, y), pa = mod(atand(x, y), 360), f = fv,
+                    dmag = -2.5 * log10(fv / (1 - fv)), chi2r = f.chi2 / ndof_map,
+                    params = f.x_opt[1:nf], stderror = f.stderror,
+                    start = (xs[starts[k][1]], ys[starts[k][2]])))
+        push!(kept, f)
+    end
+    return (out, kept)
 end
 
 """

@@ -21,6 +21,7 @@ PythonPlot.matplotlib          # force the import NOW, while conda's harfbuzz ca
 
 # GLMakie, QMLMakie and QML are what activate OITOOLSGUIExt, where the whole GUI lives.
 using OITOOLS, GLMakie, QMLMakie, QML, Test, Dates, TOML
+using PairPlots                # the Modeling tab's Corner view (OITOOLSPairPlotsExt)
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
 GUI === nothing && error("OITOOLSGUIExt did not load; the GUI tests cannot run")
 using .GUI
@@ -1519,13 +1520,15 @@ end
             @test startswith(G.shell_set_smearing("auto", "sideways"), "!")
             @test G.shell_set_smearing("auto", "incoherent") == "" && m.dict["smear"] == "auto" &&
                   !haskey(m.dict, "smear_mode")
-            # The dialog's prefill: the default grid to two significant figures, the step and
-            # the inner radius rounded down, the outer radius up.
+            # The dialog's prefill: the default step unrounded, so the dialog's grid is the
+            # default grid; the radii to two significant figures, the annulus widened.
             dg = companion_grid(G._model(sh).dict, sess.datasets[1].data[1, 1]; companion = "companion")
             df = parse.(Float64, split(G.shell_companion_defaults("companion"), '\t'))
-            @test df[1] <= dg.step && df[2] <= dg.rmin && df[3] >= dg.rmax
+            @test df[1] ≈ dg.step rtol = 1e-5
+            @test df[2] <= dg.rmin && df[3] >= dg.rmax
             @test all(isapprox.(df, [dg.step, dg.rmin, dg.rmax]; rtol = 0.1))
-            @test G.shell_companion_defaults("companion") == "2\t2\t37"   # AX Cir: 2.02, 2.02, 36.6
+            @test startswith(G.shell_companion_defaults("companion"), "2.02113\t")   # AX Cir
+            @test endswith(G.shell_companion_defaults("companion"), "\t2\t37")
             pv = G.shell_companion_grid("companion", NaN, NaN, NaN, NaN)
             @test occursin(r"^\d+ nodes · step ", pv)
             @test startswith(G.shell_companion_grid("companion", NaN, 50.0, 10.0, NaN), "!")
@@ -1597,6 +1600,27 @@ end
                         for l in split(G.shell_fit_values(), '\n'))
             @test vals["companion,x"] == s.best.x && vals["companion,y"] == s.best.y
             @test vals["companion,f"] == s.best.f && haskey(vals, "star,ud")
+
+            # Refined: the best minima fitted again with the position free. Adopt takes the
+            # refined position, once, and the row carries its σ.
+            @test G.shell_companion_search(free, true, false, true, false, false, false, "companion",
+                                           NaN, NaN, NaN, NaN, NaN, "vmlmb", true, 3) == "searching…"
+            line = ""
+            for _ in 1:1200
+                r = G.shell_job_poll()
+                startswith(r, "running") || (line = r; break)
+                sleep(0.25)
+            end
+            @test startswith(line, "done\tbest refined minimum")
+            sr = last(sh.fits).map
+            @test !isempty(sr.refined) && sr.best.x == sr.refined[1].x
+            @test hypot(sr.best.x - 6.228, sr.best.y + 28.487) < 0.2
+            fv = split(G.shell_fit_values(), '\n')
+            @test count(startswith("companion,x="), fv) == 1 && count(startswith("companion,y="), fv) == 1
+            vals = Dict(split(l, '=')[1] => parse(Float64, split(l, '=')[2]) for l in fv)
+            @test vals["companion,x"] == sr.best.x && vals["companion,y"] == sr.best.y
+            @test occursin("companion,x = ", split(G.shell_fit_rows(), '\n')[1]) &&
+                  occursin("±", split(G.shell_fit_rows(), '\n')[1])
         finally
             G.SHELL[] = prev
         end
@@ -1633,10 +1657,21 @@ end
             f = last(sh.fits)
             @test f.sigma == f.result.stderror && f.boot === nothing && f.optimiser == "lsqfit"
             @test occursin("±", split(G.shell_fit_rows(), '\n')[1])
+            # The correlations follow the same source: LM's covariance here. PMOIRED: ud–f −65%.
+            corr(t) = (l = split(t, '\n'); (split(l[1], '\t'),
+                       [parse.(Float64, split(x, '\t')) for x in l[2:end]]))
+            nm, R = corr(G.shell_fit_correlation())
+            @test nm == f.result.list_free_params
+            s = f.result.stderror
+            @test all(isapprox.(reduce(vcat, permutedims.(R)), f.result.covar ./ (s * s'); atol = 0.005))
+            iud, ifl = findfirst(==("star,ud"), nm), findfirst(==("companion,f"), nm)
+            @test R[iud][ifl] ≈ -0.65 atol = 0.03
 
             @test fit("none") == "fitting…" && startswith(wait_fit(), "done\tchi2r")
             @test last(sh.fits).sigma === nothing
             @test !occursin("±", split(G.shell_fit_rows(), '\n')[1])
+            @test G.shell_fit_correlation() == ""
+            @test startswith(G.shell_corner_plot(600, 600), "! the latest fit has no samples")
 
             @test fit("bootstrap") == "fitting…" && startswith(wait_fit(), "done\tchi2r")
             f = last(sh.fits)
@@ -1649,6 +1684,19 @@ end
                                 lb, ub, weights = G.fitting_weights(; t3amp = false),
                                 maxeval = 200, seed = 7, threaded = false, verb = false)
             @test f.sigma ≈ ref.sigma rtol = 1e-8
+            nb, Rb = corr(G.shell_fit_correlation())
+            @test all(isapprox.(reduce(vcat, permutedims.(Rb)), f.boot.correlation; atol = 0.005))
+
+            # The corner plot of the bootstrap's kept replicates, drawn offscreen to a PNG.
+            @test occursin("corner=1", G.shell_optional_engines())
+            pd = plot_corner_makie(f.boot; truth = f.boot.x_opt)
+            @test count(c -> c isa Makie.Axis, pd.figure.content) == 4 * 5 ÷ 2   # lower triangle
+            p1 = G.shell_corner_plot(600, 600)
+            @test isfile(p1) && filesize(p1) > 10_000
+            p2 = G.shell_corner_plot(600, 600)
+            @test p2 != p1 && isfile(p2) && !isfile(p1)    # a new name each time, the old removed
+            out = joinpath(mktempdir(), "corner")
+            @test G.shell_save_corner(out) == "" && filesize(out * ".png") == filesize(p2)
             @test occursin("±", split(G.shell_fit_rows(), '\n')[1])
 
             @test startswith(fit("bootstrap"; opt = "grid"), "! bootstrap refits")
