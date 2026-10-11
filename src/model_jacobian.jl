@@ -437,6 +437,8 @@ function _kernel_into_G!(ws::ModelJacWorkspace{T}, comp::HankelSpec, chrom, np, 
     # [d_min, d_max, profile params...], scalars always
     dmin = comp.dmin_idx != 0 ? T(rp.s[rp.slot[comp.dmin_idx]]) : T(comp.d_min)
     dmax = comp.dmax_idx != 0 ? T(rp.s[rp.slot[comp.dmax_idx]]) : T(comp.d_max)
+    rev = _hankel_reversed(comp.comp_name, dmin, dmax)
+    rev && ((dmin, dmax) = (dmax, dmin))
     prof = vcat(dmin, dmax, T[rp.s[rp.slot[k]] for k in comp.profile_param_idx])
     npp = length(prof)
     @inbounds for i in 1:ws.n
@@ -494,6 +496,12 @@ function _kernel_into_G!(ws::ModelJacWorkspace{T}, comp::HankelSpec, chrom, np, 
                  (ws.u2[i] * ws.dv_dpa[i] - ws.v2[i] * ws.du_dpa[i]) / r2)
             G[i, 4] = (ws.Du[i] * dri / _MAS2RAD_PM + ws.Dv[i] * dψi) * _DEG
             G[i, 5] = (ws.Du[i] * drp / _MAS2RAD_PM + ws.Dv[i] * dψp) * _DEG
+        end
+    end
+    # Reversed, the inner edge is `c,diamout`: each column goes back to the key it came from.
+    if rev
+         for i in 1:ws.n
+            G[i, _G_FIXED+1], G[i, _G_FIXED+2] = G[i, _G_FIXED+2], G[i, _G_FIXED+1]
         end
     end
     return ws

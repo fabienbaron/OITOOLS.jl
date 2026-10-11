@@ -10,8 +10,8 @@
 # Why this is not bounds
 # ----------------------
 # `lb`/`ub` describe an axis-aligned box, so they can say "diamout is between 0 and 40" but not
-# "diamout is larger than diamin". Every fitter here takes the box natively — NLopt, LsqFit and
-# UltraNest all consume it — and none of them takes a relation as a bound.
+# "diamout is larger than diamin". Every fitter here takes the box natively — NLopt,
+# Levenberg-Marquardt and UltraNest all consume it — and none of them takes a relation as a bound.
 #
 # How a constraint is evaluated
 # -----------------------------
@@ -263,8 +263,8 @@ end
 The violations as residuals, for a least-squares fitter that sums their squares itself.
 
 One entry per constraint for a scalar model, more when a chromatic parameter makes the
-resolver broadcast. The count is fixed for a given model, which is what `curve_fit` requires
-of its residual vector.
+resolver broadcast. The count is fixed for a given model, which is what Levenberg-Marquardt
+requires of its residual vector.
 """
 function constraint_residuals(x, constraints, model, idx)
     isempty(constraints) && return Float64[]

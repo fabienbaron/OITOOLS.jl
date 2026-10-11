@@ -951,16 +951,18 @@ struct LsqFitResult
     ndof        ::Int
     covar       ::Matrix{Float64}       # parameter covariance matrix
     stderror    ::Vector{Float64}       # 1σ uncertainties (sqrt of diag(covar))
-    converged   ::Bool                  # did LsqFit converge?
+    converged   ::Bool                  # stopped by a convergence test, not the iteration cap
     model       ::FlatModel
-    lsqfit_result ::LsqFit.LsqFitResult  # raw LsqFit result (for confidence_interval etc.);
-                                         # its `trace` is stored, so `length(...)` is the
-                                         # iteration count LsqFit does not report directly
+    lsqfit_result ::LsqFit.LsqFitResult  # in LsqFit's form, so confidence_interval etc. apply;
+                                         # `length(trace)` is the iteration count
+    reason      ::Symbol                # what stopped it: :chi2, :gradient, :step, :bounds, :maxiter
+    at_bound    ::Vector{String}        # parameters the minimum holds on a bound
 end
 
 function Base.show(io::IO, r::LsqFitResult)
-    @printf(io, "LsqFitResult: χ²r = %.4f  (chi2=%.2f, ndof=%d, converged=%s)\n",
-            r.chi2r, r.chi2, r.ndof, r.converged)
+    @printf(io, "LsqFitResult: χ²r = %.4f  (chi2=%.2f, ndof=%d, converged=%s: %s)\n",
+            r.chi2r, r.chi2, r.ndof, r.converged, _LM_REASONS[r.reason])
+    isempty(r.at_bound) || println(io, "  on a bound: ", join(r.at_bound, ", "))
     for (i, p) in enumerate(r.list_free_params)
         @printf(io, "  %-20s = %10.4f ± %.4f\n", p, r.x_opt[i], r.stderror[i])
     end
@@ -968,14 +970,28 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# fit_model_lsqfit — Levenberg-Marquardt via LsqFit.jl
+# fit_model_lsqfit — Levenberg-Marquardt (`_lm_bounded`), reported in LsqFit's form
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Run `_lm_bounded` and wrap it as LsqFit's result, with no weights: `vcov` and `stderror` then
+# scale by rss/(n − p) exactly as they did when `curve_fit` produced it.
+function _lm_fit(model_fn, jacobian_fn, x0, lb_vec, ub_vec, maxIter)
+    lm = _lm_bounded(model_fn, jacobian_fn, Float64.(x0), lb_vec, ub_vec; maxIter)
+    fit = LsqFit.LsqFitResult(lm.x, lm.resid, lm.jacobian, lm.converged, lm.trace, Float64[])
+    return fit, lm
+end
 
 """
     fit_model_lsqfit(model_dict, list_free_params, data; kwargs...) -> LsqFitResult
 
-Fit a parametric model to interferometric data using Levenberg-Marquardt
-(LsqFit.jl).  Returns parameter covariance and 1σ uncertainties.
+Fit a parametric model to interferometric data using Levenberg-Marquardt.
+Returns parameter covariance and 1σ uncertainties.
+
+The iteration is LsqFit's, with bounds honoured rather than clipped: a parameter the minimum
+pushes against a bound is held there and left out of the step, so the others converge instead
+of crawling to the iteration cap (see `src/fit_lm.jl`). Besides LsqFit's tests it stops when the
+Gauss-Newton step could no longer lower χ² by a thousandth of a data point's average share.
+`reason` says which test stopped it, and `at_bound` names the parameters held on a bound.
 
 Uses the analytic Jacobian from `residuals_flat_jac` (Wirtinger chain rule
 through the complex visibility Jacobian), so no finite-difference overhead.
@@ -1017,43 +1033,31 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     constraint_idx  = [findfirst(==(k), fm.all_names) for k in constraint_keys]
     nparams = length(list_free_params)
 
-    # ── 2. Build the model function and Jacobian for LsqFit ─────────────────
-    # LsqFit convention: model_fn(xdata, p) -> predicted ydata
-    # We use xdata = [1] as a dummy — the data is captured in the closure.
-    # The "ydata" is zeros (we want residuals = predicted - 0 = residuals).
-
+    # ── 2. The residuals and their Jacobian, the data captured in the closures ──
     # Constraints append rows. Their count is fixed for a given model — one per constraint, or
-    # one per wavelength where the resolver broadcasts — which is what `curve_fit` requires of a
-    # residual vector whose length it fixes from the first call.
-    function model_fn(_, p)
+    # one per wavelength where the resolver broadcasts — so the residual vector keeps the length
+    # it has at the start.
+    function model_fn(p)
         r = residuals_flat(fm, p, data; weights)
         isempty(cons) ? r : vcat(r, constraint_residuals(p, cons, fm, constraint_idx))
     end
 
     jkw = _jac_cache_kw(data)
-    function jacobian_fn(_, p)
+    function jacobian_fn(p)
         _, J = residuals_flat_jac(fm, p, data; weights, jkw...)
         isempty(cons) ? J : vcat(J, constraint_jacobian(p, cons, fm, constraint_idx))
     end
 
     # ── 3. Initial parameter vector and bounds ───────────────────────────────
     x0 = Float64[model_dict[p] for p in list_free_params]
-    xdata = [1]  # dummy
     ndata = length(residuals_flat(fm, x0, data; weights))
-    ydata = zeros(length(model_fn(xdata, x0)))  # target = 0 (residuals)
 
     # Build lower/upper bound vectors
     lb_vec = Float64[get(lb, p, -Inf) for p in list_free_params]
     ub_vec = Float64[get(ub, p,  Inf) for p in list_free_params]
 
-    # ── 4. Run LsqFit ───────────────────────────────────────────────────────
-    # `store_trace`: LsqFit reports no iteration count of its own, and without the trace there
-    # is no way to say how many steps a fit took -- only whether it converged. The trace is one
-    # small struct per iteration, capped by `maxIter`, and `length(result.lsqfit_result.trace)`
-    # is the count.
-    fit = curve_fit(model_fn, jacobian_fn, xdata, ydata, x0;
-                    lower=lb_vec, upper=ub_vec, store_trace=true,
-                    maxIter=maxIter, inplace=false)
+    # ── 4. Levenberg-Marquardt ───────────────────────────────────────────────
+    fit, lm = _lm_fit(model_fn, jacobian_fn, x0, lb_vec, ub_vec, maxIter)
 
     # ── 5. Extract results ───────────────────────────────────────────────────
     minx = fit.param
@@ -1077,7 +1081,8 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     end
 
     return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
-                         cov, σ, fit.converged, fm, fit)
+                         cov, σ, fit.converged, fm, fit, lm.reason,
+                         list_free_params[lm.held])
 end
 
 """
@@ -1105,25 +1110,18 @@ function fit_model_lsqfit(model        ::FlatModel,
     # that ignores what the caller asked for.
     !isempty(constraints) && error("Constraints are only supported with the Dict form of fit_model_lsqfit; pass model_dict instead of FlatModel")
 
-    function model_fn(_, p)
-        residuals_flat(fm, p, data; weights)
-    end
+    model_fn(p) = residuals_flat(fm, p, data; weights)
 
     jkw = _jac_cache_kw(data)
-    function jacobian_fn(_, p)
+    function jacobian_fn(p)
         _, J = residuals_flat_jac(fm, p, data; weights, jkw...)
         return J
     end
 
-    xdata = [1]
-    ydata = zeros(length(model_fn(xdata, Float64.(x0))))
-
     lb_vec = _bounds_vec(lb, list_free_params, -Inf)
     ub_vec = _bounds_vec(ub, list_free_params,  Inf)
 
-    fit = curve_fit(model_fn, jacobian_fn, xdata, ydata, Float64.(x0);
-                    lower=lb_vec, upper=ub_vec, store_trace=true,
-                    maxIter=maxIter, inplace=false)
+    fit, lm = _lm_fit(model_fn, jacobian_fn, x0, lb_vec, ub_vec, maxIter)
 
     minx = fit.param
     r_final = fit.resid
@@ -1142,7 +1140,8 @@ function fit_model_lsqfit(model        ::FlatModel,
     end
 
     return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
-                         cov, σ, fit.converged, fm, fit)
+                         cov, σ, fit.converged, fm, fit, lm.reason,
+                         list_free_params[lm.held])
 end
 
 

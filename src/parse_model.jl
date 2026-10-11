@@ -185,8 +185,12 @@ lb, ub = default_bounds(model_dict, free; data = data) # sized to this uv covera
 
 Everything else is physical rather than instrumental — fluxes in `[0,Inf)`, since a flux is a
 weight relative to the others, `thick` in `[0,1]`, inclination in `[0,90]`, position angles in
-`[-180,180]` — and does not depend on the data. A nested sampler needs a finite upper bound on
-every free flux, since the bounds are its prior.
+`[-180,180]`, an azimuthal amplitude `az ampN` in `[0,1]` — and does not depend on the data.
+The amplitude multiplies the brightness by `1 + amp·cos(…)`, so 1 is the largest single
+amplitude that keeps it non-negative; several modes need `Σ amp ≤ 1`, which a box cannot say.
+PMOIRED leaves the amplitude unbounded, so a PMOIRED fit can report one above 1.
+
+A nested sampler needs a finite upper bound on every free flux, since the bounds are its prior.
 
 See also [`display_model`](@ref), which validates values against whatever bounds you end up
 with, and [`max_angular_scale`](@ref).
@@ -954,9 +958,7 @@ function dict_to_model(model_dict::Dict{String},
             # component is built with sets its nodes until the diameters change.
             r_min = _hankel_r_min(cn, pd)
             r_max = _hankel_r_max(cn, pd)
-            r_max > r_min >= 0 ||
-                error("Hankel component '$cn': the profile needs 0 ≤ r_min < r_max, " *
-                      "got r_min = $r_min, r_max = $r_max")
+            _hankel_reversed(cn, 2r_min, 2r_max) && ((r_min, r_max) = (r_max, r_min))
             Nr    = _hankel_Nr(cn, pd)
 
             profile_fn = _SizedProfile(compile_profile(profile_expr, prof_refs; size_args = true))
@@ -1353,6 +1355,18 @@ function _hankel_setup(comp::HankelSpec{T}, B::AbstractVector, q; cached::Bool =
     return (; s, μ, g, r, cacheable = !sized, jumps)
 end
 
+# Whether a profile's inner and outer diameters come reversed. Reversed, they are the ring
+# between the two radii, as PMOIRED's reversed grid is and as the analytic `ring` already is,
+# so the callers swap them; a fit that carries one past the other then goes on. A negative or
+# an equal pair is no ring at all and is refused, naming the component.
+function _hankel_reversed(comp_name::AbstractString, dmin, dmax)
+    (dmin >= 0 && dmax >= 0 && dmin != dmax) ||
+        throw(ArgumentError("profile component '$comp_name': the inner and outer diameters " *
+                            "must be ≥ 0 and differ, got " *
+                            "$(ForwardDiff.value(dmin)) and $(ForwardDiff.value(dmax)) mas"))
+    return dmin > dmax
+end
+
 # r_max and s_min at the diameters qv[1:2]: the component's own numbers at the size it was
 # built with, so that a fixed size gives the nodes it always did.
 function _hankel_size(comp::HankelSpec{T}, qv) where {T}
@@ -1480,6 +1494,7 @@ end
 function _hankel_q(comp::HankelSpec, rp, pp)
     dmin = comp.dmin_idx != 0 ? _par(rp, comp.dmin_idx, Val(false)) : comp.d_min
     dmax = comp.dmax_idx != 0 ? _par(rp, comp.dmax_idx, Val(false)) : comp.d_max
+    _hankel_reversed(comp.comp_name, dmin, dmax) && ((dmin, dmax) = (dmax, dmin))
     return vcat(dmin, dmax, pp)
 end
 

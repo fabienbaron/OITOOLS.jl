@@ -1972,16 +1972,45 @@ end
     end
 
     @testset "every kind the parser reads has a name in the table's header" begin
-        # The header reads `disk · Gaussian` from `kindLabels` in ModelTab.qml, or from the law
-        # selector's names for a disc. A kind with neither shows its raw symbol, so a kind
-        # added to the parser must be named there too.
-        qml = read(joinpath(pkgdir(OITOOLS), "src", "gui", "qml", "ModelTab.qml"), String)
-        i = findfirst("readonly property var kindLabels", qml)
-        block = qml[last(i):findnext("})", qml, last(i))[1]]
-        named = Set(m[1] for m in eachmatch(r"\"([a-z_0-9]+)\":", block))
-        laws  = Set(l.key for l in GUI.DISC_LAWS)
+        # The header reads `disk · Gaussian` from `KIND_LABELS` (sent to the QML at startup), or
+        # from the law selector's names for a disc; the model's description reads the same. A
+        # kind with neither shows its raw symbol, so a kind added to the parser must be named.
+        laws = Set(l.key for l in GUI.DISC_LAWS)
         for k in keys(OITOOLS._KIND_GEOMETRY)
-            @test string(k) in named || string(k) in laws
+            @test haskey(GUI.KIND_LABELS, string(k)) || string(k) in laws
+        end
+        @test length(split(GUI.shell_kind_labels(), "\n")) == length(GUI.KIND_LABELS)
+        @test GUI._kind_label("ldpow") == "power law disc"
+        @test GUI._kind_label("hankel") == "written profile"
+    end
+
+    @testset "the model is described by its components, and Save writes that" begin
+        # The title is the file; the description is `name: kind` per component, so a law switch
+        # or a rename shows at once and a saved file says what it holds.
+        G = GUI
+        prev = G.SHELL[]
+        sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        out = tempname() * ".toml"
+        try
+            f = joinpath(pkgdir(OITOOLS), "demos", "models", "Limb_Darkened_Disk_Claret4.toml")
+            @test G.shell_open_model(f) == "Limb_Darkened_Disk_Claret4.toml"
+            @test occursin("named in the file \"Claret four-parameter limb-darkened disk\"",
+                           sh.console[end])
+            @test G.shell_model_description() == "star: four-parameter disc"
+            @test G.shell_set_ld_law("star", "ldpow") == ""
+            @test G.shell_model_description() == "star: power law disc"
+            @test G.shell_rename_component("star", "sun") == ""
+            @test G.shell_model_description() == "sun: power law disc"
+            @test G.shell_save_model(out) == ""
+            @test read_model_file(out).name == "sun: power law disc"
+            @test G._model(sh).name == basename(out)
+        finally
+            rm(out; force = true)
+            G.SHELL[] = prev
         end
     end
 
@@ -2034,10 +2063,17 @@ end
                                   free = ["star,ud"], map = nothing, chi2_start = NaN,
                                   sigma = nothing, boot = nothing))
             end
+            # The data want 8.3 mas; capped at 6 the minimum holds the diameter on its bound.
+            ud5 = merge(ud, Dict{String,Any}("star,ud" => 5.0))
+            r = fit_model_lsqfit(ud5, ["star,ud"], d; ub = Dict("star,ud" => 6.0))
+            push!(sh.fits, (; result = r, optimiser = "lsqfit", seconds = 0.0,
+                              free = ["star,ud"], map = nothing, chi2_start = NaN,
+                              sigma = nothing, boot = nothing))
             rows = split(G.shell_fit_rows(), '\n')
             @test all(length(split(l, '\t')) == 8 for l in rows)
-            @test !occursin("not converged", rows[1])              # newest first: 200 iterations
-            @test endswith(split(rows[2], '\t')[5], " · not converged")
+            @test endswith(split(rows[1], '\t')[5], " · on a bound: star,ud")
+            @test !occursin("not converged", rows[2])              # newest first: 200 iterations
+            @test endswith(split(rows[3], '\t')[5], " · not converged")
 
             # The uv title names the dataset as its row does, not only its first file.
             pd = G.canvas_data(d, :uv; source = "first.fits + 25 more")

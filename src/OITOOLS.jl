@@ -35,6 +35,7 @@ include("model_jacobian.jl")     # eval_model_jac!: the Jacobian from the closed
 include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
 include("constraints.jl")        # ModelConstraint: NLopt constraints, and penalties elsewhere
 include("model_file.jl")         # TOML model files: model + free + bounds + constraints + priors
+include("fit_lm.jl")             # Levenberg-Marquardt whose bounds are honoured, not clipped
 include("fit_model.jl")          # fit_model (NLopt), fit_model_nested, display_model
 include("chi2_map.jl")           # grid search over two free parameters, and its chi2 surface
 include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo

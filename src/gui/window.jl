@@ -50,6 +50,7 @@ function __init__()
                      shell_profile_templates, shell_profile_template,
                      shell_component_geometry, shell_set_component_geometry,
                      shell_ld_laws, shell_ld_law, shell_set_ld_law,
+                     shell_kind_labels, shell_model_description,
                      shell_az_modes, shell_add_az_mode, shell_remove_az_mode,
                      shell_model_residuals, shell_model_sed, shell_model_depends,
                      shell_set_residual_mode, shell_set_overlay_mode,

@@ -92,6 +92,9 @@ Item {
     // touches and every `x_opt` a result reports — showing it is what makes an exported
     // script legible.
     property string modelName: "untitled"
+    // The model as `name: kind` per component, from `shell_model_description`, refreshed with
+    // the table: what Save writes as the file's name.
+    property string modelDescription: ""
     property bool   modelDirty: false
     property string modelPath: ""
 
@@ -464,6 +467,17 @@ Item {
             }
         }
         root.ldLaws = lw
+
+        var kl = {}
+        var kt = Julia.shell_kind_labels()
+        if (kt.length > 0) {
+            var kk = kt.split("\n")
+            for (var q = 0; q < kk.length; ++q) {
+                var kf = kk[q].split("\t")
+                if (kf.length === 2) kl[kf[0]] = kf[1]
+            }
+        }
+        root.kindLabels = kl
 
         var tp = []
         var tt = Julia.shell_profile_templates()
@@ -894,6 +908,16 @@ Item {
                 color: root.modelDirty ? root.cWarn : "#444"
                 elide: Text.ElideMiddle
                 Layout.maximumWidth: dp(220)
+            }
+            Label {
+                visible: root.modelDescription.length > 0
+                text: root.modelDescription
+                color: "#888"
+                elide: Text.ElideRight
+                Layout.maximumWidth: dp(320)
+                HoverHandler { id: descHover }
+                ToolTip.visible: descHover.hovered
+                ToolTip.text: "the components and what each is read as; Save writes this as the file's name"
             }
 
             ToolSeparator {}
@@ -3116,15 +3140,25 @@ Item {
                                         // Iterations or chi2 evaluations -- whichever the
                                         // optimiser reports; they are not the same quantity, so
                                         // the unit is in the cell rather than in the header.
+                                        // `10 it · on a bound: rim,diamin` shows as two lines,
+                                        // the names in the tooltip: the cell is too narrow for them.
                                         Label {
                                             readonly property bool stopped:
                                                 model.work.indexOf("not converged") >= 0
+                                            readonly property string bound: {
+                                                var i = model.work.indexOf("on a bound: ")
+                                                return i < 0 ? "" : model.work.substring(i + 12)
+                                            }
                                             Layout.preferredWidth: root.dp(80)
-                                            text: model.work.replace(" · ", "\n")
-                                            color: stopped ? root.cWarn : "#666"
+                                            text: model.work.split(" · ").map(function (w) {
+                                                return w.indexOf("on a bound") === 0 ? "on a bound" : w
+                                            }).join("\n")
+                                            color: stopped || bound.length > 0 ? root.cWarn : "#666"
                                             ToolTip.visible: fitWorkHover.hovered && model.work !== "—"
                                             ToolTip.text: stopped
                                                 ? "Stopped by the iteration limit before converging: the values are where it stopped, not a minimum. Fit again from them, or adopt and refit."
+                                                : bound.length > 0
+                                                ? "The minimum holds " + bound + " on its bound: the bound decides that value, not the data, and its ± ignores the bound. Widen the bound or fix the parameter."
                                                 : model.work.indexOf("it") >= 0
                                                 ? "Levenberg–Marquardt iterations, each costing a residual and a Jacobian"
                                                 : "χ² evaluations; NLopt reports no iteration count"
@@ -3419,13 +3453,9 @@ Item {
         return ""
     }
     // What the parser read the component as, for the table's header: `disk · Gaussian`,
-    // `star · four-parameter`. Written so it cannot be taken for a key -- `$disk,gaussian`
-    // would not resolve. A disc's law is named as the law selector names it.
-    readonly property var kindLabels: ({ "point": "point", "gaussian": "Gaussian",
-                                         "ring": "ring", "gaussian_ring": "Gaussian ring",
-                                         "crescent": "crescent", "hankel": "written profile",
-                                         "image": "image", "visfunc": "visibility function",
-                                         "resolved": "resolved flux" })
+    // `star · four-parameter`. From Julia's `KIND_LABELS`, which the model's description reads
+    // too. A disc's law is named as the law selector names it.
+    property var kindLabels: ({})
     function kindLabelOf(comp) {
         for (var i = 0; i < componentModel.count; ++i) {
             var c = componentModel.get(i)
@@ -3500,6 +3530,7 @@ Item {
     }
 
     function refreshModel() {
+        root.modelDescription = Julia.shell_model_description()
         paramModel.clear()
         var rows = Julia.shell_model_rows()
         if (rows.length > 0) {
@@ -4716,6 +4747,7 @@ Item {
             root.consoleChanged()
             if (err.length > 0) { root.fitText = err; return }
             root.modelPath = path
+            root.modelName = path.replace(/^.*[\\/]/, "")
             root.modelDirty = false
         }
     }

@@ -441,4 +441,64 @@ end
     @test r.x_opt[1] ≈ 8.0 rtol = 1e-4
 end
 
+@testset "a profile ring's diameters: reversed is the same ring, negative or equal is refused" begin
+    # Reversed, the two diameters are the ring between them, as PMOIRED reads them and as the
+    # analytic `ring` already does; each derivative stays with its own key. A fit that carries
+    # `diamin` past `diamout` goes on instead of dying inside the quadrature.
+    md = Dict{String,Any}("rim,profile" => "1 - (2*(\$R - (\$RMIN + \$RMAX)/2)/(\$RMAX - \$RMIN))^2",
+                          "rim,diamin" => 4.0, "rim,diamout" => 8.0,
+                          "rim,az amp1" => 0.4, "rim,az projang1" => 30.0)
+    free = ["rim,diamin", "rim,diamout"]
+    fm = dict_to_model(md, free)
+    uv = data.uv
+    V, J   = eval_model_jac(fm, [4.0, 8.0], uv)
+    Vr, Jr = eval_model_jac(fm, [8.0, 4.0], uv)
+    @test Vr ≈ V
+    @test Jr[:, 1] ≈ J[:, 2] && Jr[:, 2] ≈ J[:, 1]
+    @test eval_model(fm, [8.0, 4.0], uv) ≈ V
+    @test Jr ≈ eval_model_grad_ad(fm, [8.0, 4.0], uv)[2]
+    # Compiled reversed, it is the same ring too.
+    fr = dict_to_model(merge(md, Dict{String,Any}("rim,diamin" => 8.0, "rim,diamout" => 4.0)), free)
+    @test eval_model(fr, [8.0, 4.0], uv) ≈ V
+
+    for x in ([-1.0, 8.0], [6.0, 6.0])
+        err = try eval_model(fm, x, uv); nothing catch e; e end
+        @test err isa ArgumentError && occursin("'rim'", err.msg)
+    end
+    @test_throws ArgumentError dict_to_model(merge(md, Dict{String,Any}("rim,diamin" => 6.0,
+                                                                        "rim,diamout" => 6.0)), free)
+
+    # From a start that is already reversed, [6.5, 7], to data made from [4, 8]: either
+    # ordering of the answer is the same ring, and the fit finishes.
+    synth = deepcopy(data)
+    synth.v2 .= model_to_obs(dict_to_model(md, String[]), Float64[], synth).v2
+    start = merge(md, Dict{String,Any}("rim,diamin" => 7.0, "rim,diamout" => 6.5))
+    lb, ub = default_bounds(start, free)
+    r = fit_model_lsqfit(start, free, synth; weights = [1.0, 0.0, 0.0], lb, ub)
+    @test sort(r.x_opt) ≈ [4.0, 8.0] rtol = 1e-4
+end
+
+@testset "a parameter the minimum pushes against its bound is held there, and named" begin
+    # Data from a ring whose inner diameter is 1 mas, fitted with `diamin ≥ 2`: the minimum holds
+    # it on the bound. Clipped instead of held (LsqFit's way), this crawled to the iteration cap
+    # on PMOIRED's FS CMa ring; held, it must match the fit with `diamin` fixed at 2.
+    md = Dict{String,Any}("rim,profile" => "1", "rim,diamin" => 1.0, "rim,diamout" => 8.0)
+    synth = deepcopy(data)
+    synth.v2 .= model_to_obs(dict_to_model(md, String[]), Float64[], synth).v2
+    start = merge(md, Dict{String,Any}("rim,diamin" => 3.0, "rim,diamout" => 7.0))
+    free = ["rim,diamin", "rim,diamout"]
+    lb, ub = default_bounds(start, free)
+    lb["rim,diamin"] = 2.0
+    r = fit_model_lsqfit(start, free, synth; weights = [1.0, 0.0, 0.0], lb, ub)
+    @test r.converged && r.reason !== :maxiter
+    @test r.at_bound == ["rim,diamin"] && r.x_opt[1] == 2.0
+    @test length(r.lsqfit_result.trace) < 30
+    @test isfinite(r.stderror[1])              # its σ is kept, as LsqFit computed it
+    fixed = fit_model_lsqfit(merge(start, Dict{String,Any}("rim,diamin" => 2.0)), ["rim,diamout"],
+                             synth; weights = [1.0, 0.0, 0.0], lb, ub)
+    @test r.chi2 ≈ fixed.chi2 rtol = 1e-4
+    @test r.x_opt[2] ≈ fixed.x_opt[1] rtol = 1e-4
+    @test occursin("on a bound: rim,diamin", sprint(show, r))
+end
+
 end

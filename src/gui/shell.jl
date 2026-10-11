@@ -1160,6 +1160,9 @@ function finish_fit!(sh::ShellState, res)
                      @sprintf("    %-22s = %.6g", k, v) :
                      @sprintf("    %-22s = %.6g ± %.3g", k, v, sigma[j]))
     end
+    for line in _reversed_rings(_model(sh).dict, r.list_free_params, r.x_opt)
+        console!(sh, "  " * line)
+    end
     if f.map isa CompanionSearch
         COMPANION_LIVE[] = nothing
         s = f.map; b = s.best
@@ -1632,6 +1635,35 @@ function _fit_work(r)
 end
 
 """
+    _reversed_rings(dict, free, x) -> Vector{String}
+
+One line per profile component whose inner diameter ended above its outer one at `x`, saying
+the model reads it as the ring between them. The fit is not wrong for it: the values are
+reported as fitted, and this says what they mean.
+"""
+function _reversed_rings(dict, free, x)
+    d = copy(dict)
+    for (k, v) in zip(free, x)
+        d[k] = v
+    end
+    out = String[]
+    for k in keys(d)
+        endswith(k, ",profile") || continue
+        cn = k[1:end-length(",profile")]
+        haskey(d, cn * ",diamin") || continue
+        a, b = try
+            OITOOLS._hankel_r_min(cn, d), OITOOLS._hankel_r_max(cn, d)
+        catch
+            continue
+        end
+        a > b || continue
+        push!(out, @sprintf("%s: diamin %.4g > outer %.4g mas, read as the ring between them",
+                             cn, 2a, 2b))
+    end
+    return sort!(out)
+end
+
+"""
     shell_fit_rows() -> String
 
 Completed fits as
@@ -1646,6 +1678,8 @@ evaluated, which the panel renders as an em dash.
 quantities and only one of them exists for any given optimiser. A fit that reports it did not
 converge -- Levenberg-Marquardt stopped by its iteration limit -- has ` · not converged` after
 it: its values are where it stopped, not a minimum.
+A Levenberg-Marquardt minimum that holds parameters on their bounds has ` · on a bound: ` and
+their names, `; `-separated: the minimum there is set by the bound, not by the data.
 
 No AIC or BIC. Both are information criteria for choosing BETWEEN models, and this package has
 a better answer for that question: `fit_model_nested` returns the log-evidence, which compares
@@ -1667,6 +1701,8 @@ function shell_fit_rows()
                it > 0           ? string(it, " it")     :
                ev > 0           ? string(ev, " ev")     : "—"
         hasproperty(r, :converged) && r.converged === false && (work *= " · not converged")
+        hasproperty(r, :at_bound) && !isempty(r.at_bound) &&
+            (work *= " · on a bound: " * join(r.at_bound, "; "))
         push!(rows, join((string("fit ", length(sh.fits) - i + 1), f.optimiser,
                           _numv(start), string(round(r.chi2r; digits = 4)),
                           work, string(r.ndof), string(k),
@@ -2064,9 +2100,10 @@ function shell_open_model(path::AbstractString)
     old = m.dict
     m.dict = r.model; m.free = collect(r.free)
     m.lb = Dict{String,Float64}(r.lb); m.ub = Dict{String,Float64}(r.ub)
-    m.name = isempty(r.name) ? basename(String(path)) : r.name
+    m.name = basename(String(path))
     console!(sh, "> read_model_file(\"" * String(path) * "\")")
-    console!(sh, "  $(m.name): $(length(m.dict)) keys, $(length(m.free)) free")
+    console!(sh, "  $(m.name): $(length(m.dict)) keys, $(length(m.free)) free" *
+                 (isempty(r.name) ? "" : ", named in the file \"" * r.name * "\""))
     _keep_smearing!(sh, old, m.dict)
     return m.name
 end
@@ -2089,10 +2126,12 @@ function shell_save_model(path::AbstractString)
     sh = _shell(); m = _model(sh)
     isempty(m.dict) && return "! no model to save"
     try
-        write_model_file(String(path), m.dict; free = m.free, lb = m.lb, ub = m.ub, name = m.name)
+        write_model_file(String(path), m.dict; free = m.free, lb = m.lb, ub = m.ub,
+                         name = shell_model_description())
     catch err
         msg = "! could not write model: " * _cause(err); console!(sh, msg; kind = :err); return msg
     end
+    m.name = basename(String(path))
     console!(sh, "> write_model_file(\"" * String(path) * "\", model; free = $(m.free))")
     return ""
 end
@@ -2713,6 +2752,49 @@ const DISC_LAWS = [
 ]
 
 """
+What each kind the parser reads is called on screen, by `model_inspection`'s kind: the
+section headers (`disk · Gaussian`) and the model's description both read it. A disc is not
+here: its law names it, from `DISC_LAWS`. Written so it cannot be taken for a key --
+`\$disk,gaussian` would not resolve.
+"""
+const KIND_LABELS = Dict{String,String}(
+    "point" => "point", "gaussian" => "Gaussian", "ring" => "ring",
+    "gaussian_ring" => "Gaussian ring", "crescent" => "crescent", "hankel" => "written profile",
+    "image" => "image", "visfunc" => "visibility function", "resolved" => "resolved flux")
+
+"""
+    shell_kind_labels() -> String
+
+`KIND_LABELS` as `kind\tlabel` lines, for the section headers.
+"""
+shell_kind_labels() = join((string(k, '\t', v) for (k, v) in sort!(collect(KIND_LABELS))), "\n")
+
+# A kind as the description names it: a disc by its law ("power law disc"), anything else from
+# `KIND_LABELS`, and an unknown kind as itself.
+function _kind_label(kind::AbstractString)
+    haskey(KIND_LABELS, kind) && return KIND_LABELS[kind]
+    i = findfirst(l -> l.key == kind, DISC_LAWS)
+    return i === nothing ? String(kind) : DISC_LAWS[i].label * " disc"
+end
+
+"""
+    shell_model_description() -> String
+
+The model as `name: kind` per component, in the model's order and joined by ", ": "star: power
+law disc", or "star: uniform disc, rim: written profile". Built from what the parser reads, so it
+follows a law switch or a rename the moment either happens and cannot describe a model that is
+no longer there. `""` for an empty model, or one that does not parse yet.
+
+The toolbar shows it after the model's source, and Save writes it as the file's `name`.
+"""
+function shell_model_description()
+    m = _model()
+    isempty(m.dict) && return ""
+    insp = try model_inspection(m.dict) catch; return "" end
+    return join((string(c.name, ": ", _kind_label(string(c.kind))) for c in insp.components), ", ")
+end
+
+"""
 The component menu, in order.
 
 Categories are alphabetical, and a category with one entry is offered as itself rather than as
@@ -3261,6 +3343,8 @@ function shell_profile_grid(component::AbstractString)
     catch
         0.0
     end
+    # Reversed diameters are the ring between them, as the model reads them.
+    rmin > rmax && ((rmin, rmax) = (rmax, rmin))
     nr = try
         OITOOLS._hankel_Nr(cn, m.dict)
     catch
