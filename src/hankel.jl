@@ -15,6 +15,7 @@
 
 using SpecialFunctions      # besselj, besselj0, besselj1
 using LinearAlgebra
+using FastGaussQuadrature: gausslegendre
 using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
@@ -122,6 +123,49 @@ function hankel_vis(I::AbstractVector, r::AbstractVector,
     N = hankel_norm(I, r)
     return H ./ N
 end
+
+
+##############################################################################
+# SECTION 2b: Quadrature for profile components
+##############################################################################
+
+# The nodes, the probe and the convergence check: hankel_nodes.jl. The transforms on those
+# nodes follow.
+include("hankel_nodes.jl")
+
+"""
+    _hankel_wtransform(I, r, g, B; n=0) -> Vector
+
+Σₖ gₖ Iₖ Jₙ(2πBⱼrₖ) for each baseline: the transform on a profile component's nodes, with the
+weights `g` of `_hankel_nodes` (r = r_max·s). B in cycles per unit of r. The direct path, for
+baselines that move with the parameters (inclination, position angle); its rrule
+(hankel_chainrules.jl) returns the tangents of `I` and of `B`.
+"""
+function _hankel_wtransform(I::AbstractVector, r::AbstractVector, g::AbstractVector,
+                            B::AbstractVector; n::Int = 0)
+    @assert length(I) == length(r) == length(g) "_hankel_wtransform: I, r and g must have the same length"
+    # Functional, as `hankel_transform`, so Enzyme can differentiate it.
+    function _one(Bj)
+        T = promote_type(eltype(I), eltype(r), eltype(g), typeof(Bj))
+        acc = zero(T)
+        twoπ = T(2π)
+        @inbounds for k in eachindex(r)
+            # SpecialFunctions' `besselj(n, ::Float32)` for n ≥ 2 is not inferred as Float32,
+            # so the Bessel value is taken in T, or Float32 would leave Float32.
+            acc += g[k] * I[k] * T(_besselj_int(n, twoπ * Bj * r[k]))
+        end
+        return acc
+    end
+    return map(_one, B)
+end
+
+"""
+    _hankel_wvis(I, r, g, B; n=0) -> Vector
+
+`_hankel_wtransform(I, r, g, B; n) / Σ g I`: the normalised visibility of order `n`.
+"""
+_hankel_wvis(I::AbstractVector, r::AbstractVector, g::AbstractVector, B::AbstractVector;
+             n::Int = 0) = _hankel_wtransform(I, r, g, B; n) ./ dot(g, I)
 
 
 # ChainRules rrules — must be included after hankel_norm/transform/vis are defined

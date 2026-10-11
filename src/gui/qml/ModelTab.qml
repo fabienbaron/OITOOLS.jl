@@ -310,6 +310,8 @@ Item {
             root.profileRMax = parseFloat(f[2])
             root.profileNr   = parseInt(f[3])
             root.profileEdgeFrac = f.length > 4 ? parseFloat(f[4]) : 0
+            root.profileNodes = f.length > 5 ? parseInt(f[5]) : 0
+            root.profileFound = f.length > 6 ? f[6] : ""
         }
 
         // What `compile_profile` will treat as a parameter, split into what exists and what
@@ -2045,10 +2047,24 @@ Item {
                                                     }
                                                     Item { Layout.fillWidth: true }
                                                     Label {
-                                                        text: root.profileNr + " points"
+                                                        // the nodes the model's quadrature uses on the
+                                                        // preview's baselines; `nr` fixes the count
+                                                        text: root.profileNodes + " nodes" +
+                                                              (root.profileNr > 0 ? " (nr)" : "")
                                                         font.pointSize: root.pt(root.baseFontPt - 2)
                                                         color: "#666"
                                                     }
+                                                }
+                                                // What the quadrature adapted to: jumps and kinks get
+                                                // panels of their own, a singular centre a change of
+                                                // variable. Said, because it is why the node count grew.
+                                                Label {
+                                                    visible: root.profileFound.length > 0
+                                                    text: "profile has " + root.profileFound
+                                                    font.pointSize: root.pt(root.baseFontPt - 2)
+                                                    color: "#666"
+                                                    wrapMode: Text.Wrap
+                                                    Layout.fillWidth: true
                                                 }
                                                 // The grid the parser built: r_min from diamin/2, r_max
                                                 // and the key that set it, and nr. Read back from
@@ -2871,7 +2887,7 @@ Item {
 
                                     Label { text: "nboot"; color: "#666" }
                                     SpinBox {
-                                        from: 10; to: 10000; stepSize: 10; value: root.nboot
+                                        from: 10; to: 10000; stepSize: 10; value: root.nboot; editable: true
                                         implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
                                         onValueModified: root.nboot = value
                                     }
@@ -2900,7 +2916,7 @@ Item {
                                     }
                                     Label { text: "seed"; color: "#666" }
                                     SpinBox {
-                                        from: 0; to: 999999; value: root.bootSeed
+                                        from: 0; to: 999999; value: root.bootSeed; editable: true
                                         implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
                                         onValueModified: root.bootSeed = value
                                         // Set by default. Replicate i uses Xoshiro(seed+i), so results are
@@ -3320,7 +3336,8 @@ Item {
                                             readonly property int i: Math.floor(index / (corrGrid.n + 1)) - 1
                                             readonly property int j: index % (corrGrid.n + 1) - 1
                                             readonly property bool cell: i >= 0 && j >= 0 && j <= i
-                                            readonly property real rho: cell ? root.corrRows[i][j] : 0
+                                            readonly property real rho: cell && i < root.corrRows.length
+                                                                        ? root.corrRows[i][j] : 0
                                             // Wide enough for a name like "companion,f"
                                             // over each column, where the label would elide.
                                             Layout.preferredWidth: root.dp(96)
@@ -3377,7 +3394,9 @@ Item {
     property real   profileRMin: 0.0
     property real   profileRMax: 1.0
     property string profileRMaxKey: "r_max"
-    property int    profileNr: 100
+    property int    profileNr: 0
+    property int    profileNodes: 0
+    property string profileFound: ""
     property var    profileParams: []
     property var    profileMissing: []      // names the expression needs and the model lacks
 
@@ -3528,10 +3547,23 @@ Item {
     property string cornerMsg: ""
     function showCorner() {
         root.diagView = "corner"
-        var r = Julia.shell_corner_plot(cornerBox.width, cornerBox.height)
-        if (r.length > 0 && r.charAt(0) === "!") { root.cornerPath = ""; root.cornerMsg = r.substring(2) }
-        else { root.cornerPath = r; root.cornerMsg = "" }
-        root.consoleChanged()
+        root.cornerPath = ""; root.cornerMsg = ""
+        cornerTimer.restart()
+    }
+    // Deferred by a tick, as a fit is: the draw holds Qt's thread (the first one compiles
+    // PairPlots, ~18 s without a sysimage), so "drawing…" has to be on screen before it starts.
+    Timer {
+        id: cornerTimer
+        interval: 60; repeat: false
+        onTriggered: {
+            // Square, whatever the panel's shape: a corner plot's panels sit on a square grid,
+            // and squeezed into a wide, short box their labels overlap. The Image scales it.
+            var side = Math.max(560, Math.min(900, Math.max(cornerBox.width, cornerBox.height)))
+            var r = Julia.shell_corner_plot(side, side)
+            if (r.length > 0 && r.charAt(0) === "!") { root.cornerPath = ""; root.cornerMsg = r.substring(2) }
+            else { root.cornerPath = r; root.cornerMsg = "" }
+            root.consoleChanged()
+        }
     }
 
     // The latest fit's correlation matrix, from the same source as its ± (the bootstrap's, LM's
@@ -3540,13 +3572,15 @@ Item {
     property var corrRows: []
     function refreshCorrelation() {
         var t = Julia.shell_fit_correlation()
+        // Names last when filling and first when clearing: the grid is rebuilt when the names
+        // change, and reads the rows as it is.
         if (t.length === 0) { root.corrNames = []; root.corrRows = []; return }
         var lines = t.split("\n")
         var rows = []
         for (var i = 1; i < lines.length; ++i)
             rows.push(lines[i].split("\t").map(function (v) { return parseFloat(v) }))
-        root.corrNames = lines[0].split("\t")
         root.corrRows = rows
+        root.corrNames = lines[0].split("\t")
     }
 
     // Whether the most recent fit left a χ² map behind, and over what.
@@ -3764,13 +3798,24 @@ Item {
     // The companion search's settings. Not an optimiser: it maps χ² over the companion's
     // position, fitting what is free at every node of a grid, and its result lands in the fits
     // table and the map panel like a fit's. An empty field takes the search's own default,
-    // which the readout at the bottom then states.
+    // which the readout at the bottom then states. Its size is fixed: the rows whose text
+    // follows the choices (what is fitted, the fitter's note, the grid) keep their room, so the
+    // dialog does not resize as the primary or the fitter changes.
     Dialog {
         id: companionDialog
         title: "Companion search"
         modal: true
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Ok | Dialog.Cancel
+        width: root.dp(680)
+        background: Rectangle {
+            color: companionDialog.palette.window
+            border.color: "#606060"
+            border.width: root.dp(2)
+            radius: root.dp(4)
+        }
+        FontMetrics { id: compFm; font: nodeFreeText.font }
+        FontMetrics { id: compSmallFm; font: fitterNote.font }
         property var fitters: []
         readonly property string fitterKey:
             fitters.length > 0 && fitterBox.currentIndex >= 0 ? fitters[fitterBox.currentIndex].key : "bradi"
@@ -3834,10 +3879,15 @@ Item {
 
             Label { text: "Fitted at each node" }
             Label {
+                id: nodeFreeText
                 text: root.nodeFreeNames(companionBox.currentText, companionDialog.refitPrimary).join(", ")
                 color: "#444"
-                Layout.maximumWidth: root.dp(420)
+                Layout.preferredWidth: root.dp(480)
+                Layout.preferredHeight: 2 * compFm.lineSpacing
+                verticalAlignment: Text.AlignTop
                 wrapMode: Text.WordWrap
+                elide: Text.ElideRight
+                maximumLineCount: 2
                 ToolTip.visible: nodeFreeHover.hovered
                 ToolTip.text: "the free parameters, less the companion's position, which the grid sets"
                 HoverHandler { id: nodeFreeHover }
@@ -3851,12 +3901,18 @@ Item {
                 textRole: "name"
             }
 
-            Label { text: ""; visible: companionDialog.fitters.length === 1 }
+            Label { text: "" }
             Label {
-                visible: companionDialog.fitters.length === 1
-                text: "BraDi and Halley fit the companion's flux alone: hold the primary, and free nothing else of the companion"
+                id: fitterNote
+                text: companionDialog.fitters.length === 1
+                      ? "BraDi and Halley fit the companion's flux alone: hold the primary, and free nothing else of the companion"
+                      : ""
                 color: "#888"
                 font.pointSize: root.pt(root.baseFontPt - 2)
+                Layout.preferredWidth: root.dp(480)
+                Layout.preferredHeight: 2 * compSmallFm.lineSpacing
+                verticalAlignment: Text.AlignTop
+                wrapMode: Text.WordWrap
             }
 
             Label { text: "Grid step (mas)" }
@@ -3914,12 +3970,11 @@ Item {
                 spacing: root.dp(6)
                 SpinBox {
                     id: compRefine
-                    from: 0; to: 50; value: 5
+                    from: 0; to: 50; value: 5; editable: true
                     implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
-                }
-                Label {
-                    text: compRefine.value === 0 ? "no refinement" : "local minima, position free (Levenberg-Marquardt)"
-                    color: "#666"
+                    ToolTip.visible: hovered
+                    ToolTip.text: value === 0 ? "no refinement"
+                                              : "local minima, position free (Levenberg-Marquardt)"
                 }
             }
 
@@ -3928,6 +3983,12 @@ Item {
                 text: root.companionGridText.length > 0 && root.companionGridText.charAt(0) !== "!"
                       ? "= " + root.companionGridText : root.companionGridText
                 color: root.companionGridText.charAt(0) === "!" ? root.cBad : "#666"
+                Layout.preferredWidth: root.dp(480)
+                Layout.preferredHeight: 2 * compFm.lineSpacing
+                verticalAlignment: Text.AlignTop
+                wrapMode: Text.WordWrap
+                elide: Text.ElideRight
+                maximumLineCount: 2
             }
         }
     }

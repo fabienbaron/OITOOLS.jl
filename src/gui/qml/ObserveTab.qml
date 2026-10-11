@@ -1146,7 +1146,7 @@ Item {
                                     SpinBox {
                                         id: stepBox
                                         Layout.fillWidth: true
-                                        from: 1; to: 120; value: root.stepMinutes
+                                        from: 1; to: 120; value: root.stepMinutes; editable: true
                                         onValueModified: root.stepMinutes = value
                                         ToolTip.visible: hovered
                                         ToolTip.text: "Spacing of the observation epochs between " +
@@ -1527,7 +1527,7 @@ Item {
                             Label { text: "n_best"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                             SpinBox { id: nBestBox; from: 1; to: 20; value: 5 }
                             Label { text: "min minutes"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                            SpinBox { id: minMinutesBox; from: 0; to: 600; value: 10 }
+                            SpinBox { id: minMinutesBox; from: 0; to: 600; value: 10; editable: true }
                             Item { Layout.fillWidth: true }
                             Label {
                                 text: "config: " + root.configString()
@@ -1772,7 +1772,7 @@ Item {
                     SpinBox {
                         id: nSamplesBox
                         Layout.preferredWidth: dp(120)
-                        from: 1; to: 100000; value: root.simNSamples
+                        from: 1; to: 100000; value: root.simNSamples; editable: true
                         enabled: root.simNoise
                         onValueModified: root.simNSamples = value
                     }
@@ -1780,7 +1780,7 @@ Item {
                     SpinBox {
                         id: seedBox
                         Layout.preferredWidth: dp(120)
-                        from: 0; to: 999999; value: root.simSeed
+                        from: 0; to: 999999; value: root.simSeed; editable: true
                         onValueModified: root.simSeed = value
                     }
                     CheckBox {

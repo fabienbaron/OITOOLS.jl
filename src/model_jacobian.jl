@@ -383,27 +383,30 @@ function _kernel_into_G!(ws::ModelJacWorkspace{T}, comp::HankelSpec, chrom, np, 
     rp = ws.rp
     npp = length(comp.profile_param_idx)
     prof = T[rp.s[rp.slot[k]] for k in comp.profile_param_idx]    # scalars, always
-    r, μ = comp.r_grid, comp.mu_grid
-    Ti = promote_type(T, eltype(r))
-    Ifun(pp) = (v = comp.profile_fn(r, μ, pp...); v isa Number ? fill(v, length(r)) : v)
-    I  = convert(Vector{Ti}, Ifun(prof))
-    dI = npp == 0 ? zeros(Ti, length(r), 0) : Matrix{Ti}(ForwardDiff.jacobian(Ifun, prof))
     @inbounds for i in 1:ws.n
         ws.Bh[i] = ws.ρ2[i] / _MAS2RAD_PM
         ws.ψ[i]  = atan(ws.v2[i], ws.u2[i])
     end
+    st = _hankel_setup(comp, ws.Bh, prof; cached = !oriented)   # the nodes follow the data
+    r, μ, g = st.r, st.μ, st.g
+    Ti = promote_type(T, eltype(r))
+    Ifun(pp) = (v = comp.profile_fn(r, μ, pp...); v isa Number ? fill(v, length(r)) : v)
+    I  = convert(Vector{Ti}, Ifun(prof))
+    dI = npp == 0 ? zeros(Ti, length(r), 0) : Matrix{Ti}(ForwardDiff.jacobian(Ifun, prof))
     nm = length(comp.az_modes)
     modes = Int[az.order for az in comp.az_modes]
-    cache = oriented ? nothing : comp.kcache
+    cache = oriented || !st.cacheable ? nothing : comp.kcache
     D = view(ws.G, :, _G_FIXED+1:_G_FIXED+npp+2nm)
     if chrom
         amps = Vector{T}[_pcol(ws, az.amp_idx) for az in comp.az_modes]
         phis = Vector{T}[_pcol(ws, az.phi_idx) for az in comp.az_modes]
-        _hankel_jac!(ws.W, D, ws.Du, ws.Dv, r, I, dI, ws.Bh, ws.ψ, modes, amps, phis, cache)
+        _hankel_jac!(ws.W, D, ws.Du, ws.Dv, r, g, I, dI, ws.Bh, ws.ψ, modes, amps, phis, cache,
+                     st.jumps)
     else
         amps = T[_pv(rp, az.amp_idx, 1) for az in comp.az_modes]
         phis = T[_pv(rp, az.phi_idx, 1) for az in comp.az_modes]
-        _hankel_jac!(ws.W, D, ws.Du, ws.Dv, r, I, dI, ws.Bh, ws.ψ, modes, amps, phis, cache)
+        _hankel_jac!(ws.W, D, ws.Du, ws.Dv, r, g, I, dI, ws.Bh, ws.ψ, modes, amps, phis, cache,
+                     st.jumps)
     end
     G = ws.G
     if oriented

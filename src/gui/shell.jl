@@ -3133,7 +3133,10 @@ end
 """
     shell_profile_grid(component) -> String
 
-The radial grid a profile is evaluated on, as `key\tr_min\tr_max\tnr`, or `!` and a reason.
+The radial grid a profile is evaluated on, as `key\tr_min\tr_max\tnr\tedge\tnodes\tfound`,
+or `!` and a reason: `nr` is `c,nr` (0 when the count is chosen from the data and the
+profile), `nodes` the count the model's quadrature uses on the preview's baselines, and
+`found` what the probe saw in the profile (a jump, a kink, a singular centre), or empty.
 
 Which key set `r_max` is worth saying out loud: four different ones can, they are tried in the
 order `udout`, `diamout`, `diam`, `r_max`, and the first three are DIAMETERS that get halved
@@ -3164,7 +3167,7 @@ function shell_profile_grid(component::AbstractString)
     nr = try
         OITOOLS._hankel_Nr(cn, m.dict)
     catch
-        100
+        0
     end
     # Whether the grid is big enough for the profile written on it, as I(r_max)/max(I).
     #
@@ -3175,6 +3178,7 @@ function shell_profile_grid(component::AbstractString)
     # with. Reported rather than judged: the number says how bad it is, and 1% is only the
     # threshold at which it is worth mentioning.
     edge = 0.0
+    nodes, found = 0, ""
     expr = get(m.dict, cn * ",profile", nothing)
     if expr isa AbstractString && rmax > rmin
         try
@@ -3184,9 +3188,16 @@ function shell_profile_grid(component::AbstractString)
                 kk = haskey(m.dict, cn * "," * n) ? cn * "," * n : n
                 push!(vals, Float64(OITOOLS._resolve_numeric(kk, m.dict)))
             end
-            rr = collect(range(rmin, rmax; length = nr))
+            fn = OITOOLS.compile_profile(expr, String.(names))
+            # The quadrature the model uses, on the preview's baselines: how many nodes, and
+            # what the profile shows (jumps, kinks, a singular centre) that it adapted to.
+            _, nodes, lay, _, _ = OITOOLS.hankel_profile_vis(fn, vals, rmin, rmax,
+                                                             _profile_baselines(); nr)
+            found = OITOOLS._hankel_describe(lay, rmax)
+            found == "nothing unusual" && (found = "")
+            rr = collect(range(rmin, rmax; length = PROFILE_NR_EDGE))
             mm = sqrt.(max.(0.0, 1 .- (rr ./ rmax) .^ 2))
-            II = OITOOLS.compile_profile(expr, String.(names))(rr, mm, vals...)
+            II = fn(rr, mm, vals...)
             II isa AbstractVector || (II = fill(Float64(II), length(rr)))
             # Only when the profile is still FALLING at the edge. A flat profile is bright
             # all the way out and that is not a mistake -- it is a uniform disc, truncated by
@@ -3200,17 +3211,27 @@ function shell_profile_grid(component::AbstractString)
             edge = 0.0            # will not evaluate: `shell_profile_curves` reports why
         end
     end
-    return join((src, string(rmin), string(rmax), string(nr), string(edge)), '\t')
+    return join((src, string(rmin), string(rmax), string(nr), string(edge), string(nodes),
+                 found), '\t')
 end
+
+# The even grid the edge check and the drawn I(r) use: for the eye, not for the transform.
+const PROFILE_NR_EDGE = 400
+
+# The preview's baselines, Mλ, and the same in cycles/mas (one cycle per radian is
+# 4.8481e-9 cycles per mas).
+_profile_bml() = collect(range(0.0, PROFILE_B_MAX; length = PROFILE_NB))
+_profile_baselines() = _profile_bml() .* 1e6 .* 4.84813681109536e-9
 
 """
     shell_profile_curves(component) -> String
 
 Evaluate a profile and its Hankel transform onto the preview, returning `""` or a `!` message.
 
-`hankel_transform` wants r in mas and B in cycles/mas, which is the same reciprocal pair, so
+V(B) comes from `hankel_profile_vis`, the quadrature a model component uses, so the preview is
+what a fit sees. It wants r in mas and B in cycles/mas, which is the same reciprocal pair, so
 the only conversion here is from the baselines an observer reads -- Mλ -- into cycles/mas:
-one cycle per radian is 4.8481e-9 cycles per mas.
+one cycle per radian is 4.8481e-9 cycles per mas. I(r) is drawn on an even grid, for the eye.
 
 Everything is read from the dict rather than from a parsed `FlatModel`, because the point is to
 preview an expression WHILE it is being written, when the model as a whole may not yet parse.
@@ -3224,8 +3245,8 @@ function shell_profile_curves(component::AbstractString)
 
     g = shell_profile_grid(cn)
     startswith(g, "!") && return g
-    _, rmin_s, rmax_s, nr_s = split(g, '\t')
-    rmin = parse(Float64, rmin_s); rmax = parse(Float64, rmax_s); nr = parse(Int, nr_s)
+    fields = split(g, '\t')
+    rmin = parse(Float64, fields[2]); rmax = parse(Float64, fields[3]); nr = parse(Int, fields[4])
     rmax > rmin || return "! the grid is empty: r_max is not greater than r_min"
 
     names = [r for r in OITOOLS.extract_refs(expr) if r ∉ OITOOLS.IMPLICIT_VARS]
@@ -3241,29 +3262,34 @@ function shell_profile_curves(component::AbstractString)
         push!(vals, v)
     end
 
-    r  = collect(range(rmin, rmax; length = nr))
+    r  = collect(range(rmin, rmax; length = PROFILE_NR_EDGE))
     mu = sqrt.(max.(0.0, 1 .- (r ./ rmax) .^ 2))
+    fn = OITOOLS.compile_profile(expr, String.(names))
     I = try
-        OITOOLS.compile_profile(expr, String.(names))(r, mu, vals...)
+        fn(r, mu, vals...)
     catch err
         return "! the profile will not evaluate: " * _cause(err)
     end
     # A profile that does not mention `$R` or `$MU` compiles to `@. <constant>`, which has no
     # array operand and so returns a SCALAR. That is a legitimate profile -- a flat one is a
     # uniform disk, and it is what a new component starts as -- so it is spread over the grid
-    # rather than rejected. `hankel_vis` asserts on the length and would otherwise refuse it.
+    # rather than rejected.
     I isa AbstractVector || (I = fill(Float64(I), length(r)))
     length(I) == length(r) ||
         return "! the profile returned $(length(I)) values for $(length(r)) grid points"
-    all(isfinite, I) || return "! the profile is not finite on this grid"
+    # A centre where the profile is infinite (a power law) is integrable, and the quadrature
+    # handles it; only the drawing leaves those points out.
+    fin = isfinite.(I)
+    any(fin) || return "! the profile is not finite anywhere on its grid"
 
-    bml = collect(range(0.0, PROFILE_B_MAX; length = PROFILE_NB))
+    bml = _profile_bml()
     V = try
-        OITOOLS.hankel_vis(I, r, bml .* 1e6 .* 4.84813681109536e-9)
+        # the model's own quadrature, so that the preview is what a fit sees
+        first(OITOOLS.hankel_profile_vis(fn, vals, rmin, rmax, _profile_baselines(); nr))
     catch err
         return "! the transform failed: " * _cause(err)
     end
-    update_profile_plot!(sh.profileplot, r, I, bml, V)
+    update_profile_plot!(sh.profileplot, r[fin], I[fin], bml, V)
     return ""
 end
 

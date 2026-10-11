@@ -75,4 +75,15 @@ plot_corner_makie(r::BootstrapResult; kwargs...) =
 plot_corner_makie(r; kwargs...) =
     plot_corner_makie(r.posterior, r.list_free_params; kwargs...)
 
+# Building the figure is most of a first corner plot: measured, 10.9 s of a 17.6 s first draw
+# (the other 6.3 s is GLMakie rendering it, which needs a GL context and so belongs to the
+# sysimage trace, not here). Three columns with a marked best fit, as the Modeling tab draws
+# them, so the 2-D contour panels and the truth lines are compiled too.
+using PrecompileTools
+
+@compile_workload begin
+    X = [sin(0.7i + j) + 0.1j * cos(1.3i) for i in 1:200, j in 1:3]
+    plot_corner_makie(X, ["a", "b", "c"]; truth = [0.0, 0.0, 0.0])
+end
+
 end # module

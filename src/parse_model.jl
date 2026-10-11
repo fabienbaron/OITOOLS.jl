@@ -395,29 +395,31 @@ struct AnalyticSpec{K} <: AbstractComponentSpec
     y_idx     ::Int               # y offset in mas (0 = not present)
 end
 
-"""
-Hankel component: arbitrary radial profile.
-
-The profile is compiled to an AD-transparent closure at dict_to_model time.
-The r grid and HankelWorkspace are fixed; only the profile param values
-change between chi2 evaluations.
-"""
 struct AzMode
     order    ::Int     # harmonic order (1, 2, 3, …)
     amp_idx  ::Int     # index into resolver output for amplitude
     phi_idx  ::Int     # index into resolver output for phase (degrees)
 end
 
+"""
+Hankel component: arbitrary radial profile.
+
+The profile is compiled to an AD-transparent closure at dict_to_model time. It is evaluated
+on the nodes of `_hankel_nodes` over [r_min, r_max]: panels between the breakpoints the
+profile shows, and a count that follows the baselines the component sees and the profile's
+own convergence (`_hankel_setup`), unless `c,nr` fixes it.
+"""
 struct HankelSpec{T<:AbstractFloat} <: AbstractComponentSpec
     comp_name        ::String
     f_idx            ::Int
     profile_fn       ::Function         # (r, mu, profile_params...) -> I
     profile_param_idx::Vector{Int}      # indices in resolver output
-    r_grid           ::Vector{T}
-    mu_grid          ::Vector{T}        # sqrt(1-(r/r_max)^2)
+    r_max            ::T                # outer radius, mas
+    s_min            ::T                # r_min / r_max
+    nr               ::Int              # `c,nr`: a fixed node count, or 0 = from the baselines
     workspace        ::HankelWorkspace{T}
     az_modes         ::Vector{AzMode}   # azimuthal variation modes (empty = none)
-    kcache           ::HankelKernelCache  # the transform matrices, per uv set
+    kcache           ::HankelKernelCache{T}  # the nodes, per count; the matrices, per uv set
     incl_idx         ::Int
     pa_idx           ::Int
     x_idx            ::Int
@@ -604,10 +606,16 @@ function _hankel_r_max(comp_name::String, model_dict::Dict{String})::Float64
     end
 end
 
-"""Determine Nr for a Hankel component's r grid (default 100)."""
+"""
+The node count `c,nr` fixes for a Hankel component, or 0 when it is chosen from the baselines
+the component sees (`_hankel_n`).
+"""
 function _hankel_Nr(comp_name::String, model_dict::Dict{String})::Int
     k = "$comp_name,nr"
-    haskey(model_dict, k) ? Int(model_dict[k]) : 100
+    haskey(model_dict, k) || return 0
+    n = Int(model_dict[k])
+    n >= 2 || error("$k must be at least 2 quadrature nodes, got $n")
+    return n
 end
 
 """Determine r_min for a Hankel component's r grid (0 by default, diamin/2 for rings)."""
@@ -922,9 +930,10 @@ function dict_to_model(model_dict::Dict{String},
             # where the profile is compiled, so it has to be known by then.
             r_min = _hankel_r_min(cn, pd)
             r_max = _hankel_r_max(cn, pd)
+            r_max > r_min >= 0 ||
+                error("Hankel component '$cn': the profile needs 0 ≤ r_min < r_max, " *
+                      "got r_min = $r_min, r_max = $r_max")
             Nr    = _hankel_Nr(cn, pd)
-            r     = collect(T, range(r_min, r_max; length=Nr))
-            mu    = @. sqrt(max(zero(T), one(T) - (r / T(r_max))^2))
 
             profile_fn = compile_profile(profile_expr, prof_refs; rmin = r_min, rmax = r_max)
 
@@ -936,9 +945,7 @@ function dict_to_model(model_dict::Dict{String},
                 n2i[k]
             end
 
-            # Build r grid (starts at diamin/2 for rings with profile)
-
-            ws = HankelWorkspace(Nr, nB_workspace, length(prof_idx); T=T)
+            ws = HankelWorkspace(Nr > 0 ? Nr : _hankel_n(0), nB_workspace, length(prof_idx); T=T)
 
             # Detect azimuthal variation modes: "cn,az amp1", "cn,az projang1", etc.
             az_modes = AzMode[]
@@ -959,7 +966,8 @@ function dict_to_model(model_dict::Dict{String},
             sort!(az_modes; by = m -> m.order)
 
             push!(components, HankelSpec(
-                cn, f_idx, profile_fn, prof_idx, r, mu, ws, az_modes, HankelKernelCache(),
+                cn, f_idx, profile_fn, prof_idx, T(r_max), T(r_min / r_max), Nr, ws, az_modes,
+                HankelKernelCache{T}(),
                 incl_idx, pa_idx, x_idx, y_idx
             ))
 
@@ -1212,37 +1220,182 @@ function _component_vis(comp::AnalyticSpec{K}, rp, ch, geom, uv, _wl, _mjd, n,
     return _vis_kernel(Val(K), _params(rp, comp.param_idx, ch), geom[3])
 end
 
+# A jump that moves with the parameters, for `_hankel_jac!`: where (in s and in mas), its
+# size I(b⁺) − I(b⁻), and ∂b/∂p in s.
+const _HankelJump = @NamedTuple{bs::Float64, br::Float64, ΔI::Float64, dbdp::Vector{Float64}}
+
+"""
+    _hankel_setup(comp::HankelSpec{T}, B, pp; cached=true) -> (r, μ, g, cacheable, jumps)
+
+The nodes (r = r_max·s, in mas), μ and weights a profile component is integrated on, for the
+baselines `B` (cycles/mas) and the profile parameters `pp`:
+
+- what the profile is like (`_hankel_probe`: breakpoints, a singular centre) and how many
+  nodes it needs (`_hankel_converge`, from `_hankel_n` for B_max·2r_max lobes) are found
+  the first time, and again whenever a uv set first enters the cache (`cached`); `c,nr`
+  fixes the count;
+- breakpoints that move with the parameters are located again on every call, carried as
+  Duals when `pp` are, so that ForwardDiff differentiates their motion; the nodes then
+  change every call (`cacheable` is false), and `jumps` lists the moving jumps for the
+  closed-form Jacobian (`_hankel_jac!`).
+"""
+function _hankel_setup(comp::HankelSpec{T}, B::AbstractVector, pp; cached::Bool = true) where {T}
+    cache = comp.kcache
+    ppv = T[ForwardDiff.value(x) for x in pp]
+    n0 = comp.nr > 0 ? comp.nr :
+         _hankel_n(isempty(B) ? 0.0 : 2 * comp.r_max * maximum(b -> abs(ForwardDiff.value(b)), B))
+    lay, m = lock(cache.lock) do
+        l = cache.layout
+        if l === nothing || (cached && !_hankel_moving(l) && !_hankel_has_uv(cache, B))
+            _hankel_check!(comp, B, ppv, n0)
+        end
+        cache.layout::_HankelLayout, cache.mult
+    end
+    n = comp.nr > 0 ? comp.nr : m * n0
+    rm = comp.r_max
+    if !_hankel_moving(lay)
+        r, μ, g = lock(cache.lock) do
+            get!(cache.nodes, (n, n0)) do
+                sn, μn, gn = _hankel_nodes(T, comp.s_min, n; layout = lay, n0)
+                (rm .* sn, μn, gn)
+            end
+        end::NTuple{3,Vector{T}}
+        return (; r, μ, g, cacheable = true, jumps = _HankelJump[])
+    end
+    return _hankel_setup_moving(comp, B, pp, ppv, lay, n, n0)
+end
+
+# `_hankel_setup` for breakpoints that move with the parameters. They are located again when
+# the parameters have changed since the last call; the nodes and matrices are kept while the
+# breakpoints stay where they are, and rebuilt when they move (as for an inclination). With
+# Dual parameters the breakpoints carry their partials and the nodes follow them, uncached.
+function _hankel_setup_moving(comp::HankelSpec{T}, B, pp, ppv, lay0, n0count, n0) where {T}
+    cache = comp.kcache; rm = comp.r_max
+    lay, n = lay0, n0count
+    known = lock(cache.lock) do
+        cache.last_pp == ppv ? copy(cache.breaks) : nothing
+    end
+    br = known !== nothing ? known : _hankel_breaks_now(lay, comp.profile_fn, ppv, rm, comp.s_min, T)
+    if br === nothing                       # a breakpoint moved too far: probe again
+        lay, m = lock(cache.lock) do
+            _hankel_check!(comp, B, ppv, n0)
+            cache.layout::_HankelLayout, cache.mult
+        end
+        n = comp.nr > 0 ? comp.nr : m * n0
+        br = lay.breaks
+    end
+    lock(cache.lock) do
+        if cache.breaks != br               # they moved: the nodes and matrices go with them
+            empty!(cache.nodes); empty!(cache.entries)
+            cache.breaks = copy(br)
+        end
+        cache.last_pp = copy(ppv)
+    end
+    return _hankel_moving_nodes(comp, pp, ppv, lay, br, n, n0)
+end
+
+# The nodes for breakpoints `br` (in s) at the current parameters, and the moving jumps. A
+# function of its own so that nothing here is reassigned: the comprehensions capture `lay`
+# and `br`.
+function _hankel_moving_nodes(comp::HankelSpec{T}, pp, ppv, lay::_HankelLayout,
+                              br::Vector{Float64}, n::Int, n0::Int) where {T}
+    rm = comp.r_max; cache = comp.kcache
+    jumps = _HankelJump[]
+    for i in eachindex(br)
+        lay.kinds[i] === :jump && any(x -> x != 0, view(lay.dbdp, i, :)) || continue
+        δ = 100 * eps(T)                     # either side of the jump, in T
+        ΔI = _hankel_profile1(comp.profile_fn, ppv, rm, T(br[i] + δ)) -
+             _hankel_profile1(comp.profile_fn, ppv, rm, T(br[i] - δ))
+        push!(jumps, (; bs = br[i], br = Float64(rm) * br[i], ΔI, dbdp = lay.dbdp[i, :]))
+    end
+    if eltype(pp) <: AbstractFloat           # plain values: the nodes for `br`, kept
+        r, μ, g = lock(cache.lock) do
+            get!(cache.nodes, (n, n0)) do
+                sn, μn, gn = _hankel_nodes(T, comp.s_min, n; layout = lay, breaks = br, n0)
+                (rm .* sn, μn, gn)
+            end
+        end::NTuple{3,Vector{T}}
+        return (; r, μ, g, cacheable = true, jumps)
+    end
+    # b + Σ ∂b/∂pⱼ (pⱼ − value(pⱼ)): the breakpoints carry the parameters' partials
+    ppc = collect(pp)
+    bd = [T(br[i]) + sum((T(lay.dbdp[i, j]) * (ppc[j] - ppv[j]) for j in eachindex(ppc));
+                         init = zero(eltype(ppc))) for i in eachindex(br)]
+    s, μ, g = _hankel_nodes(T, comp.s_min, n; layout = lay, breaks = bd, n0)
+    return (; r = rm .* s, μ, g, cacheable = false, jumps)
+end
+
+# The probe and the count, for these baselines and parameter values. Called under the lock.
+function _hankel_check!(comp::HankelSpec{T}, B, ppv, n0) where {T}
+    cache = comp.kcache
+    lay = _hankel_probe(comp.profile_fn, ppv, comp.r_max, comp.s_min, T)
+    old = cache.layout
+    if old === nothing || old.breaks != lay.breaks || old.sing != lay.sing
+        empty!(cache.nodes); empty!(cache.entries)
+    end
+    cache.layout = lay
+    cache.breaks = copy(lay.breaks); cache.last_pp = copy(Float64.(ppv))
+    comp.nr > 0 && return cache
+    rm = comp.r_max
+    nodes(n) = ((sn, μn, gn) = _hankel_nodes(T, comp.s_min, n; layout = lay, n0); (rm .* sn, μn, gn))
+    m, agree, ok = _hankel_converge(nodes, comp.profile_fn, ppv, B, n0; tol = _hankel_tol(T))
+    cache.mult = m
+    if !ok && !cache.warned
+        cache.warned = true
+        @warn "Profile component '$(comp.comp_name)' did not converge: V agrees only to " *
+              "$(round(agree; sigdigits = 2)) between $(m * n0 ÷ 2) and $(m * n0) nodes. " *
+              "The profile has $(_hankel_describe(lay, rm)). Set '$(comp.comp_name),nr' to " *
+              "fix the node count."
+    end
+    return cache
+end
+
+# Whether the baselines `B` are one of the uv sets the cache holds matrices for.
+function _hankel_has_uv(cache::HankelKernelCache{T}, B::AbstractVector{TB}) where {T,TB}
+    TK = promote_type(TB, T)
+    for e in cache.entries
+        e isa _HankelUV{TB,TK} || continue
+        length(e.B) == length(B) && e.B == B && return true
+    end
+    return false
+end
+
 function _component_vis(comp::HankelSpec, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
     # A profile's parameters are scalars (`dict_to_model` refuses chromatic ones).
     prof_params = _params(rp, comp.profile_param_idx, Val(false))
-    I_raw = comp.profile_fn(comp.r_grid, comp.mu_grid, prof_params...)
+    oriented = comp.incl_idx != 0 || comp.pa_idx != 0
+    st = _hankel_setup(comp, geom[4], prof_params; cached = !oriented)
+    r, μ, g = st.r, st.μ, st.g
+    I_raw = comp.profile_fn(r, μ, prof_params...)
     # A vector of a known type, whatever the generated profile returned: a constant profile
     # like "1" returns a scalar, and the call itself is not inferred.
-    Ti = promote_type(eltype(prof_params), eltype(comp.r_grid))
-    I = I_raw isa Number ? fill(Ti(I_raw), length(comp.r_grid)) : convert(Vector{Ti}, I_raw)
-    return _hankel_component_vis(comp, I::Vector{Ti}, rp, ch, geom, n)
+    Ti = promote_type(eltype(prof_params), eltype(r))
+    I = I_raw isa Number ? fill(Ti(I_raw), length(r)) : convert(Vector{Ti}, I_raw)
+    return _hankel_component_vis(comp, I::Vector{Ti}, r, g, rp, ch, geom, n,
+                                 !oriented && st.cacheable)
 end
 
-function _hankel_component_vis(comp::HankelSpec, I, rp, ch, geom, n)
+function _hankel_component_vis(comp::HankelSpec, I, r, g, rp, ch, geom, n, cached::Bool)
     u_comp, v_comp, _, B_comp = geom
     # The data's own baselines: the transform matrices are cached per uv set. With an
-    # inclination or position angle B moves with the parameters, and the transform is direct.
-    if comp.incl_idx == 0 && comp.pa_idx == 0
+    # inclination or position angle B moves with the parameters, and with breakpoints that
+    # move with them the nodes do: the transform is then direct.
+    if cached
         cache = comp.kcache
-        N_h = hankel_norm(I, comp.r_grid)
-        V0  = (_hkernel(cache, comp.r_grid, B_comp, n, false) * I) ./ N_h
+        N_h = dot(g, I)
+        V0  = (_hkernel(cache, r, g, B_comp, n, false) * I) ./ N_h
         isempty(comp.az_modes) && return V0
-        Vi  = complex.(_hkernel(cache, comp.r_grid, B_comp, 0, false) * I ./ N_h)
+        Vi  = complex.(_hkernel(cache, r, g, B_comp, 0, false) * I ./ N_h)
         ψ   = @. atan(v_comp, u_comp)
         for az in comp.az_modes
             amp_val = _par(rp, az.amp_idx, ch)
             phi_rad = _par(rp, az.phi_idx, ch) * π / 180
-            Hn = (_hkernel(cache, comp.r_grid, B_comp, az.order, false) * I) ./ N_h
+            Hn = (_hkernel(cache, r, g, B_comp, az.order, false) * I) ./ N_h
             @. Vi += amp_val * (-1im)^az.order * Hn * cos(az.order * (ψ + phi_rad - π/2))
         end
         return Vi
     end
-    isempty(comp.az_modes) && return hankel_vis(I, comp.r_grid, B_comp; n)
+    isempty(comp.az_modes) && return _hankel_wvis(I, r, g, B_comp; n)
     # Azimuthal variations: V = H₀/N + Σ amp·(-j)^n·Hₙ/N·cos(n·(ψ+φ-π/2))
     #
     # PMOIRED's convention, term for term: `_Vazvar` in its oimodels.py computes
@@ -1250,13 +1403,13 @@ function _hankel_component_vis(comp::HankelSpec, I, rp, ch, geom, n)
     # `_PA = arctan2(_v, _u)`, and its image-domain brightness is the matching
     # `1 + amp*cos(n*(PA + phi*pi/180 - pi/2))`. A `projang` therefore means the
     # same angle in both packages and a model can move between them unchanged.
-    N_h = hankel_norm(I, comp.r_grid)
-    Vi  = complex.(hankel_transform(I, comp.r_grid, B_comp; n=0) ./ N_h)
+    N_h = dot(g, I)
+    Vi  = complex.(_hankel_wtransform(I, r, g, B_comp; n=0) ./ N_h)
     ψ   = @. atan(v_comp, u_comp)    # UV position angle
     for az in comp.az_modes
         amp_val = _par(rp, az.amp_idx, ch)
         phi_rad = _par(rp, az.phi_idx, ch) * π / 180
-        Hn = hankel_transform(I, comp.r_grid, B_comp; n=az.order) ./ N_h
+        Hn = _hankel_wtransform(I, r, g, B_comp; n=az.order) ./ N_h
         @. Vi += amp_val * (-1im)^az.order * Hn *
                  cos(az.order * (ψ + phi_rad - π/2))
     end
@@ -1424,9 +1577,8 @@ function Base.show(io::IO, model::FlatModel)
             println(io, "  $(comp.comp_name) [image]  $(basename(mi.path))  " *
                     "$(join(size(mi.image), "×"))  $(mi.pixsize) mas/px  f_idx=$(comp.f_idx)")
         elseif comp isa HankelSpec
-            Nr = length(comp.r_grid)
             println(io, "  $(comp.comp_name) [hankel]  " *
-                    "Nr=$Nr  r_max=$(comp.r_grid[end])  " *
+                    "nodes=$(comp.nr > 0 ? comp.nr : "auto")  r_max=$(comp.r_max)  " *
                     "profile_param_idx=$(comp.profile_param_idx)  f_idx=$(comp.f_idx)")
         end
     end

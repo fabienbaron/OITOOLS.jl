@@ -179,8 +179,10 @@
         end
         Vimg ./= tot
 
-        md = Dict{String,Any}("d,profile" => "(\$R >= $rin) * (\$R <= $rout) * 1.0",
-                              "d,udout" => 2rout, "d,nr" => 400.0, "d,f" => 1.0,
+        # the ring as a ring: r_min from diamin, so the model is exact (the profile quadrature's
+        # handling of steps written into a profile is tested in test_hankel_quadrature.jl)
+        md = Dict{String,Any}("d,profile" => "1.0", "d,diamin" => 2rin,
+                              "d,udout" => 2rout, "d,f" => 1.0,
                               "d,az amp1" => amp, "d,az projang1" => phi)
         Vmod = eval_model(dict_to_model(md, String[]), Float64[], vcat(u', v'))
 

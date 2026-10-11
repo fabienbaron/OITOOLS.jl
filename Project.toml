@@ -3,7 +3,7 @@ uuid = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 keywords = ["astronomy", "interferometry"]
 license = "GPLv3"
 desc = "The all-in-one data analysis package for optical interferometry"
-version = "0.15.0"
+version = "0.16.0"
 authors = ["Fabien Baron <fbaron@gsu.edu>"]
 
 [workspace]
@@ -20,6 +20,7 @@ DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 FITSIO = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
+FastGaussQuadrature = "442a2c76-b920-505d-bb47-c5924d526838"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 LazyAlgebra = "aeaa251e-9d76-11e9-311b-83636bf44738"
@@ -99,6 +100,7 @@ Dates = "1"
 DelimitedFiles = "1"
 FFTW = "1"
 FITSIO = "0.17"
+FastGaussQuadrature = "1"
 ForwardDiff = "1"
 LaTeXStrings = "1"
 LazyAlgebra = "0.2"
@@ -111,6 +113,7 @@ OptimPackNextGen = "0.4"
 Pkg = "1"
 PrecompileTools = "1"
 Printf = "1"
+QuadGK = "2"
 Random = "1"
 RuntimeGeneratedFunctions = "0.5"
 Serialization = "1"
@@ -149,6 +152,7 @@ FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
 Nautilus = "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73"
 PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
+QuadGK = "1fd47b50-473d-5c70-9696-f719f8f3bcdc"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
@@ -177,4 +181,4 @@ env = "@oitools"
 # PythonCall is named as well as PythonPlot even though PythonPlot depends on it: the tests
 # `using PythonCall` directly for `pyimport`/`pyconvert`, and `using` a package requires it to
 # be a direct dependency of the active project, not merely a loaded one.
-test = ["Test", "Serialization", "PythonPlot", "PythonCall", "Nautilus", "FiniteDifferences", "Aqua"]
+test = ["Test", "Serialization", "PythonPlot", "PythonCall", "Nautilus", "FiniteDifferences", "Aqua", "QuadGK"]

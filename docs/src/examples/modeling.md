@@ -402,7 +402,6 @@ model_dict = Dict{String,Any}(
 model_dict = Dict{String,Any}(
     "disk,profile"  => "max(0, 1 - (2*(\$R - \$Rmid)/\$width)^2)",
     "disk,diamout"  => 10.0,     # outer diameter (mas) — sets the r-grid extent
-    "disk,nr"       => 200,      # radial grid points (default: 100)
     "disk,Rmid"     => 3.0,      # peak radius (custom parameter)
     "disk,width"    => 2.0,      # ring width (custom parameter)
     "disk,f"        => 0.5,
@@ -419,8 +418,28 @@ model_dict = Dict{String,Any}(
 | `profile` | Radial intensity expression (uses `\$R`, `\$MU`, and any custom params) |
 | `diamout` or `udout` | Outer diameter in mas (sets r-grid extent) |
 | `diamin` | Inner diameter in mas (optional, sets r-grid inner boundary for rings) |
-| `nr` | Number of radial grid points (default 100; increase for sharp features) |
+| `nr` | Optional: fixes the number of quadrature nodes (at least 2). Without it the count is chosen from the data and the profile, see below |
 | `r_max` | Alternative to `diamout` for setting the outer boundary |
+
+### How a profile is integrated
+
+A profile is integrated with Gauss–Legendre quadrature in panels, not on an even grid:
+
+- **Near the edge** μ = t² is used as the variable, so a limb-darkened edge (μ^α, which has an
+  infinite slope at the rim) becomes smooth.
+- **Before integrating, the profile is probed** at its current parameter values. Jumps
+  (`(\$R >= \$rin)`), kinks (`max(0, …)`) and steep transitions become panel boundaries, and a
+  centre where the profile is infinite (`\$R^(-1.5)`) gets a change of variable. Each panel is
+  then smooth, and the quadrature converges fast.
+- **A jump whose position is a fitted parameter** is followed as it moves, and its derivative
+  includes the term from the moving boundary.
+- **The node count** starts from the resolution of the data (about 32 nodes up to 7 lobes,
+  then 1.1 per lobe), and is doubled until the visibilities and their parameter derivatives
+  agree to 1e-8 (1e-6 in Float32).
+
+This runs when a dataset is first seen. If a fit later makes a feature much sharper than it was
+at that point, set `nr` to fix the count. A step down to zero (a ring) is best written with
+`diamin`: the grid then starts at the ring's inner edge.
 
 ### Azimuthal modulations
 

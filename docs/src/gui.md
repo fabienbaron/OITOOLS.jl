@@ -209,7 +209,7 @@ closure and Hankel-transformed. Add one with **+ component → radial profile**.
 "disk,profile" => "exp(-($R / $scale)^2 / 2)",
 "disk,scale"   => 1.5,      # discovered from the expression
 "disk,udout"   => 8.0,      # sets the r grid
-"disk,nr"      => 100,      # optional, defaults to 100
+"disk,nr"      => 64,       # optional: fixes the number of quadrature nodes
 "disk,f"       => 1.0,
 ```
 

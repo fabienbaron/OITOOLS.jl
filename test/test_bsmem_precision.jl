@@ -165,7 +165,8 @@ end
     hm = dict_to_model(Dict{String,Any}("r,profile"=>"exp(-(\$R/2.0)^2)",
                                         "r,udout"=>10.0, "r,f"=>1.0), String[]; T=Float32)
     @test eltype(hm.components[1].workspace.V) === Float32
-    @test eltype(hm.components[1].r_grid) === Float32
+    st = OITOOLS._hankel_setup(hm.components[1], Float32[0.1], Float32[])
+    @test all(x -> eltype(x) === Float32, (st.r, st.μ, st.g))
     @test eltype(eval_model(hm, Float32[], d32.uv)) === ComplexF32
 
     # Plot entry points must accept Float32 arrays (they took Array{Float64,N} before).

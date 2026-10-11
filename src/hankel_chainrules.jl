@@ -399,3 +399,27 @@ function hankel_grad_params!(out_dL_dp::AbstractVector,
     mul!(out_dL_dp, dI_dp', dI)              # (n_params × Nr) * (Nr,) → (n_params,)
     return nothing
 end
+
+
+# ---------------------------------------------------------------------------
+# 7.  _hankel_wtransform  (a profile component's nodes and weights)
+# ---------------------------------------------------------------------------
+#
+# H[j] = Σₖ g[k] I[k] Jₙ(2π B[j] r[k]), so
+#   ∂L/∂I = K'ȳ,                K[j,k]  = g[k] Jₙ(2π B[j] r[k])
+#   ∂L/∂B[j] = ȳ[j] (K_B I)[j],   K_B[j,k] = g[k] 2π r[k] Jₙ'(2π B[j] r[k])
+# The B tangent is what lets reverse mode differentiate an inclination or a position angle,
+# which move the baselines the component sees. H is real, so only the real part of ȳ counts.
+
+function ChainRulesCore.rrule(::typeof(_hankel_wtransform), I::AbstractVector,
+                              r::AbstractVector, g::AbstractVector, B::AbstractVector;
+                              n::Int = 0)
+    K  = _build_hkernel(r, g, B, n, false)
+    KB = _build_hkernel(r, g, B, n, true)
+    H  = K * I
+    function hankel_wtransform_pullback(ȳ)
+        y = real.(unthunk(ȳ))
+        return NoTangent(), K' * y, NoTangent(), NoTangent(), y .* (KB * I)
+    end
+    return H, hankel_wtransform_pullback
+end

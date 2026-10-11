@@ -472,7 +472,9 @@ function _dbesselj_dnu(ν::Real, x::Real; nterms::Int=30)
     x == 0.0 && return zero(x)
 
     if x > _DBESSEL_SERIES_XMAX
-        h = 1e-3
+        # The stencil's rounding error is ~eps/h and its truncation error ~h⁴: 1e-3 in
+        # Float64, eps^(1/5) ≈ 0.04 in Float32. `h` is in x's type, so Float32 stays Float32.
+        h = max(oftype(float(x), 1e-3), eps(float(x))^(1 // 5))
         return (besselj(ν-2h, x) - 8*besselj(ν-h, x) +
                 8*besselj(ν+h, x) - besselj(ν+2h, x)) / (12h)
     end
