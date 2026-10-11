@@ -134,7 +134,8 @@ using FITSIO, DelimitedFiles, LinearAlgebra, Statistics
         @test cache.nfft == 1 && V2 != V1
         _, J = eval_model_grad(m, [0.6, 0.2, 0.4], uv)       # the Jacobian, through the cache
         @test cache.nfft == 1 && all(isfinite, J)
-        @test J[:, 1] ≈ eval_model(m, [1.0, 0.2, 0.0], uv)  # ∂V/∂f is the shifted image
+        # V is normalised by the total flux F = 0.6 + 0.4 = 1: ∂V/∂f = (shifted image − V)/F
+        @test J[:, 1] ≈ eval_model(m, [1.0, 0.2, 0.0], uv) .- eval_model(m, [0.6, 0.2, 0.4], uv)
         eval_model(m, [0.6, 0.2, 0.4], uv[:, 1:10])          # a new uv set is a new transform
         @test cache.nfft == 2
         eval_model(m, [0.6, 0.2, 0.4], Float32.(uv))         # the same points at Float32

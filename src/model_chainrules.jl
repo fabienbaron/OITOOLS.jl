@@ -38,7 +38,7 @@ const MAS2RAD = 2.0626480624709636e8   # 1 radian in milli-arcseconds
 #
 # A parameter may be a scalar, or a vector holding one value per uv point —
 # the latter is what the resolver produces for an expression referencing the
-# implicit variables `$WL`, `$MJD` or `$B` (a chromatic diameter, a
+# implicit variables `$WL`, `$MJD` or `$BL` (a chromatic diameter, a
 # time-variable limb darkening, ...).  Every formula below is written with
 # broadcasting, so the same body serves both cases; only the reduction in the
 # pullback differs, hence `_dparam`.

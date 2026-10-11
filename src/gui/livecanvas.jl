@@ -877,16 +877,19 @@ function ramp_colors(values::AbstractVector{<:Real}; colormap = WAV_COLORMAP)
 end
 
 """
-    canvas_data(d, kind; color, conjugate, logscale) -> NamedTuple
+    canvas_data(d, kind; color, conjugate, logscale, source) -> NamedTuple
 
-Everything needed to draw, computed and nothing drawn.
+Everything needed to draw, computed and nothing drawn. `source` names the data in the title;
+empty, it is `d`'s own file, which for several files merged is only the first of them.
 
 Shared with `draw!` through the same helpers (`uv_point_labels`, `group_names`,
 `baseline_color_map`, `OBS_SPECS`), and asserted equal to it in the tests.
 """
 function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
                      conjugate::Bool = true, logscale::Bool = false,
-                     residual::Union{Nothing,AbstractVector} = nothing)
+                     residual::Union{Nothing,AbstractVector} = nothing,
+                     source::AbstractString = "")
+    src = isempty(source) ? basename(d.filename) : String(source)
     if kind === :uv
         color = color === nothing ? :baseline : color
         names, info = uv_point_labels(d)
@@ -920,7 +923,7 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
 
         return (; x, y, err = Float64[], colors = cols, info = inf, legend, cvals, clabel, cmap,
                 xlabel = "U (Mλ)", ylabel = "V (Mλ)",
-                title = "uv coverage — " * basename(d.filename),
+                title = "uv coverage — " * src,
                 isotropic = true, logscale = false, ylims = nothing, markersize = 6.0f0)
     end
 
@@ -995,8 +998,7 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
     return (; x, y = yv, err = e, errlow = lo_err, colors = cols, info, legend, cvals, clabel,
             cmap, xlabel = spec.xlabel,
             ylabel = isresid ? "(model − data) / σ" : spec.ylabel,
-            title = (isresid ? string(kind) * " residuals — " : string(kind) * " — ") *
-                    basename(d.filename),
+            title = (isresid ? string(kind) * " residuals — " : string(kind) * " — ") * src,
             isotropic = false, logscale, ylims, markersize = 7.0f0)
 end
 
@@ -1010,9 +1012,10 @@ function update_canvas!(c::LiveCanvas, d, kind::Symbol;
                         color::Union{Nothing,Symbol} = nothing, conjugate::Bool = true,
                         logscale::Bool = false, markersize::Union{Nothing,Real} = nothing,
                         residual::Union{Nothing,AbstractVector} = nothing,
-                        overlay::Union{Nothing,AbstractVector} = nothing)
+                        overlay::Union{Nothing,AbstractVector} = nothing,
+                        source::AbstractString = "")
     pd = canvas_data(d, kind; color = color, conjugate = conjugate, logscale = logscale,
-                     residual = residual)
+                     residual = residual, source = source)
     # A filter preview belongs to the view it was computed for; the panel computes it again.
     # A selection belongs to the view it was drawn on, and goes with it.
     c.prevpoints[] = Makie.Point2f[]

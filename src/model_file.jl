@@ -57,6 +57,12 @@
 
 using TOML
 
+# `$WL` as a reference, not as the start of a longer name.
+const _WL_REF = r"\$WL(?![A-Za-z0-9_,])"
+# An expression written when `$WL` was in metres, rewritten to mean the same in microns.
+_wl_from_metres(v::AbstractString) = replace(v, _WL_REF => "(\$WL*1e-6)")
+_wl_from_metres(v) = v
+
 """
     read_model_file(path) -> (; model, free, lb, ub, constraints, priors, name)
 
@@ -78,6 +84,10 @@ defaults was in the package.
 An image component's `c,image` path, when relative, is taken relative to the model file and
 returned absolute.
 
+`\$WL` is in microns in an expression. A file written before that (it has no
+`wl_unit = "um"`) meant metres: its `\$WL` is read as `(\$WL*1e-6)`, which means what it
+meant, and a message says so. Saving it again writes the marker.
+
 See also [`write_model_file`](@ref), [`ModelConstraint`](@ref) and [`default_bounds`](@ref).
 """
 function read_model_file(path::AbstractString)
@@ -86,6 +96,11 @@ function read_model_file(path::AbstractString)
 
     haskey(doc, "model") || error("'$path' has no [model] section, so there is no model to read")
     model = Dict{String,Any}(String(k) => v for (k, v) in doc["model"])
+    metres = get(doc, "wl_unit", "m") != "um"              # written before `$WL` was in microns
+    wl(v) = metres ? _wl_from_metres(v) : v
+    for (k, v) in model
+        model[k] = wl(v)
+    end
     # An image component's file is named relative to the model file, so the two travel together.
     for (k, v) in model
         endswith(k, ",image") && v isa AbstractString && !isabspath(v) &&
@@ -111,7 +126,8 @@ function read_model_file(path::AbstractString)
             error("Bounds for '$k' in '$path' are empty: lower $(v[1]) is not below upper $(v[2])")
     end
 
-    constraints = parse_constraints(get(doc, "constraints", []))
+    constraints = [ModelConstraint(wl(c.lhs), c.op, wl(c.rhs); c.tol)
+                   for c in parse_constraints(get(doc, "constraints", []))]
 
     priors = Tuple{String,Float64,Float64}[]
     for p in get(doc, "priors", [])
@@ -120,7 +136,12 @@ function read_model_file(path::AbstractString)
         end
         Float64(p["sigma"]) > 0 ||
             error("Prior on '$(p["expr"])' in '$path' has sigma $(p["sigma"]); it must be positive")
-        push!(priors, (String(p["expr"]), Float64(p["target"]), Float64(p["sigma"])))
+        push!(priors, (wl(String(p["expr"])), Float64(p["target"]), Float64(p["sigma"])))
+    end
+    if metres && any(v -> v isa AbstractString && occursin(_WL_REF, v),
+                     vcat(collect(values(doc["model"])), [String(p[1]) for p in priors]))
+        @info "'$(basename(path))' was written with \$WL in metres; its \$WL is read as " *
+              "(\$WL*1e-6). Saving it again writes it in microns."
     end
 
     return (; model, free, lb, ub, constraints, priors,
@@ -168,6 +189,7 @@ function write_model_file(path::AbstractString, model_dict::AbstractDict;
     open(path, "w") do io
         println(io, "# OITOOLS model file")
         isempty(name) || println(io, "name = ", _toml_str(name))
+        println(io, "wl_unit = \"um\"     # `\$WL` in the expressions is in microns")
         # `free` must precede every table header, since a bare TOML key belongs to whichever
         # table it follows.
         println(io, "free = [", join((_toml_str(p) for p in freev), ", "), "]")

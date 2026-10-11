@@ -105,13 +105,13 @@
     end
 
     # A visibility written out must agree with the analytic kind it reproduces, in the units
-    # the expression is written in. `$B` is Mλ, so the conversion to the cycles/rad the model
+    # the expression is written in. `$BL` is Mλ, so the conversion to the cycles/rad the model
     # works in is part of what this pins: an expression right in one unit and evaluated in the
     # other still looks like a plausible curve.
     @testset "a custom visibility function is the model it spells out" begin
         D = 5.0
         vf = Dict{String,Any}(
-            "c,visfunc" => "2*besselj1(pi*\$dd*\$B/206.264806) / (pi*\$dd*\$B/206.264806)",
+            "c,visfunc" => "2*besselj1(pi*\$dd*\$BL/206.264806) / (pi*\$dd*\$BL/206.264806)",
             "c,dd" => D, "c,f" => 1.0)
         @test OITOOLS._identify_kind("c", Dict{String,Any}(vf)) === :visfunc
 
@@ -128,15 +128,15 @@
         @test isnan(real(eval_model(dict_to_model(vf, String[]), Float64[],
                                     reshape(z, 2, 1))[1]))
         vg = merge(vf, Dict{String,Any}("c,visfunc" =>
-                 "ifelse(\$B < 1e-8, 1.0, 2*besselj1(pi*\$dd*\$B/206.264806) / " *
-                 "(pi*\$dd*\$B/206.264806))"))
+                 "ifelse(\$BL < 1e-8, 1.0, 2*besselj1(pi*\$dd*\$BL/206.264806) / " *
+                 "(pi*\$dd*\$BL/206.264806))"))
         @test real(eval_model(dict_to_model(vg, String[]), Float64[],
                               reshape(z, 2, 1))[1]) ≈ 1.0
 
-        # the expression's own parameter is discovered and fittable, and `$B` is not one
+        # the expression's own parameter is discovered and fittable, and `$BL` is not one
         fm = dict_to_model(vf, ["c,dd"])
         @test fm.list_free_params == ["c,dd"]
-        @test "c,B" ∉ fm.all_names && "B" ∉ fm.all_names
+        @test "c,BL" ∉ fm.all_names && "BL" ∉ fm.all_names
 
         # and it is AD-transparent, which is what makes it usable by a gradient fitter
         f(x) = sum(abs2, eval_model(fm, x, uv))   # uv is the B > 0 grid built above

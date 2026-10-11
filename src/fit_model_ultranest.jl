@@ -28,8 +28,8 @@ function _ultranest_fit(model_dict         ::Dict{String},
 )
     # ── 1. Validate bounds ──────────────────────────────────────────────────
     for p in list_free_params
-        haskey(lb, p) || error("Lower bound required for '$p' (UltraNest needs finite bounds)")
-        haskey(ub, p) || error("Upper bound required for '$p' (UltraNest needs finite bounds)")
+        isfinite(get(lb, p, NaN)) || error("Finite lower bound required for '$p' (UltraNest needs finite bounds)")
+        isfinite(get(ub, p, NaN)) || error("Finite upper bound required for '$p' (UltraNest needs finite bounds)")
     end
     lbounds = Float64[lb[p] for p in list_free_params]
     ubounds = Float64[ub[p] for p in list_free_params]
@@ -193,8 +193,8 @@ function _ultranest_fit(model             ::FlatModel,
     lbounds = _bounds_vec(lb, list_free_params, NaN)
     ubounds = _bounds_vec(ub, list_free_params, NaN)
     for (i, p) in enumerate(list_free_params)
-        isnan(lbounds[i]) && error("Lower bound required for '$p' (UltraNest needs finite bounds)")
-        isnan(ubounds[i]) && error("Upper bound required for '$p' (UltraNest needs finite bounds)")
+        isfinite(lbounds[i]) || error("Finite lower bound required for '$p' (UltraNest needs finite bounds)")
+        isfinite(ubounds[i]) || error("Finite upper bound required for '$p' (UltraNest needs finite bounds)")
     end
 
     # ── Prior transform: uniform [0,1]^n → [lb, ub] ────────────────────────

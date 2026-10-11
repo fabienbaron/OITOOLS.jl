@@ -28,6 +28,21 @@ using RuntimeGeneratedFunctions
 # point the grid is known.
 const IMPLICIT_VARS = Set(["R", "MU", "D", "RMIN", "RMAX", "DMIN", "DMAX", "WL", "MJD"])
 
+# A `$`-reference: a name, then optionally `,` and a suffix. The suffix is an identifier, or
+# one of the two keys written with a space, PMOIRED's spelling of an azimuthal mode
+# (`az amp1`, `az projang1`). No other space belongs to a reference: `$a,b c` is `$a,b`, then c.
+const _REF_PATTERN = r"\$([A-Za-z_][A-Za-z0-9_]*(?:,(?:az (?:amp|projang)[0-9]+|[A-Za-z_][A-Za-z0-9_]*))?)"
+
+# `$WL` in an expression is in MICRONS, the unit the field writes a wavelength in; every
+# wavelength outside the expression language (the `wl` arguments, `uv_lam`, `model_to_sed`'s
+# grid) is in metres. A compiled expression reads `$WL` as `_wl_expr(WL)`, in the resolver and
+# in a visibility function, and nowhere else: inside the generated code it is part of the
+# fused broadcast, so it allocates nothing and keeps the wavelength's own precision.
+_wl_expr(wl::Real) = wl * oftype(float(wl), 1e6)
+
+# A reference as a Julia identifier: `,` → `__`, the space of an azimuthal mode's key → `_`.
+_mangle(name::AbstractString) = replace(name, "," => "__", " " => "_")
+
 """
     extract_refs(expr_str) -> Vector{String}
 
@@ -37,7 +52,7 @@ R, MU) are included — filter with `IMPLICIT_VARS` if needed.
 """
 function extract_refs(expr_str::String)::Vector{String}
     refs = String[]
-    for m in eachmatch(r"\$([A-Za-z_][A-Za-z0-9_,]*)", expr_str)
+    for m in eachmatch(_REF_PATTERN, expr_str)
         push!(refs, m.captures[1])
     end
     return unique(refs)
@@ -133,12 +148,13 @@ module RGF
 using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
-using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS
+using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS,
+                _REF_PATTERN, _mangle, _wl_expr
 
-mangle(name::AbstractString) = replace(name, "," => "__")
+const mangle = _mangle
 
 function preprocess(s::String)::String
-    replace(s, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => s -> mangle(s[2:end]))
+    replace(s, _REF_PATTERN => s -> (n = s[2:end]; n == "WL" ? "_wl_expr(WL)" : mangle(n)))
 end
 
 """
@@ -203,7 +219,8 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
         return $(Expr(:vect, [Symbol(mangle(n)) for n in all_names]...))
     end
     compiled_fn = @RuntimeGeneratedFunction(:((x, WL, MJD) -> $fn_body))
-    # Wrap with default NaN for backward compatibility: fn(x) still works
+    # Wrap with default NaN for backward compatibility: fn(x) still works. The wavelength
+    # arrives in metres; the expressions read it in microns (`preprocess`).
     wrapped_fn(x, WL=NaN, MJD=NaN) = compiled_fn(x, WL, MJD)
 
     # `fill!`: chromatic expressions broadcast in place into their column; the others scalar.

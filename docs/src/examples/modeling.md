@@ -160,6 +160,11 @@ Sets V = 0 at all non-zero baselines (fully resolved flux):
 model_dict = Dict{String,Any}("bg,resolved" => true, "bg,f" => 0.1)
 ```
 
+Its own visibility is 1 at zero baseline and 0 at every baseline the array measures. Its flux
+counts in the total that every visibility is divided by, so it lowers the visibilities of
+everything else by the factor (F − f_bg)/F, and it counts in the flux an OI_FLUX measurement is
+compared with. In `model_to_image` it is a uniform level across the field.
+
 ### Summary table
 
 | Key(s) | Type | Description |
@@ -201,7 +206,7 @@ Every component supports these optional keys:
 | `x`, `y` | Position offset in mas (east, north) |
 | `incl` | Inclination in degrees (0 = face-on) |
 | `pa` or `projang` | Position angle in degrees (north through east) |
-| `spectrum` | Spectral law string; promoted to `f` internally (e.g. `"(\$WL/2.2e-6)^-4"`) |
+| `spectrum` | Spectral law string; promoted to `f` internally (e.g. `"(\$WL/2.2)^-4"`) |
 | `spatial_kernel` | Gaussian smoothing FWHM in visibility space (global, not per-component) |
 
 ### Geometric transformations
@@ -246,15 +251,14 @@ These implicit variables are available in expressions:
 
 | Variable | Where | Description |
 |----------|-------|-------------|
-| `\$WL` | any expression | Wavelength in metres, one value per uv point during fitting |
+| `\$WL` | any expression | Wavelength in microns, one value per uv point during fitting (every `wl` argument and the data stay in metres) |
 | `\$MJD` | any expression | Modified Julian date, one value per uv point |
 | `\$R` | `profile` expressions only | Radius in mas, on the component's radial grid |
 | `\$MU` | `profile` expressions only | `sqrt(1 - (R/r_max)^2)`, for limb-darkening-style profiles |
+| `\$BL` | `visfunc` expressions only | Baseline length in Mλ, one value per uv point; the one place a baseline exists, since a visibility function IS the visibility |
 
-!!! warning "No `\$B`"
-    A `\$B` (baseline length) variable is **not** implemented. It is absent from
-    `IMPLICIT_VARS` and from the compiled resolver signature, so an expression referring to
-    it fails with an undefined-name error rather than a helpful message.
+`B` is not a variable, so `\$disk,B` is an ordinary parameter, as PMOIRED's notebooks write a
+spectral slope.
 
 !!! warning "`\$MJD` resolves to ~5.6 minutes at the default precision"
     `\$MJD` is read from `data.uv_mjd`, which is stored in the `OIdata` element type `T`.
@@ -271,8 +275,7 @@ These implicit variables are available in expressions:
     ```
 
     Measured on the same `\$MJD` model, the two differ by 0.28% in χ² and by up to 3.2e-4 in
-    |V|. `\$WL` is unaffected: a wavelength in metres is around 1e-6, where `Float32` has
-    ample relative precision.
+    |V|. `\$WL` is unaffected: `Float32` holds a wavelength to ample relative precision.
 
 Referencing `\$WL` or `\$MJD` in *any* derived expression makes the resolver broadcast **all**
 derived expressions, so every parameter becomes a per-uv-point vector — chromatic diameters
@@ -283,9 +286,9 @@ These enable chromatic and time-variable models:
 ```julia
 model_dict = Dict{String,Any}(
     "star,f"        => 1.0,
-    "star,spectrum"  => "(\$WL/2.2e-6)^(-4)",    # Rayleigh–Jeans spectrum
+    "star,spectrum"  => "(\$WL/2.2)^(-4)",    # Rayleigh–Jeans spectrum
     "disk,f"        => 0.3,
-    "disk,spectrum"  => "(\$WL/2.2e-6)^(-2)",    # greyer spectrum
+    "disk,spectrum"  => "(\$WL/2.2)^(-2)",    # greyer spectrum
     "disk,diamout"  => 10.0,
     "disk,profile"  => "exp(-(\$R/3.0)^2)",
 )
@@ -299,7 +302,7 @@ model_dict = Dict{String,Any}(
     # a diameter that grows linearly with wavelength
     "star,d0"    => 3.0,
     "star,slope" => 0.05,
-    "star,ud"    => "\$star,d0 * (1 + \$star,slope * (\$WL/1.6e-6 - 1))",
+    "star,ud"    => "\$star,d0 * (1 + \$star,slope * (\$WL/1.6 - 1))",
     "star,f"     => 1.0,
 )
 list_free_params = ["star,d0", "star,slope"]   # both are fitted as usual
@@ -416,10 +419,17 @@ model_dict = Dict{String,Any}(
 | Key | Description |
 |-----|-------------|
 | `profile` | Radial intensity expression (uses `\$R`, `\$MU`, and any custom params) |
-| `diamout` or `udout` | Outer diameter in mas (sets r-grid extent) |
-| `diamin` | Inner diameter in mas (optional, sets r-grid inner boundary for rings) |
+| `diam`, `diamout` or `udout` | Outer diameter in mas, where the profile ends. It can be fitted |
+| `diamin` | Inner diameter in mas (optional: the profile starts there, for a ring). It can be fitted |
 | `nr` | Optional: fixes the number of quadrature nodes (at least 2). Without it the count is chosen from the data and the profile, see below |
-| `r_max` | Alternative to `diamout` for setting the outer boundary |
+| `r_max` | Alternative to `diamout`: the outer radius, a fixed number |
+
+The diameters are parameters like any other: free them, or write them as expressions, and the
+profile follows. `\$RMIN`, `\$RMAX`, `\$DMIN` and `\$DMAX` in the profile are the current
+radii and diameters, and `\$MU` = √(1 − (R/R_max)²) the current μ. A profile written as
+`\$MU^\$alpha` with `diam` free therefore fits exactly as the closed-form `ldpow` does. A
+free size makes the transform matrices change at every evaluation, as an inclination does, so
+an evaluation costs about 0.3 ms at 600 baselines instead of a few µs.
 
 ### How a profile is integrated
 
@@ -432,7 +442,8 @@ A profile is integrated with Gauss–Legendre quadrature in panels, not on an ev
   centre where the profile is infinite (`\$R^(-1.5)`) gets a change of variable. Each panel is
   then smooth, and the quadrature converges fast.
 - **A jump whose position is a fitted parameter** is followed as it moves, and its derivative
-  includes the term from the moving boundary.
+  includes the term from the moving boundary. So does a jump at a fixed radius
+  (`\$R >= 2.0`) when the size is fitted, and the inner edge when `diamin` is.
 - **The node count** starts from the resolution of the data (about 32 nodes up to 7 lobes,
   then 1.1 per lobe), and is doubled until the visibilities and their parameter derivatives
   agree to 1e-8 (1e-6 in Float32).

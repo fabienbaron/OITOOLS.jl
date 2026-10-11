@@ -55,7 +55,9 @@ _split_key(k::AbstractString) = (i = findfirst(',', k);
 
 Describe every parameter in the model: its state, value, bounds and fit-vector index.
 
-Bounds come from `default_bounds` unless supplied. Rows are ordered globals first, then
+Bounds are the supplied ones where there are, and `default_bounds` for every other free key:
+a parameter added after the bounds were set (a coefficient seeded by a change of law) gets its
+default, not none. Rows are ordered globals first, then
 components in the parser's own order, and within a component the geometry key leads — the key
 that determines what the component *is* should not be buried among its modifiers.
 
@@ -75,7 +77,7 @@ function model_rows(model_dict::AbstractDict, list_free_params::AbstractVector;
     disp = md
     if wl !== nothing || mjd !== nothing
         disp = copy(md)
-        wl  === nothing || (disp["WL"]  = Float64(wl))
+        wl  === nothing || (disp["WL"]  = Float64(OITOOLS._wl_expr(wl)))   # `$WL` is in microns
         mjd === nothing || (disp["MJD"] = Float64(mjd))
     end
     dlb, dub = try
@@ -83,8 +85,8 @@ function model_rows(model_dict::AbstractDict, list_free_params::AbstractVector;
     catch
         (Dict{String,Float64}(), Dict{String,Float64}())
     end
-    lbd = lb === nothing ? dlb : Dict{String,Float64}(String(k) => Float64(v) for (k, v) in lb)
-    ubd = ub === nothing ? dub : Dict{String,Float64}(String(k) => Float64(v) for (k, v) in ub)
+    lbd = lb === nothing ? dlb : merge(dlb, Dict{String,Float64}(String(k) => Float64(v) for (k, v) in lb))
+    ubd = ub === nothing ? dub : merge(dub, Dict{String,Float64}(String(k) => Float64(v) for (k, v) in ub))
 
     comps = try
         String.(OITOOLS._component_names(md))
@@ -323,9 +325,9 @@ The model as a picture, at one wavelength and one epoch.
 is rendered is what would be fitted. Pass an empty `free` to render a model with nothing free,
 which is the usual case here.
 
-`wl` is in METRES, matching `\\\$WL`; `mjd` in days. Both may be `nothing`, and are ignored by a
-model that does not reference them — which [`model_depends_on`](@ref) reports, so the panel can
-say so rather than let the user wonder.
+`wl` is in metres, as every `wl` argument (`\\\$WL` sees it in microns); `mjd` in days. Both
+may be `nothing`, and are ignored by a model that does not reference them — which
+[`model_depends_on`](@ref) reports, so the panel can say so rather than let the user wonder.
 """
 function render_model_image(model_dict::AbstractDict, free::AbstractVector, x::AbstractVector;
                             nx::Integer = 128, pixsize::Real = 0.1,

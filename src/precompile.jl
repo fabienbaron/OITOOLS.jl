@@ -127,8 +127,8 @@
                 (Dict{String,Any}("a,profile" => "exp(-(\$R/\$s)^2)", "a,s" => 1.0,
                                   "a,udout" => 6.0, "a,az amp1" => 0.3,
                                   "a,az projang1" => 40.0), ["a,s", "a,az amp1"]),
-                (Dict{String,Any}("a,visfunc" => "exp(-(\$B*\$q)^2)", "a,q" => 0.01), ["a,q"]),
-                (Dict{String,Any}("a,ud" => 1.0, "a,f" => "\$fs * (\$WL/1.6e-6)^(-4)",
+                (Dict{String,Any}("a,visfunc" => "exp(-(\$BL*\$q)^2)", "a,q" => 0.01), ["a,q"]),
+                (Dict{String,Any}("a,ud" => 1.0, "a,f" => "\$fs * (\$WL/1.6)^(-4)",
                                   "fs" => 0.6, "b,fwhm" => 3.0, "b,f" => "1 - \$a,f"),
                  ["a,ud", "fs"]),
                 (Dict{String,Any}("a,ud" => "2 * \$r", "r" => 0.5), ["r"]))

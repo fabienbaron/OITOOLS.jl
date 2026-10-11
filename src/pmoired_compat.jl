@@ -164,9 +164,12 @@ end
 Rename the PMOIRED keys OITOOLS spells differently, and warn about the one that cannot be
 carried across faithfully.
 
-This is a transpiler of syntax, so keys otherwise arrive verbatim -- which is right for almost
-all of them, since the two packages share their vocabulary. The exception is the spatial
-kernel. PMOIRED writes it `"comp,spatial kernel"`, with a space, and applies it PER COMPONENT;
+Expressions are rewritten where the two languages differ: Python's `**` becomes `^`, and a
+ring's `profile` given as one of PMOIRED's names (`uniform`, `doughnut`, `doughnut<p>`, defined
+in its `oimodels.py`) becomes the expression it stands for, over the ring's radii.
+
+Keys otherwise arrive verbatim -- which is right for almost all of them, since the two packages
+share their vocabulary. The exception is the spatial kernel. PMOIRED writes it `"comp,spatial kernel"`, with a space, and applies it PER COMPONENT;
 OITOOLS spells it `spatial_kernel` and applies one kernel to the whole model. A single
 component converts exactly. More than one cannot: adopting one component's kernel would smooth
 the others too, and adopting none would drop a part of the model. The keys are left in place in
@@ -174,7 +177,11 @@ that case, so the inspector reports them as unrecognised rather than the import 
 changing what the model means.
 """
 function _adopt_pmoired_keys(d::AbstractDict)
-    out = Dict{String,Any}(String(k) => v for (k, v) in d)
+    out = Dict{String,Any}(String(k) => (v isa AbstractString ? replace(String(v), "**" => "^") : v)
+                           for (k, v) in d)
+    for k in [k for k in keys(out) if endswith(k, ",profile")]
+        out[k] isa AbstractString && (out[k] = _pmoired_profile(out[k]))
+    end
     kern = [k for k in keys(out) if endswith(k, ",spatial kernel")]
     if length(kern) == 1
         out["spatial_kernel"] = out[kern[1]]
@@ -195,6 +202,17 @@ function _adopt_pmoired_keys(d::AbstractDict)
     return out
 end
 
+
+# PMOIRED's named ring profiles as expressions. `mean(R)` and `ptp(R)` are over the ring's even
+# grid of radii, from `diamin`/2 to `diamout`/2: (RMIN + RMAX)/2 and RMAX − RMIN.
+function _pmoired_profile(p::String)
+    x = "(2*(\$R - (\$RMIN + \$RMAX)/2)/(\$RMAX - \$RMIN))"
+    p == "uniform"  && return "1"
+    p == "doughnut" && return "1 - $x^2"
+    m = match(r"^doughnut\s*([0-9.]+(?:[eE][-+]?[0-9]+)?)$", p)
+    m === nothing || return "1 - abs($x)^$(m[1])"
+    return p
+end
 
 """
     pmoired_to_julia_file(infile, outfile)
@@ -223,7 +241,7 @@ _pmoired_value(v::Bool)            = v ? "True" : "False"
 _pmoired_value(::Nothing)          = "None"
 _pmoired_value(v::Integer)         = string(v)
 _pmoired_value(v::Real)            = string(float(v))
-_pmoired_value(v::AbstractString)  = "'" * replace(v, "'" => "\\'") * "'"
+_pmoired_value(v::AbstractString)  = "'" * replace(v, "'" => "\\'", "^" => "**") * "'"
 _pmoired_value(v)                  = string(v)
 
 """
@@ -234,7 +252,8 @@ Render an OITOOLS model dictionary as PMOIRED source — the inverse of
 
 Keys are emitted in sorted order so the output is reproducible and diffable. Julia `true`,
 `false` and `nothing` become `True`, `False` and `None`; string values are quoted with
-single quotes, so `\$`-expressions survive unchanged (both packages use the same syntax).
+single quotes, and in expressions `^` becomes Python's `**`; `\$`-references are the same in
+both packages.
 
 With `check=true` (the default) a warning is emitted for keys that have no PMOIRED
 equivalent — the `ldlin`/`ldquad`/`ldpow`/`resolved` geometries are OITOOLS additions. The

@@ -163,7 +163,7 @@ using ForwardDiff, FiniteDifferences, SpecialFunctions
     end
 
     @testset "visfunc: dual numbers through the user's expression" begin
-        fn = O.compile_visfunc("exp(-(\$B * \$a)^2) * cis(\$c * \$B) * (\$WL / 1.6e-6)", ["a", "c"])
+        fn = O.compile_visfunc("exp(-(\$BL * \$a)^2) * cis(\$c * \$BL) * (\$WL / 1.6)", ["a", "c"])
         Bm = collect(range(0, 120; length = 200)); N = length(Bm)
         wl = collect(range(1.5e-6, 1.8e-6; length = N))
         a = 0.012; c = collect(range(0.01, 0.02; length = N))      # c per point (chromatic)
@@ -187,8 +187,9 @@ using ForwardDiff, FiniteDifferences, SpecialFunctions
         m = dict_to_model(md, free); x = [md[k] for k in free]
         comp = only(m.components)
         ρh  = hypot.(u, v); Bh = ρh ./ O._MAS2RAD_PM; ψ = atan.(v, u)
-        st = O._hankel_setup(comp, Bh, [1.2, 2.0]); r, μ, g = st.r, st.μ, st.g
-        prof(p) = comp.profile_fn(r, μ, p...)
+        # the profile's parameters follow its diameters, [d_min, d_max, s, q]
+        st = O._hankel_setup(comp, Bh, [0.0, 6.0, 1.2, 2.0]); s, r, μ, g = st.s, st.r, st.μ, st.g
+        prof(p) = comp.profile_fn(s, μ, 0.0, 6.0, p...)
         I  = prof([1.2, 2.0]); dI = ForwardDiff.jacobian(prof, [1.2, 2.0])
         W = zeros(ComplexF64, N); D = zeros(ComplexF64, N, 6)
         DB = zeros(ComplexF64, N); Dψ = zeros(ComplexF64, N)

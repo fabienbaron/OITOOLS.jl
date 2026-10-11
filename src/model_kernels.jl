@@ -328,8 +328,10 @@ function _vis_jac!(W, D, Dρ, ::Val{:point}, p, ρ)
     return W
 end
 
+# Fully resolved: 1 at zero baseline (its own flux) and 0 at every other, as `_vis_resolved`.
 function _vis_jac!(W, D, Dρ, ::Val{:resolved}, p, ρ)
-    fill!(W, zero(eltype(W))); fill!(Dρ, zero(eltype(Dρ)))
+    @. W = ifelse(iszero(ρ), one(eltype(W)), zero(eltype(W)))
+    fill!(Dρ, zero(eltype(Dρ)))
     return W
 end
 
@@ -518,26 +520,29 @@ end
 """
     HankelKernelCache{T}()
 
-A radial-profile component's quadrature nodes, per node count, and per uv set (compared by
-value) its node count and transform matrices, per order. The last few uv sets are kept. Also
-what the probe found in the profile, and the multiple of the automatic count the convergence
-check settled on, for baselines that move (inclination, position angle). Guarded by a lock,
+A radial-profile component's quadrature nodes (in s = r/r_max), per node count, and per uv set
+(compared by value) its node count and transform matrices, per order, for one size: they are
+dropped when the diameters change. The last few uv sets are kept. Also what the probe found in
+the profile, and the multiple of the automatic count the convergence check settled on, for
+baselines that move (inclination, position angle). Guarded by a lock,
 since a `FlatModel` is shared between the threads of a batch likelihood.
 """
 mutable struct HankelKernelCache{T<:AbstractFloat}
     entries :: Vector{Any}          # _HankelUV{TB,TK}: baselines of any element type
-    nodes   :: Dict{Tuple{Int,Int},NTuple{3,Vector{T}}}  # (n, n₀) => (r, μ, g), r = r_max·s
+    nodes   :: Dict{Tuple{Int,Int},NTuple{3,Vector{T}}}  # (n, n₀) => (s, μ, g), s = r/r_max
     layout  :: Union{Nothing,_HankelLayout}  # nothing = not probed yet
     mult    :: Int                  # the check's multiple of `_hankel_n`
     warned  :: Bool                 # the not-converged warning was issued
     last_pp :: Vector{Float64}      # the parameters the breakpoints were last located for
     breaks  :: Vector{Float64}      # and where they were: the nodes and matrices are for these
+    dsize   :: Vector{Float64}      # the diameters (d_min, d_max) the nodes and matrices are for
+    uvs     :: Vector{UInt}         # the uv sets the count was checked on, by hash
     nbuilt  :: Int
     lock    :: ReentrantLock
 end
 HankelKernelCache{T}() where {T} =
     HankelKernelCache{T}(Any[], Dict{Tuple{Int,Int},NTuple{3,Vector{T}}}(), nothing, 1, false,
-                         Float64[], Float64[], 0, ReentrantLock())
+                         Float64[], Float64[], Float64[], UInt[], 0, ReentrantLock())
 
 # One uv set: its baselines, the node count chosen for them, and the matrices built for them,
 # keyed by (order, derivative).

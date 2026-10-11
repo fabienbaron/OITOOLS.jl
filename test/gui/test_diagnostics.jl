@@ -64,9 +64,9 @@
         # evaluates every $WL expression a million times too far out and returns numbers that
         # are wrong without erroring, so the conversion belongs at the drawing.
         chromatic = Dict{String,Any}("star,ud" => 2.0,
-                                     "star,f"  => "0.7 * (\$WL/1.6e-6)^-4",
+                                     "star,f"  => "0.7 * (\$WL/1.6)^-4",
                                      "disk,fwhm" => 6.0,
-                                     "disk,f"  => "0.3 * (\$WL/1.6e-6)^-1.5")
+                                     "disk,f"  => "0.3 * (\$WL/1.6)^-1.5")
         m  = dict_to_model(chromatic, String[])
         wl = [1.5e-6, 1.6e-6, 1.7e-6]
         total, comps = model_to_sed(m, Float64[], wl)

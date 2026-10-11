@@ -173,7 +173,8 @@ function refresh_plot!(sh::ShellState = _shell())
         sh.info    = update_canvas!(sh.canvas, d, sh.kind; color = sh.color,
                                     logscale = sh.logy,
                                     residual = residual_for(rset, sh.kind),
-                                    overlay  = residual_for(oset, sh.kind))
+                                    overlay  = residual_for(oset, sh.kind),
+                                    source   = source_label(e))
         sh.plotobj = sh.canvas.scatterplot
     end
     suffix = sh.residual === :none ? "" : " — " * String(sh.residual) * " residuals"
@@ -1417,13 +1418,19 @@ function _round2(x::Real, r)
     return r(x / p) * p
 end
 
+# A value from `_round2`, written with its two significant figures: 2.0, 1.2, 0.85, 43.
+function _fmt2(x::Real)
+    (isfinite(x) && x > 0) || return @sprintf("%g", x)
+    return @sprintf("%.*f", max(0, 1 - floor(Int, log10(x))), x)
+end
+
 """
     shell_companion_defaults(companion) -> String
 
 The grid the search would take by default, as the dialog prefills it: `"step\trmin\trmax"`,
-in mas. The step to six significant figures, so the dialog's grid is the default grid (a node
-is where it would be to 1e-5 mas); the radii to two, the inner one rounded down and the outer
-one up, which only widens the annulus. `""` when there is no grid to compute (no dataset, or a
+in mas, to two significant figures: the step rounded down, so the grid is no coarser than the
+default λ/(2 B_max), and the radii outwards (the inner one down, the outer one up), which only
+widens the annulus. `""` when there is no grid to compute (no dataset, or a
 model the grid cannot be laid around).
 """
 function shell_companion_defaults(companion)
@@ -1435,9 +1442,9 @@ function shell_companion_defaults(companion)
     catch
         return ""
     end
-    f(v) = @sprintf("%g", v)
-    return join((@sprintf("%.6g", g.step), f(_round2(g.rmin, floor)), f(_round2(g.rmax, ceil))),
-                "\t")
+    # The step rounded down, so that it is never coarser than λ/(2 B_max).
+    return join((_fmt2(_round2(g.step, floor)), _fmt2(_round2(g.rmin, floor)),
+                 _fmt2(_round2(g.rmax, ceil))), "\t")
 end
 
 """
@@ -1636,7 +1643,9 @@ the fit's progress is the ratio between them. It is `NaN` when the starting mode
 evaluated, which the panel renders as an em dash.
 
 `work` is `_fit_work` rendered with its unit, because iterations and evaluations are different
-quantities and only one of them exists for any given optimiser.
+quantities and only one of them exists for any given optimiser. A fit that reports it did not
+converge -- Levenberg-Marquardt stopped by its iteration limit -- has ` · not converged` after
+it: its values are where it stopped, not a minimum.
 
 No AIC or BIC. Both are information criteria for choosing BETWEEN models, and this package has
 a better answer for that question: `fit_model_nested` returns the log-evidence, which compares
@@ -1657,6 +1666,7 @@ function shell_fit_rows()
         work = it > 0 && ev > 0 ? string(it, " / ", ev) :
                it > 0           ? string(it, " it")     :
                ev > 0           ? string(ev, " ev")     : "—"
+        hasproperty(r, :converged) && r.converged === false && (work *= " · not converged")
         push!(rows, join((string("fit ", length(sh.fits) - i + 1), f.optimiser,
                           _numv(start), string(round(r.chi2r; digits = 4)),
                           work, string(r.ndof), string(k),
@@ -1710,16 +1720,12 @@ bound — so the panel reports what the PARSER made of the model rather than wha
 function shell_model_rows()
     m = _model()
     isempty(m.dict) && return ""
-    # `nothing`, not an empty Dict: `model_rows` reads a supplied dict as authoritative, so
-    # handing it an empty one suppresses `default_bounds` and every bound comes back 0/0.
-    # The dataset's first wavelength and epoch, so a chromatic expression resolves to the
-    # number it actually takes there rather than to nothing.
+    # The bounds set in the session, `default_bounds` for the rest (`model_rows`). The
+    # dataset's first wavelength and epoch, so a chromatic expression resolves to the number
+    # it actually takes there rather than to nothing.
     w, t = _display_wl_mjd()
     rows = try
-        model_rows(m.dict, m.free;
-                   lb = isempty(m.lb) ? nothing : m.lb,
-                   ub = isempty(m.ub) ? nothing : m.ub,
-                   wl = w, mjd = t)
+        model_rows(m.dict, m.free; lb = m.lb, ub = m.ub, wl = w, mjd = t)
     catch err
         console!(_shell(), "! model: " * _cause(err); kind = :err)
         return ""
@@ -1777,8 +1783,10 @@ end
 
 _mode_name(m) = m === PARAM_FREE ? "free" : m === PARAM_EXPR ? "expr" : "fixed"
 
-# Bounds: a non-finite bound is no bound, and the panel leaves those fields blank.
-_num(x) = isfinite(x) ? string(x) : "0.0"
+# Bounds: an infinite bound is no bound. It travels as JavaScript writes it, so the panel's
+# `parseFloat` reads ±Infinity, leaves the field blank and sends it to the fit as no bound.
+# NaN is the bound of a row that is not free, which shows none.
+_num(x) = isfinite(x) || isnan(x) ? string(x) : (x > 0 ? "Infinity" : "-Infinity")
 
 # Values: a non-finite value is a value the resolver could not produce -- a chromatic
 # expression with no wavelength to show it at, or a reference to a key that is not there. The
@@ -2042,7 +2050,8 @@ end
 
 Model files. TOML carries the model, the free list, the bounds, the constraints and the priors
 together; PMOIRED carries the model alone, and export warns about what it cannot represent
-rather than writing something that means a different thing on the other side.
+rather than writing something that means a different thing on the other side. Opening or
+importing a model that does not set bandwidth smearing keeps the smearing in force.
 """
 function shell_open_model(path::AbstractString)
     sh = _shell()
@@ -2052,12 +2061,28 @@ function shell_open_model(path::AbstractString)
         msg = "! could not read model: " * _cause(err); console!(sh, msg; kind = :err); return msg
     end
     m = _model(sh)
+    old = m.dict
     m.dict = r.model; m.free = collect(r.free)
     m.lb = Dict{String,Float64}(r.lb); m.ub = Dict{String,Float64}(r.ub)
     m.name = isempty(r.name) ? basename(String(path)) : r.name
     console!(sh, "> read_model_file(\"" * String(path) * "\")")
     console!(sh, "  $(m.name): $(length(m.dict)) keys, $(length(m.free)) free")
+    _keep_smearing!(sh, old, m.dict)
     return m.name
+end
+
+# Smearing is chosen for the data as much as for the model, and a model file or a PMOIRED
+# import usually does not set it: one that does not keeps the smearing in force, rather than
+# switching it off unseen. One that sets it has it. The keys go into the model, so a saved
+# model or an exported script evaluates as the panel did.
+function _keep_smearing!(sh, old::AbstractDict, new::AbstractDict)
+    (haskey(new, "smear") || !haskey(old, "smear")) && return
+    for k in _SMEAR_KEYS
+        haskey(old, k) && (new[k] = old[k])
+    end
+    console!(sh, "  bandwidth smearing kept: $(old["smear"]) sub-wavelengths per channel, " *
+                 string(get(old, "smear_mode", "incoherent")); kind = :cmd)
+    return
 end
 
 function shell_save_model(path::AbstractString)
@@ -2073,16 +2098,43 @@ function shell_save_model(path::AbstractString)
 end
 
 function shell_import_pmoired(path::AbstractString)
+    src = try
+        read(String(path), String)
+    catch err
+        msg = "! PMOIRED import: " * _cause(err); console!(_shell(), msg; kind = :err); return msg
+    end
+    return _import_pmoired!(src, basename(String(path)),
+                            "pmoired_to_dict(read(\"" * String(path) * "\", String))")
+end
+
+"""
+    shell_import_pmoired_text(text) -> String
+
+Import a PMOIRED `param` dict pasted from a notebook, as [`shell_import_pmoired`](@ref) imports a
+`.py` file: the model is replaced, and the name is returned, or a message beginning `!`. The
+console line holds the text as a raw string, so a `\$WL` in it stays a `\$WL` when the script
+runs.
+"""
+function shell_import_pmoired_text(text::AbstractString)
+    s = strip(String(text))
+    isempty(s) && return "! nothing to import: paste a PMOIRED param dict"
+    return _import_pmoired!(String(s), "pasted PMOIRED model",
+                            "pmoired_to_dict(raw\"\"\"" * s * "\"\"\")")
+end
+
+function _import_pmoired!(src::String, name::String, call::String)
     sh = _shell()
     md = try
-        pmoired_to_dict(read(String(path), String))
+        pmoired_to_dict(src)
     catch err
         msg = "! PMOIRED import: " * _cause(err); console!(sh, msg; kind = :err); return msg
     end
     m = _model(sh)
+    old = m.dict
     m.dict = md; m.free = String[]; empty!(m.lb); empty!(m.ub)
-    m.name = basename(String(path))
-    console!(sh, "> pmoired_to_dict(read(\"" * String(path) * "\", String))")
+    m.name = name
+    console!(sh, "> " * call)
+    _keep_smearing!(sh, old, m.dict)
     # Import is a transpiler, not a validator, so say at once what the parser made of it.
     insp = try model_inspection(md) catch; nothing end
     insp === nothing || isempty(insp.unrecognised) ||
@@ -2634,6 +2686,33 @@ struct ComponentChoice
 end
 
 """
+The laws across a disc's face: uniform, and the limb-darkening laws, as one shape wearing
+different coefficients. The law menu on a disc's card and the add-component dialog's disc
+entries both read this list.
+
+They are a sub-choice, not six separate components: every one of them is a disc of some
+diameter, and which law you use is a question about the atmosphere rather than about the
+geometry. Offering them as separate entries beside "uniform ring" and "crescent" put two different
+questions in one list and made limb darkening most of it.
+
+`coeffs` is what the law needs BESIDES the diameter, in the parser's order.
+"""
+const DISC_LAWS = [
+    (key = "ud",        label = "uniform",        coeffs = String[],
+     note = "I(μ) = 1"),
+    (key = "ldlin",     label = "linear",         coeffs = ["u"],
+     note = "I(μ) = 1 − u(1−μ)"),
+    (key = "ldquad",    label = "quadratic",      coeffs = ["u", "w"],
+     note = "I(μ) = 1 − u(1−μ) − w(1−μ)²"),
+    (key = "ldsqrt",    label = "square root",    coeffs = ["u", "w"],
+     note = "I(μ) = 1 − u(1−μ) − w(1−√μ)"),
+    (key = "ldpow",     label = "power law",      coeffs = ["alpha"],
+     note = "I(μ) = μ^α  (Hestroffer)"),
+    (key = "ldclaret4", label = "four-parameter", coeffs = ["c1", "c2", "c3", "c4"],
+     note = "I(μ) = 1 − Σₖ cₖ(1 − μ^{k/2})  (Claret)"),
+]
+
+"""
 The component menu, in order.
 
 Categories are alphabetical, and a category with one entry is offered as itself rather than as
@@ -2648,12 +2727,8 @@ const COMPONENT_CHOICES = ComponentChoice[
     # the ones you look for deliberately rather than land on by scrolling.
     ComponentChoice("point",    "point source", "point", "point source", "pt"),
 
-    ComponentChoice("disc", "disc", "ud",        "uniform",                    "star"),
-    ComponentChoice("disc", "disc", "ldlin",     "linear limb darkening",      "star"),
-    ComponentChoice("disc", "disc", "ldquad",    "quadratic limb darkening",   "star"),
-    ComponentChoice("disc", "disc", "ldsqrt",    "square-root limb darkening", "star"),
-    ComponentChoice("disc", "disc", "ldpow",     "power-law limb darkening",   "star"),
-    ComponentChoice("disc", "disc", "ldclaret4", "Claret four-parameter",      "star"),
+    # the disc laws, from the list the law menu reads, so the two cannot disagree
+    (ComponentChoice("disc", "disc", l.key, l.label, "star") for l in DISC_LAWS)...,
 
     # The three ring cross-sections. `ring_profile` is the same `:hankel` machinery as the
     # custom image function, seeded with `diamin`/`diamout` so the profile is evaluated on the
@@ -2677,7 +2752,7 @@ const COMPONENT_CHOICES = ComponentChoice[
     # `shell_add_image_component`, which takes the file.
     ComponentChoice("fitsimage", "image (FITS file)", "fits_image", "image (FITS file)", "img"),
 
-    # You write V(B) directly, in $B. The other direction, and the only kind whose expression
+    # You write V(B) directly, in $BL. The other direction, and the only kind whose expression
     # is not an image at all.
     ComponentChoice("visfunc", "custom visibility function", "vis_func",
                     "custom visibility function", "comp"),
@@ -2720,10 +2795,9 @@ _component_seed(suffix) = get(_COMPONENT_SEEDS, suffix, 2.0)
 The flux fraction a component being added should start at, having rescaled the others so the
 fractions still sum to 1.
 
-`display_model` warns when numeric flux fractions do not sum to 1, and every component starting
-at 1.0 is the commonest way to earn that warning: two components then each carry a whole
-source, which inflates chi2 rather than splitting the light between them. Adding a second
-component means "share the source", not "double it".
+The visibilities are divided by the total flux, so the sum does not change V; sharing it out
+keeps every `f` readable as the component's fraction of the light, which is what the table, the
+SED and a fitted value then say.
 
 Existing fractions keep their ratio to each other -- a deliberate 4:1 stays 4:1 -- and the new
 one takes an equal share. Nothing is touched when any existing fraction is an expression:
@@ -2760,8 +2834,6 @@ function shell_add_component(name, kind)
     k = Symbol(String(kind))
     k === :fits_image && return "! an image component is added with its file: " *
                                 "shell_add_image_component(name, path)"
-    k === :ld && return "! choose a limb-darkening law: " *
-                        join((l.key for l in LD_LAWS), ", ")
     # Panel ids that are not parser kinds. `image_func` and `ring_profile` are both `:hankel`
     # and differ only in the keys seeded below: the first is a profile about the centre, the
     # second is one evaluated on an annulus, which is the same machinery pointed at a ring.
@@ -2779,12 +2851,12 @@ function shell_add_component(name, kind)
         # and a NaN at one uv point poisons the whole chi2, so the seed shows the guard a
         # written-out visibility generally needs.
         m.dict[pre * "visfunc"] =
-            "ifelse(\$B < 1e-8, 1.0, 2*besselj1(pi*\$d*\$B/206.264806) / " *
-            "(pi*\$d*\$B/206.264806))"
+            "ifelse(\$BL < 1e-8, 1.0, 2*besselj1(pi*\$d*\$BL/206.264806) / " *
+            "(pi*\$d*\$BL/206.264806))"
         m.dict[pre * "d"]       = _component_seed("ud")
         m.dict[pre * "f"]       = _share_flux!(m, pre * "f")
         push!(m.free, pre * "d")
-        console!(sh, "  added $(nm): V(B) written in \$B (Mλ); $(pre)d is free")
+        console!(sh, "  added $(nm): V(B) written in \$BL (Mλ); $(pre)d is free")
         console!(sh, "  a component's flux fraction assumes V(0) = 1, and V IS evaluated at " *
                      "B = 0; guard any 0/0 there as the seed does")
         return ""
@@ -3000,8 +3072,8 @@ function shell_expression_keywords(key::AbstractString)
             ("RMAX", "grid outer radius",      "the grid's outer radius, mas"),
             ("DMIN", "grid inner diameter",    "the grid's inner diameter, mas"),
             ("DMAX", "grid outer diameter",    "the grid's outer diameter, mas"),
-            ("B",    "baseline, Mλ",           "baseline length in Mλ, one per uv point"),
-            ("WL",   "wavelength, m",          "wavelength in METRES, one per uv point"),
+            ("BL",   "baseline, Mλ",           "baseline length in Mλ, one per uv point"),
+            ("WL",   "wavelength, µm",         "wavelength in MICRONS, one per uv point"),
             ("MJD",  "date, MJD",              "Modified Julian Date, one per uv point (~5.6 min " *
                                                "resolution unless the file was read with " *
                                                "T = Float64)"))
@@ -3010,9 +3082,34 @@ function shell_expression_keywords(key::AbstractString)
                  for (n, short, long) in rows), "\n")
 end
 
+"""
+    shell_expression_params(key) -> String
+
+The model's parameters an expression for `key` can refer to, one `\$comp,name` per line: the
+key's own component first, then the globals, then the other components. Written in full, which
+resolves in every kind of expression. The names are the parser's (`all_names`), so a profile
+string is not offered and a `spectrum` is offered as the `f` it is; `key` itself is left out.
+Empty when the model does not compile, since the checker below the field says why.
+"""
+function shell_expression_params(key::AbstractString)
+    m = _model(); k = String(key)
+    isempty(m.dict) && return ""
+    names = try
+        dict_to_model(m.dict, String[]).all_names
+    catch
+        return ""
+    end
+    i = findfirst(',', k)
+    comp = i === nothing ? "" : k[1:i-1]
+    self = i !== nothing && k[i+1:end] == "spectrum" ? comp * ",f" : k
+    rank(n) = (j = findfirst(',', n); j === nothing ? 1 : n[1:j-1] == comp ? 0 : 2)
+    keep = sort([String(n) for n in names if n != self && n != k]; by = n -> (rank(n), n))
+    return join(("\$" * n for n in keep), "\n")
+end
+
 # Where an implicit variable CAN be used, for the line explaining why it cannot be used here.
 function _implicit_scope_reason(name)
-    name == "B" && return "only in a visibility function, which is the one place a baseline exists"
+    name == "BL" && return "only in a visibility function, which is the one place a baseline exists"
     name in ("WL", "MJD") &&
         return "not in a profile: the profile is evaluated on the radial grid, before any uv point"
     return "only inside a profile string, where compile_profile substitutes it"
@@ -3043,7 +3140,7 @@ function shell_check_expression(key::AbstractString, expr::AbstractString)
     inscope = OITOOLS.implicit_vars(k)
     out = String[]
     for ref in OITOOLS.extract_refs(String(expr))
-        if ref in OITOOLS.IMPLICIT_VARS || ref == "B"
+        if ref in OITOOLS.IMPLICIT_VARS || ref == "BL"
             ok = ref in inscope
             push!(out, join((ref, ok ? "ok" : "scope",
                              ok ? "" : "\$$(ref): " * _implicit_scope_reason(ref)), '\t'))
@@ -3188,7 +3285,7 @@ function shell_profile_grid(component::AbstractString)
                 kk = haskey(m.dict, cn * "," * n) ? cn * "," * n : n
                 push!(vals, Float64(OITOOLS._resolve_numeric(kk, m.dict)))
             end
-            fn = OITOOLS.compile_profile(expr, String.(names))
+            fn = OITOOLS.compile_profile(expr, String.(names); rmin = rmin, rmax = rmax)
             # The quadrature the model uses, on the preview's baselines: how many nodes, and
             # what the profile shows (jumps, kinks, a singular centre) that it adapted to.
             _, nodes, lay, _, _ = OITOOLS.hankel_profile_vis(fn, vals, rmin, rmax,
@@ -3264,7 +3361,11 @@ function shell_profile_curves(component::AbstractString)
 
     r  = collect(range(rmin, rmax; length = PROFILE_NR_EDGE))
     mu = sqrt.(max.(0.0, 1 .- (r ./ rmax) .^ 2))
-    fn = OITOOLS.compile_profile(expr, String.(names))
+    fn = try
+        OITOOLS.compile_profile(expr, String.(names); rmin = rmin, rmax = rmax)
+    catch err
+        return "! the profile will not compile: " * _cause(err)
+    end
     I = try
         fn(r, mu, vals...)
     catch err
@@ -3394,7 +3495,8 @@ the closed form, plus a grid to get wrong -- and `\$MU^\$alpha` is `ldpow` the s
 template earns its place only where there is no analytic component to reach for instead.
 
 `seeds` is `name=>value` in the order they should be created. `r_max` is a RADIUS; `udout` is
-twice it.
+twice it. An `r_max` of 0 suggests none: a profile written on the grid's own radii, as the
+doughnut is with `\$RMIN`/`\$RMAX`, scales with whatever grid it is given.
 """
 # Parameter names are lowercase throughout, and none of them is a function.
 #
@@ -3406,9 +3508,9 @@ twice it.
 # avoid both, and mean the same thing in every template.
 const PROFILE_TEMPLATES = [
     (key = "doughnut", label = "Doughnut",
-     expr = "1 - ((\$R - \$rbar)/(2*(\$rout - \$rin)))^2",
-     seeds = ["rbar" => 1.5, "rin" => 1.0, "rout" => 2.0], rmax = 2.5,
-     note = "parabolic ring: one width, symmetric rims"),
+     expr = "1 - (2*(\$R - (\$RMIN + \$RMAX)/2)/(\$RMAX - \$RMIN))^2",
+     seeds = Pair{String,Float64}[], rmax = 0.0,
+     note = "PMOIRED's doughnut: brightest mid-grid, zero at r_min and r_max"),
 
     (key = "double_sigmoid", label = "Double sigmoid",
      expr = "1/(1+exp(-(\$R-\$rin)/\$win)) * 1/(1+exp((\$R-\$rout)/\$wout))",
@@ -3512,53 +3614,30 @@ function shell_set_component_geometry(name::AbstractString, which::AbstractStrin
     return ""
 end
 
-"""
-The limb-darkening laws, as one shape wearing different coefficients.
-
-They are a sub-choice, not five separate components: every one of them is a disc of some
-diameter, and which law you use is a question about the atmosphere rather than about the
-geometry. Offering them as five entries beside "uniform ring" and "crescent" put two different
-questions in one list and made limb darkening most of it.
-
-`coeffs` is what the law needs BESIDES the diameter, in the parser's order.
-"""
-const LD_LAWS = [
-    (key = "ldlin",     label = "linear",         coeffs = ["u"],
-     note = "I(μ) = 1 − u(1−μ)"),
-    (key = "ldquad",    label = "quadratic",      coeffs = ["u", "w"],
-     note = "I(μ) = 1 − u(1−μ) − w(1−μ)²"),
-    (key = "ldsqrt",    label = "square root",    coeffs = ["u", "w"],
-     note = "I(μ) = 1 − u(1−μ) − w(1−√μ)"),
-    (key = "ldpow",     label = "power law",      coeffs = ["alpha"],
-     note = "I(μ) = μ^α  (Hestroffer)"),
-    (key = "ldclaret4", label = "four-parameter", coeffs = ["c1", "c2", "c3", "c4"],
-     note = "I(μ) = 1 − Σₖ cₖ(1 − μ^{k/2})  (Claret)"),
-]
 
 """
     shell_ld_laws() -> String
 
 The laws, as `key\tlabel\tnote` lines.
 """
-shell_ld_laws() = join((string(l.key, '\t', l.label, '\t', l.note) for l in LD_LAWS), "\n")
+shell_ld_laws() = join((string(l.key, '\t', l.label, '\t', l.note) for l in DISC_LAWS), "\n")
 
 """
     shell_ld_law(component) -> String
 
-The law a component currently uses, as `key\tlabel`, or `""` when it is not a limb-darkened
-disc at all.
+The law a component currently uses, as `key\tlabel`, or `""` when it is not a disc at all.
 """
 function shell_ld_law(component::AbstractString)
     m = _model(); cn = String(component)
-    i = findfirst(l -> haskey(m.dict, cn * "," * l.key), LD_LAWS)
+    i = findfirst(l -> haskey(m.dict, cn * "," * l.key), DISC_LAWS)
     i === nothing && return ""
-    return string(LD_LAWS[i].key, '\t', LD_LAWS[i].label)
+    return string(DISC_LAWS[i].key, '\t', DISC_LAWS[i].label)
 end
 
 """
     shell_set_ld_law(component, law) -> String
 
-Change which limb-darkening law a component uses, keeping its diameter.
+Change which law a disc uses (uniform or a limb-darkening law), keeping its diameter.
 
 The diameter is the same physical quantity in every law and carries over, along with whether it
 was being fitted. The coefficients do NOT: `u` is the linear coefficient in the quadratic and
@@ -3569,11 +3648,11 @@ carried across to look like a measurement that survived the change.
 function shell_set_ld_law(component::AbstractString, law::AbstractString)
     sh = _shell(); m = _model(sh)
     cn = String(component); want = String(law)
-    j = findfirst(l -> l.key == want, LD_LAWS)
-    j === nothing && return "! unknown limb-darkening law: " * want
-    i = findfirst(l -> haskey(m.dict, cn * "," * l.key), LD_LAWS)
-    i === nothing && return "! " * cn * " is not a limb-darkened disc"
-    old, new = LD_LAWS[i], LD_LAWS[j]
+    j = findfirst(l -> l.key == want, DISC_LAWS)
+    j === nothing && return "! unknown disc law: " * want
+    i = findfirst(l -> haskey(m.dict, cn * "," * l.key), DISC_LAWS)
+    i === nothing && return "! " * cn * " is not a disc"
+    old, new = DISC_LAWS[i], DISC_LAWS[j]
     old.key == want && return ""
 
     dkey = cn * "," * old.key
@@ -3727,7 +3806,7 @@ function _param_name_problem(m, cn::AbstractString, nm::AbstractString)
     occursin(r"^[A-Za-z_][A-Za-z0-9_]*$", nm) ||
         return "a name is letters, digits and underscores, not starting with a digit: " *
                "it has to survive being written as \$" * nm
-    (nm in OITOOLS.IMPLICIT_VARS || nm == "B") &&
+    (nm in OITOOLS.IMPLICIT_VARS || nm == "BL") &&
         return "\$" * nm * " is a built-in variable"
     if isempty(cn)
         nm in ("spatial_kernel", "smear", "smear_mode") &&
@@ -3745,7 +3824,7 @@ end
 """
     shell_remove_unused() -> String
 
-Delete every key the parser ignores -- the ones the panel's "Nothing uses …" banner lists --
+Delete every key the parser ignores -- the ones Validation reports as not used or ignored --
 with their bounds and their places in the free list. Returns `""` or a message beginning `!`.
 
 These are keys `model_inspection` reports as unrecognised: on a component, a name no kind
@@ -3801,7 +3880,7 @@ Create a fixed parameter at `value`: a global when `component` is `""` or `"__gl
 otherwise `component,name`. Returns `""` or a message beginning with `!`.
 
 This is how a model gets a quantity that no component kind seeds: SPARCO's flux fraction `fs`,
-a spectral slope, the `d0` and `p` of a diameter written as `\$d0 * (\$WL/1.6e-6)^\$p`. It
+a spectral slope, the `d0` and `p` of a diameter written as `\$d0 * (\$WL/1.6)^\$p`. It
 starts fixed and referenced by nothing, because what it means is decided by the expression
 that uses it; until one does, the parser lists it among the keys it ignored, which is true.
 

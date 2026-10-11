@@ -10,7 +10,7 @@
         for (md, free) in (
                 (Dict{String,Any}("s,ud" => 0.83, "s,f" => "1 - \$c,f", "c,f" => 0.01,
                                   "c,x" => 6.2, "c,y" => -28.5), ["s,ud", "c,f"]),
-                (Dict{String,Any}("s,ud" => 0.9, "s,f" => "\$fs * (\$WL/1.6e-6)^(-4)", "fs" => 0.6,
+                (Dict{String,Any}("s,ud" => 0.9, "s,f" => "\$fs * (\$WL/1.6)^(-4)", "fs" => 0.6,
                                   "d,fwhm" => 3.0, "d,f" => "1 - \$fs"), ["fs"]),
                 (Dict{String,Any}("r,diamin" => 2.0, "r,diamout" => 3.0, "r,incl" => 40.0,
                                   "r,pa" => 30.0, "spatial_kernel" => 0.3), ["r,incl"]))
@@ -25,7 +25,7 @@
 
     @testset "only what depends on \$WL/\$MJD is per point" begin
         md = Dict{String,Any}("s,ud" => "2 * \$b", "b" => 0.45,
-                              "s,f" => "\$fs * (\$WL/1.6e-6)^(-4)", "fs" => 0.6,
+                              "s,f" => "\$fs * (\$WL/1.6)^(-4)", "fs" => 0.6,
                               "g,fwhm" => 3.0, "g,f" => "1 - \$s,f")
         m = dict_to_model(md, ["b", "fs"])
         r = m.resolver
@@ -44,7 +44,7 @@
     end
 
     @testset "a radial profile's parameters must be scalars" begin
-        md = Dict{String,Any}("d,profile" => "exp(-(\$R/\$s)^2)", "d,s" => "1.0 * \$WL / 1.6e-6",
+        md = Dict{String,Any}("d,profile" => "exp(-(\$R/\$s)^2)", "d,s" => "1.0 * \$WL / 1.6",
                               "d,udout" => 6.0)
         err = try dict_to_model(md, String[]); nothing catch e; e end
         @test err isa ErrorException && occursin("radial profile", err.msg)

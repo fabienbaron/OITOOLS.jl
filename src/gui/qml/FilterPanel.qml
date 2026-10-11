@@ -110,6 +110,21 @@ ColumnLayout {
     readonly property var errLabels: ({ v2: "V²", t3amp: "T3amp", t3phi: "T3φ (°)",
                                         visamp: "VISamp", visphi: "VISφ (°)", flux: "flux" })
     readonly property var errCols: ["add", "rel", "mult", "cap", "caprel"]
+    // What each column does to an error bar, by column (errCols' order). x is the value, σ the
+    // file's error bar, σ′ the one used: σ′ = max(×·σ, |x|·rel. + floor), as oifits_prep does.
+    readonly property var errTips: [
+        "floor: the smallest error bar allowed, in the observable's own units (degrees for a phase).\n" +
+        "σ′ = max(×·σ, |x|·rel. + floor), where x is the value and σ the file's error bar",
+        "relative floor: a fraction of the value, added to the floor (0.05 = 5 % of |x|).\n" +
+        "σ′ = max(×·σ, |x|·rel. + floor). A phase has none",
+        "multiplier: every error bar is scaled by this before the floors are compared (1 = unchanged).\n" +
+        "σ′ = max(×·σ, |x|·rel. + floor)",
+        "cap: points whose error bar is above this are REMOVED, in the observable's own units.\n" +
+        "Compared with the file's σ, before any floor or multiplier",
+        "relative cap: points whose error bar is above this fraction of |x| are REMOVED " +
+        "(0.2 = σ above 20 % of the value).\nCompared with the file's σ, before any floor or " +
+        "multiplier. A phase has none"
+    ]
     // Field text by key ("v2_add", …), so the grid below is generated rather than written out.
     property var errText: ({})
     // Typical MIRC-X error-bar floors (V² max(5 %, 2e-4), T3amp max(10 %, 1e-5), T3φ 1°):
@@ -388,7 +403,14 @@ ColumnLayout {
         Label { text: "" }
         Repeater {
             model: ["floor", "rel.", "×", "cap", "cap rel."]
-            Label { required property string modelData; text: modelData; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+            Label {
+                required property string modelData
+                required property int index
+                text: modelData; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                HoverHandler { id: headHover }
+                ToolTip.visible: headHover.hovered
+                ToolTip.text: root.errTips[index]
+            }
         }
         Repeater {
             model: root.errRows.length * 6
@@ -413,6 +435,8 @@ ColumnLayout {
                     text: root.errText[key] !== undefined ? root.errText[key] : ""
                     placeholderText: root.errTypical[key] !== undefined ? root.errTypical[key] : ""
                     onTextEdited: root.setErr(key, text)
+                    ToolTip.visible: hovered && enabled
+                    ToolTip.text: root.errTips[Math.max(0, cell.c - 1)]
                 }
             }
         }

@@ -237,9 +237,9 @@ end
     _hankel_nodes(T, s_min, n; layout, breaks, n0) -> (s, μ, g)
 
 The panelled rule's nodes on [s_min, 1]: radii s, μ = √(1 − s²) and weights g with
-∫ f(s) s ds ≈ Σ gₖ f(sₖ), as `Vector{T}` (or of the breakpoints' type, when they carry Duals:
-the nodes then move with the parameters, and the quadrature differentiates the breakpoints'
-motion too). Each panel's count is set at `n0` (by length, at least 6) and scaled by n/n0, so
+∫ f(s) s ds ≈ Σ gₖ f(sₖ), as `Vector{T}` (or of the breakpoints' or `s_min`'s type, when
+they carry Duals: the nodes then move with the parameters, and the quadrature differentiates
+the motion of the breakpoints and of the inner edge too). Each panel's count is set at `n0` (by length, at least 6) and scaled by n/n0, so
 that doubling n refines every panel. Without a layout: no breakpoints, no singular centre.
 """
 _hankel_nodes(::Type{T}, s_min::Real, n::Int; layout::Union{Nothing,_HankelLayout} = nothing,
@@ -251,17 +251,18 @@ _hankel_nodes(::Type{T}, s_min::Real, n::Int; layout::Union{Nothing,_HankelLayou
 function _hankel_nodes_impl(::Type{T}, s_min::Real, n::Int, layout::Union{Nothing,_HankelLayout},
                             breaks::AbstractVector, n0::Int) where {T<:AbstractFloat}
     n >= 2 || throw(ArgumentError("a profile component needs at least 2 nodes, got $n"))
-    S, R = _hankel_node_types(T, eltype(breaks))
+    S, R = _hankel_node_types(T, promote_type(eltype(breaks), typeof(s_min)))
     sing = layout !== nothing && layout.sing && s_min == 0
     pexp = layout === nothing ? 0.0 : layout.pexp
-    smin = Float64(s_min)
+    smin = Float64(ForwardDiff.value(s_min))      # the counts; the edges carry s_min itself
     f = n / n0
     ss = max(_HANKEL_SPLIT, smin)
     nrim0 = smin >= _HANKEL_SPLIT ? n0 : max(8, round(Int, _HANKEL_RIM * n0))
     ninner0 = max(8, n0 - nrim0)
     s = S[]; μ = S[]; g = S[]
     # the rim, in t; t runs down as s runs up
-    redges = vcat(S(ss), sort([b for b in breaks if ss < b < 1]), S(1))
+    redges = vcat(smin >= _HANKEL_SPLIT ? S(s_min) : S(ss), sort([b for b in breaks if ss < b < 1]),
+                  S(1))
     ttot = (1 - ss^2)^0.25
     for i in 1:length(redges)-1
         ta, tb = (1 - redges[i+1]^2)^0.25, (1 - redges[i]^2)^0.25
@@ -271,7 +272,7 @@ function _hankel_nodes_impl(::Type{T}, s_min::Real, n::Int, layout::Union{Nothin
         append!(s, sqrt.(1 .- t .^ 4)); append!(μ, t .^ 2); append!(g, (tb - ta) .* w .* t .^ 3)
     end
     if smin < _HANKEL_SPLIT
-        edges = vcat(S(smin), sort([b for b in breaks if smin < b < ss]), S(ss))
+        edges = vcat(S(s_min), sort([b for b in breaks if smin < b < ss]), S(ss))
         if sing                       # a singular innermost panel, [0, s₁]
             s1 = min(S(0.1), edges[2])
             edges = vcat(S(0), s1, [e for e in edges[2:end] if e > s1])
@@ -313,7 +314,7 @@ _hankel_node_types(::Type{T}, ::Type{B}) where {T,B} = (promote_type(T, B), prom
 
 How many times `n₀` a profile needs on the baselines `B`: V and ∂V/∂p (order 0, the parameters
 `pp` at their current values, ∂I/∂p by ForwardDiff) at n and 2n agree to `tol` (∂V/∂p relative
-to max(1, |∂V/∂p|)), starting from n = n₀ and doubling. It is judged on `nsub` of the
+to max(1, |∂V/∂p|), on the parameters it is finite for), starting from n = n₀ and doubling. It is judged on `nsub` of the
 baselines, spread evenly through them sorted, the longest included: on 11 profiles (steps,
 kinks, transitions, singular centres), 622 and 2000 baselines, Float64 and Float32, 64 chose
 the count all of them did, in a tenth to a thirtieth of the time. Returns the multiple m of
@@ -344,7 +345,11 @@ function _hankel_converge(nodes, profile_fn, pp::AbstractVector, B::AbstractVect
     agree = Inf
     while 2m * n0 <= capn
         V2, Vp2 = vals(2m * n0)
-        dp = isempty(Vp2) ? 0.0 : maximum(abs.(Vp2 .- Vp)) / max(1, maximum(abs, Vp2))
+        # ∂V/∂p on the parameters it is finite for at both counts: a profile whose expression
+        # overflows (a very narrow sigmoid) has a NaN ∂I/∂R, which no count changes
+        fin = [all(isfinite, view(Vp, :, j)) && all(isfinite, view(Vp2, :, j)) for j in axes(Vp2, 2)]
+        dp = !any(fin) ? 0.0 :
+             maximum(abs.(Vp2[:, fin] .- Vp[:, fin])) / max(1, maximum(abs, Vp2[:, fin]))
         agree = max(Float64(maximum(abs.(V2 .- V))), Float64(dp))
         agree <= tol && return (m, agree, true)
         m *= 2

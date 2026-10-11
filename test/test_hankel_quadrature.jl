@@ -185,7 +185,7 @@ using QuadGK, SpecialFunctions, ForwardDiff
         @test maximum(abs.(eval_model(m, [45.0], uv) .- eval_model(dict_to_model(ma, ["s,incl"]), [45.0], uv))) < 1e-8
     end
 
-    @testset "the direct transform's rrule, with the B tangent" begin
+    @testset "the direct transform's rrule, with the B, r and g tangents" begin
         s, μ, g = O._hankel_nodes(Float64, 0.0, 32); r = 2 .* s; I = μ .^ 0.14; B = Bset(3, 4.0)
         ȳ = sin.(1:length(B))
         H, pb = O.ChainRulesCore.rrule(O._hankel_wtransform, I, r, g, B; n = 1)
@@ -193,6 +193,57 @@ using QuadGK, SpecialFunctions, ForwardDiff
         @test H ≈ O._hankel_wtransform(I, r, g, B; n = 1)
         @test Ī ≈ ForwardDiff.gradient(x -> sum(ȳ .* O._hankel_wtransform(x, r, g, B; n = 1)), I) rtol = 1e-10
         @test B̄ ≈ ForwardDiff.gradient(x -> sum(ȳ .* O._hankel_wtransform(I, r, g, x; n = 1)), B) rtol = 1e-8
+        _, _, r̄, ḡ, _ = pb(ȳ)
+        @test r̄ ≈ ForwardDiff.gradient(x -> sum(ȳ .* O._hankel_wtransform(I, x, g, B; n = 1)), r) rtol = 1e-8
+        @test ḡ ≈ ForwardDiff.gradient(x -> sum(ȳ .* O._hankel_wtransform(I, r, x, B; n = 1)), g) rtol = 1e-8
+    end
+
+    @testset "a free size: diameters, the inner edge and \$RMAX, in V and its derivatives" for T in (Float64, Float32)
+        t = tol(T) * 10
+        B = Bset(3, 8.0); uv = T.(uvof(B))
+        ud(D, b) = (x = π * D * b; x == 0 ? 1.0 : 2besselj1(x) / x)
+        # a ring of constant brightness: the difference of two uniform discs
+        ring(a, b) = [((b / 2)^2 * ud(b, x) - (a / 2)^2 * ud(a, x)) / ((b / 2)^2 - (a / 2)^2) for x in B]
+        m = dict_to_model(Dict{String,Any}("s,diamin" => 3.0, "s,udout" => 8.0, "s,profile" => "1.0"),
+                          ["s,diamin", "s,udout"]; T)
+        h = 1e-6
+        Ja = (ring(3 + h, 8) .- ring(3 - h, 8)) ./ 2h; Jb = (ring(3, 8 + h) .- ring(3, 8 - h)) ./ 2h
+        @test maximum(abs.(eval_model(m, T[3, 8], uv) .- ring(3, 8))) < t
+        for J in (eval_model_jac(m, T[3, 8], uv)[2], eval_model_grad(m, T[3, 8], uv)[2])
+            @test maximum(abs.(J[:, 1] .- Ja)) < t && maximum(abs.(J[:, 2] .- Jb)) < t
+        end
+        # the size changed: followed, and the matrices are those of the new size
+        @test maximum(abs.(eval_model(m, T[2.5, 7], uv) .- ring(2.5, 7))) < t
+        # a breakpoint fixed in R moves in s with the size; `$RMAX` is the size
+        for (prof, pv, free) in (("(\$R >= 2.0) * exp(-\$R/\$a)", [1.5], ["s,udout", "s,a"]),
+                                 ("1 - (\$R/\$RMAX)^2 * \$c", [0.5], ["s,udout", "s,c"]),
+                                 ("exp(-(\$R - \$RMIN)/\$c)", [1.5], ["s,diamin", "s,udout", "s,c"]))
+            md = Dict{String,Any}("s,diamin" => 2.0, "s,udout" => 8.0, "s,profile" => prof,
+                                  "s,$(free[end][3:end])" => pv[1])
+            m = dict_to_model(md, free; T); x = T[md[k] for k in free]
+            m64 = dict_to_model(md, free)
+            Jd = reduce(hcat, [(eval_model(m64, x .+ h .* (1:length(x) .== j), uvof(B)) .-
+                                eval_model(m64, x .- h .* (1:length(x) .== j), uvof(B))) ./ 2h
+                               for j in eachindex(x)])
+            @test maximum(abs.(eval_model_jac(m, x, uv)[2] .- Jd)) < 10t
+            @test maximum(abs.(eval_model_grad(m, x, uv)[2] .- Jd)) < 10t
+        end
+        # a fixed size: the parameters' columns are those of the same model with the size free
+        md = Dict{String,Any}("s,udout" => 8.0, "s,profile" => "exp(-(\$R/\$w)^2)", "s,w" => 2.0)
+        Jf = eval_model_jac(dict_to_model(md, ["s,w"]; T), T[2], uv)[2]
+        Js = eval_model_jac(dict_to_model(md, ["s,udout", "s,w"]; T), T[8, 2], uv)[2]
+        @test Jf[:, 1] ≈ Js[:, 2] rtol = 10eps(T)
+    end
+
+    @testset "α Cen A, the diameter free: a written power law fits as the closed-form one" begin
+        d = readoifits(joinpath(@__DIR__, "..", "demos", "data", "AlphaCenA.oifits");
+                       T = Float64, warn = false, verbose = false)[1, 1]
+        rc = fit_model_lsqfit(dict_to_model(Dict{String,Any}("s,ldpow" => 8.0, "s,alpha" => 0.3),
+                                            ["s,ldpow", "s,alpha"]), [8.0, 0.3], d)
+        rp = fit_model_lsqfit(dict_to_model(Dict{String,Any}("s,diam" => 8.0, "s,profile" => "\$MU^\$alpha",
+                                                             "s,alpha" => 0.3), ["s,diam", "s,alpha"]), [8.0, 0.3], d)
+        @test rp.x_opt ≈ rc.x_opt rtol = 1e-6
+        @test rp.chi2 ≈ rc.chi2 rtol = 1e-8
     end
 
     @testset "the GUI preview's quadrature is the model's" begin

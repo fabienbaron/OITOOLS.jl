@@ -216,8 +216,13 @@ function picker_places()
     return join((join(r, "\t") for r in rows), "\n")
 end
 
-"Absolute, normalised path. QML should never do path arithmetic itself."
-picker_join(a, b) = abspath(joinpath(expanduser(String(a)), String(b)))
+"""
+Absolute, normalised path. QML should never do path arithmetic itself.
+
+`b` may be a name in `a`, or a path typed into the picker's File field: an absolute one, or one
+starting with `~`, replaces `a`.
+"""
+picker_join(a, b) = abspath(joinpath(expanduser(String(a)), expanduser(String(b))))
 
 """
     shell_set_work_directory(path) -> String

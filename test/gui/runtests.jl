@@ -1472,6 +1472,14 @@ end
         for (label, path) in vols
             @test any(r -> r[1] == label && r[2] == path, rows)
         end
+
+        # A path typed into the File field replaces the folder when it is absolute or starts
+        # with `~`, and is a name in it otherwise.
+        d = mktempdir()
+        @test GUI.picker_join(d, "a.py") == joinpath(d, "a.py")
+        @test GUI.picker_join(d, "~") == homedir()
+        @test GUI.picker_join(d, joinpath("~", "x.py")) == joinpath(homedir(), "x.py")
+        @test GUI.picker_join(d, d) == d
     end
 
     # The companion search, through the shell calls the Model panel makes: AX Cir and its shipped
@@ -1520,15 +1528,14 @@ end
             @test startswith(G.shell_set_smearing("auto", "sideways"), "!")
             @test G.shell_set_smearing("auto", "incoherent") == "" && m.dict["smear"] == "auto" &&
                   !haskey(m.dict, "smear_mode")
-            # The dialog's prefill: the default step unrounded, so the dialog's grid is the
-            # default grid; the radii to two significant figures, the annulus widened.
+            # The dialog's prefill, to two significant figures: the step rounded down (never
+            # coarser than the default), the annulus widened.
             dg = companion_grid(G._model(sh).dict, sess.datasets[1].data[1, 1]; companion = "companion")
             df = parse.(Float64, split(G.shell_companion_defaults("companion"), '\t'))
-            @test df[1] ≈ dg.step rtol = 1e-5
+            @test df[1] <= dg.step
             @test df[2] <= dg.rmin && df[3] >= dg.rmax
             @test all(isapprox.(df, [dg.step, dg.rmin, dg.rmax]; rtol = 0.1))
-            @test startswith(G.shell_companion_defaults("companion"), "2.02113\t")   # AX Cir
-            @test endswith(G.shell_companion_defaults("companion"), "\t2\t37")
+            @test G.shell_companion_defaults("companion") == "2.0\t2.0\t37"     # AX Cir
             pv = G.shell_companion_grid("companion", NaN, NaN, NaN, NaN)
             @test occursin(r"^\d+ nodes · step ", pv)
             @test startswith(G.shell_companion_grid("companion", NaN, 50.0, 10.0, NaN), "!")
@@ -1790,14 +1797,33 @@ end
             @test runs(m.dict)
             @test G.shell_remove_component("star") == ""
 
-            # The visibility function's own seed checks clean, `$B` included, and its palette
+            # A uniform disc changes law like any other disc: the diameter, its free state and
+            # its bounds carry over; the coefficients are seeded, and dropped going back.
+            @test G.shell_add_component("star", "ud") == ""
+            @test G.shell_ld_law("star") == "ud\tuniform"
+            m.dict["star,ud"] = 8.3
+            @test G.shell_set_param("star,ud", "mode", "free") == ""
+            G.shell_set_param("star,ud", "lb", 0.0); G.shell_set_param("star,ud", "ub", 20.0)
+            @test G.shell_set_ld_law("star", "ldclaret4") == ""
+            @test m.dict["star,ldclaret4"] == 8.3 && "star,ldclaret4" in m.free
+            @test (m.lb["star,ldclaret4"], m.ub["star,ldclaret4"]) == (0.0, 20.0)
+            @test all(haskey(m.dict, "star,c$i") for i in 1:4) && !haskey(m.dict, "star,ud")
+            @test G.shell_set_ld_law("star", "ud") == ""
+            @test m.dict["star,ud"] == 8.3 && "star,ud" in m.free
+            @test !any(haskey(m.dict, "star,c$i") for i in 1:4)
+            # the add-component dialog offers the same laws, in the same order
+            kinds = split.(split(G.shell_component_kinds(), '\n'), '\t')
+            @test [k[3] for k in kinds if k[1] == "disc"] == [l.key for l in G.DISC_LAWS]
+            @test G.shell_remove_component("star") == ""
+
+            # The visibility function's own seed checks clean, `$BL` included, and its palette
             # offers the baseline beside the wavelength and the epoch.
             @test G.shell_add_component("comp", "vis_func") == ""
             @test all(==("ok"), values(verdicts("comp,visfunc", m.dict["comp,visfunc"])))
             @test runs(m.dict)
-            @test sort(enabled("comp,visfunc")) == ["\$B", "\$MJD", "\$WL"]
-            @test verdicts("comp,visfunc", "\$B * \$WL")["WL"] == "ok"
-            @test verdicts("comp,visfunc", "\$B * \$R")["R"] == "scope"
+            @test sort(enabled("comp,visfunc")) == ["\$BL", "\$MJD", "\$WL"]
+            @test verdicts("comp,visfunc", "\$BL * \$WL")["WL"] == "ok"
+            @test verdicts("comp,visfunc", "\$BL * \$R")["R"] == "scope"
             @test G.shell_remove_component("comp") == ""
 
             @test all(length(split(l, '\t')) == 5
@@ -1839,10 +1865,10 @@ end
             @test m.dict["fs"] == 0.4 && m.dict["disk,slope"] == 0.5
             @test G.shell_set_param("fs", "mode", "free") == ""
             @test G.shell_set_param("disk,slope", "mode", "free") == ""
-            den = "(\$fs * (\$WL/1.6e-6)^(-4) + (1 - \$fs) * (\$WL/1.6e-6)^\$disk,slope)"
-            @test G.shell_set_param("star,f", "expr", "\$fs * (\$WL/1.6e-6)^(-4) / " * den) == ""
+            den = "(\$fs * (\$WL/1.6)^(-4) + (1 - \$fs) * (\$WL/1.6)^\$disk,slope)"
+            @test G.shell_set_param("star,f", "expr", "\$fs * (\$WL/1.6)^(-4) / " * den) == ""
             @test G.shell_set_param("disk,f", "expr",
-                                    "(1 - \$fs) * (\$WL/1.6e-6)^\$disk,slope / " * den) == ""
+                                    "(1 - \$fs) * (\$WL/1.6)^\$disk,slope / " * den) == ""
             demo = read_model_file(joinpath(pkgdir(OITOOLS), "demos", "models",
                                             "SPARCO_Star_Disk.toml"))
             @test sort(collect(keys(m.dict))) == sort(collect(keys(demo.model)))
@@ -1853,13 +1879,20 @@ end
             # A name the parser already reads, a built-in, a bad identifier, a duplicate, a
             # component that is not there: each refused, and the dialog's check says so first.
             for (c, n) in (("disk", "ud"), ("disk", "u"), ("disk", "az amp1"), ("__global__", "WL"),
-                           ("__global__", "B"), ("__global__", "2x"), ("__global__", "a,b"),
+                           ("__global__", "BL"), ("__global__", "2x"), ("__global__", "a,b"),
                            ("__global__", "fs"), ("disk", "slope"), ("nope", "a"),
                            ("__global__", "spatial_kernel"), ("__global__", ""))
                 @test !isempty(G.shell_param_name_problem(c, n))
                 @test startswith(G.shell_add_param(c, n, 1.0), "!")
             end
             @test m.dict["disk,fwhm"] isa Real                 # still a Gaussian
+
+            # The baseline is `$BL`, so `B` is an ordinary name: PMOIRED's own for a spectral
+            # slope (`$disk,B`), and a global too.
+            @test G.shell_param_name_problem("disk", "B") == ""
+            @test G.shell_add_param("disk", "B", 2.0) == "" && m.dict["disk,B"] == 2.0
+            @test G.shell_remove_param("disk,B") == ""
+            @test G.shell_param_name_problem("__global__", "B") == ""
 
             # What "+ parameter" adds, Remove takes away; what the parser reads, it does not.
             @test G.shell_param_removable("fs") == "1"
@@ -1871,10 +1904,13 @@ end
             @test G.shell_remove_param("disk,spare") == ""
             @test !haskey(m.dict, "disk,spare")
 
-            # What nothing uses, the banner's "Remove them" clears in one go.
+            # What nothing uses, Validation reports once per key, and its "Remove unused"
+            # clears in one go.
             @test G.shell_add_param("disk", "spare", 2.0) == ""
             @test G.shell_add_param("disk", "other", 3.0) == ""
             @test occursin("disk,spare", G.shell_model_inspection())
+            wl = filter(l -> occursin("disk,spare", l), split(G.shell_model_warnings(), '\n'))
+            @test wl == ["disk,spare is not used: no expression refers to \$disk,spare"]
             @test G.shell_remove_unused() == ""
             @test !haskey(m.dict, "disk,spare") && !haskey(m.dict, "disk,other")
             @test haskey(m.dict, "disk,slope")                 # used, so kept
@@ -1904,6 +1940,158 @@ end
             @test !occursin("does not define", G.shell_model_warnings())
             @test runs(m.dict)
         finally
+            G.SHELL[] = prev
+        end
+    end
+
+    @testset "an error in a Qt callback comes back as a string, not through Qt" begin
+        # Every callback is registered through `_guarded`; an exception reaching Qt freezes the
+        # window, so it has to come back as the panels' "! ..." string and a console line.
+        G = GUI
+        prev = G.SHELL[]
+        sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        try
+            n0 = length(sh.console)
+            msg = redirect_stderr(devnull) do
+                G._guarded(x -> error("broken on purpose: $x"), 3)
+            end
+            @test startswith(msg, "! ") && occursin("broken on purpose: 3", msg)
+            @test length(sh.console) == n0 + 1 && occursin("broken on purpose: 3", sh.console[end])
+            @test G._guarded(+, 1, 2) == 3
+            @test G._guarded(G.shell_console) == G.shell_console()
+            # No shell yet, as at start-up: still a string, and nothing thrown.
+            G.SHELL[] = nothing
+            @test startswith(redirect_stderr(() -> G._guarded(G.shell_console), devnull), "! ")
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
+    @testset "every kind the parser reads has a name in the table's header" begin
+        # The header reads `disk · Gaussian` from `kindLabels` in ModelTab.qml, or from the law
+        # selector's names for a disc. A kind with neither shows its raw symbol, so a kind
+        # added to the parser must be named there too.
+        qml = read(joinpath(pkgdir(OITOOLS), "src", "gui", "qml", "ModelTab.qml"), String)
+        i = findfirst("readonly property var kindLabels", qml)
+        block = qml[last(i):findnext("})", qml, last(i))[1]]
+        named = Set(m[1] for m in eachmatch(r"\"([a-z_0-9]+)\":", block))
+        laws  = Set(l.key for l in GUI.DISC_LAWS)
+        for k in keys(OITOOLS._KIND_GEOMETRY)
+            @test string(k) in named || string(k) in laws
+        end
+    end
+
+    @testset "every Error bars column has a tooltip" begin
+        # One tip per column of `errCols`, each opening with the column's name, in the same order.
+        qml = read(joinpath(pkgdir(OITOOLS), "src", "gui", "qml", "FilterPanel.qml"), String)
+        cols = match(r"readonly property var errCols: \[([^\]]*)\]", qml)[1]
+        ncols = count(==('"'), cols) ÷ 2
+        i = findfirst("readonly property var errTips", qml)
+        block = qml[last(i):findnext("\n    ]", qml, last(i))[1]]
+        heads = [m[1] for m in eachmatch(r"^\s*\"([a-z ]+):"m, block)]
+        @test heads == ["floor", "relative floor", "multiplier", "cap", "relative cap"]
+        @test length(heads) == ncols == 5
+    end
+
+    @testset "the palette offers the model's parameters; a fit cut short says so" begin
+        G = GUI
+        prev = G.SHELL[]
+        sess = Session()
+        load_dataset!(sess, joinpath(pkgdir(OITOOLS), "demos", "data", "AlphaCenA.oifits");
+                      warn = false, verbose = false)
+        sh = G.ShellState(sess, nothing, nothing, nothing, String[], Any[], 1,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        try
+            m = G._model(sh)
+            m.dict = Dict{String,Any}("star,ud" => 8.0, "star,f" => 1.0, "disk,fwhm" => 20.0,
+                                      "disk,spectrum" => "\$disk,A*(\$WL/1.67)^\$disk,B",
+                                      "disk,A" => 1.0, "disk,B" => 2.0, "fs" => 0.5)
+            # Written in full, own component first, then globals; never the key itself, and a
+            # spectrum is the `f` it sets.
+            ps = split(G.shell_expression_params("disk,spectrum"), '\n')
+            @test ps[1:3] == ["\$disk,A", "\$disk,B", "\$disk,fwhm"]
+            @test "\$fs" in ps && "\$star,ud" in ps
+            @test "\$disk,f" ∉ ps && "\$disk,spectrum" ∉ ps
+            @test findfirst(==("\$fs"), ps) < findfirst(==("\$star,ud"), ps)
+            @test !("\$star,ud" in split(G.shell_expression_params("star,ud"), '\n'))
+            m.dict["star,profile"] = "\$nope"; m.dict["star,diamout"] = 8.0
+            @test G.shell_expression_params("disk,A") == ""   # does not compile: the checker says why
+            empty!(m.dict)
+
+            # One iteration of Levenberg-Marquardt does not converge, and the row says so.
+            d = sess.datasets[1].data[1, 1]
+            ud = Dict{String,Any}("star,ud" => 6.0, "star,f" => 1.0)
+            for it in (1, 200)
+                r = fit_model_lsqfit(ud, ["star,ud"], d; maxIter = it)
+                push!(sh.fits, (; result = r, optimiser = "lsqfit", seconds = 0.0,
+                                  free = ["star,ud"], map = nothing, chi2_start = NaN,
+                                  sigma = nothing, boot = nothing))
+            end
+            rows = split(G.shell_fit_rows(), '\n')
+            @test all(length(split(l, '\t')) == 8 for l in rows)
+            @test !occursin("not converged", rows[1])              # newest first: 200 iterations
+            @test endswith(split(rows[2], '\t')[5], " · not converged")
+
+            # The uv title names the dataset as its row does, not only its first file.
+            pd = G.canvas_data(d, :uv; source = "first.fits + 25 more")
+            @test pd.title == "uv coverage — first.fits + 25 more"
+            @test G.canvas_data(d, :uv).title == "uv coverage — " * basename(d.filename)
+        finally
+            G.SHELL[] = prev
+        end
+    end
+
+    @testset "a profile written with \$RMIN and \$RMAX previews" begin
+        # PMOIRED's doughnut is written on the grid's own radii; the preview has to compile it
+        # on that grid, as the model does.
+        G = GUI
+        prev = G.SHELL[]
+        prfig = Makie.Figure()
+        pplot = G.build_profile_plot(prfig, Makie.Axis(prfig[1, 1]), Makie.Axis(prfig[1, 2]))
+        sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, pplot, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        py = tempname() * ".py"
+        try
+            write(py, """{'rim,diamin': 10., 'rim,diamout': 20., 'rim,profile': 'doughnut',
+                          'rim,f': 1.0}""")
+            @test G.shell_import_pmoired(py) == basename(py)
+            @test occursin("\$RMIN", G._model(sh).dict["rim,profile"])
+            g = split(G.shell_profile_grid("rim"), '\t')
+            @test parse(Float64, g[2]) == 5.0 && parse(Float64, g[3]) == 10.0
+            @test parse(Int, g[6]) > 0                       # the quadrature's node count
+            @test G.shell_profile_curves("rim") == ""
+
+            # Pasted, the same dict gives the same model; the console line keeps `$WL` as written.
+            filed = copy(G._model(sh).dict)
+            @test G.shell_import_pmoired_text(read(py, String)) == "pasted PMOIRED model"
+            @test G._model(sh).dict == filed
+            @test occursin("pmoired_to_dict(raw\"\"\"", sh.console[end - 1] * sh.console[end])
+            @test startswith(G.shell_import_pmoired_text("  \n"), "!")
+            @test startswith(G.shell_import_pmoired_text("{'a,ud': }"), "!")
+            @test G._model(sh).dict == filed                 # a failed paste changes nothing
+
+            # The template menu's Doughnut is the expression the import writes: 1 mid-grid, 0 at
+            # both rims, whatever the grid.
+            t = split(G.shell_profile_template("doughnut"), '\t')
+            @test t[1] == G._model(sh).dict["rim,profile"]
+            @test isempty(t[3])                             # no parameters of its own
+            for (lo, hi) in ((5.0, 10.0), (0.0, 2.5))
+                fn = OITOOLS.compile_profile(String(t[1]), String[]; rmin = lo, rmax = hi)
+                r = [lo, (lo + hi) / 2, hi]
+                @test fn(r, zero(r)) ≈ [0.0, 1.0, 0.0] atol = 1e-12
+            end
+        finally
+            rm(py; force = true)
             G.SHELL[] = prev
         end
     end

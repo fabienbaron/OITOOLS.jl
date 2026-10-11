@@ -119,7 +119,18 @@ end
 _refuse_smear(model::FlatModel, what) = (model.smear >= 2 || model.smear == -1) && throw(ArgumentError(
     "$what does not apply bandwidth smearing; remove \"smear\" from the model or set it to 0"))
 
-# The smeared visibilities of `data`'s uv points, and the zero-baseline flux when asked for.
+# The model's total flux at the first point's wavelength and epoch, what OI_FLUX is compared
+# with, and its gradient. (`eval_model` divides by it, so V at zero baseline is 1.)
+function _flux_at(model::FlatModel, x::AbstractVector, wl, mjd)
+    return only(model_flux(model, x; wl = isnothing(wl) ? nothing : wl[1:1],
+                           mjd = isnothing(mjd) ? nothing : mjd[1:1]))
+end
+function _flux_grad_at(model::FlatModel, x::AbstractVector, wl, mjd)
+    f(y) = _flux_at(model, y, wl, mjd)
+    return f(x), ForwardDiff.gradient(f, x)
+end
+
+# The smeared visibilities of `data`'s uv points, and the model's flux when asked for.
 function _smeared_cvis(model::FlatModel, x::AbstractVector, data::OIdata, need_flux::Bool)
     wl  = data.uv_lam
     mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
@@ -128,12 +139,7 @@ function _smeared_cvis(model::FlatModel, x::AbstractVector, data::OIdata, need_f
     # Coherent: the visibility averaged over the channel and the observables formed from that,
     # as an ABCD / coherent-flux measurement gives them (and as CANDID models it).
     model.smear_coherent && (V = _rowmean(V))
-    flux = if need_flux
-        real(eval_model(model, x, zeros(eltype(data.uv), 2, 1); wl = wl[1:1],
-                        mjd = mjd === nothing ? nothing : mjd[1:1])[1])
-    else
-        NaN
-    end
+    flux = need_flux ? _flux_at(model, x, wl, mjd) : NaN
     return V, flux
 end
 
@@ -298,8 +304,8 @@ function _chi2_flat_smeared(model, x, data::Vector{<:OIdata}, w, need_flux, Tp, 
         else
             V = eval_model(model, x, d.uv; wl = d.uv_lam,
                            mjd = hasproperty(d, :uv_mjd) ? d.uv_mjd : nothing)
-            fl = need_flux ? real(eval_model(model, x, zeros(eltype(d.uv), 2, 1);
-                                             wl = d.uv_lam[1:1])[1]) : NaN
+            fl = need_flux ? _flux_at(model, x, d.uv_lam,
+                                      hasproperty(d, :uv_mjd) ? d.uv_mjd : nothing) : NaN
         end
         chi2 += _total_chi2(_chi2_terms(V, d, w), w)
         need_flux && (model_fluxes[i] = fl)
@@ -527,9 +533,9 @@ Chi-squared from complex visibilities `V` and interferometric data `data`, witho
 gradient.
 
 Handles the same per-channel observables as [`cvis_to_chi2_fg`](@ref) — V², T3amp, T3phi,
-visamp, visphi — and additionally the **flux** term: pass the model's zero-baseline flux as
-`model_flux` and give `weights[6] > 0`. (`cvis_to_chi2_fg` cannot do this, because the flux
-*gradient* needs the model Jacobian at zero baseline, which is not derivable from `V` alone.)
+visamp, visphi — and additionally the **flux** term: pass the model's total flux
+([`model_flux`](@ref)) as `model_flux` and give `weights[6] > 0`. (`cvis_to_chi2_fg` cannot do
+this, because the flux *gradient* needs ∂F/∂x, which is not derivable from `V` alone.)
 
 Precision follows the inputs: `ComplexF32` visibilities against an `OIdata{Float32}` return a
 `Float32` chi². Accumulation is via `sum`, which is pairwise, so Float32 holds ~1e-8 relative
@@ -758,21 +764,12 @@ function chi2_flat(model::FlatModel,
     w = _pad_weights(weights)
     need_flux = w[6] > 0 && data.nflux > 0
 
-    # Evaluate model (prepend zero baseline if flux needed)
+    # Evaluate the model, and its total flux if the flux is fitted.
     # Pass per-UV wavelength and MJD so chromatic expressions ($WL, $MJD) work.
     _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
     _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
-    if need_flux
-        uv_aug  = hcat(zeros(2, 1), data.uv)
-        wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
-        mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
-        V_aug   = eval_model(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
-        model_flux = real(V_aug[1])
-        V = V_aug[2:end]
-    else
-        V = eval_model(model, x, data.uv; wl=_wl, mjd=_mjd)
-        model_flux = NaN
-    end
+    V = eval_model(model, x, data.uv; wl=_wl, mjd=_mjd)
+    model_flux = need_flux ? _flux_at(model, x, _wl, _mjd) : NaN
 
     chi2 = cvis_to_chi2_f(V, data; weights=w, model_flux=model_flux)
 
@@ -820,19 +817,8 @@ function chi2_flat_fg(model::FlatModel,
     # ── Forward pass + Jacobian ─────────────────────────────────────────────
     _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
     _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
-    if need_flux
-        uv_aug  = hcat(zeros(2, 1), data.uv)
-        wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
-        mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
-        V_aug, J_aug = _model_jac(jac_cache, model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
-        model_flux = real(V_aug[1])
-        J_zero = J_aug[1:1, :]
-        V = V_aug[2:end]
-        J = J_aug[2:end, :]
-    else
-        V, J = _model_jac(jac_cache, model, x, data.uv; wl=_wl, mjd=_mjd)
-        model_flux = NaN
-    end
+    V, J = _model_jac(jac_cache, model, x, data.uv; wl=_wl, mjd=_mjd)
+    model_flux, J_zero = need_flux ? _flux_grad_at(model, x, _wl, _mjd) : (NaN, nothing)
 
     # ── Per-channel chi2 + adjoint source ──────────────────────────────────
     T = _chi2_eltype(V, data)
@@ -901,12 +887,8 @@ function chi2_flat(model::FlatModel,
         for i in 1:nwavs
             _wl_i  = hasproperty(data[i], :uv_lam) ? data[i].uv_lam : nothing
             _mjd_i = hasproperty(data[i], :uv_mjd) ? data[i].uv_mjd : nothing
-            uv_aug  = hcat(zeros(2, 1), data[i].uv)
-            wl_aug  = isnothing(_wl_i)  ? nothing : vcat([_wl_i[1]], _wl_i)
-            mjd_aug = isnothing(_mjd_i) ? nothing : vcat([_mjd_i[1]], _mjd_i)
-            V_aug   = eval_model(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
-            model_fluxes[i] = real(V_aug[1])
-            cvis[i] = V_aug[2:end]
+            model_fluxes[i] = _flux_at(model, x, _wl_i, _mjd_i)
+            cvis[i] = eval_model(model, x, data[i].uv; wl=_wl_i, mjd=_mjd_i)
         end
     else
         cvis = [eval_model(model, x, data[i].uv;
@@ -1019,14 +1001,10 @@ function chi2_flat_fg(model::FlatModel,
         _wl_i  = hasproperty(data[i], :uv_lam) ? data[i].uv_lam : nothing
         _mjd_i = hasproperty(data[i], :uv_mjd) ? data[i].uv_mjd : nothing
         if need_flux
-            uv_aug  = hcat(zeros(2, 1), data[i].uv)
-            wl_aug  = isnothing(_wl_i)  ? nothing : vcat([_wl_i[1]], _wl_i)
-            mjd_aug = isnothing(_mjd_i) ? nothing : vcat([_mjd_i[1]], _mjd_i)
-            V_aug, J_aug = eval_model_grad(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
-            model_fluxes[i] = real(V_aug[1])
-            J_zeros[i] = vec(J_aug[1, :])
-            cvis[i] = V_aug[2:end]
-            Jac[i]  = J_aug[2:end, :]
+            fl_i, gf_i = _flux_grad_at(model, x, _wl_i, _mjd_i)
+            model_fluxes[i] = fl_i
+            J_zeros[i] = gf_i
+            cvis[i], Jac[i] = eval_model_grad(model, x, data[i].uv; wl=_wl_i, mjd=_mjd_i)
         else
             V_i, J_i = eval_model_grad(model, x, data[i].uv; wl=_wl_i, mjd=_mjd_i)
             cvis[i] = V_i
@@ -1115,17 +1093,8 @@ function residuals_flat(model::FlatModel,
     _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
     _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
     _smeared(model, data) && return _residuals_smeared(model, x, data, w, need_flux)
-    if need_flux
-        uv_aug  = hcat(zeros(2, 1), data.uv)
-        wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
-        mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
-        V_aug   = eval_model(model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
-        model_flux = real(V_aug[1])
-        V = V_aug[2:end]
-    else
-        V = eval_model(model, x, data.uv; wl=_wl, mjd=_mjd)
-        model_flux = NaN
-    end
+    V = eval_model(model, x, data.uv; wl=_wl, mjd=_mjd)
+    model_flux = need_flux ? _flux_at(model, x, _wl, _mjd) : NaN
 
     r = Float64[]
 
@@ -1197,18 +1166,8 @@ function residuals_flat_jac(model::FlatModel,
 
     _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
     _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
-    if need_flux
-        uv_aug  = hcat(zeros(2, 1), data.uv)
-        wl_aug  = isnothing(_wl)  ? nothing : vcat([_wl[1]], _wl)
-        mjd_aug = isnothing(_mjd) ? nothing : vcat([_mjd[1]], _mjd)
-        V_aug, dV_aug = _model_jac(jac_cache, model, x, uv_aug; wl=wl_aug, mjd=mjd_aug)
-        model_flux = real(V_aug[1])
-        V  = V_aug[2:end]
-        dV = dV_aug[2:end, :]
-    else
-        V, dV = _model_jac(jac_cache, model, x, data.uv; wl=_wl, mjd=_mjd)
-        model_flux = NaN
-    end
+    V, dV = _model_jac(jac_cache, model, x, data.uv; wl=_wl, mjd=_mjd)
+    model_flux, dflux = need_flux ? _flux_grad_at(model, x, _wl, _mjd) : (NaN, nothing)
 
     # LsqFit consumes these, so they stay Float64 (see fit_model.jl).
     r_parts = Vector{Float64}[]
@@ -1288,8 +1247,8 @@ function residuals_flat_jac(model::FlatModel,
         fl = _chi2_flux(model_flux, data)
         fm = fill(fl.C * model_flux, data.nflux)
         r_fl = sqrt(w_flux) .* (fm .- data.flux) ./ data.flux_err
-        # J_flux[i,j] = sqrt(w) * C * Re(∂V_zero/∂x_j) / σ_i
-        J_zero = real.(dV_aug[1:1, :])  # 1 × nparams
+        # J_flux[i,j] = sqrt(w) * C * ∂F/∂x_j / σ_i
+        J_zero = permutedims(dflux)  # 1 × nparams
         J_fl = sqrt(w_flux) .* fl.C .* repeat(J_zero, data.nflux, 1) ./ data.flux_err
         push!(r_parts, r_fl); push!(J_parts, J_fl)
     end
@@ -1337,15 +1296,13 @@ function _smeared_chi2_fg(model::FlatModel, x::AbstractVector, data::OIdata, w,
                               convert(Matrix{C}, Jf), data, ntuple(i -> T(w[i]), Val(7)),
                               model.smear_coherent)
     if w[6] > 0 && data.nflux > 0
-        # As in `_smeared_residuals_jac`: the zero-baseline visibility, the scale held fixed.
-        Vz, Jz = eval_model_grad(model, x, zeros(eltype(data.uv), 2, 1);
-                                 wl = data.uv_lam[1:1],
-                                 mjd = mjd === nothing ? nothing : mjd[1:1])
-        fl = _chi2_flux(real(Vz[1]), data)
+        # As in `_smeared_residuals_jac`: the model's total flux, the scale held fixed.
+        Fz, gz = _flux_grad_at(model, x, data.uv_lam, mjd)
+        fl = _chi2_flux(Fz, data)
         sw = sqrt(w[6])
-        r  = sw .* (fl.C * real(Vz[1]) .- data.flux) ./ data.flux_err
+        r  = sw .* (fl.C * Fz .- data.flux) ./ data.flux_err
         chi2 += sum(abs2, r)
-        g .+= 2 * sum(r .* sw .* fl.C ./ data.flux_err) .* real.(vec(Jz))
+        g .+= 2 * sum(r .* sw .* fl.C ./ data.flux_err) .* gz
     end
     return chi2, g
 end
@@ -1471,16 +1428,14 @@ function _smeared_residuals_jac(model::FlatModel, x::AbstractVector, data::OIdat
     end
     r, J = _smeared_obs_jac(V, Jd, data, w)
     if w[6] > 0 && data.nflux > 0
-        # The flux is the zero-baseline visibility, which smearing does not change. For an
+        # The flux is the model's total flux, which smearing does not change. For an
         # uncalibrated flux the scale C is at its optimum, so holding it fixed gives the exact
         # gradient of the χ² minimised over C.
-        Vz, Jz = eval_model_grad(model, x, zeros(eltype(data.uv), 2, 1);
-                                 wl = data.uv_lam[1:1],
-                                 mjd = mjd === nothing ? nothing : mjd[1:1])
-        fl = _chi2_flux(real(Vz[1]), data)
-        r = vcat(r, sqrt(w[6]) .* (fill(fl.C * real(Vz[1]), data.nflux) .- data.flux) ./
+        Fz, gz = _flux_grad_at(model, x, data.uv_lam, mjd)
+        fl = _chi2_flux(Fz, data)
+        r = vcat(r, sqrt(w[6]) .* (fill(fl.C * Fz, data.nflux) .- data.flux) ./
                     data.flux_err)
-        J = vcat(J, sqrt(w[6]) .* fl.C .* repeat(real.(Jz[1:1, :]), data.nflux, 1) ./
+        J = vcat(J, sqrt(w[6]) .* fl.C .* repeat(permutedims(gz), data.nflux, 1) ./
                     data.flux_err)
     end
     return r, J

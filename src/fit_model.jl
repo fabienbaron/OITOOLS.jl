@@ -98,7 +98,7 @@ compiled with its own arguments, so the set is fixed by the key's parameter name
 | key | variables | why |
 |---|---|---|
 | `c,profile` | `\$R`, `\$MU`, `\$D`, `\$RMIN`, `\$RMAX`, `\$DMIN`, `\$DMAX` | evaluated on the radial grid, before any uv point |
-| `c,visfunc` | `\$B`, `\$WL`, `\$MJD` | evaluated per uv point, on its baseline |
+| `c,visfunc` | `\$BL`, `\$WL`, `\$MJD` | evaluated per uv point, on its baseline |
 | anything else | `\$WL`, `\$MJD` | resolved once per uv point |
 
 A variable used outside its set raises `UndefVarError` when the model is evaluated, naming the
@@ -108,7 +108,7 @@ function implicit_vars(key::AbstractString)
     i = findfirst(',', key)
     par = i === nothing ? key : key[i+1:end]
     par == "profile" && return ("R", "MU", "D", "RMIN", "RMAX", "DMIN", "DMAX")
-    par == "visfunc" && return ("B", "WL", "MJD")
+    par == "visfunc" && return ("BL", "WL", "MJD")
     return ("WL", "MJD")
 end
 
@@ -135,7 +135,7 @@ function missing_refs(model_dict::AbstractDict)
         qualifies = par == "profile" || par == "visfunc"
         inscope = implicit_vars(key)
         for ref in extract_refs(String(v))
-            if ref in IMPLICIT_VARS || ref == "B"
+            if ref in IMPLICIT_VARS || ref == "BL"
                 ref in inscope || push!(out, (key, ref))
                 continue
             end
@@ -153,7 +153,7 @@ end
 # One sentence for a `missing_refs` pair: an implicit variable used out of its scope reads
 # differently from a parameter that does not exist, and the fix differs too.
 function _missing_ref_message(key, ref)
-    ref in IMPLICIT_VARS || ref == "B" || return "$key refers to \$$ref, which the model does not define"
+    ref in IMPLICIT_VARS || ref == "BL" || return "$key refers to \$$ref, which the model does not define"
     ok = implicit_vars(key)
     return "$key uses \$$ref, which this kind of expression cannot see (it has " *
            join(("\$" * v for v in ok), ", ") * ")"
@@ -164,10 +164,11 @@ end
 
 Everything wrong with a model that can be seen without fitting it, one sentence each.
 
-Four of the five describe a setup that runs happily and answers the wrong question: a starting
-value outside its own bounds, bounds that exclude everything, and flux fractions that do not sum
-to one. The flux check is the quiet one -- a second component added with `f = 1` doubles the
-model's flux, and the only symptom is a χ² in the millions.
+Four of the first five describe a setup that runs happily and answers the wrong question: a
+starting value outside its own bounds, bounds that exclude everything, and fluxes that cannot
+make a visibility. The visibilities are divided by the total flux, so the fluxes' scale is
+free: when every flux is free the fit has one direction that changes nothing (fix one, or
+write one as 1 − the others), and numeric fluxes summing to zero or less make V undefined.
 
 The fifth, an expression referring to a parameter that is not in the model or to an implicit
 variable its kind of expression cannot see (`\$WL` inside a profile), does not run at all:
@@ -176,7 +177,17 @@ naming its own internal module rather than the key or the expression at fault. R
 component or a global leaves exactly that behind in anything that referred to it, so the model
 panel reports it here instead.
 
-[`display_model`](@ref) reports the same five. It calls this function for the reference check
+The sixth is a key the parser ignores. A key that is not a shape key and that no expression
+refers to does nothing, whether it was added with "+ parameter" and is not used yet or is a
+misspelling (`star,diamm`); the warning says it is not used. A shape key of another kind beside
+the one that decided the component does nothing either: `ud` and `diamin` make a ring, whose
+`ud` is not read. Neither raises; in the second case the warning says what the component was
+read as and which key decided it.
+
+The seventh is a wavelength written in metres: `\$WL` is in microns, so `\$WL/1.6e-6` is
+off by 10⁶; a constant below 1e-3 set against `\$WL` is reported.
+
+[`display_model`](@ref) reports the first five. It calls this function for the reference check
 alone and keeps the bound warnings in its own per-parameter table, where each one reads beside
 the bounds it is about.
 
@@ -196,19 +207,70 @@ function model_warnings(model_dict::Dict{String}, list_free_params::AbstractVect
             push!(w, "$p has an empty box: lower $lo is not below upper $hi")
     end
 
-    fkeys = [k for k in keys(model_dict) if endswith(k, ",f")]
-    numeric = [model_dict[k] for k in fkeys if model_dict[k] isa Number]
-    if !isempty(numeric) && length(numeric) == length(fkeys)
-        fsum = sum(numeric)
-        abs(fsum - 1.0) > 0.01 && push!(w,
-            "flux fractions sum to $(round(fsum; digits = 4)), not 1 — every component is " *
-            "carrying its own full flux, which inflates χ² rather than sharing the source " *
-            "between them")
-    end
+    append!(w, _flux_warnings(model_dict, list_free_params))
 
     for (key, ref) in missing_refs(model_dict)
         push!(w, _missing_ref_message(key, ref) * " — evaluating the model raises " *
                  "UndefVarError naming $ref but not the key using it")
+    end
+
+    # The keys the parser ignores, as `dict_to_model` finds them, without its log message.
+    ignored = try
+        Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+            _warn_unrecognised_keys(Dict{String,Any}(model_dict))
+        end
+    catch
+        String[]
+    end
+    # `$WL` is in microns. Divided by, or set against, a constant below 1e-3 it was almost
+    # certainly written in metres, and is off by 10⁶ (raised to whatever power follows).
+    for k in sort(collect(keys(model_dict)))
+        v = model_dict[k]
+        v isa AbstractString || continue
+        for m in eachmatch(r"\$WL\s*[-/<>]=?\s*\(?\s*([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)", v)
+            c = tryparse(Float64, m[1])
+            c !== nothing && 0 < c < 1e-3 &&
+                push!(w, "$k compares \$WL with $(m[1]): \$WL is in microns, so that constant " *
+                         "looks like metres (write $(round(c * 1e6; sigdigits = 6)))")
+        end
+    end
+
+    for k in sort(ignored)
+        cn, suffix = split(k, ',', limit = 2)
+        kind = _identify_kind(String(cn), model_dict)
+        if suffix in _GEOMETRY_KEYS
+            from = get(_KIND_GEOMETRY, kind, "")
+            push!(w, "$cn is read as $kind" * (isempty(from) ? "" : " (from $cn,$from)") *
+                     "; $k is ignored")
+        else
+            # Not a shape key, so the kind is unchanged: a parameter added and not referenced
+            # yet, or a misspelling. Either way what is missing is a reference to it.
+            push!(w, "$k is not used: no expression refers to \$$k")
+        end
+    end
+    return w
+end
+
+# The fluxes, which V is divided by the sum of: numeric ones summing to zero or less leave V
+# undefined, and every flux free leaves their common scale undetermined.
+function _flux_warnings(model_dict::AbstractDict, free::AbstractVector{<:AbstractString})
+    w = String[]
+    comps = try
+        String.(_component_names(Dict{String,Any}(model_dict)))
+    catch
+        String[]
+    end
+    isempty(comps) && return w
+    fkeys = [c * ",f" for c in comps]
+    vals = [get(model_dict, k, 1.0) for k in fkeys]          # no `f` is a flux of 1
+    if all(v -> v isa Number, vals) && sum(vals) <= 0
+        push!(w, "the fluxes sum to $(sum(vals)): the visibilities are divided by the total " *
+                 "flux, which must be positive")
+    end
+    if length(fkeys) > 1 && all(k -> k in free, fkeys)
+        push!(w, "every flux is free ($(join(fkeys, ", "))): the visibilities are divided by " *
+                 "their sum, so only their ratios are measured — fix one, or write one as " *
+                 "1 − the others")
     end
     return w
 end
@@ -219,7 +281,7 @@ end
 Print a human-readable summary of the model setup, grouped by component.
 Shows each parameter's value (or expression), whether it is free or fixed,
 and its bounds.  Warns about common mistakes (value out of bounds, missing
-bounds, flux fractions that don't sum to 1).
+bounds, fluxes that cannot make a visibility).
 
 Call this *before* `fit_model` / `fit_model_ultranest` to verify your setup.
 """
@@ -329,18 +391,10 @@ function display_model(model_dict  ::Dict{String},
     println("Total: $n_total parameters, $n_free free")
     println("Free:  $(join(list_free_params, ", "))")
 
-    # Check flux sum at reference values
-    flux_keys = [k for k in keys(model_dict) if endswith(k, ",f")]
-    numeric_fluxes = [(k, model_dict[k]) for k in flux_keys if model_dict[k] isa Number]
-    expr_fluxes    = [(k, model_dict[k]) for k in flux_keys if model_dict[k] isa String]
-    if !isempty(numeric_fluxes) && isempty(expr_fluxes)
-        fsum = sum(v for (_, v) in numeric_fluxes)
-        if abs(fsum - 1.0) > 0.01
-            @printf("⚠ Numeric flux fractions sum to %.4f (expected ≈ 1.0)\n", fsum)
-            n_warnings += 1
-        end
-    elseif !isempty(expr_fluxes)
-        println("  Note: some flux fractions are expressions — sum check skipped")
+    # The fluxes: V is divided by their sum
+    for msg in _flux_warnings(model_dict, list_free_params)
+        println("⚠ ", msg)
+        n_warnings += 1
     end
 
     # An expression naming a parameter the model does not define raises at evaluation time,
@@ -409,7 +463,8 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 function _dollarify(expr::String)
-    replace(expr, r"\b([A-Za-z_][A-Za-z0-9_]*,[A-Za-z_][A-Za-z0-9_]*)\b" => s"$\1")
+    # the suffixes of `_REF_PATTERN`, an azimuthal mode's key among them
+    replace(expr, r"\b([A-Za-z_][A-Za-z0-9_]*,(?:az (?:amp|projang)[0-9]+|[A-Za-z_][A-Za-z0-9_]*))\b" => s"$\1")
 end
 
 
@@ -1190,36 +1245,34 @@ parameters at each wavelength.
 # Arguments
 - `model::FlatModel` — compiled model from `dict_to_model`
 - `x::AbstractVector` — current free-parameter values
-- `wl_grid` — wavelength array in METRES, the unit `\$WL` carries in the resolver and
-  `uv_lam` carries in the data. A grid in microns evaluates every `\$WL` expression at a
-  wavelength a million times too large and returns fluxes that are wrong without erroring.
+- `wl_grid` — wavelength array in METRES, the unit `uv_lam` carries in the data and every
+  `wl` argument takes; the expressions see it as `\$WL` in microns. A grid in microns
+  evaluates every `\$WL` expression at a wavelength a million times too small and returns
+  fluxes that are wrong without erroring.
 
 # Returns
-- `total::Vector{Float64}` — total flux at each wavelength (= V(0,0))
-- `components::Dict{String,Vector{Float64}}` — per-component flux
+- `total::Vector{T}` — total flux at each wavelength, Σ f ([`model_flux`](@ref)), in the
+  parameters' type
+- `components::Dict{String,Vector{T}}` — per-component flux, in the same type
 """
 function model_to_sed(model::FlatModel,
                       x::AbstractVector,
                       wl_grid::AbstractVector)
     nwl = length(wl_grid)
 
-    # Total flux = V(0,0) at each wavelength
-    uv_zero = zeros(2, 1)   # single (u,v) = (0,0) point
-    total = Vector{Float64}(undef, nwl)
-    for (i, wl) in enumerate(wl_grid)
-        V = eval_model(model, x, uv_zero; wl)
-        total[i] = real(V[1])
-    end
+    # Total flux, Σ f, at each wavelength, in the parameters' type
+    total = model_flux(model, x; wl = wl_grid)
+    T = eltype(total)
 
     # Per-component fluxes from the resolver
-    comp_fluxes = Dict{String, Vector{Float64}}()
+    comp_fluxes = Dict{String, Vector{T}}()
     for comp in model.components
-        comp_fluxes[comp.comp_name] = zeros(nwl)
+        comp_fluxes[comp.comp_name] = zeros(T, nwl)
     end
     for (i, wl) in enumerate(wl_grid)
         pv = model.resolver.fn(x, wl, NaN)
         for comp in model.components
-            f = comp.f_idx == 0 ? 1.0 : pv[comp.f_idx]
+            f = comp.f_idx == 0 ? one(T) : T(pv[comp.f_idx])
             comp_fluxes[comp.comp_name][i] = f
         end
     end
@@ -1265,7 +1318,8 @@ visibility evaluations.
 - `pixsize` — pixel size in mas (default 0.1)
 - `oversample` — oversampling factor (default 1)
 - `normalize` — normalize image to unit sum (default true)
-- `wl` — wavelength in microns (scalar); enables `\$WL` in spectrum expressions
+- `wl` — wavelength in metres (scalar), as every `wl` argument; enables `\$WL` (microns in
+  the expressions) in spectrum expressions
 
 # Returns
 `img` — `nx × nx` Matrix{Float64}
@@ -1306,7 +1360,8 @@ function model_to_image(model::FlatModel,
     # `mjd` as well as `wl`: a model may depend on either, and `eval_model` has always taken
     # both — only this entry point did not pass it, so a time-dependent model rendered at one
     # arbitrary epoch with nothing saying which.
-    V_half = eval_model(model, x, uv; wl, mjd)
+    # Not normalised by the flux when the image is not: its sum is then the model's flux.
+    V_half = eval_model(model, x, uv; wl, mjd, normalize)
 
     # Reshape to (nrfft, ns) — rfft output layout
     V_mat = reshape(V_half, nrfft, ns)

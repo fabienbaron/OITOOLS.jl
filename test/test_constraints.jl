@@ -346,10 +346,10 @@ end
     # else. Every variable in every kind, against the parser.
     kinds = (("c,profile", v -> Dict{String,Any}("c,profile" => "exp(-\$R/2) * (1 + 0 * \$$v)",
                                                  "c,udout" => 4.0, "c,f" => 1.0)),
-             ("c,visfunc", v -> Dict{String,Any}("c,visfunc" => "exp(-\$g * \$B) * (1 + 0 * \$$v)",
+             ("c,visfunc", v -> Dict{String,Any}("c,visfunc" => "exp(-\$g * \$BL) * (1 + 0 * \$$v)",
                                                  "c,g" => 0.01, "c,f" => 1.0)),
              ("c,ud",      v -> Dict{String,Any}("c,ud" => "3 + 0 * \$$v", "c,f" => 1.0)))
-    for (key, model) in kinds, v in vcat(collect(OITOOLS.IMPLICIT_VARS), "B")
+    for (key, model) in kinds, v in vcat(collect(OITOOLS.IMPLICIT_VARS), "BL")
         d = model(v)
         visible = v in OITOOLS.implicit_vars(key)
         @test isempty(OITOOLS.missing_refs(d)) == visible
@@ -359,7 +359,7 @@ end
 
     # And a visibility function sees each uv point's OWN wavelength and epoch, not a scalar:
     # at B = 10 and 20 Mλ, observed at 1.6 and 3.2 µm, V = exp(-g·B·λ/1.6 µm).
-    chromatic = Dict{String,Any}("c,visfunc" => "exp(-\$g * \$B * \$WL / 1.6e-6) * \$MJD / \$MJD",
+    chromatic = Dict{String,Any}("c,visfunc" => "exp(-\$g * \$BL * \$WL / 1.6) * \$MJD / \$MJD",
                                  "c,g" => 0.01, "c,f" => 1.0)
     V = eval_model(dict_to_model(chromatic, String[]), Float64[], uv;
                    wl = [1.6e-6, 3.2e-6], mjd = [57000.0, 57001.0])
@@ -370,6 +370,75 @@ end
         endswith(f, ".toml") || continue
         @test isempty(OITOOLS.missing_refs(read_model_file(f).model))
     end
+end
+
+# An azimuthal mode's key has a space in it (PMOIRED's spelling, `rim,az amp1`), and an
+# expression must be able to refer to it like any other key: in a constraint, a prior, a link.
+@testset "an expression can refer to an azimuthal mode's key" begin
+    @test OITOOLS.extract_refs("\$rim,az amp1 * 2 + \$rim,az projang12") == ["rim,az amp1", "rim,az projang12"]
+    @test OITOOLS.extract_refs("\$a,b c") == ["a,b"]          # no other space belongs to a reference
+    md = Dict{String,Any}("rim,diamin" => 2.0, "rim,diamout" => 4.0, "rim,profile" => "1",
+                          "rim,az amp1" => 0.5, "rim,az projang1" => 30.0, "rim,f" => 0.5,
+                          "disk,diamin" => 4.0, "disk,diamout" => 8.0, "disk,profile" => "1",
+                          "disk,az amp1" => "\$rim,az amp1", "disk,az projang1" => "\$rim,az projang1 + 90",
+                          "disk,f" => 0.5)
+    m = dict_to_model(md, ["rim,az amp1"])
+    uv = [1e7 3e7; 2e7 -1e7]
+    md2 = merge(md, Dict{String,Any}("disk,az amp1" => 0.7, "disk,az projang1" => 120.0, "rim,az amp1" => 0.7))
+    @test eval_model(m, [0.7], uv) ≈ eval_model(dict_to_model(md2, String[]), Float64[], uv)
+    c = [ModelConstraint("rim,az amp1", "<", 0.6)]
+    @test check_constraints(c, md; verb = false) == [true]
+    @test check_constraints(c, merge(md, Dict{String,Any}("rim,az amp1" => 0.7)); verb = false) == [false]
+end
+
+# A key the parser ignores does not raise: a misspelt one does nothing, and a key of another
+# kind beside the one that decided the component does not make it that kind. Both are named.
+@testset "keys the parser ignores are named, with what the component was read as" begin
+    w = model_warnings(Dict{String,Any}("star,ud" => 3.0, "star,diamin" => 1.0,
+                                        "star,diamout" => 3.0, "star,f" => 1.0), String[])
+    @test w == ["star is read as ring (from star,diamin); star,ud is ignored"]
+    w = model_warnings(Dict{String,Any}("star,ud" => 3.0, "star,diamm" => 1.0, "star,f" => 1.0),
+                       String[])
+    @test w == ["star,diamm is not used: no expression refers to \$star,diamm"]
+    # what the kind reads raises nothing
+    for md in (Dict{String,Any}("star,ud" => 3.0, "star,f" => 1.0),
+               Dict{String,Any}("r,diamin" => 1.0, "r,diamout" => 3.0, "r,f" => 1.0),
+               Dict{String,Any}("r,profile" => "1.0", "r,diamin" => 1.0, "r,diamout" => 3.0, "r,f" => 1.0),
+               Dict{String,Any}("s,ldclaret4" => 8.0, "s,c1" => 0.7, "s,c2" => 0.0, "s,c3" => 0.0,
+                                "s,c4" => 0.0, "s,f" => 1.0))
+        @test isempty(model_warnings(md, String[]))
+    end
+    # A visibility function's `$BL` is the baseline, not a use of some component's `BL`; a
+    # profile's `$slope` IS a use of its component's `slope`.
+    md = Dict{String,Any}("vf,visfunc" => "exp(-\$BL/100)", "vf,f" => 1.0,
+                          "disk,fwhm" => 4.0, "disk,BL" => 2.0, "disk,f" => 1.0)
+    @test any(w -> occursin("disk,BL", w), model_warnings(md, String[]))
+    md["disk,f"] = "\$disk,BL"
+    @test isempty(model_warnings(md, String[]))
+    md = Dict{String,Any}("r,profile" => "\$R^\$slope", "r,slope" => -2.0,
+                          "r,diamin" => 1.0, "r,diamout" => 3.0, "r,f" => 1.0)
+    @test isempty(model_warnings(md, String[]))
+end
+
+
+@testset "a flux is a weight: unbounded above, and a fit reaches a ratio above 1" begin
+    # The model divides each flux by the total, so `f` is relative and 1.5 is an ordinary value
+    # (PMOIRED's FS CMa disc is 1.55 against a star at 1). A default upper bound of 1 stopped
+    # the fit on the bound.
+    md = Dict{String,Any}("star,ud" => 8.0, "star,f" => 1.0, "disk,fwhm" => 4.0, "disk,f" => 1.5)
+    lb, ub = default_bounds(md, ["star,f", "disk,f", "disk,thick"])
+    @test (lb["disk,f"], ub["disk,f"]) == (0.0, Inf)
+    @test (lb["disk,thick"], ub["disk,thick"]) == (0.0, 1.0)
+
+    # Data made from that model, so the answer is known without fitting it first.
+    synth = deepcopy(data)
+    synth.v2 .= model_to_obs(dict_to_model(md, String[]), Float64[], synth).v2
+    free = ["star,ud", "disk,f"]
+    start = merge(md, Dict{String,Any}("star,ud" => 7.0, "disk,f" => 1.0))
+    lb, ub = default_bounds(start, free)
+    r = fit_model_lsqfit(start, free, synth; weights = [1.0, 0.0, 0.0], lb, ub)
+    @test r.x_opt[2] ≈ 1.5 rtol = 1e-4
+    @test r.x_opt[1] ≈ 8.0 rtol = 1e-4
 end
 
 end

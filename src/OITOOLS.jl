@@ -209,7 +209,7 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
 
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
 export companion_search, companion_grid, CompanionSearch, companion_flux_map, detection_sigma
-export FlatModel, dict_to_model, parse_model, eval_model, eval_model_grad, eval_model_grad_ad,
+export FlatModel, dict_to_model, parse_model, eval_model, model_flux, eval_model_grad, eval_model_grad_ad,
        eval_model_jac, eval_model_jac!, ModelJacWorkspace, ModelJacCache, eval_model_sub, smear_samples, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
 export fit_model, fit_model_lsqfit, fit_model_nested, fit_model_ultranest
 export nested_backend, set_nested_backend!

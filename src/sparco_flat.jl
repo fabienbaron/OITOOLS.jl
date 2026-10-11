@@ -44,7 +44,7 @@ const _SPARCO_EXPRS = Dict{String,Any}(
 )
 
 const _SPARCO_DEFAULTS = Dict{String,Any}(
-    "wl0" => 1.6e-6, "star,f0" => 0.5, "star,di" => 4.0,
+    "wl0" => 1.6, "star,f0" => 0.5, "star,di" => 4.0,              # wl0 in microns, as `$WL`
     "bg,f0" => 0.0, "d_env" => 0.0,
 )
 
@@ -109,7 +109,7 @@ end
 function _sparco_flat_forward(model::FlatModel, x, x_img, ftplan, data, w_idx::Int)
     wl = data.uv_lam
     _refuse_smear(model, "SPARCO image + model")
-    V_model = eval_model(model, x, data.uv; wl=wl)
+    V_model = eval_model(model, x, data.uv; wl=wl, normalize = false)
     W = _eval_W(model, x, wl, w_idx)
     V_image = image_to_vis(x_img, ftplan[1])
     V_total = V_model .+ W .* V_image
@@ -197,7 +197,7 @@ function chi2_sparco_flat_fg(x::AbstractVector{<:AbstractFloat},
 
     # ── Forward pass ──────────────────────────────────────────────────────────
     _refuse_smear(model, "SPARCO image + model")
-    V_model, J_model = eval_model_grad(model, params, data.uv; wl=wl)
+    V_model, J_model = eval_model_grad(model, params, data.uv; wl=wl, normalize = false)
     W = _eval_W(model, params, wl, w_idx)
     J_W = _jacobian_W(model, params, wl, w_idx)
     V_image = image_to_vis(x_img, ftplan[1])
@@ -291,7 +291,7 @@ function model_and_image_to_chi2_fg(
     # 2. Model → cvis + Jacobian
     wl = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
     _refuse_smear(model, "SPARCO image + model")
-    cvis_model, J = eval_model_grad(model, x_params, data.uv; wl=wl)
+    cvis_model, J = eval_model_grad(model, x_params, data.uv; wl=wl, normalize = false)
 
     if !isnothing(w_name)
         # Use named W output from model
@@ -312,7 +312,7 @@ function model_and_image_to_chi2_fg(
         # Fallback: f_env = 1 - V_model(0,0)
         uv_zero = zeros(2, 1)
         wl_zero = isnothing(wl) ? nothing : [wl[1]]
-        cvis_zero, J_zero = eval_model_grad(model, x_params, uv_zero; wl=wl_zero)
+        cvis_zero, J_zero = eval_model_grad(model, x_params, uv_zero; wl=wl_zero, normalize = false)
         f_env = 1.0 - real(cvis_zero[1])
 
         cvis_total = f_env .* cvis_image .+ cvis_model
@@ -377,7 +377,7 @@ function model_and_image_to_chi2_fg(
     for i in 1:nwavs
         wl_i = data[i].uv_lam
         _refuse_smear(model, "SPARCO image + model")
-        V_model_i, J_i = eval_model_grad(model, x_params, data[i].uv; wl=wl_i)
+        V_model_i, J_i = eval_model_grad(model, x_params, data[i].uv; wl=wl_i, normalize = false)
         W_i = _eval_W(model, x_params, wl_i, w_idx)
         J_W_i = _jacobian_W(model, x_params, wl_i, w_idx)
         V_total_i = V_model_i .+ W_i .* cvis_image
@@ -680,7 +680,7 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
 
     # Build model dict
     model_dict = merge(_SPARCO_DEFAULTS, _SPARCO_EXPRS)
-    model_dict["wl0"]     = Float64(lambda_ref)
+    model_dict["wl0"]     = Float64(lambda_ref) * 1e6        # metres → microns, as `$WL`
     model_dict["star,f0"] = Float64(star_flux)
     model_dict["bg,f0"]   = Float64(bg_flux)
     model_dict["d_env"]   = Float64(d_env)

@@ -4,8 +4,10 @@
 # builds the thing that draws it and hands control to Qt's event loop.
 
 function __init__()
-    # Callbacks must be registered before any QML file that calls them is loaded.
-    QML.@qmlfunction(shell_open, shell_set_view, shell_select_dataset,
+    # Callbacks must be registered before any QML file that calls them is loaded. Each one goes
+    # through `_guarded`: QML.jl calls Julia from a C function pointer with no `try`, so an error
+    # escaping a callback would unwind through Qt's event loop and freeze the window.
+    for f in (shell_open, shell_set_view, shell_select_dataset,
                      shell_dataset_names, shell_current_dataset, shell_dataset_summary,
                      shell_filter_choices, shell_filter_preview, shell_apply_filter,
                      shell_filter_spec, shell_filter_preview_clear,
@@ -40,7 +42,7 @@ function __init__()
                      shell_remove_param, shell_add_param, shell_link_params, shell_param_name_problem,
                      shell_param_removable, shell_remove_unused,
                      shell_rename_component, shell_save_figure,
-                     shell_expression_keywords, shell_check_expression,
+                     shell_expression_keywords, shell_expression_params, shell_check_expression,
                      shell_profile_params, shell_add_profile_params, shell_profile_grid,
                      shell_profile_curves,
                      shell_flux_constraint,
@@ -61,14 +63,42 @@ function __init__()
                      shell_companion_defaults,
                      shell_smearing, shell_set_smearing, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
-                     shell_import_pmoired, shell_export_pmoired,
+                     shell_import_pmoired, shell_import_pmoired_text, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
                      # Julia for everything the toolkit would otherwise supply.
                      picker_list, picker_places, picker_join, picker_parent, picker_basename, picker_suggest,
                      shell_initial_folder, shell_set_work_directory,
                      picker_start, picker_kind, picker_would_overwrite, picker_examples)
+        QML.qmlfunction(string(nameof(f)), (args...) -> _guarded(f, args...))
+    end
     return nothing
+end
+
+"""
+    _guarded(f, args...)
+
+Call the Qt callback `f`, and turn an error into the panels' error string instead of letting it
+reach Qt. The error goes to the console pane as `! name: cause` and, with its stack trace, to
+stderr; the return value is that same `"! name: cause"`, which the panels already read as a
+failure. A callback whose caller expects a number or a Bool gets the string instead, which
+JavaScript coerces: one control shows a wrong value, the window keeps running.
+"""
+function _guarded(f, args...)
+    try
+        return f(args...)
+    catch err
+        msg = string("! ", nameof(f), ": ", _cause(err))
+        # stderr first: the console pane needs a running shell, and the callback may have failed
+        # because there is none.
+        Base.showerror(stderr, err, catch_backtrace())
+        println(stderr)
+        try
+            SHELL[] === nothing || console!(SHELL[], msg; kind = :err)
+        catch
+        end
+        return msg
+    end
 end
 
 """

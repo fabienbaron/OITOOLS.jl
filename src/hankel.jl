@@ -302,7 +302,7 @@ end
 ##############################################################################
 
 """
-    compile_profile(expr_str, param_names) -> RuntimeGeneratedFunction
+    compile_profile(expr_str, param_names; rmin, rmax, size_args=false) -> RuntimeGeneratedFunction
 
 Compile a profile expression string into an AD-transparent closure.
 
@@ -312,6 +312,10 @@ where each `param_i` corresponds to the names in `param_names` (in order).
 `\$R` and `\$MU` are replaced by the first two arguments.
 Other `\$name` references are replaced by the corresponding scalar argument.
 
+`\$RMIN`, `\$RMAX`, `\$DMIN` and `\$DMAX` are the numbers `rmin` and `rmax` (and twice them),
+written into the expression. With `size_args = true` they are arguments instead, so that a
+component's size can be a parameter: the signature is then `(r, mu, rmin, rmax, param1, ...)`.
+
 Example:
     fn = compile_profile("exp(-(\$R / \$scale)^2 / 2)", ["scale"])
     I  = fn(r, mu, 2.0)   # equivalent to @. exp(-(r / 2.0)^2 / 2)
@@ -319,7 +323,8 @@ Example:
 function compile_profile(expr_str::AbstractString,
                           param_names::Vector{String};
                           rmin::Union{Nothing,Real} = nothing,
-                          rmax::Union{Nothing,Real} = nothing)
+                          rmax::Union{Nothing,Real} = nothing,
+                          size_args::Bool = false)
     # One pass over whole `$name` tokens, not a sequence of substring replacements.
     #
     # `$R` is a PREFIX of `$Rin`, so replacing it first rewrote `$Rin` as `_R_in` — and the
@@ -330,13 +335,19 @@ function compile_profile(expr_str::AbstractString,
     #
     # The token pattern is `extract_refs`'s, so what is substituted here and what the rest of
     # the package counts as a reference cannot disagree.
-    s = replace(expr_str, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => function (m)
+    s = replace(expr_str, _REF_PATTERN => function (m)
         name = m[2:end]                      # strip the $
         name == "R"  && return "_R_"
         name == "MU" && return "_MU_"
         # `$D` is the diameter at each grid radius, so it is elementwise 2r and needs no
         # argument of its own. The bounds are numbers by the time this is called.
         name == "D"    && return "(2*_R_)"
+        if size_args
+            name == "RMIN" && return "_RMIN_"
+            name == "RMAX" && return "_RMAX_"
+            name == "DMIN" && return "(2*_RMIN_)"
+            name == "DMAX" && return "(2*_RMAX_)"
+        end
         name == "RMIN" && return rmin === nothing ?
             error("\$RMIN needs the profile grid; compile_profile was called without it") :
             "($(Float64(rmin)))"
@@ -349,12 +360,13 @@ function compile_profile(expr_str::AbstractString,
         name == "DMAX" && return rmax === nothing ?
             error("\$DMAX needs the profile grid; compile_profile was called without it") :
             "($(2*Float64(rmax)))"
-        return replace(name, "," => "__")    # mangle to a valid Julia identifier
+        return _mangle(name)                  # a valid Julia identifier
     end)
 
-    # Build argument list: (_R_, _MU_, param1, param2, ...)
-    arg_symbols = [Symbol(replace(n, "," => "__")) for n in param_names]
-    args = Expr(:tuple, :_R_, :_MU_, arg_symbols...)
+    # Build argument list: (_R_, _MU_, [_RMIN_, _RMAX_,] param1, param2, ...)
+    arg_symbols = [Symbol(_mangle(n)) for n in param_names]
+    args = size_args ? Expr(:tuple, :_R_, :_MU_, :_RMIN_, :_RMAX_, arg_symbols...) :
+                       Expr(:tuple, :_R_, :_MU_, arg_symbols...)
 
     fn_expr = Meta.parse("$args -> @. $s")
     return @RuntimeGeneratedFunction(fn_expr)
@@ -369,11 +381,12 @@ Compile a user-written **visibility** expression into an AD-transparent broadcas
 of each uv point.
 
 The mirror of [`compile_profile`](@ref), and deliberately the same machinery: whole-token
-substitution over the `extract_refs` pattern, so a parameter whose name begins with B does not
+substitution over the `extract_refs` pattern, so a parameter whose name begins with BL does not
 get rewritten the way `\$Rin` once was by a naive `\$R` replacement.
 
-The implicit variables are `\$B`, `\$WL` and `\$MJD`, all per uv point, so a visibility can be
-chromatic or time-variable directly. There is no `\$R` or `\$MU` here: those are radii on an image
+The implicit variables are `\$BL` (Mλ), `\$WL` (microns) and `\$MJD`, all per uv point, so a
+visibility can be chromatic or time-variable directly. The returned function takes the
+wavelength in metres, as every API does, and the expression sees it in microns. There is no `\$R` or `\$MU` here: those are radii on an image
 grid, and this expression never builds an image -- it IS the visibility.
 
 The result is not normalised or checked. `V(0) = 1` is what makes a component's flux fraction
@@ -382,14 +395,14 @@ is not `f`; `dict_to_model` warns rather than rescaling, because rescaling would
 change the model that was written.
 """
 function compile_visfunc(expr_str::AbstractString, param_names::Vector{String})
-    s = replace(expr_str, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => function (m)
+    s = replace(expr_str, _REF_PATTERN => function (m)
         name = m[2:end]
-        name == "B"   && return "_B_"
-        name == "WL"  && return "_WL_"
+        name == "BL"  && return "_B_"
+        name == "WL"  && return "_wl_expr(_WL_)"     # microns; the call takes metres
         name == "MJD" && return "_MJD_"
-        return replace(name, "," => "__")
+        return _mangle(name)
     end)
-    arg_symbols = [Symbol(replace(n, "," => "__")) for n in param_names]
+    arg_symbols = [Symbol(_mangle(n)) for n in param_names]
     args = Expr(:tuple, :_B_, :_WL_, :_MJD_, arg_symbols...)
     fn_expr = Meta.parse("$args -> @. $s")
     return @RuntimeGeneratedFunction(fn_expr)

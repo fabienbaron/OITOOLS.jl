@@ -85,6 +85,9 @@ Popup {
     property bool   multiSelect: false
     property int    _anchor: -1
     property int    markedCount: 0
+    // The File field holds what the user typed rather than the highlighted row's name. Opening,
+    // that is a path to go to: a folder is walked into, a file opened, `~` expanded.
+    property bool   _typed: false
 
     signal accepted(string path)
     signal rejected()
@@ -114,6 +117,7 @@ Popup {
     function openAt(hint) {
         folder = Julia.picker_start(hint === undefined ? "" : hint)
         selectedName = ""
+        _typed = false
         // Suggested, not imposed: the field is selected so the first keystroke replaces it.
         nameField.text = saveMode ? suggestedName : ""
         refresh()
@@ -173,6 +177,7 @@ Popup {
         } else if (e.kind === "file" && !chooseFolder) {
             selectedName = e.name
             nameField.text = e.name
+            _typed = false
             root.confirm()
         }
     }
@@ -213,6 +218,7 @@ Popup {
         for (var k = 0; k < entryModel.count; ++k) if (entryModel.get(k).marked) ++n
         markedCount = n
         if (n > 1) {
+            _typed = false
             nameField.text = n + " files"
             statusLabel.text = n + " files selected"
         }
@@ -227,14 +233,19 @@ Popup {
     function confirm() {
         if (chooseFolder) { root.accepted(root.chosenFolder); root.close(); return }
         if (multiSelect && !saveMode && markedCount > 1) { root.finish(markedPaths().join("\n")); return }
-        var name = saveMode ? nameField.text.trim() : selectedName
+        var name = (saveMode || _typed) ? nameField.text.trim() : selectedName
         if (name.length === 0) { statusLabel.text = "nothing selected"; return }
         if (saveMode && defaultSuffix.length > 0 && name.indexOf(".") < 0)
             name = name + "." + defaultSuffix
         var full = Julia.picker_join(folder, name)
 
         // A typed name that turns out to be a directory should walk into it, not be "opened".
-        if (Julia.picker_kind(full) === "dir") { folder = full; nameField.text = ""; return }
+        if (Julia.picker_kind(full) === "dir") {
+            folder = full; nameField.text = ""; _typed = false; return
+        }
+        if (!saveMode && Julia.picker_kind(full) !== "file") {
+            statusLabel.text = "no such file: " + full; return
+        }
 
         if (saveMode && Julia.picker_would_overwrite(full) === "1") {
             overwriteDialog.target = full
@@ -388,8 +399,10 @@ Popup {
                             var e = entryModel.get(currentIndex)
                             if (e.kind === "file") {
                                 root.selectedName = e.name
-                                if (!root.saveMode || nameField.text.length === 0)
+                                if (!root.saveMode || nameField.text.length === 0) {
                                     nameField.text = e.name
+                                    root._typed = false
+                                }
                             }
                         }
 
@@ -483,8 +496,15 @@ Popup {
                 id: nameField
                 Layout.fillWidth: true
                 implicitHeight: root.dp(28)
-                readOnly: !root.saveMode
-                placeholderText: root.saveMode ? "filename" : ""
+                placeholderText: root.saveMode ? "filename" : "or type a path, ~ for home"
+                onTextEdited: root._typed = true
+                // Opening, the field shows the highlighted file's name; the first key typed
+                // starts a path rather than appending to that name.
+                Keys.onPressed: function (event) {
+                    if (!root.saveMode && !root._typed && event.text.length > 0
+                            && event.text >= " ")
+                        text = ""
+                }
                 onAccepted: root.confirm()
             }
             ComboBox {
@@ -523,13 +543,15 @@ Popup {
                 enabled: root.chooseFolder ? true
                        : root.saveMode     ? nameField.text.trim().length > 0
                                            : fileList.currentIndex >= 0
+                                             || (root._typed && nameField.text.trim().length > 0)
                 // SAVE acts on the name field, not on the highlighted row. Through `activate`
                 // it did the latter: clicking Save walked into whichever directory happened to
                 // be highlighted, or adopted a highlighted file's name and offered to overwrite
                 // it -- so the only way to save under a NEW name was to press Enter instead of
                 // pressing the button marked Save. Opening is the case where the selection IS
                 // the answer; a double click still walks into a directory either way.
-                onClicked: (root.chooseFolder || root.saveMode || root.markedCount > 1)
+                onClicked: (root.chooseFolder || root.saveMode || root.markedCount > 1
+                            || root._typed)
                            ? root.confirm()
                            : root.activate(fileList.currentIndex)
             }

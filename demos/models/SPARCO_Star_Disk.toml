@@ -9,7 +9,7 @@
 # wavelengths is fitted smaller to compensate.
 #
 # The two `f` entries below are expressions, not numbers: `$WL` is the per-baseline wavelength
-# in METRES, and the shared denominator normalises the pair so the total flux is 1 at every
+# in MICRONS, and the shared denominator normalises the pair so the total flux is 1 at every
 # wavelength. `fs` is the star's fraction at the reference wavelength λ0 = 1.6 µm, and it is
 # the free parameter; the disc gets whatever is left. Written this way there is one flux
 # unknown rather than two, and the constraint holds identically instead of being fitted.
@@ -29,16 +29,17 @@
 # denominator with its own slope.
 
 name = "SPARCO star + disk"
+wl_unit = "um"     # `$WL` in the expressions is in microns
 
 free = ["fs", "disk,fwhm", "disk,slope"]
 
 [model]
 # The star: unresolved, so it has no geometry key at all — only a flux.
-"star,f"     = "$fs * ($WL/1.6e-6)^(-4) / ($fs * ($WL/1.6e-6)^(-4) + (1 - $fs) * ($WL/1.6e-6)^$disk,slope)"
+"star,f"     = "$fs * ($WL/1.6)^(-4) / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$disk,slope)"
 
 # The disc: resolved, Gaussian, with a free spectral slope.
 "disk,fwhm"  = 3.0
-"disk,f"     = "(1 - $fs) * ($WL/1.6e-6)^$disk,slope / ($fs * ($WL/1.6e-6)^(-4) + (1 - $fs) * ($WL/1.6e-6)^$disk,slope)"
+"disk,f"     = "(1 - $fs) * ($WL/1.6)^$disk,slope / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$disk,slope)"
 "disk,slope" = 0.5
 
 # A free global: the star's flux fraction at λ0. It belongs to no component, which is why it

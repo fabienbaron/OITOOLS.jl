@@ -60,7 +60,7 @@ const _GEOMETRY_KEYS = ["image", "visfunc", "profile", "diamin", "fwhmin", "crin
 
 const _KIND_GEOMETRY = Dict{Symbol,String}(
     :image         => "image",        # a FITS image or cube (image_component.jl)
-    :visfunc       => "visfunc",      # V(B) written out, in $B (Mlambda)
+    :visfunc       => "visfunc",      # V(B) written out, in $BL (Mlambda)
     :hankel        => "profile",
     :ring          => "diamin",       # uniform ring (analytic)
     :gaussian_ring => "fwhmin",       # bi-Gaussian ring (analytic)
@@ -72,7 +72,7 @@ const _KIND_GEOMETRY = Dict{Symbol,String}(
     :ldsqrt        => "ldsqrt",       # square-root law
     :ldclaret4     => "ldclaret4",    # Claret four-parameter law
     :ldpow         => "ldpow",
-    :resolved      => "resolved",     # fully resolved (V=0 at B>0), e.g. halo
+    :resolved      => "resolved",     # fully resolved (V=1 at B=0, 0 at B>0), e.g. halo
     :point         => "",             # no geometry key — unresolved point
 )
 
@@ -134,8 +134,9 @@ const _DEFAULT_PARAM_BOUNDS = Dict{String,Tuple{Float64,Float64}}(
     "pa"      => (-180.0, 180.0), "projang" => (-180.0, 180.0),
     "crprojang" => (-180.0, 180.0),
     "incl"    => (0.0, 90.0),
-    # flux and shape fractions
-    "f"       => (0.0, 1.0),  "thick"   => (0.0, 1.0),
+    # A flux is a relative weight -- the model divides by the total -- so it has no upper
+    # bound; a fraction of a shape does.
+    "f"       => (0.0, Inf),  "thick"   => (0.0, 1.0),
     # The crescent's offset is a FRACTION of the largest offset that keeps the subtracted disk
     # inside the outer one: `off = croff*(crout - crin)/2`, so 0 is a concentric ring and 1 is
     # internally tangent. Outside [0, 1] the hole leaves the disk and the model stops being a
@@ -182,8 +183,10 @@ lb, ub = default_bounds(model_dict, free)              # 100 mas ceiling
 lb, ub = default_bounds(model_dict, free; data = data) # sized to this uv coverage
 ```
 
-Everything else is physical rather than instrumental — flux fractions in `[0,1]`, inclination
-in `[0,90]`, position angles in `[-180,180]` — and does not depend on the data.
+Everything else is physical rather than instrumental — fluxes in `[0,Inf)`, since a flux is a
+weight relative to the others, `thick` in `[0,1]`, inclination in `[0,90]`, position angles in
+`[-180,180]` — and does not depend on the data. A nested sampler needs a finite upper bound on
+every free flux, since the bounds are its prior.
 
 See also [`display_model`](@ref), which validates values against whatever bounds you end up
 with, and [`max_angular_scale`](@ref).
@@ -292,8 +295,10 @@ function _vis_point(params::AbstractVector, ρ::AbstractVector)
     ones(eltype(ρ), length(ρ))
 end
 
+# Fully resolved (a background): its own flux at zero baseline, 1, and 0 at every baseline the
+# array measures. The spike at zero is what puts its flux in an image, as a uniform level.
 function _vis_resolved(params::AbstractVector, ρ::AbstractVector)
-    zeros(eltype(ρ), length(ρ))
+    @. ifelse(iszero(ρ), one(eltype(ρ)), zero(eltype(ρ)))
 end
 
 # Uniform ring: area-weighted difference of two uniform disks
@@ -330,7 +335,7 @@ function _vis_crescent(params::AbstractVector, u::AbstractVector, v::AbstractVec
     crprojang = params[4]  # PA of thinnest part (deg, 0=N, 90=E)
 
     # broadcast throughout: any of these may be a per-point vector when the
-    # parameter is given as a $WL / $MJD / $B expression
+    # parameter is given as a $WL / $MJD / $BL expression
     crpa = @. crprojang * π / 180
     off  = @. croff * (crout - crin) / 2   # offset distance (mas)
 
@@ -401,20 +406,37 @@ struct AzMode
     phi_idx  ::Int     # index into resolver output for phase (degrees)
 end
 
+# A component's profile as the quadrature sees it: a function of s = r/r_max, whose first two
+# parameters are the inner and outer diameters, `(s, μ, d_min, d_max, p...) -> I` at
+# R = (d_max/2)·s. `f` is the profile compiled with `size_args`. The size is then a parameter
+# like any other: the probe sees breakpoints fixed in R move in s, and ForwardDiff takes
+# ∂I/∂d at fixed s.
+struct _SizedProfile{F} <: Function
+    f::F
+end
+(p::_SizedProfile)(s, μ, dmin, dmax, pp...) = p.f((dmax / 2) .* s, μ, dmin / 2, dmax / 2, pp...)
+
 """
 Hankel component: arbitrary radial profile.
 
 The profile is compiled to an AD-transparent closure at dict_to_model time. It is evaluated
 on the nodes of `_hankel_nodes` over [r_min, r_max]: panels between the breakpoints the
 profile shows, and a count that follows the baselines the component sees and the profile's
-own convergence (`_hankel_setup`), unless `c,nr` fixes it.
+own convergence (`_hankel_setup`), unless `c,nr` fixes it. The diameters are read each call
+(`dmin_idx`, `dmax_idx`, or the numbers `d_min`, `d_max` when no key gives them), so the size
+can be fitted; the quadrature is in s = r/r_max, and the profile's parameter vector is
+`[d_min, d_max, profile params...]`.
 """
 struct HankelSpec{T<:AbstractFloat} <: AbstractComponentSpec
     comp_name        ::String
     f_idx            ::Int
-    profile_fn       ::Function         # (r, mu, profile_params...) -> I
+    profile_fn       ::_SizedProfile    # (s, mu, d_min, d_max, profile_params...) -> I
     profile_param_idx::Vector{Int}      # indices in resolver output
-    r_max            ::T                # outer radius, mas
+    dmin_idx         ::Int              # `c,diamin` in the resolver (0 = d_min is fixed)
+    dmax_idx         ::Int              # `c,udout`/`diamout`/`diam` (0 = `c,r_max`, fixed)
+    d_min            ::T                # the diameters the component was built with, mas
+    d_max            ::T
+    r_max            ::T                # d_max / 2
     s_min            ::T                # r_min / r_max
     nr               ::Int              # `c,nr`: a fixed node count, or 0 = from the baselines
     workspace        ::HankelWorkspace{T}
@@ -430,7 +452,7 @@ end
 A component whose VISIBILITY is written out, rather than its brightness.
 
 The counterpart of `HankelSpec`: that one compiles I(r) and transforms it, this one is handed
-V(B) and evaluates it. `\$B` is the baseline in Mλ, which is the unit the observable plots use
+V(B) and evaluates it. `\$BL` is the baseline in Mλ, which is the unit the observable plots use
 and the one a formula from a paper is normally written in.
 """
 struct VisFuncSpec <: AbstractComponentSpec
@@ -570,7 +592,7 @@ function _resolve_numeric(key::AbstractString, model_dict::Dict{String}, visited
     push!(visited, k)
     expr = v
     # Replace $ref with resolved numeric values
-    resolved = replace(expr, r"\$([A-Za-z_][A-Za-z0-9_,]*)" => function(m)
+    resolved = replace(expr, _REF_PATTERN => function(m)
         ref = m[2:end]  # strip leading $
         string(_resolve_numeric(ref, model_dict, visited))
     end)
@@ -740,13 +762,15 @@ A misspelt geometry key does not error — it changes what the component *is*. W
 exactly this and fitted the wrong model for as long as they existed.
 
 Keys referenced from a `\$`-expression anywhere in the dict are always legitimate (that is
-how radial-profile parameters and shared globals work), so they are never reported.
+how radial-profile parameters and shared globals work), so they are never reported. A reference
+that is one of the expression's implicit variables (`\$BL` in a visibility function, `\$R` in a
+profile) is that variable, so it does not count as a use of a component's `B` or `R`.
 """
 function _warn_unrecognised_keys(pd::Dict{String})
     referenced = Set{String}()
-    for v in values(pd)
+    for (k, v) in pd
         v isa AbstractString || continue
-        union!(referenced, extract_refs(v))
+        union!(referenced, setdiff(extract_refs(v), implicit_vars(k)))
     end
 
     unknown = String[]
@@ -878,12 +902,12 @@ function dict_to_model(model_dict::Dict{String},
 
             # Same discovery rule as a profile: anything that is not an implicit variable is a
             # parameter, resolved component-qualified first and then global.
-            # `\$B` is implicit HERE and nowhere else. It is not in `IMPLICIT_VARS` because the
+            # `\$BL` is implicit HERE and nowhere else. It is not in `IMPLICIT_VARS` because the
             # resolver's signature is `(x, WL, MJD)` and has no baseline to give a derived
             # parameter; a visibility expression is the one place a baseline exists, and it is
             # supplied by `eval_model` rather than resolved.
             raw_refs = extract_refs(vis_expr)
-            vf_refs  = filter(r -> r ∉ IMPLICIT_VARS && r != "B", raw_refs)
+            vf_refs  = filter(r -> r ∉ IMPLICIT_VARS && r != "BL", raw_refs)
             vf_names = map(vf_refs) do r
                 if occursin(",", r)
                     r
@@ -925,9 +949,9 @@ function dict_to_model(model_dict::Dict{String},
                 end
             end
 
-            # Compile the profile closure (AD-transparent)
-            # The grid first: `$RMIN`, `$RMAX`, `$DMIN` and `$DMAX` are substituted as numbers
-            # where the profile is compiled, so it has to be known by then.
+            # Compile the profile closure (AD-transparent), the size among its arguments:
+            # `$RMIN`, `$RMAX`, `$DMIN` and `$DMAX` follow the diameters each call. The size the
+            # component is built with sets its nodes until the diameters change.
             r_min = _hankel_r_min(cn, pd)
             r_max = _hankel_r_max(cn, pd)
             r_max > r_min >= 0 ||
@@ -935,7 +959,12 @@ function dict_to_model(model_dict::Dict{String},
                       "got r_min = $r_min, r_max = $r_max")
             Nr    = _hankel_Nr(cn, pd)
 
-            profile_fn = compile_profile(profile_expr, prof_refs; rmin = r_min, rmax = r_max)
+            profile_fn = _SizedProfile(compile_profile(profile_expr, prof_refs; size_args = true))
+            # The diameters' keys in the resolver, read each call; `c,r_max` is a fixed setting.
+            dmin_idx = get(n2i, "$cn,diamin", 0)
+            kmax = findfirst(k -> haskey(pd, "$cn,$k"), ("udout", "diamout", "diam"))
+            dmax_idx = kmax === nothing ? 0 :
+                       get(n2i, "$cn," * ("udout", "diamout", "diam")[kmax], 0)
 
             # Indices of profile params in resolver output
             prof_idx = map(prof_param_names) do k
@@ -966,7 +995,8 @@ function dict_to_model(model_dict::Dict{String},
             sort!(az_modes; by = m -> m.order)
 
             push!(components, HankelSpec(
-                cn, f_idx, profile_fn, prof_idx, T(r_max), T(r_min / r_max), Nr, ws, az_modes,
+                cn, f_idx, profile_fn, prof_idx, dmin_idx, dmax_idx, T(2r_min), T(2r_max),
+                T(r_max), T(r_min / r_max), Nr, ws, az_modes,
                 HankelKernelCache{T}(),
                 incl_idx, pa_idx, x_idx, y_idx
             ))
@@ -1018,6 +1048,9 @@ function dict_to_model(model_dict::Dict{String},
                 "$(c.comp_name): a radial profile's parameters cannot depend on \$WL or \$MJD " *
                 "(its I(r) is computed once, on the r grid); give the component a chromatic " *
                 "flux instead")
+            (ischrom(c.dmin_idx) || ischrom(c.dmax_idx)) && error(
+                "$(c.comp_name): a radial profile's size cannot depend on \$WL or \$MJD " *
+                "(its nodes are laid out once per call, for one size)")
             for az in c.az_modes
                 push!(idx, az.amp_idx, az.phi_idx)
             end
@@ -1075,19 +1108,23 @@ const parse_model = dict_to_model
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    eval_model(model, x, uv; wl=nothing, mjd=nothing, n=0) -> Vector{Complex{T}}
+    eval_model(model, x, uv; wl=nothing, mjd=nothing, n=0, normalize=true) -> Vector{Complex{T}}
 
-Evaluate the model visibility at the given parameter vector `x` and baselines `uv`.
+Evaluate the model visibility at the given parameter vector `x` and baselines `uv`:
+Σ fᵢ Vᵢ / Σ fᵢ, normalised by the total flux at each point ([`model_flux`](@ref)), so a
+component's `f` is its flux in any unit and V(0) = 1.
 
 Arguments
 ---------
 model : FlatModel from dict_to_model
 x     : current free-parameter values, length = length(model.list_free_params)
 uv    : 2×N matrix of (u,v) spatial frequencies in cycles/rad
-wl    : wavelength per UV point (metres), length N  — enables `\$WL` in expressions
+wl    : wavelength per UV point (metres), length N  — enables `\$WL` (microns) in expressions
 mjd   : MJD per UV point, length N  — enables `\$MJD` in expressions
 n     : Bessel order for Hankel components (default 0)
 plane_wl : the wavelength an image component chooses its plane by (default `wl`)
+normalize : divide by the total flux (default). `false` returns Σ fᵢ Vᵢ, for a model that is
+        one part of a larger sum, beside an image (SPARCO, VI).
 
 `eval_model` returns one visibility per uv point and does not smear. A model with
 `"smear" => n` is averaged over its channels by [`eval_model_sub`](@ref) and the χ² functions.
@@ -1102,7 +1139,8 @@ function eval_model(model::FlatModel,
                     wl  = nothing,
                     mjd = nothing,
                     n::Int = 0,
-                    plane_wl = wl)
+                    plane_wl = wl,
+                    normalize::Bool = true)
 
     # `$WL`/`$MJD` are NaN when the caller passes none, as in a derived parameter.
     _wl  = isnothing(wl)  ? NaN : wl
@@ -1113,13 +1151,13 @@ function eval_model(model::FlatModel,
     # promotes to Dual so gradients flow. The resolved parameters are stored in it too.
     T  = eltype(x) <: Real ? promote_type(eltype(x), float(eltype(uv))) : Float64
     rp = _resolve(model, x, _wl, _mjd, size(uv, 2), T)
-    return _eval_model(model, rp, uv, _wl, _mjd, n, plane_wl)
+    return _eval_model(model, rp, uv, _wl, _mjd, n, plane_wl, normalize)
 end
 
 # Everything after the resolver, behind a function barrier: concretely typed by the
 # parameters' element type and the uv matrix, never by the model instance.
 function _eval_model(model::FlatModel, rp::ResolvedParams{T}, uv::AbstractMatrix,
-                     _wl, _mjd, n::Int, plane_wl) where {T}
+                     _wl, _mjd, n::Int, plane_wl, normalize::Bool = true) where {T}
     nB = size(uv, 2)
     u_raw = @view uv[1,:]
     v_raw = @view uv[2,:]
@@ -1133,6 +1171,10 @@ function _eval_model(model::FlatModel, rp::ResolvedParams{T}, uv::AbstractMatrix
         _add_component!(V, comp, rp, Val(model.chromatic[c]), uv, u_raw, v_raw, ρ, B,
                         _wl, _mjd, n, plane_wl)
     end
+    # Normalised by the total flux at each point: a component's `f` is its flux in any unit,
+    # and fractions summing to one are the case where this divides by 1. Not when the model is
+    # a part of a larger sum (`normalize = false`: an image beside it, SPARCO and VI).
+    normalize && (V ./= _total_flux(model, rp, nB))
 
     # ── Spatial kernel (Gaussian smoothing in visibility space) ─────────
     if model.kernel_idx != 0
@@ -1140,6 +1182,38 @@ function _eval_model(model::FlatModel, rp::ResolvedParams{T}, uv::AbstractMatrix
         k > 0 ? _apply_kernel!(V, rp.s[k], ρ) : _apply_kernel!(V, rp.cols[-k], ρ)
     end
     return V
+end
+
+# Σ f over the components, one value per point (a flux may be chromatic), in the
+# parameters' type.
+function _total_flux(model::FlatModel, rp::ResolvedParams{T}, n::Int) where {T}
+    F = zeros(T, n)
+    for (c, comp) in enumerate(model.components)
+        if comp.f_idx == 0
+            F .+= one(T)
+        elseif model.chromatic[c]
+            F .+= _par(rp, comp.f_idx, Val(true))
+        else
+            F .+= _par(rp, comp.f_idx, Val(false))
+        end
+    end
+    return F
+end
+
+"""
+    model_flux(model, x; wl = nothing, mjd = nothing) -> Vector
+
+The model's total flux, Σ f over its components, at each wavelength (and epoch) given, or
+once without them. `eval_model` divides the visibilities by it; it is what an OI_FLUX
+measurement is compared with.
+"""
+function model_flux(model::FlatModel, x::AbstractVector; wl = nothing, mjd = nothing)
+    n   = wl !== nothing ? length(wl) : mjd !== nothing ? length(mjd) : 1
+    _wl = isnothing(wl) ? NaN : wl
+    _mjd = isnothing(mjd) ? NaN : mjd
+    T  = eltype(x) <: Real ? float(eltype(x)) : Float64
+    rp = _resolve(model, x, _wl, _mjd, n, T)
+    return _total_flux(model, rp, n)
 end
 
 function _apply_kernel!(V, kern_fwhm, ρ)
@@ -1202,7 +1276,7 @@ function _component_vis(comp::ImageSpec, rp, ch, geom, uv, _wl, _mjd, n, plane_w
 end
 
 function _component_vis(comp::VisFuncSpec, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
-    # `$B` is in Mλ: ρ is cycles/rad, which IS baseline/λ, and the observable plots divide it
+    # `$BL` is in Mλ: ρ is cycles/rad, which IS baseline/λ, and the observable plots divide it
     # by 1e6 and label the axis Mλ. A formula copied from a paper is written in those units,
     # so the expression is evaluated in them. `$WL` and `$MJD` are the same per-uv-point
     # values the resolver was given, or NaN when the caller passed none.
@@ -1225,60 +1299,104 @@ end
 const _HankelJump = @NamedTuple{bs::Float64, br::Float64, ΔI::Float64, dbdp::Vector{Float64}}
 
 """
-    _hankel_setup(comp::HankelSpec{T}, B, pp; cached=true) -> (r, μ, g, cacheable, jumps)
+    _hankel_setup(comp::HankelSpec{T}, B, q; cached=true) -> (s, μ, g, r, cacheable, jumps)
 
-The nodes (r = r_max·s, in mas), μ and weights a profile component is integrated on, for the
-baselines `B` (cycles/mas) and the profile parameters `pp`:
+The nodes a profile component is integrated on, in s = r/r_max (`s`, `μ`, weights `g`), and
+their radii `r` (mas) at the current size, for the baselines `B` (cycles/mas) and the
+parameters `q = [d_min, d_max, profile params...]`:
 
 - what the profile is like (`_hankel_probe`: breakpoints, a singular centre) and how many
   nodes it needs (`_hankel_converge`, from `_hankel_n` for B_max·2r_max lobes) are found
-  the first time, and again whenever a uv set first enters the cache (`cached`); `c,nr`
-  fixes the count;
-- breakpoints that move with the parameters are located again on every call, carried as
-  Duals when `pp` are, so that ForwardDiff differentiates their motion; the nodes then
-  change every call (`cacheable` is false), and `jumps` lists the moving jumps for the
-  closed-form Jacobian (`_hankel_jac!`).
+  the first time, and again whenever a uv set is first seen (`cached`); `c,nr` fixes the
+  count;
+- the nodes and matrices are kept for one size, and dropped when the diameters change;
+- breakpoints that move with the parameters (the size among them, for a breakpoint fixed in
+  R) are located again when the parameters change, carried as Duals when `q` is, so that
+  ForwardDiff differentiates their motion; the nodes are then not cached (`cacheable` is
+  false). So is the inner edge s_min = d_min/d_max when the size carries partials; and `r`
+  follows the size then too;
+- `jumps` lists what moves with the parameters `q[jumpcols]`, for the closed-form Jacobian
+  (`_hankel_jac!`), with ∂b/∂q for those columns: the jumps that move with them, and the inner
+  edge when they include the diameters and a key gives the size.
 """
-function _hankel_setup(comp::HankelSpec{T}, B::AbstractVector, pp; cached::Bool = true) where {T}
+function _hankel_setup(comp::HankelSpec{T}, B::AbstractVector, q; cached::Bool = true,
+                       jumpcols::UnitRange{Int} = 1:length(q)) where {T}
     cache = comp.kcache
-    ppv = T[ForwardDiff.value(x) for x in pp]
+    qv = T[ForwardDiff.value(x) for x in q]
+    rm, smin = _hankel_size(comp, qv)
     n0 = comp.nr > 0 ? comp.nr :
-         _hankel_n(isempty(B) ? 0.0 : 2 * comp.r_max * maximum(b -> abs(ForwardDiff.value(b)), B))
+         _hankel_n(isempty(B) ? 0.0 : 2 * rm * maximum(b -> abs(ForwardDiff.value(b)), B))
     lay, m = lock(cache.lock) do
+        _hankel_resize!(cache, qv)
         l = cache.layout
-        if l === nothing || (cached && !_hankel_moving(l) && !_hankel_has_uv(cache, B))
-            _hankel_check!(comp, B, ppv, n0)
+        if l === nothing || (cached && !_hankel_moving(l) && !_hankel_has_uv(cache, B) &&
+                             !_hankel_seen(cache, B))
+            _hankel_check!(comp, B, qv, n0, rm, smin)
         end
         cache.layout::_HankelLayout, cache.mult
     end
     n = comp.nr > 0 ? comp.nr : m * n0
-    rm = comp.r_max
-    if !_hankel_moving(lay)
-        r, μ, g = lock(cache.lock) do
-            get!(cache.nodes, (n, n0)) do
-                sn, μn, gn = _hankel_nodes(T, comp.s_min, n; layout = lay, n0)
-                (rm .* sn, μn, gn)
-            end
-        end::NTuple{3,Vector{T}}
-        return (; r, μ, g, cacheable = true, jumps = _HankelJump[])
+    br = lay.breaks
+    if _hankel_moving(lay)
+        lay, n, br = _hankel_relocate!(comp, B, qv, lay, n, n0, rm, smin)
     end
-    return _hankel_setup_moving(comp, B, pp, ppv, lay, n, n0)
+    jumps = _hankel_jumps(comp, qv, lay, br, rm, smin, jumpcols)
+    sized = _hankel_hasgrad(q[1]) || _hankel_hasgrad(q[2])
+    if (_hankel_moving(lay) && !(eltype(q) <: AbstractFloat)) || (sized && smin > 0)
+        return _hankel_dual_nodes(comp, q, qv, lay, br, n, n0, smin, jumps)
+    end
+    s, μ, g = lock(cache.lock) do
+        get!(() -> _hankel_nodes(T, smin, n; layout = lay, breaks = br, n0),
+             cache.nodes, (n, n0))
+    end::NTuple{3,Vector{T}}
+    r = sized ? (q[2] / 2) .* s : rm .* s
+    return (; s, μ, g, r, cacheable = !sized, jumps)
 end
 
-# `_hankel_setup` for breakpoints that move with the parameters. They are located again when
-# the parameters have changed since the last call; the nodes and matrices are kept while the
-# breakpoints stay where they are, and rebuilt when they move (as for an inclination). With
-# Dual parameters the breakpoints carry their partials and the nodes follow them, uncached.
-function _hankel_setup_moving(comp::HankelSpec{T}, B, pp, ppv, lay0, n0count, n0) where {T}
-    cache = comp.kcache; rm = comp.r_max
-    lay, n = lay0, n0count
-    known = lock(cache.lock) do
-        cache.last_pp == ppv ? copy(cache.breaks) : nothing
+# r_max and s_min at the diameters qv[1:2]: the component's own numbers at the size it was
+# built with, so that a fixed size gives the nodes it always did.
+function _hankel_size(comp::HankelSpec{T}, qv) where {T}
+    qv[1] == comp.d_min && qv[2] == comp.d_max && return comp.r_max, comp.s_min
+    return T(qv[2] / 2), T(qv[1] / qv[2])
+end
+
+# Whether x carries a derivative: a Dual with a partial that is not zero.
+_hankel_hasgrad(x::ForwardDiff.Dual) = !iszero(ForwardDiff.partials(x))
+_hankel_hasgrad(::Real) = false
+
+# The nodes and matrices are for one size; drop them when the diameters change. Under the lock.
+function _hankel_resize!(cache::HankelKernelCache, qv)
+    length(cache.dsize) == 2 && cache.dsize[1] == qv[1] && cache.dsize[2] == qv[2] && return
+    empty!(cache.nodes); empty!(cache.entries)
+    cache.dsize = Float64[qv[1], qv[2]]
+    return
+end
+
+# Whether the count was checked on the baselines `B`: the uv sets the cache holds matrices
+# for, or, after a change of size dropped them, those it was checked on. Under the lock.
+_hankel_seen(cache::HankelKernelCache, B::AbstractVector) = hash(B) in cache.uvs
+
+function _hankel_has_uv(cache::HankelKernelCache{T}, B::AbstractVector{TB}) where {T,TB}
+    TK = promote_type(TB, T)
+    for e in cache.entries
+        e isa _HankelUV{TB,TK} || continue
+        length(e.B) == length(B) && e.B == B && return true
     end
-    br = known !== nothing ? known : _hankel_breaks_now(lay, comp.profile_fn, ppv, rm, comp.s_min, T)
+    return false
+end
+
+# The breakpoints at the parameters qv, for a layout whose breakpoints move: located again
+# when the parameters have changed since the last call, and the nodes and matrices dropped
+# when they have moved. Probed again if one is not found near where it was.
+function _hankel_relocate!(comp::HankelSpec{T}, B, qv, lay, n, n0, rm, smin) where {T}
+    cache = comp.kcache
+    known = lock(cache.lock) do
+        cache.last_pp == qv ? copy(cache.breaks) : nothing
+    end
+    br = known !== nothing ? known : _hankel_breaks_now(lay, comp.profile_fn, qv, 1, smin, T)
     if br === nothing                       # a breakpoint moved too far: probe again
         lay, m = lock(cache.lock) do
-            _hankel_check!(comp, B, ppv, n0)
+            _hankel_check!(comp, B, qv, n0, rm, smin)
             cache.layout::_HankelLayout, cache.mult
         end
         n = comp.nr > 0 ? comp.nr : m * n0
@@ -1289,56 +1407,63 @@ function _hankel_setup_moving(comp::HankelSpec{T}, B, pp, ppv, lay0, n0count, n0
             empty!(cache.nodes); empty!(cache.entries)
             cache.breaks = copy(br)
         end
-        cache.last_pp = copy(ppv)
+        cache.last_pp = Float64.(qv)
     end
-    return _hankel_moving_nodes(comp, pp, ppv, lay, br, n, n0)
+    return lay, n, br
 end
 
-# The nodes for breakpoints `br` (in s) at the current parameters, and the moving jumps. A
-# function of its own so that nothing here is reassigned: the comprehensions capture `lay`
-# and `br`.
-function _hankel_moving_nodes(comp::HankelSpec{T}, pp, ppv, lay::_HankelLayout,
-                              br::Vector{Float64}, n::Int, n0::Int) where {T}
-    rm = comp.r_max; cache = comp.kcache
+# What moves with the parameters qv[cols], for the closed-form Jacobian: each jump that moves
+# with one of them, its height from 100 eps(T) either side; and the inner edge
+# s_min = d_min/d_max when `cols` holds the diameters and a key gives the size, a jump from 0
+# to I(s_min). ∂b/∂q for the columns `cols`.
+function _hankel_jumps(comp::HankelSpec{T}, qv, lay::_HankelLayout, br, rm, smin,
+                       cols::UnitRange{Int}) where {T}
     jumps = _HankelJump[]
+    isempty(cols) && return jumps
+    pf = comp.profile_fn
     for i in eachindex(br)
-        lay.kinds[i] === :jump && any(x -> x != 0, view(lay.dbdp, i, :)) || continue
-        δ = 100 * eps(T)                     # either side of the jump, in T
-        ΔI = _hankel_profile1(comp.profile_fn, ppv, rm, T(br[i] + δ)) -
-             _hankel_profile1(comp.profile_fn, ppv, rm, T(br[i] - δ))
-        push!(jumps, (; bs = br[i], br = Float64(rm) * br[i], ΔI, dbdp = lay.dbdp[i, :]))
+        lay.kinds[i] === :jump && any(x -> x != 0, view(lay.dbdp, i, cols)) || continue
+        δ = 100 * eps(T)
+        ΔI = _hankel_profile1(pf, qv, 1, T(br[i] + δ)) - _hankel_profile1(pf, qv, 1, T(br[i] - δ))
+        push!(jumps, (; bs = br[i], br = Float64(rm) * br[i], ΔI, dbdp = lay.dbdp[i, cols]))
     end
-    if eltype(pp) <: AbstractFloat           # plain values: the nodes for `br`, kept
-        r, μ, g = lock(cache.lock) do
-            get!(cache.nodes, (n, n0)) do
-                sn, μn, gn = _hankel_nodes(T, comp.s_min, n; layout = lay, breaks = br, n0)
-                (rm .* sn, μn, gn)
-            end
-        end::NTuple{3,Vector{T}}
-        return (; r, μ, g, cacheable = true, jumps)
+    if first(cols) == 1 && smin > 0 && (comp.dmin_idx != 0 || comp.dmax_idx != 0)
+        d = zeros(length(cols)); d[1] = 1 / qv[2]; d[2] = -smin / qv[2]
+        push!(jumps, (; bs = Float64(smin), br = Float64(rm * smin),
+                       ΔI = _hankel_profile1(pf, qv, 1, T(smin)), dbdp = d))
     end
-    # b + Σ ∂b/∂pⱼ (pⱼ − value(pⱼ)): the breakpoints carry the parameters' partials
-    ppc = collect(pp)
-    bd = [T(br[i]) + sum((T(lay.dbdp[i, j]) * (ppc[j] - ppv[j]) for j in eachindex(ppc));
-                         init = zero(eltype(ppc))) for i in eachindex(br)]
-    s, μ, g = _hankel_nodes(T, comp.s_min, n; layout = lay, breaks = bd, n0)
-    return (; r = rm .* s, μ, g, cacheable = false, jumps)
+    return jumps
+end
+
+# The nodes as Duals, moving with the parameters: each breakpoint b + Σ ∂b/∂qⱼ (qⱼ − value(qⱼ)),
+# and the inner edge d_min/d_max when the size carries partials. Not cached.
+function _hankel_dual_nodes(comp::HankelSpec{T}, q, qv, lay::_HankelLayout, br, n, n0, smin,
+                            jumps) where {T}
+    qc = collect(q)
+    bd = [T(br[i]) + sum((T(lay.dbdp[i, j]) * (qc[j] - qv[j]) for j in eachindex(qc));
+                         init = zero(eltype(qc))) for i in eachindex(br)]
+    sm = smin > 0 ? smin + (qc[1] / qc[2] - ForwardDiff.value(qc[1] / qc[2])) : smin
+    s, μ, g = _hankel_nodes(T, sm, n; layout = lay, breaks = bd, n0)
+    return (; s, μ, g, r = (qc[2] / 2) .* s, cacheable = false, jumps)
 end
 
 # The probe and the count, for these baselines and parameter values. Called under the lock.
-function _hankel_check!(comp::HankelSpec{T}, B, ppv, n0) where {T}
+function _hankel_check!(comp::HankelSpec{T}, B, qv, n0, rm, smin) where {T}
     cache = comp.kcache
-    lay = _hankel_probe(comp.profile_fn, ppv, comp.r_max, comp.s_min, T)
+    lay = _hankel_probe(comp.profile_fn, qv, 1, smin, T)
     old = cache.layout
     if old === nothing || old.breaks != lay.breaks || old.sing != lay.sing
         empty!(cache.nodes); empty!(cache.entries)
     end
     cache.layout = lay
-    cache.breaks = copy(lay.breaks); cache.last_pp = copy(Float64.(ppv))
+    cache.breaks = copy(lay.breaks); cache.last_pp = Float64.(qv)
+    if !isempty(B)
+        push!(cache.uvs, hash(B))
+        length(cache.uvs) > 16 && popfirst!(cache.uvs)
+    end
     comp.nr > 0 && return cache
-    rm = comp.r_max
-    nodes(n) = ((sn, μn, gn) = _hankel_nodes(T, comp.s_min, n; layout = lay, n0); (rm .* sn, μn, gn))
-    m, agree, ok = _hankel_converge(nodes, comp.profile_fn, ppv, B, n0; tol = _hankel_tol(T))
+    nodes(n) = _hankel_nodes(T, smin, n; layout = lay, n0)
+    m, agree, ok = _hankel_converge(nodes, comp.profile_fn, qv, B .* rm, n0; tol = _hankel_tol(T))
     cache.mult = m
     if !ok && !cache.warned
         cache.warned = true
@@ -1350,28 +1475,25 @@ function _hankel_check!(comp::HankelSpec{T}, B, ppv, n0) where {T}
     return cache
 end
 
-# Whether the baselines `B` are one of the uv sets the cache holds matrices for.
-function _hankel_has_uv(cache::HankelKernelCache{T}, B::AbstractVector{TB}) where {T,TB}
-    TK = promote_type(TB, T)
-    for e in cache.entries
-        e isa _HankelUV{TB,TK} || continue
-        length(e.B) == length(B) && e.B == B && return true
-    end
-    return false
+# The profile's parameter vector [d_min, d_max, profile params...] from the resolved values:
+# the diameters from their keys, or the component's numbers.
+function _hankel_q(comp::HankelSpec, rp, pp)
+    dmin = comp.dmin_idx != 0 ? _par(rp, comp.dmin_idx, Val(false)) : comp.d_min
+    dmax = comp.dmax_idx != 0 ? _par(rp, comp.dmax_idx, Val(false)) : comp.d_max
+    return vcat(dmin, dmax, pp)
 end
 
 function _component_vis(comp::HankelSpec, rp, ch, geom, uv, _wl, _mjd, n, plane_wl)
     # A profile's parameters are scalars (`dict_to_model` refuses chromatic ones).
-    prof_params = _params(rp, comp.profile_param_idx, Val(false))
+    q = _hankel_q(comp, rp, _params(rp, comp.profile_param_idx, Val(false)))
     oriented = comp.incl_idx != 0 || comp.pa_idx != 0
-    st = _hankel_setup(comp, geom[4], prof_params; cached = !oriented)
-    r, μ, g = st.r, st.μ, st.g
-    I_raw = comp.profile_fn(r, μ, prof_params...)
+    st = _hankel_setup(comp, geom[4], q; cached = !oriented, jumpcols = 1:0)
+    I_raw = comp.profile_fn(st.s, st.μ, q...)
     # A vector of a known type, whatever the generated profile returned: a constant profile
     # like "1" returns a scalar, and the call itself is not inferred.
-    Ti = promote_type(eltype(prof_params), eltype(r))
-    I = I_raw isa Number ? fill(Ti(I_raw), length(r)) : convert(Vector{Ti}, I_raw)
-    return _hankel_component_vis(comp, I::Vector{Ti}, r, g, rp, ch, geom, n,
+    Ti = promote_type(eltype(q), eltype(st.s))
+    I = I_raw isa Number ? fill(Ti(I_raw), length(st.s)) : convert(Vector{Ti}, I_raw)
+    return _hankel_component_vis(comp, I::Vector{Ti}, st.r, st.g, rp, ch, geom, n,
                                  !oriented && st.cacheable)
 end
 
@@ -1539,14 +1661,15 @@ function eval_model_grad_ad(model::FlatModel,
                             wl  = nothing,
                             mjd = nothing,
                             n::Int = 0,
-                            plane_wl = wl)
+                            plane_wl = wl,
+                            normalize::Bool = true)
 
     nB    = size(uv, 2)
 
     # ForwardDiff works on real arrays, so the real and imaginary parts are stacked.
     # wl and mjd are captured as constants — not differentiated.
     function eval_real(x_)
-        V = eval_model(model, x_, uv; wl, mjd, n, plane_wl)
+        V = eval_model(model, x_, uv; wl, mjd, n, plane_wl, normalize)
         return [real.(V); imag.(V)]   # 2nB-vector, eltype follows x and uv
     end
 

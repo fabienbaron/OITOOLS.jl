@@ -169,7 +169,8 @@ function _snapshot_figure(sh::ShellState, which::AbstractString, size, detailed:
             show_panels!(c, false)
             update_canvas!(c, d, sh.kind; color = sh.color, logscale = sh.logy,
                            residual = residual_for(rset, sh.kind),
-                           overlay  = residual_for(oset, sh.kind))
+                           overlay  = residual_for(oset, sh.kind),
+                           source   = source_label(e))
             # The zoom, once the data is loaded: `update_canvas!` autolimits, so matching the
             # view has to come after it. The panel grid is left alone -- each of its axes is
             # framed on its own group and none of them is zoomable.

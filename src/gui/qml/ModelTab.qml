@@ -281,6 +281,8 @@ Item {
         root.consoleChanged()
     }
 
+    property int profileTemplateIndex: -1
+    signal profileRefreshed()
     function refreshProfile() {
         root.profileKey = ""
         root.profileError = ""
@@ -298,6 +300,17 @@ Item {
         for (var j = 0; j < paramModel.count; ++j)
             if (paramModel.get(j).key === root.profileKey)
                 root.profileText = paramModel.get(j).expr
+
+        // The template box names this component's own profile when it IS a template, and
+        // nothing otherwise: left at the previous component's choice, it described a profile
+        // this one does not have.
+        var at = -1
+        for (var k = 0; k < root.profileTemplates.length; ++k) {
+            var t = Julia.shell_profile_template(root.profileTemplates[k].key)
+            if (t.charAt(0) !== "!" && t.split("\t")[0].trim() === root.profileText.trim()) { at = k; break }
+        }
+        root.profileTemplateIndex = at
+        root.profileRefreshed()
 
         var g = Julia.shell_profile_grid(root.selectedComponent)
         if (g.charAt(0) === "!") { root.profileError = g; return }
@@ -489,7 +502,7 @@ Item {
     // ── model → image ────────────────────────────────────────────────────────
     property int    imgNx: 128
     property real   imgPixsize: 0.1
-    property real   imgWl: 1.6e-6            // metres, matching $WL
+    property real   imgWl: 1.6e-6            // metres, as the API takes it ($WL sees microns)
     property real   imgMjd: 0.0
     property bool   hasRender: false
     property string renderText: ""
@@ -836,11 +849,12 @@ Item {
     }
 
     // The `$`-references an expression makes, in the order they appear and without repeats.
-    // A reference is `$name,suffix` for a component parameter or `$name` for a global, and a
-    // component name cannot contain a comma, so nothing more is needed to know where one ends.
+    // A reference is `$name,suffix` for a component parameter or `$name` for a global; the
+    // suffix is an identifier or an azimuthal mode's key (`az amp1`), as the parser's
+    // `_REF_PATTERN` reads it.
     function refsOf(expr) {
         if (!expr || expr.length === 0) return []
-        var m = expr.match(/\$[A-Za-z_][A-Za-z0-9_]*(?:,[A-Za-z_][A-Za-z0-9_ ]*)?/g)
+        var m = expr.match(/\$[A-Za-z_][A-Za-z0-9_]*(?:,(?:az (?:amp|projang)[0-9]+|[A-Za-z_][A-Za-z0-9_]*))?/g)
         if (m === null) return []
         var out = []
         for (var i = 0; i < m.length; ++i) {
@@ -891,8 +905,10 @@ Item {
                 // Open where the models are, not where the last dialog happened to be: the
                 // shipped starting points live in demos/models, and a model file is what this
                 // button is for. A path already in use wins, so re-opening returns to it.
-                onClicked: openModelDialog.openAt(root.modelPath.length > 0 ? root.modelPath
-                                                  : Julia.picker_examples("model"))
+                onClicked: root.unlessUnsaved(function () {
+                    openModelDialog.openAt(root.modelPath.length > 0 ? root.modelPath
+                                           : Julia.picker_examples("model"))
+                })
             }
             Button {
                 text: "Save…"
@@ -905,7 +921,7 @@ Item {
 
             Button {
                 text: "Import PMOIRED…"
-                onClicked: importPmoiredDialog.openAt(Julia.picker_examples("pmoired"))
+                onClicked: root.unlessUnsaved(function () { pmoiredPasteDialog.open() })
             }
             Button {
                 text: "Export PMOIRED…"
@@ -932,48 +948,11 @@ Item {
             }
         }
 
-        // ── broadcasting and unrecognised-key banners ────────────────────────
+        // ── broadcasting banner ─────────────────────────────────────────────
         //
-        // Both are silent in the library and both change what is being fitted, so they are
-        // banners rather than something to find in a panel. An ignored key is amber, not red:
-        // it is as often a parameter just added with "+ parameter" that no expression uses YET
-        // as a misspelt shape key, and the text says which of the two to look for.
-        Rectangle {
-            Layout.fillWidth: true
-            visible: root.unrecognisedKeys.length > 0
-            color: "#fff6e0"
-            border.color: root.cWarn
-            radius: dp(3)
-            implicitHeight: unrecRow.implicitHeight + dp(10)
-            RowLayout {
-                id: unrecRow
-                anchors.fill: parent
-                anchors.margins: dp(5)
-                spacing: dp(8)
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: root.cWarn
-                    font.pointSize: root.pt(root.baseFontPt - 1)
-                    text: "Not used: " + root.unrecognisedKeys.join(", ")
-                }
-                InfoTip { tip: "The parser ignores these keys. Refer to a parameter from an expression to use it; a misspelt shape key means the component is not the shape you meant." }
-                // The model is the same without them, so clearing them is one click; the
-                // console names each key, so a misspelling removed here can be retyped.
-                Button {
-                    text: root.unrecognisedKeys.length === 1 ? "Remove it" : "Remove them"
-                    implicitHeight: Math.max(dp(22), implicitContentHeight + topPadding + bottomPadding)
-                    onClicked: {
-                        var err = Julia.shell_remove_unused()
-                        root.consoleChanged()
-                        if (err.length > 0) { root.fitText = err; return }
-                        root.modelDirty = true
-                        root.refreshModel()
-                    }
-                }
-            }
-        }
-
+        // Silent in the library, and it changes what every parameter is, so it is a banner
+        // rather than something to find in a panel. Keys the parser ignores are reported under
+        // Validation, with the rest of the model's problems.
         Rectangle {
             Layout.fillWidth: true
             visible: root.broadcasting
@@ -1113,11 +1092,6 @@ Item {
                                             onActiveFocusChanged: if (!activeFocus) visible = false
                                             Keys.onEscapePressed: visible = false
                                         }
-                                        Label {
-                                            text: model.kind + " ← " + model.geometryKey
-                                            color: "#666"
-                                            font.pointSize: root.pt(root.baseFontPt - 2)
-                                        }
                                     }
                                     ToolButton {
                                         text: "✎"
@@ -1201,16 +1175,27 @@ Item {
                             section.property: "comp"
                             section.criteria: ViewSection.FullString
                             section.delegate: Rectangle {
+                                id: sectionItem
                                 width: paramList.width
                                 implicitHeight: root.dp(22)
                                 color: "#eef1f4"
-                                Label {
+                                readonly property string kindLabel: root.kindLabelOf(section)
+                                Row {
                                     anchors.verticalCenter: parent.verticalCenter
                                     x: root.dp(6)
-                                    text: section === "__global__" ? "globals" : section
-                                    font.bold: true
-                                    font.pointSize: root.pt(root.baseFontPt - 1)
-                                    color: "#333"
+                                    spacing: root.dp(6)
+                                    Label {
+                                        text: section === "__global__" ? "globals" : section
+                                        font.bold: true
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                        color: "#333"
+                                    }
+                                    Label {
+                                        visible: section !== "__global__" && sectionItem.kindLabel.length > 0
+                                        text: "·  " + sectionItem.kindLabel
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                        color: "#666"
+                                    }
                                 }
                             }
 
@@ -1231,6 +1216,7 @@ Item {
                                 // silently shadows the delegate's row.
                                 readonly property int    rIndex:   index
                                 readonly property string rParam:   model.param
+                                readonly property string rComp:    model.comp
                                 readonly property string rMode:    model.mode
                                 readonly property real   rValue:   model.value
                                 readonly property real   rLb:      model.lb
@@ -1253,8 +1239,15 @@ Item {
                                     Label {
                                         Layout.preferredWidth: root.dp(150)
                                         Layout.maximumWidth: root.dp(150)
-                                        text: rowItem.rParam
+                                        // the size key's row reads as the size; the key an
+                                        // expression writes is its tooltip
+                                        readonly property bool isSize:
+                                            rowItem.rParam === root.sizeKeyOf(rowItem.rComp)
+                                        text: isSize ? root.sizeLabels[rowItem.rParam] : rowItem.rParam
                                         elide: Text.ElideRight
+                                        HoverHandler { id: nameHover }
+                                        ToolTip.visible: nameHover.hovered && isSize
+                                        ToolTip.text: "in an expression: $" + rowItem.rComp + "," + rowItem.rParam
                                         // Free in green, derived in violet, fixed in plain --
                                         // the same three colours the mode selector uses, so the
                                         // state of a row is readable without reading its mode.
@@ -1318,7 +1311,9 @@ Item {
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
-                                        text: rowItem.rMode === "free" ? root.fmt(rowItem.rLb, 3) : ""
+                                        // blank for no bound (±Infinity)
+                                        text: rowItem.rMode === "free" && isFinite(rowItem.rLb)
+                                              ? root.fmt(rowItem.rLb, 3) : ""
                                         horizontalAlignment: Text.AlignRight
                                         onEditingFinished: root.commitParam(rowItem.rIndex, "lb", text)
                                     }
@@ -1329,7 +1324,8 @@ Item {
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                         enabled: rowItem.rMode === "free"
                                         opacity: enabled ? 1 : 0.35
-                                        text: rowItem.rMode === "free" ? root.fmt(rowItem.rUb, 3) : ""
+                                        text: rowItem.rMode === "free" && isFinite(rowItem.rUb)
+                                              ? root.fmt(rowItem.rUb, 3) : ""
                                         horizontalAlignment: Text.AlignRight
                                         onEditingFinished: root.commitParam(rowItem.rIndex, "ub", text)
                                     }
@@ -1531,7 +1527,7 @@ Item {
                                     // they are read last or not at all.
                                     //
                                     // `display_model` performs exactly these checks -- value<lb,
-                                    // value>ub, lb>=ub, flux fractions not summing to 1 -- so what
+                                    // value>ub, lb>=ub, fluxes that cannot make a visibility -- so what
                                     // is rendered here are its results, not a second implementation
                                     // of them that could disagree with the fit.
                                     Label {
@@ -1547,6 +1543,24 @@ Item {
                                             color: root.cWarn
                                             font.pointSize: root.pt(root.baseFontPt - 1)
                                             text: "• " + modelData
+                                        }
+                                    }
+                                    // The keys the parser ignores are among the lines
+                                    // above. The model is the same without them, so clearing
+                                    // them is one click; the console names each key removed,
+                                    // so a misspelling cleared here can be typed back.
+                                    Button {
+                                        visible: root.unrecognisedKeys.length > 0
+                                        text: "Remove unused"
+                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Delete " + root.unrecognisedKeys.join(", ")
+                                        onClicked: {
+                                            var err = Julia.shell_remove_unused()
+                                            root.consoleChanged()
+                                            if (err.length > 0) { root.fitText = err; return }
+                                            root.modelDirty = true
+                                            root.refreshModel()
                                         }
                                     }
                                     // The checks above are `display_model`'s own — value<lb,
@@ -1664,12 +1678,6 @@ Item {
                                             visible: root.selectedComponent === ""
                                             text: "Select a component"
                                             font.bold: true
-                                        }
-                                        Label {
-                                            visible: root.selectedKind.length > 0
-                                            text: root.selectedKind + " ← " + root.selectedGeometryKey
-                                            color: "#666"
-                                            font.pointSize: root.pt(root.baseFontPt - 2)
                                         }
                                         Item { Layout.fillWidth: true }
                                     }
@@ -1945,6 +1953,17 @@ Item {
                                                         model: root.profileTemplates
                                                         currentIndex: -1
                                                         displayText: currentIndex < 0 ? "choose a profile…" : currentText
+                                                        Connections {
+                                                            target: root
+                                                            // The editor too: a template writes its text, which
+                                                            // ends the binding to the profile, and an unapplied
+                                                            // draft carried to the next component would be
+                                                            // applied to THAT component's profile.
+                                                            function onProfileRefreshed() {
+                                                                templateBox.currentIndex = root.profileTemplateIndex
+                                                                profileEdit.text = root.profileText
+                                                            }
+                                                        }
                                                         onActivated: {
                                                             var t = Julia.shell_profile_template(
                                                                         root.profileTemplates[currentIndex].key)
@@ -3098,10 +3117,15 @@ Item {
                                         // optimiser reports; they are not the same quantity, so
                                         // the unit is in the cell rather than in the header.
                                         Label {
+                                            readonly property bool stopped:
+                                                model.work.indexOf("not converged") >= 0
                                             Layout.preferredWidth: root.dp(80)
-                                            text: model.work; color: "#666"
+                                            text: model.work.replace(" · ", "\n")
+                                            color: stopped ? root.cWarn : "#666"
                                             ToolTip.visible: fitWorkHover.hovered && model.work !== "—"
-                                            ToolTip.text: model.work.indexOf("it") >= 0
+                                            ToolTip.text: stopped
+                                                ? "Stopped by the iteration limit before converging: the values are where it stopped, not a minimum. Fit again from them, or adopt and refit."
+                                                : model.work.indexOf("it") >= 0
                                                 ? "Levenberg–Marquardt iterations, each costing a residual and a Jacobian"
                                                 : "χ² evaluations; NLopt reports no iteration count"
                                             HoverHandler { id: fitWorkHover }
@@ -3378,16 +3402,46 @@ Item {
     // The geometry key that DECIDED the selected component's kind, or "" when nothing is
     // selected. `_identity_kind` searches the keys in order and the first match wins, so this
     // is the key that made the component what it is.
+    // A component whose size has its own key (a disc's law, a Gaussian): that key's row reads
+    // as the size, "diameter" or "FWHM", and its tooltip gives the key an expression writes,
+    // `$star,ldclaret4`.
+    readonly property var sizeLabels: ({ "ud": "diameter", "ldlin": "diameter",
+                                         "ldquad": "diameter", "ldsqrt": "diameter",
+                                         "ldpow": "diameter", "ldclaret4": "diameter",
+                                         "fwhm": "FWHM" })
+    // `componentModel.count` is read first so that a binding calling this follows the model.
+    function sizeKeyOf(comp) {
+        for (var i = 0; i < componentModel.count; ++i) {
+            var c = componentModel.get(i)
+            if (c.name === comp)
+                return sizeLabels[c.geometryKey] !== undefined ? c.geometryKey : ""
+        }
+        return ""
+    }
+    // What the parser read the component as, for the table's header: `disk · Gaussian`,
+    // `star · four-parameter`. Written so it cannot be taken for a key -- `$disk,gaussian`
+    // would not resolve. A disc's law is named as the law selector names it.
+    readonly property var kindLabels: ({ "point": "point", "gaussian": "Gaussian",
+                                         "ring": "ring", "gaussian_ring": "Gaussian ring",
+                                         "crescent": "crescent", "hankel": "written profile",
+                                         "image": "image", "visfunc": "visibility function",
+                                         "resolved": "resolved flux" })
+    function kindLabelOf(comp) {
+        for (var i = 0; i < componentModel.count; ++i) {
+            var c = componentModel.get(i)
+            if (c.name !== comp) continue
+            if (kindLabels[c.kind] !== undefined) return kindLabels[c.kind]
+            for (var j = 0; j < root.ldLaws.length; ++j)
+                if (root.ldLaws[j].key === c.kind) return root.ldLaws[j].label
+            return c.kind
+        }
+        return ""
+    }
+
     readonly property string selectedGeometryKey: {
         for (var i = 0; i < componentModel.count; ++i)
             if (componentModel.get(i).name === selectedComponent)
                 return componentModel.get(i).geometryKey
-        return ""
-    }
-    readonly property string selectedKind: {
-        for (var i = 0; i < componentModel.count; ++i)
-            if (componentModel.get(i).name === selectedComponent)
-                return componentModel.get(i).kind
         return ""
     }
 
@@ -3812,7 +3866,14 @@ Item {
             color: companionDialog.palette.window
             border.color: "#606060"
             border.width: root.dp(2)
-            radius: root.dp(4)
+        }
+        // The title without a background of its own: the style's header paints over the top of
+        // the border.
+        header: Label {
+            text: companionDialog.title
+            font.bold: true
+            padding: root.dp(12)
+            bottomPadding: 0
         }
         FontMetrics { id: compFm; font: nodeFreeText.font }
         FontMetrics { id: compSmallFm; font: fitterNote.font }
@@ -3869,12 +3930,27 @@ Item {
                 currentIndex: 1
                 enabled: root.primaryHasFree(companionBox.currentText)
                 onActivated: companionDialog.refreshChoices()
-                ToolTip.visible: hovered
-                ToolTip.text: enabled
-                    ? "held: only the companion is fitted at a node, and the significance is against " +
-                      "this primary alone; refitted: its free parameters are fitted too, at every node " +
-                      "and for the no-companion model"
-                    : "the primary has no free parameters to refit"
+                // Its own ToolTip, of a fixed width: the attached one is one line, off the screen.
+                ToolTip {
+                    visible: primaryModeBox.hovered
+                    delay: 150
+                    // The width is the ToolTip's, not the text's: the ToolTip lays its text out at
+                    // its own width, which is the text's unwrapped one unless capped here.
+                    // Placed by that width too: the default placement uses the unwrapped one.
+                    width: Math.min(implicitWidth, root.dp(360) + leftPadding + rightPadding)
+                    x: (primaryModeBox.width - width) / 2
+                    y: -height - root.dp(4)
+                    contentItem: Text {
+                        text: primaryModeBox.enabled
+                            ? "held: only the companion is fitted at a node, and the significance is against " +
+                              "this primary alone; refitted: its free parameters are fitted too, at every node " +
+                              "and for the no-companion model"
+                            : "the primary has no free parameters to refit"
+                        wrapMode: Text.WordWrap
+                        width: root.dp(360)
+                        font.pointSize: root.pt(root.baseFontPt - 1)
+                    }
+                }
             }
 
             Label { text: "Fitted at each node" }
@@ -4053,8 +4129,11 @@ Item {
                 }
             }
             keywords = kw
+            var ps = Julia.shell_expression_params(editKey)
+            params = ps.length > 0 ? ps.split("\n") : []
             check()
         }
+        property var params: []
 
         // Names a profile expression needs that the model does not have yet. Empty for any
         // other key: only a profile discovers its parameters from what is written.
@@ -4209,6 +4288,46 @@ Item {
                         HoverHandler { id: kwHover }
                         ToolTip.visible: kwHover.hovered
                         ToolTip.text: modelData.enabled ? modelData.meaning : modelData.reason
+                    }
+                }
+            }
+
+            // ── the model's own parameters, this component's first ───────────────
+            //
+            // What an expression most often refers to, and otherwise typed by hand. A column of
+            // its own, wrapping, and scrolled past a height: a model has as many as it has.
+            ColumnLayout {
+                Layout.alignment: Qt.AlignTop
+                visible: exprDialog.params.length > 0
+                spacing: root.dp(3)
+                Label {
+                    text: "Parameters"
+                    font.bold: true
+                    font.pointSize: root.pt(root.baseFontPt - 1)
+                }
+                Label {
+                    text: "this component's first"
+                    color: "#666"
+                    font.pointSize: root.pt(root.baseFontPt - 2)
+                }
+                ScrollView {
+                    Layout.preferredWidth: root.dp(260)
+                    Layout.preferredHeight: Math.min(paramFlow.implicitHeight, root.dp(300))
+                    clip: true
+                    Flow {
+                        id: paramFlow
+                        width: root.dp(250)
+                        spacing: root.dp(3)
+                        Repeater {
+                            model: exprDialog.params
+                            delegate: Button {
+                                text: modelData
+                                font.family: "monospace"
+                                font.pointSize: root.pt(root.baseFontPt - 2)
+                                implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                onClicked: exprDialog.insert(modelData)
+                            }
+                        }
                     }
                 }
             }
@@ -4517,7 +4636,7 @@ Item {
                     if (addComponentDialog.chosenId === "image_func")
                         return "I(r) written in $R and $MU, Hankel-transformed to a visibility"
                     if (addComponentDialog.chosenId === "vis_func")
-                        return "V written directly in $B, the baseline in Mλ"
+                        return "V written directly in $BL, the baseline in Mλ"
                     if (addComponentDialog.chosenId === "fits_image")
                         return "the FITS file is chosen next"
                     return ""
@@ -4615,14 +4734,121 @@ Item {
         // keeping a selection that named a component of the previous model would leave the
         // panel describing something no longer there.
         onAccepted: function (path) {
+            root.pmoiredFolder = Julia.picker_parent(path)
             var name = Julia.shell_import_pmoired(path)
             root.consoleChanged()
             if (name.length === 0 || name.charAt(0) === "!") { root.fitText = name; return }
-            root.modelPath = ""          // a .py is not a model file we can save back to
-            root.modelName = name
-            root.modelDirty = true       // nothing on disk holds this as a TOML yet
-            root.selectedComponent = ""
-            root.refreshModel()
+            root.pmoiredImported(name)
+        }
+    }
+
+    // Where the last .py came from: the next "From file…" opens there, not at the examples.
+    property string pmoiredFolder: ""
+    function pmoiredImported(name) {
+        root.modelPath = ""          // a .py is not a model file we can save back to
+        root.modelName = name
+        // Unedited: the .py or the notebook still holds it. Marked unsaved here, the next
+        // Open or Import would ask about a model nobody had touched.
+        root.modelDirty = false
+        root.selectedComponent = ""
+        root.refreshModel()
+    }
+
+    // Open and Import replace the model. With unsaved edits they ask first, before the picker
+    // or the paste box opens, so nothing is chosen only to be thrown away.
+    function unlessUnsaved(action) {
+        if (!root.modelDirty) { action(); return }
+        discardDialog.pending = action
+        discardDialog.open()
+    }
+    Dialog {
+        id: discardDialog
+        title: "Unsaved changes"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: root.dp(380)
+        property var pending: null
+        onClosed: pending = null
+        Label {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: root.modelName + " has changes that are not saved. Discard them and replace the model?"
+        }
+        footer: DialogButtonBox {
+            Button { text: "Discard"; DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole }
+            Button { text: "Cancel";  DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+            onClicked: function (button) {
+                var act = button.text === "Discard" ? discardDialog.pending : null
+                discardDialog.close()
+                if (act) act()
+            }
+        }
+    }
+
+    // "Import PMOIRED…": a notebook keeps its `param` dicts in cells, so pasting one is the
+    // usual way in; a .py file is the other.
+    Dialog {
+        id: pmoiredPasteDialog
+        title: "Import a PMOIRED model"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: root.dp(560)
+        property string problem: ""
+        onOpened: { problem = ""; pasteArea.forceActiveFocus() }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: root.dp(6)
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "Paste a param dict from a notebook, or open a .py file."
+            }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: root.dp(200)
+                TextArea {
+                    id: pasteArea
+                    font.family: "monospace"
+                    wrapMode: TextArea.Wrap
+                    placeholderText: "{'star,ud': 0.1, 'disk,fwhm': 18., 'disk,f': 1.0}"
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: pmoiredPasteDialog.problem.length > 0
+                wrapMode: Text.WordWrap
+                color: root.cWarn
+                text: pmoiredPasteDialog.problem
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    text: "From file…"
+                    onClicked: {
+                        pmoiredPasteDialog.close()
+                        importPmoiredDialog.openAt(root.pmoiredFolder.length > 0
+                                                   ? root.pmoiredFolder
+                                                   : Julia.picker_examples("pmoired"))
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                Button { text: "Cancel"; onClicked: pmoiredPasteDialog.close() }
+                Button {
+                    text: "Import"
+                    highlighted: true
+                    enabled: pasteArea.text.trim().length > 0
+                    onClicked: {
+                        var name = Julia.shell_import_pmoired_text(pasteArea.text)
+                        root.consoleChanged()
+                        if (name.length === 0 || name.charAt(0) === "!") {
+                            pmoiredPasteDialog.problem = name; return
+                        }
+                        pmoiredPasteDialog.close()
+                        root.pmoiredImported(name)
+                    }
+                }
+            }
         }
     }
 

@@ -104,6 +104,14 @@ if have(:nautilus)
         @test_throws ErrorException fit_model_nested(nested_md, nested_free, nested_data;
                                                      backend = :nautilus,
                                                      lb = nested_lb, verb = false)
+        # An infinite bound is no prior either: the panel sends Inf for an empty bound, and a
+        # flux's default upper bound is Inf.
+        inf_ub = Dict("s,ud" => Inf)
+        @test_throws ErrorException fit_model_nested(nested_md, nested_free, nested_data;
+                                                     backend = :nautilus, lb = nested_lb,
+                                                     ub = inf_ub, verb = false)
+        @test_throws ErrorException fit_model_nested(fm, nested_data; backend = :nautilus,
+                                                     lb = nested_lb, ub = inf_ub, verb = false)
     end
 end
 

@@ -60,13 +60,16 @@ mutable struct ModelJacWorkspace{T<:AbstractFloat}
     pcols  :: Vector{Vector{T}}           # or one value per point
     pvec   :: Vector{Vector{T}}
     qidx   :: Vector{Int}                 # resolver index of each column of G (0 = absent)
+    F      :: Vector{T}                   # the total flux Σ f at each point, and ∂F/∂x (n × nf):
+    JF     :: Matrix{T}                   # V and J are divided by it at the end
+    fidx   :: Vector{Int}                 # each component's flux in the resolver (0 = f is 1)
 end
 
 const _G_FIXED = 5      # columns of G before a component's own parameters: f, x, y, incl, pa
 
 _ncomp_params(c::AnalyticSpec) = length(c.param_idx)
 _ncomp_params(c::VisFuncSpec)  = length(c.param_idx)
-_ncomp_params(c::HankelSpec)   = length(c.profile_param_idx) + 2 * length(c.az_modes)
+_ncomp_params(c::HankelSpec)   = 2 + length(c.profile_param_idx) + 2 * length(c.az_modes)
 _ncomp_params(c::ImageSpec)    = 0
 
 function ModelJacWorkspace(model::FlatModel, x::AbstractVector, uv::AbstractMatrix)
@@ -85,7 +88,8 @@ function ModelJacWorkspace(model::FlatModel, x::AbstractVector, uv::AbstractMatr
         vt(), Matrix{T}(undef, n, np), vt(),
         vc(), Matrix{Complex{T}}(undef, n, _G_FIXED + np), vc(), vc(),
         Vector{T}(undef, np), [vt() for _ in 1:np], Vector{Vector{T}}(undef, np),
-        zeros(Int, _G_FIXED + np))
+        zeros(Int, _G_FIXED + np), vt(), Matrix{T}(undef, n, nf),
+        Int[c.f_idx for c in model.components])
 end
 
 """
@@ -100,7 +104,7 @@ differentiation.
 function eval_model_jac!(V::AbstractVector{Complex{T}}, J::AbstractMatrix{Complex{T}},
                          ws::ModelJacWorkspace{T}, model::FlatModel, x::AbstractVector,
                          uv::AbstractMatrix; wl = nothing, mjd = nothing, n::Int = 0,
-                         plane_wl = wl) where {T}
+                         plane_wl = wl, normalize::Bool = true) where {T}
     n == 0 || throw(ArgumentError("eval_model_jac! evaluates radial profiles at order 0 only"))
     N = size(uv, 2)
     (N == ws.n && length(V) == N && size(J) == (N, length(x)) && ws.nf == length(x)) ||
@@ -108,7 +112,7 @@ function eval_model_jac!(V::AbstractVector{Complex{T}}, J::AbstractMatrix{Comple
     _wl  = isnothing(wl)  ? NaN : wl
     _mjd = isnothing(mjd) ? NaN : mjd
     _resolve_jac!(ws, model, x, _wl, _mjd)
-    _eval_model_jac!(V, J, ws, model, uv, _wl, _mjd, plane_wl)
+    _eval_model_jac!(V, J, ws, model, uv, _wl, _mjd, plane_wl, normalize)
     return V, J
 end
 
@@ -218,7 +222,8 @@ end
     return s > 0 ? rp.s[s] : rp.cols[-s][i]
 end
 
-function _eval_model_jac!(V, J, ws::ModelJacWorkspace{T}, model, uv, _wl, _mjd, plane_wl) where {T}
+function _eval_model_jac!(V, J, ws::ModelJacWorkspace{T}, model, uv, _wl, _mjd, plane_wl,
+                          normalize::Bool = true) where {T}
     N = ws.n
     @inbounds for i in 1:N
         u, v = uv[1, i], uv[2, i]
@@ -228,7 +233,52 @@ function _eval_model_jac!(V, J, ws::ModelJacWorkspace{T}, model, uv, _wl, _mjd, 
     for (c, comp) in enumerate(model.components)
         _component_jac!(V, J, ws, comp, model.chromatic[c], uv, _wl, _mjd, plane_wl)
     end
+    normalize && _normalise_jac!(V, J, ws, model)
     model.kernel_idx != 0 && _kernel_jac!(V, J, ws, model.kernel_idx)
+    return V, J
+end
+
+# V/F and its Jacobian, F = Σ f: V ← V/F, then J ← (J − V ∂F/∂xᵀ)/F with that normalised V,
+# as `eval_model` divides.
+function _normalise_jac!(V, J, ws::ModelJacWorkspace{T}, model) where {T}
+    F, JF, rp = ws.F, ws.JF, ws.rp
+    fill!(F, zero(T)); fill!(JF, zero(T))
+    # the components' flux indices, read from the workspace: `model.components` is abstractly
+    # typed, and a field read through it would allocate
+    @inbounds for fi in ws.fidx
+        if fi == 0
+            F .+= one(T)
+            continue
+        end
+        s = rp.slot[fi]
+        if s > 0
+            v = rp.s[s]
+            for i in 1:ws.n
+                F[i] += v
+            end
+            for k in 1:ws.nf
+                r = ws.Rs[s, k]
+                iszero(r) && continue
+                for i in 1:ws.n
+                    JF[i, k] += r
+                end
+            end
+        else
+            col = rp.cols[-s]; R = ws.Rc[-s]
+            for i in 1:ws.n
+                F[i] += col[i]
+            end
+            for k in 1:ws.nf, i in 1:ws.n
+                JF[i, k] += R[i, k]
+            end
+        end
+    end
+    @inbounds for i in 1:ws.n
+        V[i] /= F[i]
+    end
+    @inbounds for k in 1:ws.nf, i in 1:ws.n
+        J[i, k] = (J[i, k] - V[i] * JF[i, k]) / F[i]
+    end
     return V, J
 end
 
@@ -253,10 +303,13 @@ function _own_param_idx!(q, comp::Union{AnalyticSpec, VisFuncSpec})
         q[_G_FIXED + j] = k
     end
 end
+# A profile's columns: d_min, d_max (0 when fixed), its parameters, then the azimuthal modes.
 function _own_param_idx!(q, comp::HankelSpec)
-    np = length(comp.profile_param_idx)
+    np = 2 + length(comp.profile_param_idx)
+    q[_G_FIXED + 1] = comp.dmin_idx
+    q[_G_FIXED + 2] = comp.dmax_idx
     for (j, k) in enumerate(comp.profile_param_idx)
-        q[_G_FIXED + j] = k
+        q[_G_FIXED + 2 + j] = k
     end
     for (m, az) in enumerate(comp.az_modes)
         q[_G_FIXED + np + 2m - 1] = az.amp_idx
@@ -381,32 +434,55 @@ end
 function _kernel_into_G!(ws::ModelJacWorkspace{T}, comp::HankelSpec, chrom, np, oriented,
                          uv, _wl, _mjd, plane_wl) where {T}
     rp = ws.rp
-    npp = length(comp.profile_param_idx)
-    prof = T[rp.s[rp.slot[k]] for k in comp.profile_param_idx]    # scalars, always
+    # [d_min, d_max, profile params...], scalars always
+    dmin = comp.dmin_idx != 0 ? T(rp.s[rp.slot[comp.dmin_idx]]) : T(comp.d_min)
+    dmax = comp.dmax_idx != 0 ? T(rp.s[rp.slot[comp.dmax_idx]]) : T(comp.d_max)
+    prof = vcat(dmin, dmax, T[rp.s[rp.slot[k]] for k in comp.profile_param_idx])
+    npp = length(prof)
     @inbounds for i in 1:ws.n
         ws.Bh[i] = ws.ρ2[i] / _MAS2RAD_PM
         ws.ψ[i]  = atan(ws.v2[i], ws.u2[i])
     end
-    st = _hankel_setup(comp, ws.Bh, prof; cached = !oriented)   # the nodes follow the data
-    r, μ, g = st.r, st.μ, st.g
+    # A size no parameter moves has zero columns, and is left out of what follows: neither
+    # ∂I/∂d, nor the size's motion of the jumps, nor the kernels' part is computed for it.
+    sized = _depends(ws, comp.dmin_idx) || _depends(ws, comp.dmax_idx)
+    c0 = sized ? 1 : 3
+    st = _hankel_setup(comp, ws.Bh, prof; cached = !oriented,      # the nodes follow the data
+                       jumpcols = c0:npp)
+    s, r, μ, g = st.s, st.r, st.μ, st.g
     Ti = promote_type(T, eltype(r))
-    Ifun(pp) = (v = comp.profile_fn(r, μ, pp...); v isa Number ? fill(v, length(r)) : v)
+    Ifun(pp) = (v = comp.profile_fn(s, μ, pp...); v isa Number ? fill(v, length(s)) : v)
     I  = convert(Vector{Ti}, Ifun(prof))
-    dI = npp == 0 ? zeros(Ti, length(r), 0) : Matrix{Ti}(ForwardDiff.jacobian(Ifun, prof))
     nm = length(comp.az_modes)
+    if sized
+        dI = Matrix{Ti}(ForwardDiff.jacobian(Ifun, prof))
+    else
+        ws.G[:, _G_FIXED+1:_G_FIXED+2] .= zero(eltype(ws.G))
+        dI = npp == 2 ? zeros(Ti, length(s), 0) :
+             Matrix{Ti}(ForwardDiff.jacobian(p -> (v = comp.profile_fn(s, μ, dmin, dmax, p...);
+                                                   v isa Number ? fill(v, length(s)) : v),
+                                             prof[3:end]))
+    end
+    jumps = st.jumps
     modes = Int[az.order for az in comp.az_modes]
     cache = oriented || !st.cacheable ? nothing : comp.kcache
-    D = view(ws.G, :, _G_FIXED+1:_G_FIXED+npp+2nm)
+    D = view(ws.G, :, _G_FIXED+c0:_G_FIXED+npp+2nm)
     if chrom
         amps = Vector{T}[_pcol(ws, az.amp_idx) for az in comp.az_modes]
         phis = Vector{T}[_pcol(ws, az.phi_idx) for az in comp.az_modes]
         _hankel_jac!(ws.W, D, ws.Du, ws.Dv, r, g, I, dI, ws.Bh, ws.ψ, modes, amps, phis, cache,
-                     st.jumps)
+                     jumps)
     else
         amps = T[_pv(rp, az.amp_idx, 1) for az in comp.az_modes]
         phis = T[_pv(rp, az.phi_idx, 1) for az in comp.az_modes]
         _hankel_jac!(ws.W, D, ws.Du, ws.Dv, r, g, I, dI, ws.Bh, ws.ψ, modes, amps, phis, cache,
-                     st.jumps)
+                     jumps)
+    end
+    # r = (d_max/2)·s: the kernels' part of ∂/∂d_max is (B/d_max)·∂/∂B, every order included
+    if sized
+        @inbounds for i in 1:ws.n
+            D[i, 2] += ws.Bh[i] / dmax * ws.Du[i]
+        end
     end
     G = ws.G
     if oriented
@@ -424,6 +500,13 @@ function _kernel_into_G!(ws::ModelJacWorkspace{T}, comp::HankelSpec, chrom, np, 
 end
 
 _pcol(ws, idx) = (s = ws.rp.slot[idx]; s > 0 ? fill(ws.rp.s[s], ws.n) : ws.rp.cols[-s])
+
+# Whether the resolved parameter `idx` moves with the fit vector (0: not a parameter).
+function _depends(ws::ModelJacWorkspace, idx::Int)
+    idx == 0 && return false
+    s = ws.rp.slot[idx]
+    return s > 0 ? any(!iszero, view(ws.Rs, s, :)) : true
+end
 
 # ── an image: cached visibilities, no parameters of its own ────────────────────────────────
 function _kernel_into_G!(ws::ModelJacWorkspace{T}, comp::ImageSpec, chrom, np, oriented, uv,

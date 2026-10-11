@@ -110,9 +110,9 @@ function _combined_cvis(image::AbstractMatrix{<:Real}, obs::ObservationConfig;
     cvis_image = obs.ft_uv * img_norm
 
     if obs.model !== nothing && params !== nothing
-        cvis_model = eval_model(obs.model, params, obs.uv)
+        cvis_model = eval_model(obs.model, params, obs.uv; normalize = false)
         # SPARCO: f_env = 1 - total_param_flux (V(0)=1 for all analytic shapes)
-        f_env = 1.0 - real(eval_model(obs.model, params, zeros(2, 1))[1])
+        f_env = 1.0 - real(eval_model(obs.model, params, zeros(2, 1); normalize = false)[1])
         return f_env .* cvis_image .+ cvis_model
     else
         return cvis_image
@@ -290,9 +290,9 @@ function observe_adjoint(g_obs::AbstractVector{Float64},
 
         # Compute quantities needed for param gradient
         wl = nothing  # monochromatic for now
-        _, J = eval_model_grad(obs.model, params, obs.uv; wl=wl)
+        _, J = eval_model_grad(obs.model, params, obs.uv; wl=wl, normalize = false)
         uv_zero = zeros(2, 1)
-        cvis_zero, J_zero = eval_model_grad(obs.model, params, uv_zero; wl=wl)
+        cvis_zero, J_zero = eval_model_grad(obs.model, params, uv_zero; wl=wl, normalize = false)
         f_env = 1.0 - real(cvis_zero[1])
 
         # Image gradient: f_env * NFFT adjoint with flux normalization
@@ -496,11 +496,11 @@ function observe_jvp(image::AbstractMatrix{Float64}, d_image::AbstractMatrix{Flo
     if obs.model !== nothing && params !== nothing && d_params !== nothing
         # Hybrid: add parametric model contribution
         wl = nothing  # monochromatic for now
-        cvis_model, J = eval_model_grad(obs.model, params, obs.uv; wl=wl)
+        cvis_model, J = eval_model_grad(obs.model, params, obs.uv; wl=wl, normalize = false)
         d_cvis_model = J * d_params
 
         uv_zero = zeros(2, 1)
-        cvis_zero, J_zero = eval_model_grad(obs.model, params, uv_zero; wl=wl)
+        cvis_zero, J_zero = eval_model_grad(obs.model, params, uv_zero; wl=wl, normalize = false)
         f_env = 1.0 - real(cvis_zero[1])
         d_f_env = -real(dot(J_zero[1, :], d_params))
 

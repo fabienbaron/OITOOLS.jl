@@ -408,8 +408,10 @@ end
 # H[j] = Σₖ g[k] I[k] Jₙ(2π B[j] r[k]), so
 #   ∂L/∂I = K'ȳ,                K[j,k]  = g[k] Jₙ(2π B[j] r[k])
 #   ∂L/∂B[j] = ȳ[j] (K_B I)[j],   K_B[j,k] = g[k] 2π r[k] Jₙ'(2π B[j] r[k])
+#   ∂L/∂r[k] = I[k] (K_B'(ȳ .* B))[k] / r[k],   ∂L/∂g[k] = I[k] (K'ȳ)[k] / g[k]
 # The B tangent is what lets reverse mode differentiate an inclination or a position angle,
-# which move the baselines the component sees. H is real, so only the real part of ȳ counts.
+# which move the baselines the component sees; the r tangent, a size, which scales the radii;
+# the g tangent, nodes that move. H is real, so only the real part of ȳ counts.
 
 function ChainRulesCore.rrule(::typeof(_hankel_wtransform), I::AbstractVector,
                               r::AbstractVector, g::AbstractVector, B::AbstractVector;
@@ -419,7 +421,8 @@ function ChainRulesCore.rrule(::typeof(_hankel_wtransform), I::AbstractVector,
     H  = K * I
     function hankel_wtransform_pullback(ȳ)
         y = real.(unthunk(ȳ))
-        return NoTangent(), K' * y, NoTangent(), NoTangent(), y .* (KB * I)
+        Ky = K' * y
+        return NoTangent(), Ky, I .* (KB' * (y .* B)) ./ r, I .* Ky ./ g, y .* (KB * I)
     end
     return H, hankel_wtransform_pullback
 end

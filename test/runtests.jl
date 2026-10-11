@@ -24,7 +24,7 @@ BLAS.set_num_threads(1)
     include("test_write_oifits.jl")      # write_oifits reads back to the same points
     include("test_merge_oidata.jl")      # several files as one dataset
     include("test_bsmem_precision.jl")   # cheap structural checks first
-    include("test_chromatic_params.jl")  # $WL / $MJD / $B model parameters
+    include("test_chromatic_params.jl")  # $WL / $MJD / $BL model parameters
     include("test_model_gradients.jl")   # analytic model gradients vs finite differences
     include("test_bootstrap.jl")         # resampling / uncertainty estimation
     include("test_constraints.jl")       # fit constraints + TOML model files
@@ -64,5 +64,6 @@ BLAS.set_num_threads(1)
     include("test_model_kernels.jl")     # J2: component kernels and their closed-form derivatives
     include("test_model_jacobian.jl")    # J3: the closed-form Jacobian against ForwardDiff
     include("test_hankel_quadrature.jl") # written profiles: closed forms, steps, kinks, the node count
+    include("test_pmoired_compat.jl")    # the PMOIRED import and export, against PMOIRED's definitions
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end

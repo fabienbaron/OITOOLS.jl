@@ -60,6 +60,11 @@
         rows2 = model_rows(md, free; lb = Dict("star,ud" => 5.0), ub = Dict("star,ud" => 8.0))
         b2 = Dict(r.key => r for r in rows2)["star,ud"]
         @test (b2.lb, b2.ub) == (5.0, 8.0)
+        # ... and only for the keys they hold: the others keep their defaults. A coefficient
+        # seeded after the session's bounds were set (a change of law) once got none, the panel
+        # showed 0/0, and the fit refused its start value.
+        b3 = Dict(r.key => r for r in rows2)["disk,pa"]
+        @test (b3.lb, b3.ub) == (lb["disk,pa"], ub["disk,pa"])
     end
 
     @testset "at-bound flags a pinned parameter, not a small one" begin
@@ -119,7 +124,7 @@
         # A chromatic expression has no single value: the resolver broadcasts it to one entry
         # per uv point. Without a wavelength the row cannot be resolved and must say so with a
         # NaN -- the failure to avoid is reporting a number that is not the parameter.
-        chromatic = Dict{String,Any}("s,ud" => 2.0, "s,f" => "0.7 * (\$WL/1.6e-6)^-4")
+        chromatic = Dict{String,Any}("s,ud" => 2.0, "s,f" => "0.7 * (\$WL/1.6)^-4")
         r0 = only(filter(r -> r.key == "s,f", model_rows(chromatic, String[])))
         @test r0.mode === PARAM_EXPR
         @test isnan(r0.value)

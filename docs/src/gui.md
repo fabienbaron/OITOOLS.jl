@@ -171,7 +171,7 @@ given.
 |:--|:--|:--|
 | `$R` | radius over the profile grid, mas | only inside a `profile` string |
 | `$MU` | `sqrt(1 - (r/r_max)^2)`, for limb darkening | only inside a `profile` string |
-| `$WL` | wavelength in **metres**, one value per uv point | only outside a profile |
+| `$WL` | wavelength in **microns**, one value per uv point | only outside a profile |
 | `$MJD` | Modified Julian Date, one value per uv point | only outside a profile |
 
 Crossing the boundary is not reported when it is typed. It surfaces later as
@@ -185,7 +185,7 @@ are told apart.
 Any ordinary expression may use them:
 
 ```julia
-"disk,ud" => "3.0 * ($WL / 1.6e-6)^1.2"
+"disk,ud" => "3.0 * ($WL / 1.6)^1.2"
 ```
 
 One consequence is worth knowing: if **any** expression in the model mentions `$WL` or `$MJD`,
@@ -294,8 +294,9 @@ own wavelengths. It is available only for a model that references `$WL`: a model
 is the same model at every wavelength, and its SED is a set of flat lines.
 
 !!! warning "`model_to_sed` takes metres"
-    `wl_grid` is in metres, the unit `$WL` carries in the resolver and `uv_lam` carries in the
-    data. A grid in microns evaluates every `$WL` expression a million times too far out and
-    returns fluxes that are wrong without raising anything.
+    `wl_grid` is in metres, as `uv_lam` in the data and every `wl` argument; only the
+    expressions see the wavelength in microns, as `$WL`. A grid in microns evaluates every
+    `$WL` expression a million times too close in and returns fluxes that are wrong without
+    raising anything.
 
 Each panel has its own **Save PNG**, which writes the plot as it is framed on screen.
