@@ -138,7 +138,7 @@ Makie = "0.24"
 # registered release resolves without further edits.
 Nautilus = "0.1"
 PairPlots = "2, 3"
-OIFITS = "1"
+OIFITS = "2"
 Pigeons = "0.4"
 PythonCall = "0.9"
 PythonPlot = "1"

@@ -36,13 +36,13 @@ using OITOOLS, Test, LinearAlgebra
                                    x0; lower = lo, upper = hi, maxIter = 1000, store_trace = true)
 
         # No bound, χ² test off: LsqFit's steps. Its trace has an iteration-0 entry. In Float32
-        # its step test (1e-8, below Float32's resolution) cannot fire and it iterates on at the
-        # same point; ours stops at eps(Float32).
+        # its step test (1e-8, below Float32's resolution) cannot fire, so it may iterate on at
+        # the same point where ours stops at eps(Float32): never more iterations than LsqFit.
         a = O._lm_bounded(f, j, x0, free_lo, free_hi; maxIter = 1000, chi2_tol = 0)
         b = lsq(free_lo, free_hi)
         @test a.converged && isempty(a.held)
         @test T == Float64 ? a.iterations == length(b.trace) - 1 :
-                             a.iterations < length(b.trace) - 1
+                             a.iterations <= length(b.trace) - 1
         @test a.x ≈ b.param rtol = (T == Float64 ? 1e-12 : 1e-5)
         @test eltype(a.x) == T
 

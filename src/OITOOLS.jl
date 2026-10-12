@@ -19,6 +19,7 @@ version() = println("OITOOLS v$(pkgversion(OITOOLS))")
 include("resources.jl")          # where shipped QML, configs and demo data are found
 include("graphics.jl")           # GL driver environment; must be callable before GLMakie
 include("gui_launcher.jl")       # oitoolsgui(): loads the GUI stack in the required order
+include("oifits_binning.jl")      # averaging spectral channels on reading (binning ≠ grouping)
 include("readoifits.jl")
 include("write_oifits.jl")        # OIdata back to OIFITS v2, read back to the same points
 include("image_component.jl")   # FITS images and cubes as model components (convention shared with ROTIR)

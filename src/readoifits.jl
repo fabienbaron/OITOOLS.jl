@@ -1011,7 +1011,8 @@ end
 function read_flux_tables(fluxtables, targetid_filter,
                           wavtables, wavtableref,
                           arraytableref, conversion_index, station_index_offset;
-                          correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+                          correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64,
+                        binspec::Union{Nothing,BinSpec}=nothing)
     flux_all = T[]; flux_err_all = T[]; flux_mjd_all = Float64[]
     flux_lam_all = T[]; flux_dlam_all = T[]; flux_flag_all = Bool[]
     flux_sta_index_all = Int64[]
@@ -1024,15 +1025,18 @@ function read_flux_tables(fluxtables, targetid_filter,
         isempty(tid_ok) && continue
 
         wav   = _find_wav(db, wavtables, wavtableref)
-        nwave = length(wav.eff_wave)
         nobs  = length(tid_ok)
 
         fdata = T.(db.fluxdata[:, tid_ok])
         ferr  = T.(db.fluxerr[:,  tid_ok])
         fflag = Bool.(db.flag[:, tid_ok])
+        ew, eb = T.(wav.eff_wave), T.(wav.eff_band)
+        binspec === nothing ||
+            ((ew, eb, fdata, ferr, fflag) = _bin_table(binspec, ew, eb, fdata, ferr, fflag; stat = :flux))
+        nwave = length(ew)
         fmjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
-        flam  = repeat(T.(wav.eff_wave), 1, nobs)
-        fdlam = repeat(T.(wav.eff_band), 1, nobs)
+        flam  = repeat(ew, 1, nobs)
+        fdlam = repeat(eb, 1, nobs)
 
         # Station index: zero for calibrated spectra, converted index for uncalibrated
         calstat = uppercase(strip(db.calstat))
@@ -1053,7 +1057,7 @@ function read_flux_tables(fluxtables, targetid_filter,
             fsi = zeros(Int64, nwave * nobs)
         end
 
-        push!(flux_corr_idx_parts, _process_corrindx(
+        binspec === nothing && push!(flux_corr_idx_parts, _process_corrindx(
             _safe_field(db, :corrname), _safe_field(db, :corrindx_fluxdata),
             tid_ok, nwave, correlt, flux_corr_offsets, seen_flux_names;
             mjd_obs=db.mjd[tid_ok]))
@@ -1076,7 +1080,8 @@ end
 # ---------------------------------------------------------------------------
 function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
                          arraytableref, conversion_index, station_index_offset;
-                         correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+                         correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64,
+                        binspec::Union{Nothing,BinSpec}=nothing)
     visamp_all = T[]; visamp_err_all = T[]
     visphi_all = T[]; visphi_err_all = T[]
     vis_mjd_all = Float64[]; vis_lam_all = T[]; vis_dlam_all = T[]
@@ -1100,17 +1105,25 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
         if !isempty(_pt) && isempty(phityp_all); phityp_all = _pt; end
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
         wav    = _find_wav(db, wavtables, wavtableref)
-        nwave  = length(wav.eff_wave)
         vamp   = T.(db.visamp[:,    tid_ok])
         verr   = T.(db.visamperr[:, tid_ok])
         vphi   = T.(db.visphi[:,    tid_ok])
         vperr  = T.(db.visphierr[:, tid_ok])
-        vmjd   = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         vflag  = Bool.(db.flag[:, tid_ok])
+        ew, eb = T.(wav.eff_wave), T.(wav.eff_band)
+        if binspec !== nothing
+            # amplitude and phase averaged apart; a channel is flagged only when neither survives
+            _, _, vamp, verr, fa = _bin_table(binspec, ew, eb, vamp, verr, vflag; stat = :visamp)
+            ew, eb, vphi, vperr, fp = _bin_table(binspec, ew, eb, vphi, vperr, vflag;
+                                                 phase = true, stat = :visphi)
+            vflag = fa .& fp
+        end
+        nwave  = length(ew)
+        vmjd   = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         uc     = T.(db.ucoord[tid_ok]);  vc = T.(db.vcoord[tid_ok])
-        vlam   = repeat(T.(wav.eff_wave), 1, length(tid_ok))
-        vdlam  = repeat(T.(wav.eff_band), 1, length(tid_ok))
-        vu, vv = _uv_lambda(uc, vc, T.(wav.eff_wave))
+        vlam   = repeat(ew, 1, length(tid_ok))
+        vdlam  = repeat(eb, 1, length(tid_ok))
+        vu, vv = _uv_lambda(uc, vc, ew)
 
         iarray = findfirst(==(db.arrname), arraytableref)
         si = if !isnothing(iarray)
@@ -1123,12 +1136,14 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
 
         cn = _safe_field(db, :corrname)
         _mjd_tid = db.mjd[tid_ok]
-        push!(visamp_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_visamp), tid_ok, nwave, correlt, va_corr_offsets, seen_va_names;
-            mjd_obs=_mjd_tid))
-        push!(visphi_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_visphi), tid_ok, nwave, correlt, vp_corr_offsets, seen_vp_names;
-            mjd_obs=_mjd_tid))
+        if binspec === nothing
+            push!(visamp_corr_idx_parts, _process_corrindx(
+                cn, _safe_field(db, :corrindx_visamp), tid_ok, nwave, correlt, va_corr_offsets, seen_va_names;
+                mjd_obs=_mjd_tid))
+            push!(visphi_corr_idx_parts, _process_corrindx(
+                cn, _safe_field(db, :corrindx_visphi), tid_ok, nwave, correlt, vp_corr_offsets, seen_vp_names;
+                mjd_obs=_mjd_tid))
+        end
 
         append!(visamp_all, vec(vamp));   append!(visamp_err_all, vec(verr))
         append!(visphi_all, vec(vphi));   append!(visphi_err_all, vec(vperr))
@@ -1156,7 +1171,8 @@ end
 # ---------------------------------------------------------------------------
 function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
                         arraytableref, conversion_index, station_index_offset;
-                        correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+                        correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64,
+                        binspec::Union{Nothing,BinSpec}=nothing)
     v2_all = T[]; v2_err_all = T[]
     v2_mjd_all = Float64[]; v2_lam_all = T[]; v2_dlam_all = T[]
     v2_flag_all = Bool[]
@@ -1169,15 +1185,18 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
     for (itable, db) in enumerate(v2tables)
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
         wav    = _find_wav(db, wavtables, wavtableref)
-        nwave  = length(wav.eff_wave)
         v2d    = T.(db.vis2data[:, tid_ok])
         v2e    = T.(db.vis2err[:,  tid_ok])
-        v2mjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         v2flag = Bool.(db.flag[:, tid_ok])
+        ew, eb = T.(wav.eff_wave), T.(wav.eff_band)
+        binspec === nothing ||
+            ((ew, eb, v2d, v2e, v2flag) = _bin_table(binspec, ew, eb, v2d, v2e, v2flag; stat = :v2))
+        nwave  = length(ew)
+        v2mjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         uc     = T.(db.ucoord[tid_ok]);  vc = T.(db.vcoord[tid_ok])
-        vlam   = repeat(T.(wav.eff_wave), 1, length(tid_ok))
-        vdlam  = repeat(T.(wav.eff_band), 1, length(tid_ok))
-        vu, vv = _uv_lambda(uc, vc, T.(wav.eff_wave))
+        vlam   = repeat(ew, 1, length(tid_ok))
+        vdlam  = repeat(eb, 1, length(tid_ok))
+        vu, vv = _uv_lambda(uc, vc, ew)
 
         iarray = findfirst(==(db.arrname), arraytableref)
         si = if !isnothing(iarray)
@@ -1188,7 +1207,7 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
                 repeat(db.sta_index[:, tid_ok], outer=[nwave, 1])
         end
 
-        push!(v2_corr_idx_parts, _process_corrindx(
+        binspec === nothing && push!(v2_corr_idx_parts, _process_corrindx(
             _safe_field(db, :corrname), _safe_field(db, :corrindx_vis2data),
             tid_ok, nwave, correlt, v2_corr_offsets, seen_v2_names;
             mjd_obs=db.mjd[tid_ok]))
@@ -1216,7 +1235,8 @@ end
 # ---------------------------------------------------------------------------
 function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
                         arraytableref, conversion_index, station_index_offset;
-                        correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64)
+                        correlt::Dict=Dict(), T::Type{<:AbstractFloat}=Float64,
+                        binspec::Union{Nothing,BinSpec}=nothing)
     t3amp_all = T[]; t3amp_err_all = T[]
     t3phi_all = T[]; t3phi_err_all = T[]
     t3_mjd_all = Float64[]; t3_lam_all = T[]; t3_dlam_all = T[]
@@ -1234,19 +1254,27 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
     for (itable, db) in enumerate(t3tables)
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
         wav    = _find_wav(db, wavtables, wavtableref)
-        nwave  = length(wav.eff_wave)
         t3a    = T.(db.t3amp[:,    tid_ok]); t3ae = T.(db.t3amperr[:, tid_ok])
         t3p    = T.(db.t3phi[:,    tid_ok]); t3pe = T.(db.t3phierr[:,  tid_ok])
-        t3mjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         t3flag = Bool.(db.flag[:, tid_ok])
+        ew, eb = T.(wav.eff_wave), T.(wav.eff_band)
+        if binspec !== nothing
+            # amplitude and phase averaged apart; a channel is flagged only when neither survives
+            _, _, t3a, t3ae, fa = _bin_table(binspec, ew, eb, t3a, t3ae, t3flag; stat = :t3amp)
+            ew, eb, t3p, t3pe, fp = _bin_table(binspec, ew, eb, t3p, t3pe, t3flag;
+                                               phase = true, stat = :t3phi)
+            t3flag = fa .& fp
+        end
+        nwave  = length(ew)
+        t3mjd  = repeat(db.mjd[tid_ok]', nwave)   # MJD kept in Float64
         u1c = T.(db.u1coord[tid_ok]); v1c = T.(db.v1coord[tid_ok])
         u2c = T.(db.u2coord[tid_ok]); v2c = T.(db.v2coord[tid_ok])
         u3c = -(u1c .+ u2c);          v3c = -(v1c .+ v2c)
-        tlam  = repeat(T.(wav.eff_wave), 1, length(tid_ok))
-        tdlam = repeat(T.(wav.eff_band), 1, length(tid_ok))
-        u1, v1 = _uv_lambda(u1c, v1c, T.(wav.eff_wave))
-        u2, v2 = _uv_lambda(u2c, v2c, T.(wav.eff_wave))
-        u3, v3 = _uv_lambda(u3c, v3c, T.(wav.eff_wave))
+        tlam  = repeat(ew, 1, length(tid_ok))
+        tdlam = repeat(eb, 1, length(tid_ok))
+        u1, v1 = _uv_lambda(u1c, v1c, ew)
+        u2, v2 = _uv_lambda(u2c, v2c, ew)
+        u3, v3 = _uv_lambda(u3c, v3c, ew)
         b1 = sqrt.(u1.^2 .+ v1.^2); b2 = sqrt.(u2.^2 .+ v2.^2); b3 = sqrt.(u3.^2 .+ v3.^2)
 
         iarray = findfirst(==(db.arrname), arraytableref)
@@ -1260,12 +1288,14 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
 
         cn = _safe_field(db, :corrname)
         _mjd_tid = db.mjd[tid_ok]
-        push!(t3amp_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_t3amp), tid_ok, nwave, correlt, ta_corr_offsets, seen_ta_names;
-            mjd_obs=_mjd_tid))
-        push!(t3phi_corr_idx_parts, _process_corrindx(
-            cn, _safe_field(db, :corrindx_t3phi), tid_ok, nwave, correlt, tp_corr_offsets, seen_tp_names;
-            mjd_obs=_mjd_tid))
+        if binspec === nothing
+            push!(t3amp_corr_idx_parts, _process_corrindx(
+                cn, _safe_field(db, :corrindx_t3amp), tid_ok, nwave, correlt, ta_corr_offsets, seen_ta_names;
+                mjd_obs=_mjd_tid))
+            push!(t3phi_corr_idx_parts, _process_corrindx(
+                cn, _safe_field(db, :corrindx_t3phi), tid_ok, nwave, correlt, tp_corr_offsets, seen_tp_names;
+                mjd_obs=_mjd_tid))
+        end
 
         append!(t3amp_all, vec(t3a));   append!(t3amp_err_all, vec(t3ae))
         append!(t3phi_all, vec(t3p));   append!(t3phi_err_all, vec(t3pe))
@@ -1690,9 +1720,28 @@ data in a single bin.
   science or fringe-tracker channel): only its wavelength table and the observable tables that
   refer to it are read. Default: every instrument.
 
-## Spectral / temporal binning
-- `spectralbin` — vector of `[λ_min, λ_max]` windows in metres. Default: single bin
-  spanning all wavelengths.
+## Averaging channels (binning)
+- `binning` — average spectral channels: an integer n (n adjacent channels become one), or a
+  vector of `[λ_min, λ_max]` windows in metres (each window's channels become one). `0`, the
+  default, keeps every channel. Applied to each table before anything else, so grouping,
+  `polychromatic` and the filters see the averaged channels. OI_CORR, which describes the
+  original channels, is then not used.
+- `binmode` — `:block` (default): exact groups of channels, weights 1/σ², phases by the weighted
+  circular mean, a channel's bandwidth the span it averages; `:pmoired`: PMOIRED's `binning`,
+  for reproducing its results (a regular grid, a Gaussian kernel, errors not reduced).
+- `bincorr` — c, channels per independent element (`:block`): the averaged error is
+  `σ_mean·√c`, with `σ_mean = (Σ 1/σ²)^(-1/2)`. 1 (default) for independent channels; n for no
+  reduction; about 2-3 for an oversampled spectrograph.
+- `binstats` — a `Dict{Symbol,Float64}` to receive, per observable, the χ²/dof of the averaged
+  channels about a straight line in λ within each new channel (`:block`). Near 1: the errors
+  describe the channel-to-channel scatter. Well below 1: neighbouring channels agree better than
+  their errors say — correlated channels (raise `bincorr`) or inflated errors. Well above 1: the
+  errors are underestimated.
+
+## Grouping channels, and time windows
+- `spectralbin` — vector of `[λ_min, λ_max]` windows in metres: GROUPS the channels into
+  polychromatic bins, every channel kept (one `OIdata` per window). To average channels into
+  one, use `binning`. Default: single bin spanning all wavelengths.
 - `temporalbin` — vector of `[mjd_min, mjd_max]` windows. Default: single bin
   spanning all epochs.
 - `polychromatic` — if `true`, derive one spectral bin per instrument channel using
@@ -1764,6 +1813,10 @@ function readoifits(oifitsfile;
         cutoff_minv2    = -1,   cutoff_maxv2    = 2.0,
         cutoff_mint3amp = -1.0, cutoff_maxt3amp = 1.5,
         special_filter_diffvis = false,
+        binning           = 0,
+        binmode::Symbol   = :block,
+        bincorr::Real     = 1,
+        binstats::Union{Nothing,AbstractDict} = nothing,
         warn = true,
         verbose = true,
         T::Type{<:AbstractFloat} = Float32)
@@ -1834,25 +1887,43 @@ function readoifits(oifitsfile;
     ci = station_info.conversion_index
     so = station_info.station_index_offset
 
+    # ---- Averaging channels ---------------------------------------------------
+    binspec = binning == 0 ? nothing : BinSpec(binning; mode = binmode, corr = bincorr)
+    if binspec !== nothing && !isempty(correlt)
+        warn && @warn("OI_CORR describes the file's channels; with binning = $binning it is not used.")
+        empty!(correlt)
+    end
+
     # ---- Read and flatten all observable tables -----------------------------
     _ec = spzeros(T, 0, 0)   # empty corr matrix sentinel
-    raw_flux = use_flux ? read_flux_tables(fluxtables, targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+    raw_flux = use_flux ? read_flux_tables(fluxtables, targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; flux=T[], flux_err=T[], flux_mjd=T[], flux_lam=T[], flux_dlam=T[], flux_flag=Bool[], flux_sta_index=Int64[],
                   flux_calibrated=false, flux_corr=_ec, flux_corr_idx=Int64[])
-    raw_vis  = use_vis  ? read_vis_tables(vistables,  targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+    raw_vis  = use_vis  ? read_vis_tables(vistables,  targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; visamp=T[], visamp_err=T[], visphi=T[], visphi_err=T[], vis_mjd=T[], vis_lam=T[], vis_dlam=T[], vis_flag=Bool[],
                   vis_uv=Matrix{T}(undef,0,2), vis_baseline=T[], vis_sta_index=Matrix{Int64}(undef,2,0),
                   visamp_corr=_ec, visamp_corr_idx=Int64[], visphi_corr=_ec, visphi_corr_idx=Int64[],
                   amptyp="", phityp="")
-    raw_v2   = use_v2   ? read_v2_tables(v2tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+    raw_v2   = use_v2   ? read_v2_tables(v2tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; v2=T[], v2_err=T[], v2_mjd=T[], v2_lam=T[], v2_dlam=T[], v2_flag=Bool[],
                   v2_uv=Matrix{T}(undef,0,2), v2_baseline=T[], v2_sta_index=Matrix{Int64}(undef,2,0),
                   v2_corr=_ec, v2_corr_idx=Int64[])
-    raw_t3   = use_t3   ? read_t3_tables(t3tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T) :
+    raw_t3   = use_t3   ? read_t3_tables(t3tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; t3amp=T[], t3amp_err=T[], t3phi=T[], t3phi_err=T[], t3_mjd=T[], t3_lam=T[], t3_dlam=T[], t3_flag=Bool[],
                   t3_u1=T[], t3_v1=T[], t3_u2=T[], t3_v2=T[], t3_u3=T[], t3_v3=T[], t3_baseline=T[], t3_maxbaseline=T[],
                   t3_sta_index=Matrix{Int64}(undef,3,0),
                   t3amp_corr=_ec, t3amp_corr_idx=Int64[], t3phi_corr=_ec, t3phi_corr_idx=Int64[])
+
+    if binspec !== nothing
+        sc = binning_scatter(binspec)
+        binstats === nothing || merge!(binstats, sc)
+        if verbose && binspec.mode === :block && !isempty(sc)
+            printstyled("Binned ($(binning isa Integer ? "×$binning" : "$(length(binning)) windows"), c = $(bincorr)); " *
+                        "scatter χ²/dof: " *
+                        join(["$k $(round(v; sigdigits = 3))" for (k, v) in sort(collect(sc))], ", ") *
+                        "\n", color = :cyan)
+        end
+    end
 
     # ---- AMPTYP / PHITYP fallback via FITSIO headers -------------------------
     if use_vis && isempty(raw_vis.amptyp) && isempty(raw_vis.phityp)
@@ -1882,7 +1953,17 @@ function readoifits(oifitsfile;
                         maximum(lam_all) + 0.5*maximum(dlam_all[argmax(lam_all)])]]
     end
 
-    if polychromatic && get_specbin_file
+    if polychromatic && get_specbin_file && binspec !== nothing
+        # The averaged channels are the ones the readers returned, not the file's tables.
+        eff_wave_all = sort(unique(vcat(use_vis ? raw_vis.vis_lam : T[], use_v2 ? raw_v2.v2_lam : T[],
+                                        use_t3 ? raw_t3.t3_lam : T[], use_flux ? raw_flux.flux_lam : T[])))
+        nch = length(eff_wave_all)
+        bounds = nch == 1 ? [eff_wave_all[1] * (1 - 1e-6), eff_wave_all[1] * (1 + 1e-6)] :
+                 vcat(eff_wave_all[1] - (eff_wave_all[2] - eff_wave_all[1]) / 2,
+                      (eff_wave_all[1:end-1] .+ eff_wave_all[2:end]) ./ 2,
+                      eff_wave_all[end] + (eff_wave_all[end] - eff_wave_all[end-1]) / 2)
+        spectralbin = [[bounds[k], bounds[k+1]] for k in 1:nch]
+    elseif polychromatic && get_specbin_file
         if length(wavtables) > 1 && merge_oi_wavelength
             eff_wave_all = merge_wav_tables(wavtables; T, verbose)
         else

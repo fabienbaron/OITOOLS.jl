@@ -284,11 +284,13 @@ end
     @test isapprox(b.median[1], b.x_opt[1], atol=5 * b.sigma[1])
     # reproducible
     @test bootstrap_fit(model, free, data; kw...).samples == b.samples
-    # ...and unchanged since before bootstrap_driver was factored out.  The line
-    # above only proves determinism within a session: if the refactor shifted the
-    # RNG stream, both sides would move together and still compare equal.
-    @test b.samples[1, :] ≈ [8.431927658994, 0.189155508420] atol=1e-10
-    @test b.sigma        ≈ [0.010065732616, 0.019544361596] atol=1e-10
+    # ...and unchanged across sessions.  The line above only proves determinism within a
+    # session: if the RNG stream shifted, both sides would move together and still compare
+    # equal.  The values also depend on where each refit stops (`_lm_bounded`'s χ² test,
+    # chi2_tol = 1e-3); with that test off they are the ones LsqFit gave, 8.431927658994,
+    # 0.189155508420 and σ 0.010065732616, 0.019544361596.
+    @test b.samples[1, :] ≈ [8.431902166997, 0.189133787009] atol=1e-10
+    @test b.sigma        ≈ [0.010027611280, 0.019527587610] atol=1e-10
 
     # these data are correlated: block bootstrap must exceed a per-point bootstrap
     p = bootstrap_fit(model, free, data; granularity=:point, kw...)

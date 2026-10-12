@@ -66,5 +66,6 @@ BLAS.set_num_threads(1)
     include("test_lm.jl")                # Levenberg-Marquardt: bounds held, not clipped, against LsqFit
     include("test_hankel_quadrature.jl") # written profiles: closed forms, steps, kinks, the node count
     include("test_pmoired_compat.jl")    # the PMOIRED import and export, against PMOIRED's definitions
+    include("test_binning.jl")           # averaging spectral channels on reading (binning, not grouping)
     include("test_bsmem_regression.jl")  # the bit-for-bit numeric gate
 end
