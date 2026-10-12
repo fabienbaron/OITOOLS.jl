@@ -151,3 +151,69 @@ end
     @test f.v2 == d.v2[setdiff(1:d.nv2, [1, 5, 9])]
     @test_throws ArgumentError set_data_filter(d; remove_v2 = [d.nv2 + 1])
 end
+
+# The counts are the points holding a measurement. A missing half of an amplitude/phase pair is
+# held as 0 ± Inf (GRAVITY carries T3PHI without T3AMP, VISAMP without VISPHI) and is not one, so
+# filtering nothing must leave every count as read -- and resampling too.
+@testset "counts leave out the missing halves" begin
+    for f in (joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2026", "OBJECT2_K.oifits"),
+              joinpath(@__DIR__, "..", "demos", "data", "MWC275_4T.oifits"))
+        d = readoifits(f; T = Float64, warn = false, verbose = false)[1, 1]
+        counts(x) = (x.nv2, x.nt3amp, x.nt3phi, x.nvisamp, x.nvisphi, x.nflux)
+        @test counts(filter_data(d)) == counts(d)
+        b = OITOOLS.apply_block_counts(d, OITOOLS.data_blocks(d; granularity = :config),
+                                       ones(Int, length(OITOOLS.data_blocks(d; granularity = :config))))
+        @test counts(b) == counts(d)
+    end
+    g = readoifits(joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2026", "OBJECT2_K.oifits");
+                   warn = false, verbose = false)[1, 1]
+    @test g.nt3amp == 0 && g.nvisphi == 0 && filter_data(g).nt3amp == 0
+end
+
+# Dropping an observable. A T3 amplitude and its closure phase are one point, as are a VIS
+# amplitude and its phase: dropping one half keeps the other's points intact.
+@testset "filter_data(...; drop)" begin
+    rd(f; kw...) = readoifits(joinpath(@__DIR__, "..", "demos", "data", f); T = Float64,
+                              warn = false, verbose = false, kw...)[1, 1]
+    d = rd("MWC275_4T.oifits")
+    ok(x, e) = isfinite(x) && isfinite(e) && e > 0
+    keep(v, e) = [i for i in eachindex(v) if ok(v[i], e[i])]
+
+    a = filter_data(d; drop = [:t3amp])
+    @test a.nt3amp == 0 && a.nt3phi == d.nt3phi
+    @test a.t3phi == d.t3phi[keep(d.t3phi, d.t3phi_err)]
+    @test a.uv[:, a.indx_t3_2] == d.uv[:, d.indx_t3_2[keep(d.t3phi, d.t3phi_err)]]
+    @test (a.nv2, a.nvisamp, a.nvisphi) == (d.nv2, d.nvisamp, d.nvisphi)
+    # χ² without its T3amp term is unchanged; with it, the dropped half contributes nothing
+    model = parse_model(Dict{String,Any}("s,ud" => 0.5, "s,f" => 1.0), String[])
+    w = [1, 1, 1, 0, 0, 0, 0]; wn = [1, 0, 1, 0, 0, 0, 0]
+    @test model_to_chi2(model, Float64[], a; weights = w) ≈ model_to_chi2(model, Float64[], d; weights = wn) rtol = 1e-12
+
+    v = filter_data(d; drop = [:visphi])
+    @test v.nvisphi == 0 && v.nvisamp == d.nvisamp && v.visamp == d.visamp[keep(d.visamp, d.visamp_err)]
+    # both halves: the points go, as if the table were not read
+    b = filter_data(d; drop = [:t3amp, :t3phi, :v2])
+    @test isempty(b.t3phi) && b.nv2 == 0 && b.nvisamp == d.nvisamp
+    nt = rd("MWC275_4T.oifits"; use_t3 = false, use_v2 = false)
+    @test b.nuv == nt.nuv
+    # with a selection: both apply
+    idx = set_data_filter(d; baseline_range = [0.0, 100e6])
+    @test filter_data(d, idx; drop = [:t3amp]).nt3phi == filter_data(d, idx).nt3phi
+    @test filter_data(d, idx; drop = [:t3amp]).nt3amp == 0
+    # written and read back: no T3amp
+    back = readoifits(write_oifits(joinpath(mktempdir(), "a.oifits"), a); T = Float64, warn = false,
+                      verbose = false, redundance_remove = false)[1, 1]
+    @test back.nt3amp == 0 && back.nt3phi == a.nt3phi
+    @test_throws ArgumentError filter_data(d; drop = [:closure])
+end
+
+# A missing half is not drawn: plotted as NaN (skipped by every front-end), indices kept.
+@testset "plots skip the missing halves" begin
+    d = readoifits(joinpath(@__DIR__, "..", "demos", "data", "MWC275_4T.oifits"); T = Float64,
+                   warn = false, verbose = false)[1, 1]
+    p = OITOOLS.panel_data(d, :visphi)
+    @test sum(count(isnan, q.y) for q in p.panels) == count(!isfinite, d.visphi_err) == 2
+    @test sum(length(q.y) for q in p.panels) == length(d.visphi)
+    a = filter_data(d; drop = [:t3amp])
+    @test all(q -> all(isnan, q.y), OITOOLS.panel_data(a, :t3amp).panels)
+end

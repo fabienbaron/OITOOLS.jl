@@ -447,7 +447,6 @@ function apply_block_counts(data::OIdata, blocks::DataBlocks, counts::Vector{Int
     d.flux_tab       = _reidx(data.flux_tab,       ifl)
 
     # ── Counts (same validity rules as readoifits) ───────────────────────────
-    _nvalid(x, e) = count(i -> !isnan(x[i]) && !isnan(e[i]) && e[i] > 0, eachindex(x))
     d.nv2     = length(d.v2)
     d.nflux   = length(d.flux)
     d.nvisamp = isempty(d.visamp) ? 0 : _nvalid(d.visamp, d.visamp_err)

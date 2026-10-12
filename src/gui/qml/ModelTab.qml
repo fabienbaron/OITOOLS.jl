@@ -647,7 +647,7 @@ Item {
                 ? Julia.shell_companion_search(
                       root.freeAsLines(),
                       root.useV2, root.useT3amp, root.useT3phi,
-                      root.useCvis, root.useFlux, root.useDiffvis,
+                      root.useVisamp, root.useVisphi, root.useFlux, root.useDiffvis,
                       companionBox.currentText, root.numOrNaN(compStep.text),
                       root.numOrNaN(compRmin.text), root.numOrNaN(compRmax.text),
                       root.numOrNaN(compMask.text), root.numOrNaN(compFmax.text),
@@ -657,7 +657,7 @@ Item {
                       root.freeAsLines(),
                       root.constraintsAsLines(), root.priorsAsLines(),
                       root.useV2, root.useT3amp, root.useT3phi,
-                      root.useCvis, root.useFlux, root.useDiffvis,
+                      root.useVisamp, root.useVisphi, root.useFlux, root.useDiffvis,
                       root.optimiser, root.maxeval,
                       gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value,
                       root.uncertainty, root.nboot, root.bootMode, root.bootGranularity,
@@ -760,30 +760,34 @@ Item {
     // ── observables (§1.8) ───────────────────────────────────────────────────
     //
     // Model fitting takes a SEVEN-element weight vector,
-    // [V2, T3amp, T3phi, visamp, visphi, flux, diffphase] — unlike imaging's three. `cvis`
-    // drives visamp AND visphi together, which is why it is one box and not two.
-    property bool haveCvis:    false
+    // [V2, T3amp, T3phi, visamp, visphi, flux, diffphase] — unlike imaging's three — one box
+    // per entry.
+    property bool haveVisamp:  false
+    property bool haveVisphi:  false
     property bool haveV2:      false
     property bool haveT3amp:   false
     property bool haveT3phi:   false
     property bool haveDiffvis: false
     property bool haveFlux:    false
 
-    readonly property bool useCvis:    cvisBox.checked
+    readonly property bool useVisamp:  visampBox.checked
+    readonly property bool useVisphi:  visphiBox.checked
     readonly property bool useV2:      v2Box.checked
     readonly property bool useT3amp:   t3ampBox.checked
     readonly property bool useT3phi:   t3phiBox.checked
     readonly property bool useDiffvis: diffvisBox.checked
     readonly property bool useFlux:    fluxBox.checked
     readonly property bool anyObservable:
-        useCvis || useV2 || useT3amp || useT3phi || useDiffvis || useFlux
+        useVisamp || useVisphi || useV2 || useT3amp || useT3phi || useDiffvis || useFlux
 
     // The header χ²ᵣ is taken over the ticked observables, as the fit is, so a tick changes it.
     function refreshChi2() {
-        var chi2 = Julia.shell_model_chi2(useV2, useT3amp, useT3phi, useCvis, useFlux, useDiffvis)
+        var chi2 = Julia.shell_model_chi2(useV2, useT3amp, useT3phi, useVisamp, useVisphi,
+                                          useFlux, useDiffvis)
         root.currentChi2r = chi2.length > 0 ? parseFloat(chi2) : NaN
     }
-    onUseCvisChanged:    refreshChi2()
+    onUseVisampChanged:  refreshChi2()
+    onUseVisphiChanged:  refreshChi2()
     onUseV2Changed:      refreshChi2()
     onUseT3ampChanged:   refreshChi2()
     onUseT3phiChanged:   refreshChi2()
@@ -2629,12 +2633,6 @@ Item {
                                     // but present is legitimate and common — fitting V² only, or dropping a
                                     // suspect T3amp — so every enabled box stays the user's to clear.
                                     CheckBox {
-                                        id: cvisBox; text: "cvis"
-                                        enabled: root.haveCvis; checked: root.haveCvis
-                                        ToolTip.visible: hovered && !enabled
-                                        ToolTip.text: "the file has no OI_VIS"
-                                    }
-                                    CheckBox {
                                         id: v2Box; text: "v2"
                                         enabled: root.haveV2; checked: root.haveV2
                                         ToolTip.visible: hovered && !enabled
@@ -2651,6 +2649,21 @@ Item {
                                         enabled: root.haveT3phi; checked: root.haveT3phi
                                         ToolTip.visible: hovered && !enabled
                                         ToolTip.text: "the file has no T3PHI"
+                                    }
+                                    // VIS amplitude and phase, each its own term of the fit. The model
+                                    // term is the absolute visibility, whatever the file's AMPTYP /
+                                    // PHITYP say (continuum-referenced observables are C1, deferred).
+                                    CheckBox {
+                                        id: visampBox; text: "visamp"
+                                        enabled: root.haveVisamp; checked: root.haveVisamp
+                                        ToolTip.visible: hovered && !enabled
+                                        ToolTip.text: "the data hold no VIS amplitude"
+                                    }
+                                    CheckBox {
+                                        id: visphiBox; text: "visφ"
+                                        enabled: root.haveVisphi; checked: root.haveVisphi
+                                        ToolTip.visible: hovered && !enabled
+                                        ToolTip.text: "the data hold no VIS phase"
                                     }
                                     CheckBox {
                                         id: diffvisBox; text: "diffvis"

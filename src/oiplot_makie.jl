@@ -246,6 +246,7 @@ function draw!(fig, ax, d, kind::Symbol;
     x = Float64.(getfield(d, spec.x)) .* spec.xscale
     y = Float64.(getfield(d, spec.y))
     e = Float64.(getfield(d, spec.yerr))
+    OITOOLS.hide_unmeasured!(y, e)
     isempty(x) && throw(ArgumentError("no $(kind) data in $(basename(d.filename))"))
     info = [obs_info(d, spec, i, names) for i in eachindex(x)]
     c    = _colors_for(d, color, names, spec)
@@ -594,6 +595,7 @@ function plot_residuals_makie(data, obs::NamedTuple; color::Symbol = :baseline,
         spec  = OBS_SPECS[kind]
         ydata = Float64.(getfield(data, spec.y))
         yerr  = Float64.(getfield(data, spec.yerr))
+        OITOOLS.hide_unmeasured!(ydata, yerr)
         ymod  = Float64.(getfield(obs, field))
         xs    = Float64.(getfield(data, spec.x)) .* spec.xscale
         names = group_names(data, spec)

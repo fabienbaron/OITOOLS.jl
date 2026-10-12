@@ -306,27 +306,31 @@ yscale_of(ax) = _pystr(ax.get_yscale())
     # ═════════════════════════════════════════════════════════════════════════
     @testset "plotted values match the data" begin
 
-        # (label, plot call, expected x, expected y) driven by OBS_PLOT_SPECS so the
-        # expectation is derived from the same declaration the plot uses — except the
+        # (label, plot call, expected x, expected y, its error) driven by OBS_PLOT_SPECS so
+        # the expectation is derived from the same declaration the plot uses — except the
         # scaling, which is written out literally here so a changed x_scale is caught
-        # rather than silently tracked.
+        # rather than silently tracked. A value whose error is not finite is the missing
+        # half of an amplitude/phase pair (0 ± Inf), and is not drawn.
         cases = [
-            ("V2",     poly, (d; kw...) -> plot_v2(d; kw...),     :v2_baseline,  :v2,     1e-6),
-            ("T3PHI",  poly, (d; kw...) -> plot_t3phi(d; kw...),  :t3_baseline,  :t3phi,  1e-6),
-            ("T3AMP",  poly, (d; kw...) -> plot_t3amp(d; kw...),  :t3_baseline,  :t3amp,  1e-6),
-            ("VISAMP", poly, (d; kw...) -> plot_visamp(d; kw...), :vis_baseline, :visamp, 1e-6),
-            ("VISPHI", poly, (d; kw...) -> plot_visphi(d; kw...), :vis_baseline, :visphi, 1e-6),
-            ("FLUX",   flux, (d; kw...) -> plot_flux(d; kw...),   :flux_lam,     :flux,   1e6),
+            ("V2",     poly, (d; kw...) -> plot_v2(d; kw...),     :v2_baseline,  :v2,     :v2_err,     1e-6),
+            ("T3PHI",  poly, (d; kw...) -> plot_t3phi(d; kw...),  :t3_baseline,  :t3phi,  :t3phi_err,  1e-6),
+            ("T3AMP",  poly, (d; kw...) -> plot_t3amp(d; kw...),  :t3_baseline,  :t3amp,  :t3amp_err,  1e-6),
+            ("VISAMP", poly, (d; kw...) -> plot_visamp(d; kw...), :vis_baseline, :visamp, :visamp_err, 1e-6),
+            ("VISPHI", poly, (d; kw...) -> plot_visphi(d; kw...), :vis_baseline, :visphi, :visphi_err, 1e-6),
+            ("FLUX",   flux, (d; kw...) -> plot_flux(d; kw...),   :flux_lam,     :flux,   :flux_err,   1e6),
         ]
 
-        for (name, dset, plotfn, xfield, yfield, xscale) in cases
+        for (name, dset, plotfn, xfield, yfield, efield, xscale) in cases
             @testset "$name" begin
-                expx = getfield(dset, xfield) .* xscale
-                expy = getfield(dset, yfield)
+                drawn = isfinite.(getfield(dset, efield))
+                expx = (getfield(dset, xfield) .* xscale)[drawn]
+                expy = getfield(dset, yfield)[drawn]
                 # the same points must be drawn no matter how they are coloured
                 for colour in ("baseline", "wav", "mjd")
                     _close(); plotfn(dset; color = colour)
                     xs, ys = figpoints()
+                    keep = .!isnan.(ys)
+                    xs, ys = xs[keep], ys[keep]
                     @test same_values(ys, expy)
                     @test same_values(xs, expx)
                     _close()

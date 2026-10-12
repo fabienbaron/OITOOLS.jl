@@ -1239,6 +1239,7 @@ end
     include(joinpath(@__DIR__, "test_imaging.jl")) # Image perspective data layer
     include(joinpath(@__DIR__, "test_observing.jl")) # Observe perspective data layer
     include(joinpath(@__DIR__, "test_tools.jl"))     # Tools perspective data layer
+    include(joinpath(@__DIR__, "test_observables.jl")) # observables kept in Explore, fitted in Modeling
     include(joinpath(@__DIR__, "test_gantt.jl"))     # the Gantt port vs its oiplot original
 
     # ═════════════════════════════════════════════════════════════════════
@@ -1509,12 +1510,12 @@ end
             fm = parse_model(G._model(sh).dict, G._model(sh).free)
             x1 = Float64[G._model(sh).dict[k] for k in G._model(sh).free]
             w13 = [1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
-            @test G.shell_model_chi2(true, false, true, false, false, false) ==
+            @test G.shell_model_chi2(true, false, true, false, false, false, false) ==
                   GUI.Printf.@sprintf("%.4f", OITOOLS.chi2_flat(fm, x1, d1; weights = w13) / OITOOLS._ndof(d1, w13))
-            @test parse(Float64, G.shell_model_chi2(true, false, true, false, false, false)) ≈ 0.7305 atol = 1e-3
-            @test G.shell_model_chi2(true, true, true, false, false, false) !=
-                  G.shell_model_chi2(true, false, true, false, false, false)
-            @test G.shell_model_chi2(false, false, false, false, false, false) == ""
+            @test parse(Float64, G.shell_model_chi2(true, false, true, false, false, false, false)) ≈ 0.7305 atol = 1e-3
+            @test G.shell_model_chi2(true, true, true, false, false, false, false) !=
+                  G.shell_model_chi2(true, false, true, false, false, false, false)
+            @test G.shell_model_chi2(false, false, false, false, false, false, false) == ""
 
             # Smearing is a menu, not a row: the model file's "auto" shows there, and the menu
             # writes the keys back (off removes them).
@@ -1545,16 +1546,16 @@ end
             # flux has to be free, and OI_FLUX is refused.
             free = "star,ud\t0\t3\ncompanion,f\t0\t0.5\ncompanion,x\t-60\t60\ncompanion,y\t-60\t60"
             @test startswith(G.shell_companion_search("star,ud\t0\t3", true, false, true,
-                                                      false, false, false, "companion", NaN, NaN,
+                                                      false, false, false, false, "companion", NaN, NaN,
                                                       NaN, NaN, NaN, "bradi"), "! free companion,f")
-            @test startswith(G.shell_companion_search(free, true, false, true, false, true,
+            @test startswith(G.shell_companion_search(free, true, false, true, false, false, true,
                                                       false, "companion", NaN, NaN, NaN, NaN, NaN,
                                                       "vmlmb"), "! the search fits")
-            @test startswith(G.shell_companion_search(free, true, false, true, false, false, false,
+            @test startswith(G.shell_companion_search(free, true, false, true, false, false, false, false,
                                                       "companion", NaN, NaN, NaN, NaN, NaN, "lbfgs"),
                              "! unknown per-node fitter")
             # The primary held: only the companion's flux is fitted, by the fast path.
-            @test G.shell_companion_search(free, true, false, true, false, false, false, "companion",
+            @test G.shell_companion_search(free, true, false, true, false, false, false, false, "companion",
                                            NaN, NaN, NaN, NaN, NaN, "bradi", false) == "searching…"
             held = ""
             for _ in 1:1200
@@ -1565,7 +1566,7 @@ end
             @test startswith(held, "done\tbest node")
             @test last(sh.fits).map.free == ["companion,f"] && last(sh.fits).map.path === :fast
 
-            @test G.shell_companion_search(free, true, false, true, false, false, false, "companion",
+            @test G.shell_companion_search(free, true, false, true, false, false, false, false, "companion",
                                            NaN, NaN, NaN, NaN, NaN, "vmlmb", true) == "searching…"
             line = ""
             for _ in 1:1200
@@ -1611,7 +1612,7 @@ end
 
             # Refined: the best minima fitted again with the position free. Adopt takes the
             # refined position, once, and the row carries its σ.
-            @test G.shell_companion_search(free, true, false, true, false, false, false, "companion",
+            @test G.shell_companion_search(free, true, false, true, false, false, false, false, "companion",
                                            NaN, NaN, NaN, NaN, NaN, "vmlmb", true, 3) == "searching…"
             line = ""
             for _ in 1:1200
@@ -1657,7 +1658,7 @@ end
         end
         free = "star,ud\t0\t3\ncompanion,f\t0\t0.5\ncompanion,x\t-60\t60\ncompanion,y\t-60\t60"
         fit(unc; cons = "", opt = "lsqfit", nboot = 12) =
-            G.shell_fit_model(free, cons, "", true, false, true, false, false, false, opt, 200,
+            G.shell_fit_model(free, cons, "", true, false, true, false, false, false, false, opt, 200,
                               "", "", 60, 0, unc, nboot, "replacement", "config", 7, false)
         try
             G.shell_open_model(joinpath(pkgdir(OITOOLS), "demos", "models", "AX_Cir_Binary.toml"))

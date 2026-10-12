@@ -14,6 +14,16 @@
 # toolkit's colour type it does not.
 
 """
+    hide_unmeasured!(y, err) -> y
+
+Set to NaN the values whose error is not finite: the half of an amplitude/phase pair a point
+does not carry (GRAVITY's T3AMP, a half dropped by `filter_data`), held as `0 ± Inf`. Every
+front-end skips a NaN and leaves it out of the axis limits, and the arrays stay aligned with
+the data, which picking and the point descriptions index into.
+"""
+hide_unmeasured!(y::AbstractVector, err::AbstractVector) = (y[.!isfinite.(err)] .= NaN; y)
+
+"""
     PlotData(figure, axis, points, info)
 
 A built figure plus what a click needs. `points` is the Makie plot object `Makie.pick` will
@@ -270,6 +280,7 @@ function panel_data(d, kind::Symbol; color = nothing)
     lam   = Float64.(getfield(d, spec.lam)) .* 1e6      # μm
     y     = Float64.(getfield(d, spec.y))
     e     = Float64.(getfield(d, spec.yerr))
+    hide_unmeasured!(y, e)
     isempty(y) && throw(ArgumentError("no $(kind) data in $(basename(d.filename))"))
 
     cmap = baseline_color_map(names)

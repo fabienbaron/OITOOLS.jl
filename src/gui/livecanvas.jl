@@ -947,6 +947,7 @@ function canvas_data(d, kind::Symbol; color::Union{Nothing,Symbol} = nothing,
     isresid = residual !== nothing && length(residual) == length(x)
     y = isresid ? Float64.(residual) : Float64.(getfield(d, spec.y))
     e = isresid ? zeros(length(x))   : Float64.(getfield(d, spec.yerr))
+    OITOOLS.hide_unmeasured!(y, Float64.(getfield(d, spec.yerr)))   # a residual of nothing, too
     isempty(x) && throw(ArgumentError("no $(kind) data in $(basename(d.filename))"))
     info = [obs_info(d, spec, i, names) for i in eachindex(x)]
 

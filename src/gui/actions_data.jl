@@ -69,6 +69,8 @@ that do it.
   again with the source's own options plus these, and the filter applies to that.
 - `prep`: error-bar floors and multipliers for `oifits_prep`, applied to the result. They
   change the data rather than remove any of it.
+- `drop`: observables removed by `filter_data(…; drop)` (`:t3amp`, `:visphi`, …): one half of an
+  amplitude/phase pair is marked "not measured", the other kept.
 - `spec`: the Filter section's settings, kept on the entry so the section can show them again.
 
 Filtering is destructive-by-copy, so keeping the source is what gives the GUI undo for free:
@@ -77,6 +79,7 @@ choosing the source again is the undo.
 function filter_dataset!(s::Session, name::AbstractString;
                          read::AbstractDict = Dict{Symbol,Any}(),
                          prep::AbstractDict = Dict{Symbol,Any}(),
+                         drop::AbstractVector = Symbol[],
                          spec::AbstractString = "", kwargs...)
     src = dataset(s, name)
     kw  = Dict{Symbol,Any}(kwargs)
@@ -84,7 +87,7 @@ function filter_dataset!(s::Session, name::AbstractString;
     base = isempty(read) ? src.data :
            OITOOLS.readoifits(sources(src); ropts..., warn = false, verbose = false)
     base isa AbstractArray || throw(ArgumentError("readoifits returned nothing for $(source_label(src))"))
-    out = map(d -> OITOOLS.filter_data(d, OITOOLS.set_data_filter(d; kwargs...)), base)
+    out = map(d -> OITOOLS.filter_data(d, OITOOLS.set_data_filter(d; kwargs...); drop), base)
     isempty(prep) || foreach(d -> OITOOLS.oifits_prep(d; prep...), out)
 
     newname = _next_name(s.datasets, "data")
@@ -103,7 +106,8 @@ function filter_dataset!(s::Session, name::AbstractString;
         isempty(rstr) ? "readoifits($(_literal(sources(src))))" :
                         "readoifits($(_literal(sources(src))); $rstr)"
     end
-    log!(s, "$(newname) = map(d -> filter_data(d, $call), $from)";
+    dstr = isempty(drop) ? "" : "; drop = $(_literal(Symbol.(drop)))"
+    log!(s, "$(newname) = map(d -> filter_data(d, $call$dstr), $from)";
          note = "filter $(src.name)", binding = newname)
     if !isempty(prep)
         pstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(prep), by = first)])
@@ -153,9 +157,9 @@ function _night_window(ns, i)
 end
 
 """
-    filter_spec_kwargs(spec) -> (; read, filter, prep) or a String
+    filter_spec_kwargs(spec) -> (; read, filter, prep, drop) or a String
 
-The Filter section's settings, as `key\tvalue` lines, turned into the three groups
+The Filter section's settings, as `key\tvalue` lines, turned into the four groups
 `filter_dataset!` takes. A field left empty takes no part. A String is a refusal to show as it
 is (a range whose minimum is above its maximum, a number that does not parse).
 
@@ -170,6 +174,7 @@ is (a range whose minimum is above its maximum, a number that does not parse).
 | `<obs>_cap`, `<obs>_caprel` | `max_<obs>_err`, `max_<obs>_err_rel` |
 | `bad`, `snr`, `v2_min`, `v2_max`, `t3amp_min`, `t3amp_max` | the quality cuts |
 | `remove_v2`, `remove_t3`, `remove_vis`, `remove_flux` (indices), `remove_uv` | the points picked by hand (`uv_bad` for uv points) |
+| `drop` (comma-separated: `t3amp`, `t3phi`, `visamp`, `visphi`, …) | `filter_data`'s `drop` |
 """
 function filter_spec_kwargs(spec::AbstractString)
     d = Dict{String,String}()
@@ -253,7 +258,13 @@ function filter_spec_kwargs(spec::AbstractString)
             v = num(k); v === nothing || (filt[kk] = v)
         end
     end
-    return (; read, filter = filt, prep)
+    drop = Symbol[]
+    if haskey(d, "drop")
+        drop = Symbol.(filter(!isempty, strip.(split(d["drop"], ","))))
+        bad = setdiff(drop, OITOOLS._DROPPABLE)
+        isempty(bad) || return "! drop: unknown observable $(join(bad, ", "))"
+    end
+    return (; read, filter = filt, prep, drop)
 end
 
 """

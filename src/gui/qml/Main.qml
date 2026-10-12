@@ -306,8 +306,8 @@ ApplicationWindow {
     // stay off after a load and the run buttons never enable — they have no other source of
     // truth, and defaulting them to on would offer observables the file does not contain.
     function refreshObservables() {
-        var have = { v2: false, t3amp: false, t3phi: false,
-                     cvis: false, flux: false, diffvis: false }
+        var have = { v2: false, t3amp: false, t3phi: false, cvis: false,
+                     visamp: false, visphi: false, flux: false, diffvis: false }
         var s = Julia.shell_observables()
         if (s.length > 0) {
             var parts = s.split(",")
@@ -350,7 +350,8 @@ ApplicationWindow {
         modelTab.haveV2      = have.v2
         modelTab.haveT3amp   = have.t3amp
         modelTab.haveT3phi   = have.t3phi
-        modelTab.haveCvis    = have.cvis
+        modelTab.haveVisamp  = have.visamp
+        modelTab.haveVisphi  = have.visphi
         modelTab.haveFlux    = have.flux
         modelTab.haveDiffvis = have.diffvis
         modelTab.hasDataset  = s.length > 0

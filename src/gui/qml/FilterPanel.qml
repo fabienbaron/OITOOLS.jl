@@ -77,7 +77,7 @@ ColumnLayout {
 
     function refreshChoices() {
         var t = Julia.shell_filter_choices()
-        var ni = [], ins = [], tg = [], st = [], bl = [], tr = []
+        var ni = [], ins = [], tg = [], st = [], bl = [], tr = [], has = []
         var lines = t.length > 0 ? t.split("\n") : []
         for (var i = 0; i < lines.length; ++i) {
             var f = lines[i].split("\t")
@@ -91,15 +91,19 @@ ColumnLayout {
             case "station":    st.push(f[1]); break
             case "baseline":   bl.push(f[1]); break
             case "triangle":   tr.push(f[1]); break
+            case "has":        has.push(f[1]); break
             }
         }
         root.nights = ni; root.instruments = ins; root.targets = tg
-        root.stations = st; root.baselines = bl; root.triangles = tr
+        root.stations = st; root.baselines = bl; root.triangles = tr; root.has = has
         root.keptNights = ({}); root.keptStations = ({})
         root.keptBaselines = ({}); root.keptTriangles = ({})
     }
 
     function isKept(map, key) { return map[key] !== false }
+    // The observables the unfiltered data hold: a box for one they do not is disabled.
+    property var has: []
+    function holds(o) { return root.has.indexOf(o) >= 0 }
     function setKept(which, key, on) {
         var m = Object.assign({}, root[which]); m[key] = on; root[which] = m
         root.edited()
@@ -157,10 +161,16 @@ ColumnLayout {
         if (!allNights) out.push("nights\t" + kept.join(","))
         if (insBox.currentIndex > 0) put("insname", insBox.currentText)
         if (targetBox.currentIndex > 0) put("target", targetBox.currentText)
+        // A whole table is left out when it is read; one half of an amplitude/phase pair is
+        // dropped from the points read (`filter_data`'s `drop`), the other half kept.
         if (!useV2.checked)   out.push("use_v2\t0")
-        if (!useT3.checked)   out.push("use_t3\t0")
-        if (!useVis.checked)  out.push("use_vis\t0")
+        if (!useT3amp.checked && !useT3phi.checked) out.push("use_t3\t0")
+        if (!useVisamp.checked && !useVisphi.checked) out.push("use_vis\t0")
         if (!useFlux.checked) out.push("use_flux\t0")
+        var dr = []
+        if (useT3amp.checked !== useT3phi.checked) dr.push(useT3amp.checked ? "t3phi" : "t3amp")
+        if (useVisamp.checked !== useVisphi.checked) dr.push(useVisamp.checked ? "visphi" : "visamp")
+        if (dr.length > 0) out.push("drop\t" + dr.join(","))
         function dropped(list, map) {
             var d = []
             for (var j = 0; j < list.length; ++j) if (!root.isKept(map, list[j])) d.push(list[j])
@@ -214,8 +224,15 @@ ColumnLayout {
             case "insname": insBox.currentIndex = Math.max(0, insBox.model.indexOf(v)); break
             case "target": targetBox.currentIndex = Math.max(0, targetBox.model.indexOf(v)); break
             case "use_v2": useV2.checked = v !== "0"; break
-            case "use_t3": useT3.checked = v !== "0"; break
-            case "use_vis": useVis.checked = v !== "0"; break
+            case "use_t3": useT3amp.checked = useT3phi.checked = v !== "0"; break
+            case "use_vis": useVisamp.checked = useVisphi.checked = v !== "0"; break
+            case "drop":
+                var dl = v.split(",")
+                if (dl.indexOf("t3amp") >= 0)  useT3amp.checked = false
+                if (dl.indexOf("t3phi") >= 0)  useT3phi.checked = false
+                if (dl.indexOf("visamp") >= 0) useVisamp.checked = false
+                if (dl.indexOf("visphi") >= 0) useVisphi.checked = false
+                break
             case "use_flux": useFlux.checked = v !== "0"; break
             case "exclude_stations":  root.keptStations  = dropMap(v); break
             case "exclude_baselines": root.keptBaselines = dropMap(v); break
@@ -242,7 +259,8 @@ ColumnLayout {
         wavMin.text = ""; wavMax.text = ""; blMin.text = ""; blMax.text = ""; blUnit.currentIndex = 0
         root.keptNights = ({}); root.keptStations = ({}); root.keptBaselines = ({}); root.keptTriangles = ({})
         insBox.currentIndex = 0; targetBox.currentIndex = 0
-        useV2.checked = true; useT3.checked = true; useVis.checked = true; useFlux.checked = true
+        useV2.checked = true; useT3amp.checked = true; useT3phi.checked = true
+        useVisamp.checked = true; useVisphi.checked = true; useFlux.checked = true
         root.errText = ({})
         badBox.checked = false; snrField.text = ""; v2Min.text = ""; v2Max.text = ""
         t3Min.text = ""; t3Max.text = ""; flagsBox.checked = true
@@ -271,6 +289,16 @@ ColumnLayout {
     }
 
     // ── layout ──────────────────────────────────────────────────────────────────
+    // One observable's box in the Tables section; disabled when the data hold none of it.
+    component ObsBox: CheckBox {
+        property string obs: ""
+        checked: true
+        enabled: root.holds(obs)
+        onToggled: root.edited()
+        ToolTip.visible: hovered && !enabled
+        ToolTip.text: "the data hold no " + text
+    }
+
     component Section: Button {
         property bool open: false
         flat: true
@@ -335,14 +363,19 @@ ColumnLayout {
             model: ["all"].concat(root.targets)
             onActivated: root.edited()
         }
-        Label { text: "tables" }
+        Label { text: "observables" }
         Flow {
             Layout.fillWidth: true
             spacing: dp(2)
-            CheckBox { id: useV2;   text: "V²";   checked: true; onToggled: root.edited() }
-            CheckBox { id: useT3;   text: "T3";   checked: true; onToggled: root.edited() }
-            CheckBox { id: useVis;  text: "VIS";  checked: true; onToggled: root.edited() }
-            CheckBox { id: useFlux; text: "flux"; checked: true; onToggled: root.edited() }
+            // Each kept or left out of the dataset. A T3 amplitude and its closure phase are one
+            // point (likewise a VIS amplitude and its phase): unticking one half keeps the points
+            // for the other. Modeling and Imaging choose again, per run, among what is kept.
+            ObsBox { id: useV2;     text: "V²";     obs: "v2" }
+            ObsBox { id: useT3amp;  text: "T3amp";  obs: "t3amp" }
+            ObsBox { id: useT3phi;  text: "T3φ";    obs: "t3phi" }
+            ObsBox { id: useVisamp; text: "VISamp"; obs: "visamp" }
+            ObsBox { id: useVisphi; text: "VISφ";   obs: "visphi" }
+            ObsBox { id: useFlux;   text: "flux";   obs: "flux" }
         }
     }
 

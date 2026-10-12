@@ -439,7 +439,8 @@ end
 What the Filter section offers, from the unfiltered dataset and its file, as `kind\t…` lines:
 `extent_wav\tlo\thi` (µm), `extent_bl` (Mλ), `extent_blm` (m), `night\tlo:hi\tlabel` (the MJD
 window that keeps one night, from `_nights`),
-`insname\tname`, `target\tname`, `station\tname`, `baseline\tA-B`, `triangle\tA-B-C`.
+`insname\tname`, `target\tname`, `station\tname`, `baseline\tA-B`, `triangle\tA-B-C`, and
+`has\tobservable` for each of v2, t3amp, t3phi, visamp, visphi, flux the data hold.
 """
 function shell_filter_choices()
     sh = _shell()
@@ -473,6 +474,10 @@ function shell_filter_choices()
         for c in eachcol(d.v2_sta_index);  push!(pairs, sort(collect(c))); union!(used, c); end
         for c in eachcol(d.vis_sta_index); push!(pairs, sort(collect(c))); union!(used, c); end
         for c in eachcol(d.t3_sta_index);  push!(tris, sort(collect(c)));  union!(used, c); end
+    end
+    for (o, n) in (("v2", :nv2), ("t3amp", :nt3amp), ("t3phi", :nt3phi), ("visamp", :nvisamp),
+                   ("visphi", :nvisphi), ("flux", :nflux))
+        any(d -> getfield(d, n) > 0, data) && push!(lines, "has\t" * o)
     end
     for k in sort(collect(used)); push!(lines, "station\t" * name(k)); end
     for p in sort(collect(pairs)); push!(lines, "baseline\t" * join(name.(p), "-")); end
@@ -566,11 +571,11 @@ function shell_apply_filter(spec::AbstractString)
     root === nothing && return "! no dataset loaded"
     k = filter_spec_kwargs(spec)
     k isa String && return k
-    (isempty(k.read) && isempty(k.filter) && isempty(k.prep)) &&
+    (isempty(k.read) && isempty(k.filter) && isempty(k.prep) && isempty(k.drop)) &&
         return "! nothing to filter: every setting is at its default"
     nlog = length(sh.session.log)
     entry = try
-        filter_dataset!(sh.session, root.name; read = k.read, prep = k.prep,
+        filter_dataset!(sh.session, root.name; read = k.read, prep = k.prep, drop = k.drop,
                         spec = String(spec), k.filter...)
     catch err
         msg = "! could not filter $(root.name): " * _cause(err)
@@ -957,7 +962,7 @@ _collapse_cr(s::AbstractString) =
 
 """
     shell_fit_model(free_lines, constraint_lines, prior_lines,
-                    v2, t3amp, t3phi, cvis, flux, diffvis, optimiser, maxeval,
+                    v2, t3amp, t3phi, visamp, visphi, flux, diffvis, optimiser, maxeval,
                     gridp1, gridp2, gridn, gridn2,
                     uncertainty, nboot, bootmode, granularity, seed, threaded) -> String
 
@@ -984,7 +989,7 @@ the panel has either, as it is after a grid search or nested sampling.
 function shell_fit_model(free_lines::AbstractString,
                          constraint_lines::AbstractString, prior_lines::AbstractString,
                          v2::Bool, t3amp::Bool, t3phi::Bool,
-                         cvis::Bool, flux::Bool, diffvis::Bool,
+                         visamp::Bool, visphi::Bool, flux::Bool, diffvis::Bool,
                          optimiser::AbstractString, maxeval::Integer,
                          gridp1::AbstractString = "", gridp2::AbstractString = "",
                          gridn::Integer = 60, gridn2::Integer = 0,
@@ -1008,7 +1013,7 @@ function shell_fit_model(free_lines::AbstractString,
         msg = "! constraint: " * _cause(err); console!(sh, msg); return msg
     end
     priors  = parse_prior_lines(prior_lines)
-    weights = fitting_weights(; v2, t3amp, t3phi, cvis, flux, diffvis)
+    weights = fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis)
     all(iszero, weights) && return "! no observables selected"
 
     data = e.data[1, 1]
@@ -1451,7 +1456,7 @@ function shell_companion_defaults(companion)
 end
 
 """
-    shell_companion_search(free_lines, v2, t3amp, t3phi, cvis, flux, diffvis,
+    shell_companion_search(free_lines, v2, t3amp, t3phi, visamp, visphi, flux, diffvis,
                            companion, step, rmin, rmax, mask, fmax, fitter,
                            refit_primary, refine) -> String
 
@@ -1467,7 +1472,7 @@ refined minimum) in the fits table, and "Adopt" writes it into the model.
 """
 function shell_companion_search(free_lines::AbstractString,
                                 v2::Bool, t3amp::Bool, t3phi::Bool,
-                                cvis::Bool, flux::Bool, diffvis::Bool,
+                                visamp::Bool, visphi::Bool, flux::Bool, diffvis::Bool,
                                 companion, step, rmin, rmax, mask, fmax,
                                 fitter::AbstractString = "bradi", refit_primary::Bool = true,
                                 refine::Integer = 0)
@@ -1491,7 +1496,7 @@ function shell_companion_search(free_lines::AbstractString,
     end
     kf in free || return "! free $kf: the search fits the companion's flux at every node"
     (flux || diffvis) && return "! the search fits V², T3 and VIS; untick OI_FLUX and differential"
-    weights = fitting_weights(; v2, t3amp, t3phi, cvis, flux, diffvis)
+    weights = fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis)
     all(iszero, weights) && return "! no observables selected"
     data = e.data[1, 1]
     fz = String(fitter)
@@ -2006,17 +2011,18 @@ function _current_residuals(sh::ShellState; quiet::Bool = false)
 end
 
 """
-    shell_model_chi2(v2, t3amp, t3phi, cvis, flux, diffvis) -> String
+    shell_model_chi2(v2, t3amp, t3phi, visamp, visphi, flux, diffvis) -> String
 
 Reduced chi2 of the model as it stands, against the current dataset, or `""` when either is
 missing. Cheap for analytic components, which is what makes it worth recomputing on every edit.
 
-The six flags are the panel's Observables ticks, and the number is `chi2_flat` over
+The seven flags are the panel's Observables ticks, and the number is `chi2_flat` over
 `_ndof(data, weights)` with the weights `shell_fit_model` builds from the same ticks -- so after
 "Adopt" it is the χ²r the fit reported, not a figure over observables the fit never saw.
 """
 function shell_model_chi2(v2::Bool = true, t3amp::Bool = true, t3phi::Bool = true,
-                          cvis::Bool = false, flux::Bool = false, diffvis::Bool = false)
+                          visamp::Bool = false, visphi::Bool = false, flux::Bool = false,
+                          diffvis::Bool = false)
     sh = _shell()
     m = _model(sh)
     e = current_dataset(sh)
@@ -2028,7 +2034,7 @@ function shell_model_chi2(v2::Bool = true, t3amp::Bool = true, t3phi::Bool = tru
         fm = parse_model(Dict{String,Any}(String(k) => v for (k, v) in m.dict),
                          String.(m.free); nB_workspace = 1)
         x = Float64[_row_value(m, k) for k in m.free]
-        weights = fitting_weights(; v2, t3amp, t3phi, cvis, flux, diffvis)
+        weights = fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis)
         all(iszero, weights) && return ""
         chi2 = model_to_chi2(fm, x, d; weights)
         @sprintf("%.4f", chi2 / OITOOLS._ndof(d, weights))

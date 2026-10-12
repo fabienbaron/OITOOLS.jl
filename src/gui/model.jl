@@ -441,15 +441,13 @@ function parse_prior_lines(text::AbstractString)
 end
 
 """
-    fitting_weights(; v2, t3amp, t3phi, cvis, flux, diffvis) -> Vector{Float64}
+    fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis) -> Vector{Float64}
 
-The SEVEN-element weight vector model fitting takes: `[V², T3amp, T3φ, visamp, visφ, flux, diffφ]`.
-
-Seven, not imaging's three, and `cvis` is one box driving TWO entries — amplitude and phase are
-one observable to a user and two to the criterion. Building it here is what stops the panel
-having to know that.
+The SEVEN-element weight vector model fitting takes: `[V², T3amp, T3φ, visamp, visφ, flux, diffφ]`,
+one entry per box of the panel's Observables row.
 """
 fitting_weights(; v2::Bool = true, t3amp::Bool = true, t3phi::Bool = true,
-                  cvis::Bool = false, flux::Bool = false, diffvis::Bool = false) =
+                  visamp::Bool = false, visphi::Bool = false, flux::Bool = false,
+                  diffvis::Bool = false) =
     Float64[v2 ? 1 : 0, t3amp ? 1 : 0, t3phi ? 1 : 0,
-            cvis ? 1 : 0, cvis ? 1 : 0, flux ? 1 : 0, diffvis ? 1 : 0]
+            visamp ? 1 : 0, visphi ? 1 : 0, flux ? 1 : 0, diffvis ? 1 : 0]

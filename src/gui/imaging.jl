@@ -1098,7 +1098,7 @@ end
 """
     observable_availability(data) -> NamedTuple
 
-Which observables the dataset actually contains, as six booleans.
+Which observables the dataset actually contains, as booleans.
 
 Counted, not inferred from the presence of a table: `nv2` and friends are *valid-point*
 counts, and a table whose points were all sanitised away (they get `err = Inf` to keep index
@@ -1120,11 +1120,13 @@ function observable_availability(data)
               t3amp   = tot(:nt3amp)  > 0,
               t3phi   = tot(:nt3phi)  > 0,
               cvis    = tot(:nvisamp) > 0 || tot(:nvisphi) > 0,
+              visamp  = tot(:nvisamp) > 0,
+              visphi  = tot(:nvisphi) > 0,
               flux    = tot(:nflux)   > 0,
               diffvis = nwav > 1 && tot(:nvisphi) > 0)
 end
 
-"The six flags as `name=0|1` pairs, which is the shape QML reads them back in."
+"The flags as `name=0|1` pairs, which is the shape QML reads them back in."
 observable_flags_string(data) =
     join(("$k=$(Int(v))" for (k, v) in pairs(observable_availability(data))), ",")
 

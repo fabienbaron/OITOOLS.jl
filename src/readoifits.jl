@@ -620,12 +620,18 @@ function _station_cuts(data::OIdata, stations, baselines, triangles)
 end
 
 """
-    filter_data(data, indexes_to_discard) -> OIdata
+    filter_data(data, indexes_to_discard; drop = Symbol[]) -> OIdata
 
 Return a deep copy of `data` with the specified points removed. `indexes_to_discard`
 must be the five-element vector `[uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]` returned by
 `set_data_filter`. UV points that become unreferenced after removing observables are
 pruned automatically and all index arrays are remapped.
+
+`drop` removes whole observables, any of `:v2, :t3amp, :t3phi, :visamp, :visphi, :flux`. A T3
+amplitude and its closure phase are one point, as are a VIS amplitude and its phase: dropping
+one half keeps the point for the other, the dropped half held as "not measured" (`0 ± Inf`,
+uncounted, ignored by χ², written back as NaN) -- and a point whose other half holds no
+measurement either goes. Dropping both halves, `:v2` or `:flux` removes the points.
 
 # Example
 ```julia
@@ -638,7 +644,43 @@ The default discards nothing. (Before 0.11 the default was `Int64[]`, which rais
 never actually be used.)
 """
 function filter_data(data_in::OIdata{T},
-                     indexes_to_discard = [Int64[], Int64[], Int64[], Int64[], Int64[]]) where T
+                     indexes_to_discard = [Int64[], Int64[], Int64[], Int64[], Int64[]];
+                     drop = Symbol[]) where T
+    drop = Symbol.(collect(drop))
+    unknown = setdiff(drop, _DROPPABLE)
+    isempty(unknown) || throw(ArgumentError("cannot drop $(join(unknown, ", ")); " *
+                                            "choose among $(join(_DROPPABLE, ", "))"))
+    idx = [Int64.(collect(indexes_to_discard[k])) for k in 1:length(indexes_to_discard)]
+    while length(idx) < 5; push!(idx, Int64[]); end
+    # Whole observables become discarded points; a half whose other half holds nothing, too.
+    :v2   in drop && append!(idx[3], eachindex(data_in.v2))
+    :flux in drop && append!(idx[5], eachindex(data_in.flux))
+    halves = ((:t3amp, :t3phi, 4, data_in.t3amp, data_in.t3amp_err, data_in.t3phi, data_in.t3phi_err),
+              (:visamp, :visphi, 2, data_in.visamp, data_in.visamp_err, data_in.visphi, data_in.visphi_err))
+    for (a, p, k, av, ae, pv, pe) in halves
+        if a in drop && p in drop
+            append!(idx[k], eachindex(av))
+        elseif a in drop
+            append!(idx[k], [i for i in eachindex(pv) if !(isfinite(pv[i]) && isfinite(pe[i]) && pe[i] > 0)])
+        elseif p in drop
+            append!(idx[k], [i for i in eachindex(av) if !(isfinite(av[i]) && isfinite(ae[i]) && ae[i] > 0)])
+        end
+    end
+    data = _filter_points(data_in, idx)
+    # The half dropped from the points kept: "not measured".
+    unmeasured!(v, e) = (fill!(v, zero(T)); fill!(e, T(Inf)); 0)
+    only(x, y) = x in drop && !(y in drop)
+    only(:t3amp, :t3phi)   && (data.nt3amp  = unmeasured!(data.t3amp,  data.t3amp_err))
+    only(:t3phi, :t3amp)   && (data.nt3phi  = unmeasured!(data.t3phi,  data.t3phi_err))
+    only(:visamp, :visphi) && (data.nvisamp = unmeasured!(data.visamp, data.visamp_err))
+    only(:visphi, :visamp) && (data.nvisphi = unmeasured!(data.visphi, data.visphi_err))
+    return data
+end
+
+const _DROPPABLE = (:v2, :t3amp, :t3phi, :visamp, :visphi, :flux)
+
+# filter_data's point removal: `idx` is the five discard lists.
+function _filter_points(data_in::OIdata{T}, indexes_to_discard) where T
     data = deepcopy(data_in)
     good_uv_vis = Int64[]; good_uv_v2 = Int64[]
     good_uv_t3_1 = Int64[]; good_uv_t3_2 = Int64[]; good_uv_t3_3 = Int64[]
@@ -655,8 +697,8 @@ function filter_data(data_in::OIdata{T},
         !isempty(data.visamp_corr_idx) && (data.visamp_corr_idx = data.visamp_corr_idx[vis_good])
         !isempty(data.visphi_corr_idx) && (data.visphi_corr_idx = data.visphi_corr_idx[vis_good])
         data.vis_tab      = data.vis_tab[vis_good]
-        data.nvisamp      = count(i -> !isnan(data.visamp[i]) && !isnan(data.visamp_err[i]) && data.visamp_err[i] > 0, eachindex(data.visamp))
-        data.nvisphi      = count(i -> !isnan(data.visphi[i]) && !isnan(data.visphi_err[i]) && data.visphi_err[i] > 0, eachindex(data.visphi))
+        data.nvisamp      = _nvalid(data.visamp, data.visamp_err)
+        data.nvisphi      = _nvalid(data.visphi, data.visphi_err)
         _sanitize_paired_observables!(data.visamp, data.visamp_err, data.visphi, data.visphi_err, "visamp")
     end
     if data.nv2 > 0
@@ -683,8 +725,8 @@ function filter_data(data_in::OIdata{T},
         !isempty(data.t3amp_corr_idx) && (data.t3amp_corr_idx = data.t3amp_corr_idx[t3_good])
         !isempty(data.t3phi_corr_idx) && (data.t3phi_corr_idx = data.t3phi_corr_idx[t3_good])
         data.t3_tab         = data.t3_tab[t3_good]
-        data.nt3amp         = count(i -> !isnan(data.t3amp[i]) && !isnan(data.t3amp_err[i]) && data.t3amp_err[i] > 0, eachindex(data.t3amp))
-        data.nt3phi         = count(i -> !isnan(data.t3phi[i]) && !isnan(data.t3phi_err[i]) && data.t3phi_err[i] > 0, eachindex(data.t3phi))
+        data.nt3amp         = _nvalid(data.t3amp, data.t3amp_err)
+        data.nt3phi         = _nvalid(data.t3phi, data.t3phi_err)
         _sanitize_paired_observables!(data.t3amp, data.t3amp_err, data.t3phi, data.t3phi_err, "t3amp")
     end
     if data.nflux > 0 && length(indexes_to_discard) >= 5
@@ -1431,8 +1473,8 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         vis_baseline = raw_vis.vis_baseline[bin_vis]
         vis_uv     = hcat(raw_vis.vis_uv[bin_vis, 1], raw_vis.vis_uv[bin_vis, 2])'  # 2×nvis
         vis_sta_index = raw_vis.vis_sta_index[:, bin_vis]
-        nvisamp    = count(i -> !isnan(visamp[i]) && !isnan(visamp_err[i]) && visamp_err[i] > 0, eachindex(visamp))
-        nvisphi    = count(i -> !isnan(visphi[i]) && !isnan(visphi_err[i]) && visphi_err[i] > 0, eachindex(visphi))
+        nvisamp    = _nvalid(visamp, visamp_err)
+        nvisphi    = _nvalid(visphi, visphi_err)
         indx_vis   = collect(1:length(visamp))
         visamp_corr_idx = isempty(raw_vis.visamp_corr_idx) ? Int64[] : raw_vis.visamp_corr_idx[bin_vis]
         visphi_corr_idx = isempty(raw_vis.visphi_corr_idx) ? Int64[] : raw_vis.visphi_corr_idx[bin_vis]
@@ -1478,8 +1520,8 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         t3_maxbaseline = raw_t3.t3_maxbaseline[bin_t3]
         t3_sta_index   = raw_t3.t3_sta_index[:, bin_t3]
         nt3    = length(t3amp)
-        nt3amp = count(i -> !isnan(t3amp[i]) && !isnan(t3amp_err[i]) && t3amp_err[i] > 0, eachindex(t3amp))
-        nt3phi = count(i -> !isnan(t3phi[i]) && !isnan(t3phi_err[i]) && t3phi_err[i] > 0, eachindex(t3phi))
+        nt3amp = _nvalid(t3amp, t3amp_err)
+        nt3phi = _nvalid(t3phi, t3phi_err)
         off    = length(visamp) + nv2
         indx_t3_1 = collect(off .+ (1:nt3))
         indx_t3_2 = collect(off .+ (nt3+1:2nt3))
@@ -1563,6 +1605,12 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
     )
 end
 
+# The points that hold a measurement: a finite value with a finite, positive error. A missing
+# half of an amplitude/phase pair is held as 0 ± Inf (`_sanitize_paired_observables!`) and is not
+# one; `err > 0` alone would count it.
+_nvalid(x, e) = count(i -> isfinite(x[i]) && isfinite(e[i]) && e[i] > 0, eachindex(x))
+_nvalid(x, e, idx) = count(i -> isfinite(x[i]) && isfinite(e[i]) && e[i] > 0, idx)
+
 # ---------------------------------------------------------------------------
 # _sanitize_paired_observables!: for paired observables (visamp/visphi or
 # t3amp/t3phi) that share indices, set err=Inf for entries where one
@@ -1620,8 +1668,8 @@ function filter_bad_observables!(bd::BinData{T};
         good_uv_vis          = bd.indx_vis[vis_good]
         bd.visamp            = bd.visamp[vis_good];    bd.visamp_err    = bd.visamp_err[vis_good]
         bd.visphi            = bd.visphi[vis_good];    bd.visphi_err    = bd.visphi_err[vis_good]
-        bd.nvisamp           = count(i -> !isnan(bd.visamp[i]) && !isnan(bd.visamp_err[i]) && bd.visamp_err[i] > 0, eachindex(bd.visamp))
-        bd.nvisphi           = count(i -> !isnan(bd.visphi[i]) && !isnan(bd.visphi_err[i]) && bd.visphi_err[i] > 0, eachindex(bd.visphi))
+        bd.nvisamp           = _nvalid(bd.visamp, bd.visamp_err)
+        bd.nvisphi           = _nvalid(bd.visphi, bd.visphi_err)
         _sanitize_paired_observables!(bd.visamp, bd.visamp_err, bd.visphi, bd.visphi_err, "visamp"; warn)
         bd.vis_baseline      = bd.vis_baseline[vis_good]
         bd.vis_mjd           = bd.vis_mjd[vis_good];   bd.vis_lam       = bd.vis_lam[vis_good]
@@ -1659,8 +1707,8 @@ function filter_bad_observables!(bd::BinData{T};
         good_uv_t3_3         = bd.indx_t3_3[t3_good]
         bd.t3amp             = bd.t3amp[t3_good];      bd.t3amp_err     = bd.t3amp_err[t3_good]
         bd.t3phi             = bd.t3phi[t3_good];      bd.t3phi_err     = bd.t3phi_err[t3_good]
-        bd.nt3amp            = count(i -> !isnan(bd.t3amp[i]) && !isnan(bd.t3amp_err[i]) && bd.t3amp_err[i] > 0, eachindex(bd.t3amp))
-        bd.nt3phi            = count(i -> !isnan(bd.t3phi[i]) && !isnan(bd.t3phi_err[i]) && bd.t3phi_err[i] > 0, eachindex(bd.t3phi))
+        bd.nt3amp            = _nvalid(bd.t3amp, bd.t3amp_err)
+        bd.nt3phi            = _nvalid(bd.t3phi, bd.t3phi_err)
         _sanitize_paired_observables!(bd.t3amp, bd.t3amp_err, bd.t3phi, bd.t3phi_err, "t3amp"; warn)
         bd.t3_baseline       = bd.t3_baseline[t3_good]; bd.t3_maxbaseline = bd.t3_maxbaseline[t3_good]
         bd.t3_mjd            = bd.t3_mjd[t3_good];    bd.t3_lam        = bd.t3_lam[t3_good]
@@ -2112,8 +2160,8 @@ function readoifits(oifitsfile;
             indx = findall(common_good)
             for i in 1:nwavbin
                 d = OIdataArr[i,itimebin]
-                d.nvisamp       = count(j -> !isnan(d.visamp[j]) && !isnan(d.visamp_err[j]) && d.visamp_err[j] > 0, indx)
-                d.nvisphi       = count(j -> !isnan(d.visphi[j]) && !isnan(d.visphi_err[j]) && d.visphi_err[j] > 0, indx)
+                d.nvisamp       = _nvalid(d.visamp, d.visamp_err, indx)
+                d.nvisphi       = _nvalid(d.visphi, d.visphi_err, indx)
                 d.visamp        = d.visamp[indx];        d.visamp_err    = d.visamp_err[indx]
                 d.visphi        = d.visphi[indx];        d.visphi_err    = d.visphi_err[indx]
                 d.vis_baseline  = d.vis_baseline[indx];  d.vis_mjd       = d.vis_mjd[indx]

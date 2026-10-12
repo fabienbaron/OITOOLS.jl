@@ -285,6 +285,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
             xvals = vcat([getfield(data[n], spec.x_field)[loc[n]] for n in eachindex(data)]...) * xs
             yvals = vcat([getfield(data[n], spec.y_field)[loc[n]] for n in eachindex(data)]...)
             yerr  = vcat([getfield(data[n], spec.yerr_field)[loc[n]] for n in eachindex(data)]...)
+            OITOOLS.hide_unmeasured!(yvals, yerr)
             if markopt
                 ax.errorbar(xvals, yvals, yerr=yerr, fmt="o", marker=oiplot_markers[mod1(i, length(oiplot_markers))],
                          markeredgecolor="Black", markersize=oiplot_markersize, color="Black",
@@ -311,6 +312,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
         xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
+        OITOOLS.hide_unmeasured!(yvals, yerr)
         scatter_obj = ax.scatter(xvals, yvals, c=wavcol, cmap="Spectral_r", alpha=1.0,
                      s=oiplot_scatter_size, zorder=100)
         ax.errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
@@ -321,6 +323,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
         xvals  = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals  = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr   = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
+        OITOOLS.hide_unmeasured!(yvals, yerr)
         scatter_obj = ax.scatter(xvals, yvals, c=mjdcol, cmap="plasma", alpha=1.0,
                      s=oiplot_scatter_size, zorder=100)
         ax.errorbar(xvals, yvals, yerr=yerr, fmt="none", marker="none",
@@ -330,6 +333,7 @@ function _plot_obs(data::Union{OIdata, AbstractArray{<:OIdata}}, spec::ObsPlotSp
         xvals = vcat([getfield(data[n], spec.x_field) for n in eachindex(data)]...) * xs
         yvals = vcat([getfield(data[n], spec.y_field) for n in eachindex(data)]...)
         yerr  = vcat([getfield(data[n], spec.yerr_field) for n in eachindex(data)]...)
+        OITOOLS.hide_unmeasured!(yvals, yerr)
         ax.errorbar(xvals, yvals, yerr=yerr, fmt="o", markersize=oiplot_markersize,
                  color=color, ecolor="Gainsboro", elinewidth=oiplot_elinewidth)
     end
