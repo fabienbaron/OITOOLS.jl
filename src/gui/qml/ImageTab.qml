@@ -1363,8 +1363,7 @@ Item {
                                     currentIndex === 1 ? "channels" :
                                     currentIndex === 2 ? "groups"   : "single", root.binGroups)
                                 ToolTip.visible: hovered
-                                ToolTip.text: "Grouping keeps every channel and gives each group of channels its own image. " +
-                                              "To average channels into fewer, use Tools › Average channels."
+                                ToolTip.text: "Grouping keeps every channel; averaging is in Tools"
                             }
                             RowLayout {
                                 Layout.fillWidth: true

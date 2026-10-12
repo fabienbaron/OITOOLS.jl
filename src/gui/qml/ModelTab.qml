@@ -623,6 +623,7 @@ Item {
         if (!canRun) return
         running = true
         searchPending = false
+        eachPending = false
         fitText = "fitting…"
         fitTimer.restart()
     }
@@ -631,10 +632,23 @@ Item {
     // as a fit, but it is not an optimiser: it maps χ² over the companion's position. It is
     // started from its own section, and this says which of the two the timer below starts.
     property bool searchPending: false
+    // "Fit each…": the same fit on each ticked dataset, one after another on the worker.
+    property bool eachPending: false
+    property string eachNames: ""
+    function startEach(names) {
+        if (!canRun || names.length === 0) return
+        running = true
+        searchPending = false
+        eachPending = true
+        eachNames = names
+        fitText = "fitting each…"
+        fitTimer.restart()
+    }
     function startSearch() {
         if (!canRun || root.companionNames.length === 0) return
         running = true
         searchPending = true
+        eachPending = false
         fitText = "searching…"
         fitTimer.restart()
     }
@@ -643,7 +657,14 @@ Item {
         id: fitTimer
         interval: 120; repeat: false
         onTriggered: {
-            root.fitText = root.searchPending
+            root.fitText = root.eachPending
+                ? Julia.shell_fit_each(
+                      root.eachNames, root.freeAsLines(),
+                      root.constraintsAsLines(), root.priorsAsLines(),
+                      root.useV2, root.useT3amp, root.useT3phi,
+                      root.useVisamp, root.useVisphi, root.useFlux, root.useDiffvis,
+                      root.optimiser, root.maxeval, root.uncertainty)
+                : root.searchPending
                 ? Julia.shell_companion_search(
                       root.freeAsLines(),
                       root.useV2, root.useT3amp, root.useT3phi,
@@ -701,6 +722,12 @@ Item {
             root.running = false
             root.fitOutput = Julia.shell_fit_output()
             if (f[0] === "done") root.fitText = f[1]
+            if (root.eachPending) {
+                root.eachPending = false
+                if (f[0] === "done") epochsDialog.show(Julia.shell_epochs_table())
+                root.consoleChanged()
+                return
+            }
             root.refreshFits()
             root.refreshChi2Map()
             root.refreshCorrelation()
@@ -1292,6 +1319,7 @@ Item {
                                     // mutually exclusive rather than independent.
                                     ComboBox {
                                         id: modeBox
+                                        objectName: "param:" + rowItem.rComp + "," + rowItem.rParam + ":mode"
                                         Layout.preferredWidth: root.dp(78)
                                         Layout.maximumWidth: root.dp(78)
                                         implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
@@ -1311,6 +1339,7 @@ Item {
                                     // Expr rows show the expression; its value is a computed
                                     // read-only display, since editing it would mean nothing.
                                     TextField {
+                                        objectName: "param:" + rowItem.rComp + "," + rowItem.rParam + ":value"
                                         Layout.preferredWidth: root.dp(96)
                                         Layout.maximumWidth: root.dp(96)
                                         implicitHeight: Math.max(root.dp(22), contentHeight + topPadding + bottomPadding)
@@ -1343,6 +1372,7 @@ Item {
                                         text: rowItem.rMode === "free" && isFinite(rowItem.rLb)
                                               ? root.fmt(rowItem.rLb, 3) : ""
                                         horizontalAlignment: Text.AlignRight
+                                        objectName: "param:" + rowItem.rComp + "," + rowItem.rParam + ":lb"
                                         onEditingFinished: root.commitParam(rowItem.rIndex, "lb", text)
                                     }
                                     TextField {
@@ -1355,6 +1385,7 @@ Item {
                                         text: rowItem.rMode === "free" && isFinite(rowItem.rUb)
                                               ? root.fmt(rowItem.rUb, 3) : ""
                                         horizontalAlignment: Text.AlignRight
+                                        objectName: "param:" + rowItem.rComp + "," + rowItem.rParam + ":ub"
                                         onEditingFinished: root.commitParam(rowItem.rIndex, "ub", text)
                                     }
 
@@ -1895,6 +1926,7 @@ Item {
                                                 spacing: root.dp(6)
                                                 Label { text: "law"; color: "#666" }
                                                 ComboBox {
+                                                    objectName: "ldLaw"
                                                     Layout.fillWidth: true
                                                     textRole: "label"
                                                     valueRole: "key"
@@ -2685,6 +2717,7 @@ Item {
                                     Label { text: "Smearing"; font.bold: true; Layout.leftMargin: root.dp(12) }
                                     ComboBox {
                                         id: smearBox
+                                        objectName: "smearing"
                                         Layout.preferredWidth: root.dp(80)
                                         model: ["off", "auto", "2", "3", "5", "8"]
                                         onActivated: root.applySmearing()
@@ -2809,6 +2842,7 @@ Item {
                                     Label { text: "Optimiser"; font.bold: true }
                                     ComboBox {
                                         id: optBox
+                                        objectName: "optimiser"
                                         // Wide enough for the longest entry: a dropdown that elides its
                                         // own descriptions hides the part distinguishing the choices.
                                         Layout.preferredWidth: root.dp(330)
@@ -2879,6 +2913,7 @@ Item {
                                     Label { text: "Uncertainty"; font.bold: true }
                                     ComboBox {
                                         id: uncBox
+                                        objectName: "uncertainty"
                                         Layout.preferredWidth: root.dp(160)
                                         // "skip", not "none": this picks whether uncertainties are
                                         // estimated at all, and "none" reads like a result the fit
@@ -2886,10 +2921,21 @@ Item {
                                         model: ["skip", "Jacobian", "bootstrap", "posterior"]
                                         currentIndex: 1
                                         onActivated: root.uncertainty =
-                                            ["none", "jacobian", "bootstrap", "posterior"][index]
+                                            ["none", "jacobian", "bootstrap", "posterior"][currentIndex]
+                                    }
+                                    Button {
+                                        objectName: "fitEachButton"
+                                        text: "Fit each…"
+                                        enabled: !root.running && root.canRun &&
+                                                 root.optimiser !== "grid" && root.optimiser !== "nested"
+                                        onClicked: eachDialog.openWith(Julia.shell_dataset_names())
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: enabled ? "The same fit on several datasets"
+                                                              : "needs Levenberg-Marquardt or NLopt"
                                     }
                                     Button {
                                         id: fitButton
+                                        objectName: "fitButton"
                                         text: root.running ? "…" : "Fit"
                                         enabled: !root.running && root.canRun
                                         onClicked: root.startFit()
@@ -2943,6 +2989,7 @@ Item {
 
                                     Label { text: "nboot"; color: "#666" }
                                     SpinBox {
+                                        objectName: "nboot"
                                         from: 10; to: 10000; stepSize: 10; value: root.nboot; editable: true
                                         implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
                                         onValueModified: root.nboot = value
@@ -3149,6 +3196,7 @@ Item {
                                         Label { Layout.preferredWidth: root.dp(92)
                                                 text: root.fmtChi2(model.chi2rStart); color: "#666" }
                                         Label { Layout.preferredWidth: root.dp(92)
+                                                objectName: "fit:" + model.label + ":chi2r"
                                                 text: root.fmtChi2(model.chi2r) }
                                         // Iterations or chi2 evaluations -- whichever the
                                         // optimiser reports; they are not the same quantity, so
@@ -3163,6 +3211,7 @@ Item {
                                                 return i < 0 ? "" : model.work.substring(i + 12)
                                             }
                                             Layout.preferredWidth: root.dp(80)
+                                            objectName: "fit:" + model.label + ":work"
                                             text: model.work.split(" · ").map(function (w) {
                                                 return w.indexOf("on a bound") === 0 ? "on a bound" : w
                                             }).join("\n")
@@ -3180,6 +3229,7 @@ Item {
                                         // ndof counts data points and is NOT reduced by the number
                                         // of free parameters, which is why it is labelled "pts".
                                         Label { Layout.preferredWidth: root.dp(90);  text: model.ndof + " pts"
+                                                objectName: "fit:" + model.label + ":points"
                                                 color: "#666" }
                                         // Where the parameters landed. Two fits that differ only
                                         // in χ² are two numbers; this is what makes them two
@@ -3188,6 +3238,7 @@ Item {
                                         // spaces inside "name = value ± σ" are non-breaking.
                                         Label {
                                             id: fitParamLabel
+                                            objectName: "fit:" + model.label + ":params"
                                             Layout.fillWidth: true
                                             text: model.params.split("   ").map(function (p) {
                                                 return p.replace(/ /g, "\u00a0") }).join("   ")
@@ -3418,6 +3469,7 @@ Item {
                                                  : rho >= 0 ? Qt.rgba(0.85, 0.2, 0.15, 0.75 * Math.abs(rho))
                                                             : Qt.rgba(0.15, 0.35, 0.85, 0.75 * Math.abs(rho))
                                             Label {
+                                                objectName: parent.cell ? "corr:" + parent.i + ":" + parent.j : ""
                                                 anchors.centerIn: parent
                                                 text: (i < 0 && j >= 0) ? root.corrNames[j]
                                                     : (j < 0 && i >= 0) ? root.corrNames[i]
@@ -4621,6 +4673,7 @@ Item {
                 Label { text: "name"; color: "#666"; Layout.preferredWidth: root.dp(50) }
                 TextField {
                     id: nameField
+                    objectName: "newCompName"
                     Layout.fillWidth: true
                     selectByMouse: true
                     onTextEdited: addComponentDialog.nameEdited = true
@@ -4632,6 +4685,7 @@ Item {
                 Label { text: "kind"; color: "#666"; Layout.preferredWidth: root.dp(50) }
                 ComboBox {
                     id: kindField
+                    objectName: "newCompKind"
                     Layout.fillWidth: true
                     textRole: "label"
                     valueRole: "key"
@@ -4656,6 +4710,7 @@ Item {
                 }
                 ComboBox {
                     id: subField
+                    objectName: "newCompSub"
                     Layout.fillWidth: true
                     textRole: "label"
                     valueRole: "key"
@@ -4811,11 +4866,15 @@ Item {
         title: "Unsaved changes"
         modal: true
         anchors.centerIn: Overlay.overlay
-        width: root.dp(380)
         property var pending: null
         onClosed: pending = null
+        // Fixed widths on both the Dialog and its wrapped Label, neither read from the other. A
+        // Dialog sized from its content chases its header and footer (a binding loop on
+        // implicitWidth); a Label sized from the Dialog re-wraps whenever the Dialog's geometry
+        // changes, and its new height changes that geometry again (one on implicitHeight).
+        width: root.dp(380)
         Label {
-            width: parent.width
+            width: root.dp(340)
             wrapMode: Text.WordWrap
             text: root.modelName + " has changes that are not saved. Discard them and replace the model?"
         }
@@ -4854,6 +4913,7 @@ Item {
                 Layout.preferredHeight: root.dp(200)
                 TextArea {
                     id: pasteArea
+                    objectName: "pmoiredPaste"
                     font.family: "monospace"
                     wrapMode: TextArea.Wrap
                     placeholderText: "{'star,ud': 0.1, 'disk,fwhm': 18., 'disk,f': 1.0}"
@@ -4914,5 +4974,109 @@ Item {
             root.consoleChanged()
             if (err.length > 0 && err.charAt(0) === "!") root.fitText = err
         }
+    }
+
+    // ── Fit each ─────────────────────────────────────────────────────────────
+    // Which datasets: the session's, as the Dataset box lists them, the current one ticked.
+    Popup {
+        id: eachDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(parent.width - root.dp(40), root.dp(600))
+        padding: root.dp(12)
+        function openWith(text) {
+            eachModel.clear()
+            var lines = text.length > 0 ? text.split("\n") : []
+            var cur = Julia.shell_current_dataset()
+            for (var i = 0; i < lines.length; ++i)
+                eachModel.append({ label: lines[i], name: lines[i].split(" — ")[0], on: i + 1 === cur })
+            open()
+        }
+        ListModel { id: eachModel }
+        contentItem: ColumnLayout {
+            spacing: root.dp(6)
+            Label { text: "Fit each dataset"; font.bold: true }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(eachCol.implicitHeight, root.dp(360))
+                clip: true
+                ColumnLayout {
+                    id: eachCol
+                    Repeater {
+                        model: eachModel
+                        CheckBox {
+                            text: model.label
+                            checked: model.on
+                            onToggled: eachModel.setProperty(index, "on", checked)
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                Item { Layout.fillWidth: true }
+                Button { text: "Cancel"; onClicked: eachDialog.close() }
+                Button {
+                    objectName: "fitEachRun"
+                    text: "Run"
+                    onClicked: {
+                        var ns = []
+                        for (var i = 0; i < eachModel.count; ++i)
+                            if (eachModel.get(i).on) ns.push(eachModel.get(i).name)
+                        eachDialog.close()
+                        root.startEach(ns.join("\n"))
+                    }
+                }
+            }
+        }
+    }
+
+    // The table "Fit each" produced: one row per dataset.
+    Popup {
+        id: epochsDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(parent.width - root.dp(40), root.dp(900))
+        height: Math.min(parent.height - root.dp(40), root.dp(520))
+        padding: root.dp(12)
+        function show(text) { epochsText.text = text; open() }
+        contentItem: ColumnLayout {
+            spacing: root.dp(6)
+            Label { text: "Epochs — one fit per dataset"; font.bold: true }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                TextArea {
+                    id: epochsText
+                    objectName: "epochsText"
+                    readOnly: true; selectByMouse: true
+                    wrapMode: TextEdit.NoWrap
+                    font.family: "monospace"
+                }
+            }
+            RowLayout {
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "Copy"
+                    onClicked: { epochsText.selectAll(); epochsText.copy(); epochsText.deselect() }
+                }
+                Button {
+                    text: "Save…"
+                    onClicked: {
+                        epochsPicker.suggestedName = Julia.picker_suggest("epochs", "tsv")
+                        epochsPicker.openAt("")
+                    }
+                }
+                Button { text: "Close"; onClicked: epochsDialog.close() }
+            }
+        }
+    }
+    FilePicker {
+        id: epochsPicker
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save the table"
+        saveMode: true
+        defaultSuffix: "tsv"
+        filters: [{ label: "Tab-separated (*.tsv)", patterns: "*.tsv" }, { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.fitText = Julia.shell_save_epochs(path); root.consoleChanged() }
     }
 }

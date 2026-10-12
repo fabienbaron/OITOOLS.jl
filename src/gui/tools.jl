@@ -1,38 +1,47 @@
 # The Tools perspective: operations on files and datasets that are none of the other four —
-# the header inspector, the validator and its repaired copy, channel averaging, and the splits.
-# A split or an average is a RE-READ of the dataset's file with one more
-# `readoifits` keyword (`targetname`, `insname`, `temporalbin`, `binning`), so each part is an
-# ordinary dataset: the Filter section works on it, and the exported script replays it.
+# the header inspector, the validator, channel binning, the splits and merging, the cube viewer.
+# OIFITS handling works from a FILE: binning or splitting reads it with one more `readoifits`
+# keyword (`binning`, `spectralbin`, `temporalbin`, `insname`, `targetname`), so each result is
+# an ordinary dataset — the Filter section works on it, and the exported script replays it.
 
 # ── session actions ───────────────────────────────────────────────────────────────────
 
 """
-    reread_dataset!(session, name, extra; label, binstats = nothing) -> DatasetEntry
+    read_file_dataset!(session, path, extra; label, binstats = nothing) -> DatasetEntry
 
-Read dataset `name`'s file(s) again with its own read options plus `extra`, as a new dataset
-labelled `label`, and log the `readoifits` call. A filtered dataset is refused: the re-read
-would silently drop its cut. `binstats` (a Dict) receives the channel-averaging scatter check;
-it is not a read option and is not kept.
+Read an OIFITS file with the read options `extra` into a new dataset labelled `label`, and log
+the `readoifits` call. `binstats` (a Dict) receives the channel-averaging scatter check; it is not
+a read option and is not kept.
 """
-function reread_dataset!(s::Session, name::AbstractString, extra::AbstractDict;
-                         label::AbstractString = "", binstats = nothing)
-    src = dataset(s, name)
-    src.derived_from === nothing ||
-        throw(ArgumentError("$(src.name) is a filtered copy of $(src.derived_from); work on " *
-                            "$(src.derived_from), then filter the result"))
-    ropts = merge(src.readopts, Dict{Symbol,Any}(extra))
-    data = OITOOLS.readoifits(sources(src); ropts..., warn = false, verbose = false, binstats)
-    data isa AbstractArray || throw(ArgumentError("readoifits returned nothing for $(source_label(src))"))
+function read_file_dataset!(s::Session, path::AbstractString, extra::AbstractDict;
+                            label::AbstractString = "", binstats = nothing)
+    p = String(path)
+    isfile(p) || throw(ArgumentError("no such file: $(repr(p))"))
+    ropts = Dict{Symbol,Any}(extra)
+    data = OITOOLS.readoifits(p; ropts..., warn = false, verbose = false, binstats)
+    data isa AbstractArray || throw(ArgumentError("readoifits returned nothing for $(basename(p))"))
     newname = _next_name(s.datasets, "data")
-    entry = DatasetEntry(newname, src.path, data, ropts, get(ropts, :spectralbin, nothing),
-                         get(ropts, :temporalbin, nothing), nothing, "", src.files,
-                         isempty(src.label) ? String(label) : string(src.label, " · ", label))
+    entry = DatasetEntry(newname, p, data, ropts, get(ropts, :spectralbin, nothing),
+                         get(ropts, :temporalbin, nothing), nothing, "", String[], String(label))
     push!(s.datasets, entry)
     kwstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(ropts), by = first)];
                     defaults = _READOIFITS_DEFAULTS)
-    call = isempty(kwstr) ? "readoifits($(_literal(sources(src))))" :
-                            "readoifits($(_literal(sources(src))); $kwstr)"
-    log!(s, "$newname = $call"; note = "$(label) of $(src.name)", binding = newname)
+    call = isempty(kwstr) ? "readoifits($(_literal(p)))" : "readoifits($(_literal(p)); $kwstr)"
+    log!(s, "$newname = $call"; note = "$(label) of $(basename(p))", binding = newname)
+    return entry
+end
+
+# The file read with the default options, as split and preview work out their parts from it;
+# kept while the file is unchanged.
+const FILE_READ = Ref{Any}(nothing)
+function _file_entry(path::AbstractString)
+    p = String(path)
+    isfile(p) || throw(ArgumentError("no such file: $(repr(p))"))
+    c = FILE_READ[]
+    (c !== nothing && c.path == p && c.mtime == mtime(p)) && return c.entry
+    data = OITOOLS.readoifits(p; warn = false, verbose = false)
+    entry = DatasetEntry("file", p, data, Dict{Symbol,Any}(), nothing, nothing, nothing)
+    FILE_READ[] = (; path = p, mtime = mtime(p), entry)
     return entry
 end
 
@@ -81,18 +90,17 @@ function split_parts(e::DatasetEntry, by::Symbol; gap::Real = 0.5, binwidth::Rea
 end
 
 """
-    split_dataset!(session, name, by; gap, binwidth) -> Vector{DatasetEntry}
+    split_file!(session, path, by; gap, binwidth) -> Vector{DatasetEntry}
 
-Split dataset `name` into one new dataset per part ([`split_parts`](@ref)), each a logged
-re-read.
+One new dataset per part of the file ([`split_parts`](@ref)), each a logged read.
 """
-split_dataset!(s::Session, name::AbstractString, by::Symbol; kw...) =
-    [reread_dataset!(s, name, extra; label) for (label, extra) in split_parts(dataset(s, name), by; kw...)]
+split_file!(s::Session, path::AbstractString, by::Symbol; kw...) =
+    [read_file_dataset!(s, path, extra; label) for (label, extra) in split_parts(_file_entry(path), by; kw...)]
 
 # ── shell calls ───────────────────────────────────────────────────────────────────────
 
-"""The current dataset's file, for the Files section's "use the current dataset"; "" with none,
-or when it is several files read as one."""
+"""The current dataset's file, for **Current**; "" with none, or when it is several files read as
+one."""
 function shell_tools_source()
     e = current_dataset(_shell())
     (e === nothing || !isempty(e.files)) && return ""
@@ -111,7 +119,8 @@ function shell_tools_headers(path::AbstractString)
     h = OITOOLS.oifits_headers(p)
     return join([join((x.index, x.kind, x.extname, x.insname, x.revn, x.nrows,
                        x.kind === :table ? string(length(x.columns), " columns") :
-                       isempty(x.dims) ? "header only" : join(x.dims, "×")), "\t") for x in h], "\n")
+                       (isempty(x.dims) || prod(x.dims) == 0) ? "header only" : join(x.dims, "×")),
+                  "\t") for x in h], "\n")
 end
 
 """
@@ -162,8 +171,8 @@ function shell_tools_validate(path::AbstractString)
     return join([join((x.severity, x.table, x.message), "\t") for x in r], "\n")
 end
 
-"""The file's targets, one per line (the repaired copy is written one target at a time); ""
-for a path that is not (yet) a readable OIFITS file -- the field asks on every keystroke."""
+"""The file's targets, one per line (Export writes one target at a time); "" for a path that is
+not (yet) a readable OIFITS file -- the field asks on every keystroke."""
 function shell_tools_targets(path::AbstractString)
     p = strip_file_url(String(path))
     isfile(p) || return ""
@@ -175,12 +184,12 @@ function shell_tools_targets(path::AbstractString)
 end
 
 """
-    shell_tools_repair(path, out, target) -> String
+    shell_tools_export(path, out, target) -> String
 
-Write a repaired copy of `path` to `out` (`repair_oifits`); `target` is "" for a one-target
-file. Returns a status line, starting with `!` on failure.
+Write the file `path` as clean OIFITS v2 to `out` (`repair_oifits`: every unflagged point kept
+exactly, instruments under their names); `target` is "" for a one-target file.
 """
-function shell_tools_repair(path::AbstractString, out::AbstractString, target::AbstractString = "")
+function shell_tools_export(path::AbstractString, out::AbstractString, target::AbstractString = "")
     sh = _shell()
     p = strip_file_url(String(path)); o = strip_file_url(String(out))
     tk = isempty(target) ? "" : "; targetname = $(_literal(String(target)))"
@@ -188,46 +197,106 @@ function shell_tools_repair(path::AbstractString, out::AbstractString, target::A
     try
         OITOOLS.repair_oifits(p, o; targetname = String(target), overwrite = true)
     catch err
-        return console!(sh, "! could not repair $(basename(p)): " * _cause(err); kind = :err)
+        return console!(sh, "! could not export $(basename(p)): " * _cause(err); kind = :err)
     end
-    return console!(sh, "wrote the repaired copy " * basename(o))
+    return console!(sh, "wrote " * basename(o))
 end
 
-"""
-    shell_tools_bin(n, mode, c) -> String
+# Select the newest dataset and draw it.
+function _show_newest!(sh, what)
+    sh.current = length(sh.session.datasets)
+    sh.status = try refresh_plot!(sh) catch err; "$(what), but cannot plot it: " * _cause(err) end
+end
 
-Average every `n` channels of the current dataset into a new dataset (`readoifits(…; binning =
-n, binmode, bincorr = c)`), `mode` `"block"` or `"pmoired"`. Averaging is not grouping: the
-channels become fewer, each with the average of the ones it replaces. Returns a status line with
-the scatter check (χ²/dof about a line in λ, per observable) for block averaging.
-"""
-function shell_tools_bin(n::Real, mode::AbstractString, c::Real = 1)
-    n = round(Int, n)
-    sh = _shell()
-    e = current_dataset(sh)
-    e === nothing && return "! no dataset loaded"
-    n >= 2 || return "! average at least 2 channels"
-    m = Symbol(mode)
-    m in (:block, :pmoired) || return "! unknown averaging mode: " * mode
-    extra = Dict{Symbol,Any}(:binning => Int(n))
-    m === :block || (extra[:binmode] = m)
-    c == 1 || (extra[:bincorr] = Float64(c))
+# Run `f`, then echo to the console the session-log lines it added.
+function _with_log(f, sh)
     nlog = length(sh.session.log)
-    stats = Dict{Symbol,Float64}()
-    entry = try
-        reread_dataset!(sh.session, e.name, extra; label = "binned ×$(n)", binstats = stats)
-    catch err
-        return console!(sh, "! could not average $(e.name): " * _cause(err); kind = :err)
-    end
+    r = f()
     for l in sh.session.log[nlog+1:end]
         console!(sh, l.code; kind = :cmd)
     end
-    sh.current = length(sh.session.datasets)
-    sh.status = try refresh_plot!(sh) catch err; "averaged into $(entry.name), but cannot plot it: " * _cause(err) end
+    return r
+end
+
+"""
+    shell_tools_bin(path, n, mode, c) -> String
+
+Average every `n` channels of the file into a new dataset (`readoifits(path; binning = n,
+binmode, bincorr = c)`), `mode` `"block"` or `"pmoired"`. Averaging makes fewer channels, each
+the average of the ones it replaces. Returns a status line with the scatter check (χ²/dof about a
+line in λ, per observable) for block averaging.
+"""
+function shell_tools_bin(path::AbstractString, n::Real, mode::AbstractString, c::Real = 1)
+    n = round(Int, n)
+    sh = _shell()
+    p = strip_file_url(String(path))
+    isempty(p) && return "! choose an OIFITS file"
+    n >= 2 || return "! average at least 2 channels"
+    m = Symbol(mode)
+    m in (:block, :pmoired) || return "! unknown averaging mode: " * mode
+    extra = Dict{Symbol,Any}(:binning => n)
+    m === :block || (extra[:binmode] = m)
+    c == 1 || (extra[:bincorr] = Float64(c))
+    stats = Dict{Symbol,Float64}()
+    entry = try
+        _with_log(sh) do
+            read_file_dataset!(sh.session, p, extra; label = "binned ×$(n)", binstats = stats)
+        end
+    catch err
+        return console!(sh, "! could not average $(basename(p)): " * _cause(err); kind = :err)
+    end
+    _show_newest!(sh, "averaged into $(entry.name)")
     msg = "averaged ×$(n) into $(entry.name)" *
           (isempty(stats) ? "" : "; scatter χ²/dof " *
            join(["$(k) $(round(v; sigdigits = 3))" for (k, v) in sort(collect(stats))], ", "))
     return console!(sh, msg)
+end
+
+"""
+    group_windows(lams, n) -> Vector{Vector{Float64}}
+
+`spectralbin` windows holding `n` consecutive channels each (the last may hold fewer), from the
+distinct wavelengths `lams`: a window's edges are halfway to the neighbouring channels, so every
+channel lies in exactly one window.
+"""
+function group_windows(lams::AbstractVector{<:Real}, n::Integer)
+    ew = sort(Float64.(lams))
+    ew = ew[[true; diff(ew) .> 1e-6 .* ew[2:end]]]
+    m = length(ew)
+    m == 0 && return Vector{Float64}[]
+    half(i) = i < m ? (ew[i + 1] - ew[i]) / 2 : (m > 1 ? (ew[m] - ew[m - 1]) / 2 : ew[m] * 1e-6)
+    lo(i) = i > 1 ? (ew[i - 1] + ew[i]) / 2 : ew[1] - half(1)
+    return [[lo(a), ew[b] + half(b)] for (a, b) in ((a, min(a + n - 1, m)) for a in 1:n:m)]
+end
+
+"""
+    shell_tools_group(path, n) -> String
+
+Group every `n` consecutive channels of the file into a spectral bin, each channel kept
+(`readoifits(path; spectralbin)`), as a new dataset: a polychromatic dataset for Imaging.
+"""
+function shell_tools_group(path::AbstractString, n::Real)
+    n = round(Int, n)
+    sh = _shell()
+    p = strip_file_url(String(path))
+    isempty(p) && return "! choose an OIFITS file"
+    n >= 1 || return "! group at least 1 channel"
+    w = try
+        group_windows(reduce(vcat, [Float64.(d.uv_lam) for d in _file_entry(p).data]), n)
+    catch err
+        return console!(sh, "! could not group $(basename(p)): " * _cause(err); kind = :err)
+    end
+    isempty(w) && return "! the file holds no wavelength"
+    entry = try
+        _with_log(sh) do
+            read_file_dataset!(sh.session, p, Dict{Symbol,Any}(:spectralbin => w); label = "grouped ×$(n)")
+        end
+    catch err
+        return console!(sh, "! could not group $(basename(p)): " * _cause(err); kind = :err)
+    end
+    _show_newest!(sh, "grouped into $(entry.name)")
+    return console!(sh, "grouped every $(n) channels of $(basename(p)) into $(entry.name): " *
+                        "$(size(entry.data, 1)) spectral bins")
 end
 
 _split_by(by::AbstractString) =
@@ -235,18 +304,17 @@ _split_by(by::AbstractString) =
     by == "instrument" ? :instrument : throw(ArgumentError("unknown split: " * by))
 
 """
-    shell_tools_split_preview(by, param) -> String
+    shell_tools_split_preview(path, by, param) -> String
 
-The parts a split of the current dataset would make, one per line: `label, V² / T3 / VIS points`
-(tab-separated), counted in the dataset as it is; a target's points are only known once read,
-so a split by target shows "—". `by` is `gap`, `width` (both take `param` in days), `target` or
-`instrument`.
+The parts a split of the file would make, one per line: `label, V² / T3 / VIS points`
+(tab-separated); a target's points are only known once read, so a split by target shows "—".
+`by` is `gap`, `width` (both take `param` in days), `target` or `instrument`.
 """
-function shell_tools_split_preview(by::AbstractString, param::Real = 0.5)
-    e = current_dataset(_shell())
-    e === nothing && return "! no dataset loaded"
-    b = _split_by(by)
-    parts = split_parts(e, b; gap = param, binwidth = param)
+function shell_tools_split_preview(path::AbstractString, by::AbstractString, param::Real = 0.5)
+    p = strip_file_url(String(path))
+    isempty(p) && return "! choose an OIFITS file"
+    e = try _file_entry(p) catch err; return "! " * _cause(err) end
+    parts = split_parts(e, _split_by(by); gap = param, binwidth = param)
     counts(x) = if haskey(x, :temporalbin)
         lo, hi = x[:temporalbin][1]
         inw(v) = count(m -> lo <= m <= hi, v)
@@ -264,31 +332,30 @@ function shell_tools_split_preview(by::AbstractString, param::Real = 0.5)
 end
 
 """
-    shell_tools_split(by, param, folder) -> String
+    shell_tools_split(path, by, param, folder) -> String
 
-Split the current dataset into new datasets; with `folder` not empty, also write each part to
+Split the file into new datasets; with `folder` not empty, also write each part to
 `<folder>/<file>_<part>.oifits` (an existing file is not replaced, nor ever the source).
 """
-function shell_tools_split(by::AbstractString, param::Real = 0.5, folder::AbstractString = "")
+function shell_tools_split(path::AbstractString, by::AbstractString, param::Real = 0.5,
+                           folder::AbstractString = "")
     sh = _shell()
-    e = current_dataset(sh)
-    e === nothing && return "! no dataset loaded"
-    nlog = length(sh.session.log)
+    p = strip_file_url(String(path))
+    isempty(p) && return "! choose an OIFITS file"
     entries = try
-        split_dataset!(sh.session, e.name, _split_by(by); gap = param, binwidth = param)
+        _with_log(sh) do
+            split_file!(sh.session, p, _split_by(by); gap = param, binwidth = param)
+        end
     catch err
-        return console!(sh, "! could not split $(e.name): " * _cause(err); kind = :err)
-    end
-    for l in sh.session.log[nlog+1:end]
-        console!(sh, l.code; kind = :cmd)
+        return console!(sh, "! could not split $(basename(p)): " * _cause(err); kind = :err)
     end
     written = 0
     dir = strip_file_url(String(folder))
     if !isempty(dir)
-        stem = replace(basename(e.path), r"\.(oi)?fits$"i => "")
+        stem = replace(basename(p), r"\.(oi)?fits$"i => "")
         for x in entries
             out = joinpath(dir, string(stem, "_", replace(x.label, r"[^A-Za-z0-9._+-]+" => "_"), ".oifits"))
-            OITOOLS._same_file(out, e.path) && continue
+            OITOOLS._same_file(out, p) && continue
             console!(sh, "write_oifits($(_literal(out)), $(x.name))"; kind = :cmd)
             try
                 OITOOLS.write_oifits(out, x.data)      # the console's record only, as Export's
@@ -298,8 +365,255 @@ function shell_tools_split(by::AbstractString, param::Real = 0.5, folder::Abstra
             end
         end
     end
-    sh.current = length(sh.session.datasets)
-    sh.status = try refresh_plot!(sh) catch err; "split, but cannot plot: " * _cause(err) end
-    return console!(sh, "split $(e.name) into $(length(entries)) datasets" *
+    _show_newest!(sh, "split")
+    return console!(sh, "split $(basename(p)) into $(length(entries)) datasets" *
                         (isempty(dir) ? "" : ", $(written) written to $(dir)"))
+end
+
+"""
+    shell_tools_merge(paths) -> String
+
+Read the files (one per line) as one dataset (`readoifits(files)`: stations matched by name,
+every point kept), and select it.
+"""
+function shell_tools_merge(paths::AbstractString)
+    sh = _shell()
+    ps = unique([strip_file_url(String(strip(l))) for l in split(paths, '\n') if !isempty(strip(l))])
+    length(ps) >= 2 || return console!(sh, "! choose at least two files to merge"; kind = :err)
+    entry = try
+        _with_log(sh) do
+            load_dataset!(sh.session, ps; warn = false, verbose = false)
+        end
+    catch err
+        return console!(sh, "! could not merge: " * _cause(err); kind = :err)
+    end
+    entry.label = "merged"
+    _show_newest!(sh, "merged")
+    d = vec(entry.data)
+    return console!(sh, "merged $(length(ps)) files into $(entry.name): " *
+                        "$(sum(x.nv2 for x in d)) V², $(sum(x.nt3phi for x in d)) T3φ, " *
+                        "$(sum(x.nvisamp for x in d)) VIS")
+end
+
+# ── the cube viewer ───────────────────────────────────────────────────────────────────
+
+# Its canvas, built by `gui()` with the others before the window exists, and the cube on show.
+const CUBE_CANVAS = Ref{Any}(nothing)
+const CUBE = Ref{Any}(nothing)
+
+_cube_planes(m) = [(w, t) for t in axes(m.image, 4) for w in axes(m.image, 3)]
+
+function _cube_label(m, w, t)
+    parts = String[]
+    w <= length(m.wavelengths) && isfinite(m.wavelengths[w]) &&
+        push!(parts, @sprintf("λ %.5g µm", m.wavelengths[w] * 1e6))
+    t <= length(m.mjds) && isfinite(m.mjds[t]) && push!(parts, @sprintf("MJD %.4f", m.mjds[t]))
+    return isempty(parts) ? "plane $(w + (t - 1) * size(m.image, 3))" : join(parts, " · ")
+end
+
+"""
+    _viewer_cube(path, sh) -> (; image, pixsize, wavelengths, mjds, path)
+
+The cube to view: `read_model_image`'s reading where it accepts the file. Otherwise the planes as
+stored, which a viewer can show although a model cannot use them: a third axis that does not
+say what it is (no `CTYPE3`) is wavelength when `CUNIT3` is a length (planes at `CRVAL3 +
+(k - CRPIX3)·CDELT3`), else unlabelled; the pixel scale from the WCS when there is one, 1 mas
+(said in the console) when not.
+"""
+function _viewer_cube(p::AbstractString, sh)
+    try
+        return OITOOLS.read_model_image(p)
+    catch
+    end
+    raw = Float64.(OITOOLS.readfits(p))
+    ndims(raw) in (2, 3, 4) || throw(ArgumentError("$(ndims(raw))-D data, not an image or a cube"))
+    img = reshape(raw, size(raw, 1), size(raw, 2), size(raw, 3), size(raw, 4))
+    kw = first(OITOOLS._fits_header(p))
+    unit = Dict("m" => 1.0, "um" => 1e-6, "micron" => 1e-6, "nm" => 1e-9, "angstrom" => 1e-10)
+    u = lowercase(strip(string(get(kw, "CUNIT3", ""))))
+    wl = Float64[]
+    if size(img, 3) > 1 && haskey(unit, u) && haskey(kw, "CRVAL3") && haskey(kw, "CDELT3")
+        c0, d, r = Float64(kw["CRVAL3"]), Float64(kw["CDELT3"]), Float64(get(kw, "CRPIX3", 1.0))
+        wl = [(c0 + (k - r) * d) * unit[u] for k in 1:size(img, 3)]
+    end
+    ps = OITOOLS.fits_pixsize(p)
+    ps === nothing && console!(sh, "  no pixel scale in the header; shown at 1 mas per pixel")
+    console!(sh, "  read as stored planes" * (isempty(wl) ? ", unlabelled" : ", wavelengths from CUNIT3/CRVAL3/CDELT3"))
+    return (; image = img, pixsize = something(ps, 1.0), wavelengths = wl, mjds = Float64[],
+              path = String(p))
+end
+
+"""
+    shell_cube_open(path) -> String
+
+Read a FITS image or cube (`read_model_image`: East first, its pixel scale, wavelengths and
+epochs) for the cube viewer, and show its first plane. Returns one line per plane, its label.
+"""
+function shell_cube_open(path::AbstractString)
+    sh = _shell()
+    p = strip_file_url(String(path))
+    console!(sh, "read_model_image($(_literal(p)))"; kind = :cmd)
+    m = try
+        _viewer_cube(p, sh)
+    catch err
+        return console!(sh, "! not an image or a cube: " * _cause(err); kind = :err)
+    end
+    CUBE[] = m
+    ps = _cube_planes(m)
+    console!(sh, "$(size(m.image, 1))×$(size(m.image, 2)) pixels of $(m.pixsize) mas, $(length(ps)) plane" *
+                 (length(ps) == 1 ? "" : "s"))
+    shell_cube_show(1)
+    return join([_cube_label(m, w, t) for (w, t) in ps], "\n")
+end
+
+"""
+    shell_cube_show(k) -> String
+
+Show plane `k` (1-based, wavelengths first, then epochs) of the cube on the viewer's canvas.
+"""
+function shell_cube_show(k::Real)
+    m = CUBE[]
+    m === nothing && return "! no cube open"
+    ps = _cube_planes(m)
+    k = clamp(round(Int, k), 1, length(ps))
+    w, t = ps[k]
+    lab = _cube_label(m, w, t)
+    c = CUBE_CANVAS[]
+    c === nothing || show_image!(c, m.image[:, :, w, t], m.pixsize;
+                                 title = basename(m.path) * " — " * lab)
+    return lab
+end
+
+# ── fit each dataset ──────────────────────────────────────────────────────────────────
+
+# The last "Fit each" table: one row per dataset.
+const EPOCHS = Ref{Any}(nothing)
+
+"""
+    shell_fit_each(names, free_lines, constraint_lines, prior_lines,
+                   v2, t3amp, t3phi, visamp, visphi, flux, diffvis,
+                   optimiser, maxeval, uncertainty) -> String
+
+Fit the panel's model to each dataset named (one per line), one after another on the worker, as a
+single fit runs: the same free parameters, bounds, constraints, priors, observables and optimiser.
+Every fit starts from the model as it stands in the table, so the results do not depend on the
+order. Levenberg-Marquardt or an NLopt method; uncertainty `"jacobian"` or `"none"`. The table
+(`shell_epochs_table`) is ready when the job finishes.
+"""
+function shell_fit_each(names::AbstractString, free_lines::AbstractString,
+                        constraint_lines::AbstractString, prior_lines::AbstractString,
+                        v2::Bool, t3amp::Bool, t3phi::Bool, visamp::Bool, visphi::Bool,
+                        flux::Bool, diffvis::Bool, optimiser::AbstractString, maxeval::Real,
+                        uncertainty::AbstractString = "jacobian")
+    sh = _shell()
+    sh.job === nothing || return "! a fit or a reconstruction is running"
+    ns = [String(strip(l)) for l in split(names, '\n') if !isempty(strip(l))]
+    isempty(ns) && return "! tick at least one dataset"
+    es = try
+        [dataset(sh.session, n) for n in ns]
+    catch err
+        return "! " * _cause(err)
+    end
+    md = copy(_model(sh).dict)
+    isempty(md) && return "! no model"
+    free, lb, ub = parse_free_lines(free_lines)
+    isempty(free) && return "! no free parameters"
+    cons = try
+        parse_constraint_lines(constraint_lines)
+    catch err
+        return "! constraint: " * _cause(err)
+    end
+    priors  = parse_prior_lines(prior_lines)
+    weights = fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis)
+    all(iszero, weights) && return "! no observables selected"
+    opt = String(optimiser)
+    opt in ("grid", "nested") &&
+        return "! fit each dataset with Levenberg-Marquardt or an NLopt method, not $(opt == "grid" ? "a grid search" : "nested sampling")"
+    unc = String(uncertainty)
+    unc in ("none", "jacobian") || return "! fit each dataset with a Jacobian uncertainty or none"
+    for n in ns
+        console!(sh, "> fit_model(model, $(free), $(n)[1, 1]; weights = $(weights), method = :$(opt))")
+    end
+    sh.fitlog = ""
+    optsym = Symbol(opt)
+    start_job!(sh, :epochs, function (stop)
+        rows = Any[]
+        for (n, e) in zip(ns, es)
+            stop[] && break
+            d = e.data[1, 1]
+            println("── ", n, " (", source_label(e), ")")
+            row = try
+                r = opt == "lsqfit" ?
+                    fit_model_lsqfit(md, free, d; lb, ub, weights, constraints = cons,
+                                     maxIter = Int(maxeval), verb = false) :
+                    fit_model(md, free, d; lb, ub, weights, priors, constraints = cons,
+                              method = optsym, maxeval = Int(maxeval), verb = false)
+                sig = unc == "jacobian" ? _jacobian_sigma(r) : nothing
+                (; name = n, mjd = d.mean_mjd, chi2r = r.chi2r, ndof = r.ndof,
+                   x = collect(r.x_opt), sigma = sig, err = "")
+            catch err
+                (; name = n, mjd = d.mean_mjd, chi2r = NaN, ndof = 0,
+                   x = fill(NaN, length(free)), sigma = nothing, err = _cause(err))
+            end
+            println(isempty(row.err) ? @sprintf("   χ²r %.4f", row.chi2r) : "   failed: " * row.err)
+            push!(rows, row)
+        end
+        return (; rows, free)
+    end)
+    return "fitting $(length(ns)) dataset" * (length(ns) == 1 ? "" : "s") * "…"
+end
+
+"""
+    finish_epochs!(sh, res) -> String
+
+Keep a finished "Fit each" table and report it in the console. **GUI thread only.**
+"""
+function finish_epochs!(sh::ShellState, res)
+    if !res.ok
+        msg = "! fitting each dataset failed: " * _cause(res.err)
+        sh.fitlog = _collapse_cr(res.output) * "\n" * msg
+        return console!(sh, msg)
+    end
+    sh.fitlog = _collapse_cr(res.output)
+    EPOCHS[] = res.result
+    for r in res.result.rows
+        console!(sh, isempty(r.err) ?
+                     @sprintf("  %-10s MJD %.4f   χ²r %.4f   ", r.name, r.mjd, r.chi2r) *
+                     join([@sprintf("%s = %.6g", k, v) for (k, v) in zip(res.result.free, r.x)], "   ") :
+                     "! $(r.name): " * r.err)
+    end
+    nok = count(r -> isempty(r.err), res.result.rows)
+    return "fitted $(nok) of $(length(res.result.rows)) datasets"
+end
+
+"""
+    shell_epochs_table() -> String
+
+The last "Fit each" table, tab-separated with a header: `dataset, MJD, chi2r, ndof`, then each
+free parameter and its σ (empty without an uncertainty).
+"""
+function shell_epochs_table()
+    t = EPOCHS[]
+    t === nothing && return ""
+    head = vcat(["dataset", "MJD", "chi2r", "ndof"], [x for k in t.free for x in (k, "σ " * k)])
+    lines = [join(head, "\t")]
+    for r in t.rows
+        cells = String[r.name, @sprintf("%.5f", r.mjd),
+                       isfinite(r.chi2r) ? @sprintf("%.4f", r.chi2r) : "", string(r.ndof)]
+        for j in eachindex(t.free)
+            push!(cells, isfinite(r.x[j]) ? @sprintf("%.6g", r.x[j]) : "")
+            push!(cells, r.sigma === nothing || !isfinite(r.sigma[j]) ? "" : @sprintf("%.3g", r.sigma[j]))
+        end
+        push!(lines, join(cells, "\t"))
+    end
+    return join(lines, "\n")
+end
+
+"""Write the last "Fit each" table to `path` (tab-separated)."""
+function shell_save_epochs(path::AbstractString)
+    t = shell_epochs_table()
+    isempty(t) && return "! no table to save"
+    p = strip_file_url(String(path))
+    write(p, t * "\n")
+    return console!(_shell(), "saved the table to " * basename(p))
 end

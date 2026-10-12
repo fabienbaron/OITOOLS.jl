@@ -1240,6 +1240,7 @@ end
     include(joinpath(@__DIR__, "test_observing.jl")) # Observe perspective data layer
     include(joinpath(@__DIR__, "test_tools.jl"))     # Tools perspective data layer
     include(joinpath(@__DIR__, "test_observables.jl")) # observables kept in Explore, fitted in Modeling
+    include(joinpath(@__DIR__, "test_batch_a.jl"))   # Filter averaging, merge, cube viewer, fit each
     include(joinpath(@__DIR__, "test_gantt.jl"))     # the Gantt port vs its oiplot original
 
     # ═════════════════════════════════════════════════════════════════════

@@ -341,6 +341,30 @@ function shell_ready()
     return sh.status
 end
 
+# The window-walk locator: with `OITOOLSGUI_WALK` naming a folder, a QML timer asks for the
+# next request written there and writes back where the named control is, so a walk driven from
+# outside (xdotool) clicks controls by name rather than by pixel. Inert otherwise.
+
+"The pending walk request (`<OITOOLSGUI_WALK>/request`, removed once read), or \"\"."
+function shell_walk_request()
+    dir = get(ENV, "OITOOLSGUI_WALK", "")
+    f = joinpath(dir, "request")
+    (isempty(dir) || !isfile(f)) && return ""
+    s = read(f, String)
+    rm(f; force = true)
+    return String(strip(s))
+end
+
+"Write the answer to a walk request to `<OITOOLSGUI_WALK>/reply`, whole or not at all."
+function shell_walk_reply(s::AbstractString)
+    dir = get(ENV, "OITOOLSGUI_WALK", "")
+    isempty(dir) && return ""
+    tmp = joinpath(dir, "reply.tmp")
+    write(tmp, s)
+    mv(tmp, joinpath(dir, "reply"); force = true)
+    return ""
+end
+
 """
     shell_open(path) -> String
 
@@ -518,6 +542,8 @@ function shell_filter_preview(spec::AbstractString)
         push!(parts, string(sum(length(ix[slot]) for ix in idxs), "/", n, " ", label))
     end
     msg = "Filtered " * join(parts, " · ")
+    haskey(k.read, :binning) && (msg *= " · read again averaging every $(k.read[:binning]) channels")
+    isempty(k.drop) || (msg *= " · without " * join(string.(k.drop), ", "))
     _set_filter_preview!(sh, root, first(idxs))
     return msg
 end
@@ -4140,7 +4166,8 @@ function shell_job_poll()
                           (sh.fitlog   = _collapse_cr(res.output))
         console!(sh, "  " * line)
     else
-        line = kind === :image ? finish_reconstruct!(sh, res) : finish_fit!(sh, res)
+        line = kind === :image  ? finish_reconstruct!(sh, res) :
+               kind === :epochs ? finish_epochs!(sh, res)      : finish_fit!(sh, res)
     end
     return "done\t" * line
 end
@@ -4190,7 +4217,7 @@ documents. `stop` is a flag the GUI sets and the finish path reads.
 """
 mutable struct GuiJob
     task      :: Task
-    kind      :: Symbol           # :image or :fit — decides what `job_finish!` does with it
+    kind      :: Symbol           # :image, :fit or :epochs — decides what `job_finish!` does with it
     path      :: String           # capture file, read while it grows
     io        :: Base.Filesystem.File
     saved     :: Any              # the `Base.stdout` to put back

@@ -63,6 +63,9 @@ not counted, not fitted, not drawn, and is written as NaN on export. Unticking b
 the table out when the file is read. The script line is
 `filter_data(d, set_data_filter(d; …); drop = [:t3amp])`.
 
+Exploring › Filter › **Spectral** › *average every N channels* averages channels when the file is
+read (`binning`, *block* or *pmoired*, *c*), as Tools' spectral binning does.
+
 **What a run uses** — the Observables boxes of Modeling (v2, t3amp, t3phi, visamp, visφ, diffvis,
 flux) and of Imaging (v2, t3amp, t3phi, diffvis). They choose among what the dataset holds, for one
 fit or one reconstruction, and leave the dataset as it is: fitting V² and closure phases only is
@@ -73,39 +76,47 @@ shows Modeling's and Imaging's t3amp boxes disabled.
 
 ## Tools
 
-Operations on files and datasets that belong to none of the other perspectives.
+Operations on files and datasets that belong to none of the other perspectives, in two frames.
 
-**Files** — any FITS file, chosen with **…** or taken from the current dataset (**Use the current
-dataset's file**). A file inside a ZIP archive is read through the archive.
+**OIFITS handling** — every operation works from the file in the frame's field (**…** to choose
+one, **Current** for the selected dataset's file); no dataset needs to be open.
 
-- **Headers**: every HDU, the ones OITOOLS does not read included (GRAVITY's `TELLURICS`, images,
-  cubes); selecting one shows its columns (format, unit, dimensions) and every header card in
-  order. [`oifits_headers`](@ref).
 - **Validate**: errors (the file cannot be read, or breaks the standard where nothing can be read
-  around), warnings (what was read around, references to stations or targets that are not
-  there, values with unusable errors, OI_VIS tables disagreeing on AMPTYP / PHITYP) and notes
-  (flagged fractions, HDUs and targets a repaired copy does not keep).
-  [`validate_oifits`](@ref).
-- **Repaired copy…**: the file written again as OIFITS v2 with each instrument under its own
-  name, one target at a time (a **Target** box appears for a file with several).
-  [`repair_oifits`](@ref).
+  around — a revision-2 table numbering targets or stations from 0, for one), warnings (what was
+  read around, stations with no entry in OI_ARRAY, values with unusable errors, OI_VIS tables
+  disagreeing on AMPTYP / PHITYP, 0-based numbering in revision-1 tables) and notes (flagged
+  fractions, HDUs and targets an export does not keep). [`validate_oifits`](@ref).
+- **Spectral binning**: every *N* channels, *average* or *group*, into a new dataset. *average*
+  makes one channel of N (`binning = N`): *block* takes 1/σ²-weighted means, circular means for
+  phases, errors multiplied by √c for a correlation *c* between adjacent channels, and reports a
+  scatter check (χ²/dof about a straight line in λ within each group); *pmoired* reproduces
+  PMOIRED's `binning`. *group* puts N consecutive channels in each spectral bin and keeps every
+  channel (`spectralbin`): a polychromatic dataset, as Imaging reconstructs one image per bin.
+- **Temporal binning**: one dataset per epoch, a new epoch after a gap longer than the given
+  days, or fixed windows of the given days (`temporalbin`). **Preview** lists the epochs with
+  their point counts; **also write each epoch to** a folder writes `<file>_<epoch>.oifits` for
+  each, never over the source or an existing file.
+- **Split**: one dataset per instrument (`insname`) or per target (`targetname`).
+- **Merge files…**: several OIFITS files (Ctrl- or Shift-click) read as one dataset, stations
+  matched by name, every point kept.
+- **Export OIFITS…**: the file written as clean OIFITS v2 — every point it does not flag, each
+  instrument under its own name, one target at a time (a **target** box appears for a file with
+  several). [`repair_oifits`](@ref). Exploring's **Export** writes the current dataset instead,
+  as it stands: filtered, binned, split or merged.
 
-**Current dataset** — both operations read the selected dataset's file again with one more
-`readoifits` keyword, so each result is an ordinary dataset: it appears in the Dataset box, the
-Filter works on it, and the exported script rebuilds it. A filtered dataset is refused; work on
-the dataset it came from and filter the result.
+Each new dataset is the file read with one more `readoifits` keyword: it appears in the Dataset
+box, the Filter works on it, and the exported script rebuilds it.
 
-- **Average channels**: every *N* channels become one (`binning = N`). *block* takes 1/σ²-weighted
-  means, circular means for phases, errors multiplied by √c for a correlation *c* between adjacent
-  channels, and reports a scatter check (χ²/dof about a straight line in λ within each group);
-  *pmoired* reproduces PMOIRED's `binning`. Averaging makes fewer channels; grouping
-  (Imaging › Setup › *wavelengths*) keeps every channel and assigns them to bins.
-- **Split**: by time (a new epoch after a gap longer than the given days, or fixed windows of the
-  given days), by instrument (`insname`) or by target (`targetname`). **Preview** lists the parts
-  with their point counts; **also write each part to** a folder writes
-  `<file>_<part>.oifits` for each, never over the source or an existing file.
+**FITS handling** works on the file in its own field (**…** lists `*.fits` files).
 
-**Export the current dataset as OIFITS…** is Exploring's Export.
+- **Headers** of any FITS file (images, cubes and the HDUs OITOOLS does not read included): the
+  HDUs above, the selected one's columns (format, unit, dimensions) and every header card below,
+  in order; the split between the two is movable. A file inside a ZIP archive is read through the
+  archive. [`oifits_headers`](@ref).
+- **Cube** shows the file's image or cube one plane at a time, East left, North up, with each
+  plane's wavelength and epoch; **Save PNG** writes the plane on screen.
+
+The frame on the left and the results on the right are separated by a movable split.
 
 ## Building a model
 
@@ -328,6 +339,15 @@ one that is already running.
     `az projang` follows PMOIRED's convention — `cos(n·(ψ + φ − π/2))`, matching `_Vazvar` in
     its `oimodels.py` term for term — so an angle means the same thing in both packages and a
     model moves between them unchanged.
+
+## Fitting each dataset
+
+**Fit each…**, beside **Fit**, runs the same fit — model, free parameters and bounds,
+constraints, priors, observables and optimiser — on each ticked dataset, one after another, each
+from the values in the table. Datasets made by Tools' temporal binning are the usual input: one
+fit per night. Levenberg-Marquardt or an NLopt method; uncertainty from the Jacobian or none. The
+result is the **Epochs** table, one row per dataset: its mean MJD, χ²ᵣ, ndof and each free
+parameter with its σ, with **Copy** (tab-separated) and **Save…** (`.tsv`).
 
 ## Diagnostics: residuals, χ² map and SED
 

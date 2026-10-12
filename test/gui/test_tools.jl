@@ -27,35 +27,39 @@
             @test occursin("oifits_headers(", G.shell_console())
         end
 
-        @testset "validate and repair" begin
+        @testset "validate" begin
             r = G.shell_tools_validate(MONO)
-            @test any(l -> startswith(l, "warning\t") && occursin("not in OI_ARRAY", l), split(r, "\n"))
+            @test any(l -> startswith(l, "warning\t") && occursin("no telescope or station name", l), split(r, "\n"))
             pol = joinpath(OIF, "polaris.oifits")
             @test any(l -> startswith(l, "warning\t") && occursin("revision 1", l),
                       split(G.shell_tools_validate(pol), "\n"))
-            out = joinpath(dir, "polaris_repaired.oifits")
-            @test startswith(G.shell_tools_repair(pol, out, ""), "wrote")
-            @test !any(l -> startswith(l, "error\t") || startswith(l, "warning\t"),
-                       split(G.shell_tools_validate(out), "\n"))
-            @test startswith(G.shell_tools_repair(pol, pol, ""), "!")
-            mwc = joinpath(OIF, "MWC275_4T.oifits")
-            @test split(G.shell_tools_targets(mwc), "\n") == ["MWC 275", "HD163296"]
-            @test startswith(G.shell_tools_repair(mwc, joinpath(dir, "m.oifits"), ""), "!")
-            @test startswith(G.shell_tools_repair(mwc, joinpath(dir, "m.oifits"), "MWC 275"), "wrote")
         end
 
-        @testset "split" begin
-            @test startswith(G.shell_tools_split("gap", 0.5, ""), "!")       # nothing loaded
-            @test !startswith(G.shell_open(v1295), "!")
-            src = sess.datasets[end]; d = src.data[1, 1]
-            @test length(split(G.shell_tools_split_preview("instrument", 0), "\n")) == 7
-            pv = split(G.shell_tools_split_preview("gap", 0.5), "\n")
+        @testset "export" begin
+            pol = joinpath(OIF, "polaris.oifits")
+            out = joinpath(dir, "polaris_v2.oifits")
+            @test startswith(G.shell_tools_export(pol, out, ""), "wrote")
+            @test !any(l -> startswith(l, "error\t") || startswith(l, "warning\t"),
+                       split(G.shell_tools_validate(out), "\n"))
+            @test startswith(G.shell_tools_export(pol, pol, ""), "!")
+            mwc = joinpath(OIF, "MWC275_4T.oifits")
+            @test split(G.shell_tools_targets(mwc), "\n") == ["MWC 275", "HD163296"]
+            @test startswith(G.shell_tools_export(mwc, joinpath(dir, "m.oifits"), ""), "!")
+            @test startswith(G.shell_tools_export(mwc, joinpath(dir, "m.oifits"), "MWC 275"), "wrote")
+            @test G.shell_tools_targets("not/a/file") == ""
+        end
+
+        @testset "split, from the file" begin
+            @test startswith(G.shell_tools_split("", "gap", 0.5, ""), "!")       # no file chosen
+            d = readoifits(v1295; warn = false, verbose = false)[1, 1]
+            @test isempty(sess.datasets)                                        # no dataset needed
+            @test length(split(G.shell_tools_split_preview(v1295, "instrument", 0), "\n")) == 7
+            pv = split(G.shell_tools_split_preview(v1295, "gap", 0.5), "\n")
             @test length(pv) == 6
             @test sum(parse(Int, match(r"\t(\d+) V²", l)[1]) for l in pv) == d.nv2
-            n0 = length(sess.datasets)
-            msg = G.shell_tools_split("gap", 0.5, dir)
+            msg = G.shell_tools_split(v1295, "gap", 0.5, dir)
             @test occursin("into 6 datasets, 6 written", msg)
-            parts = sess.datasets[n0+1:end]
+            parts = copy(sess.datasets)
             @test length(parts) == 6 && all(e -> e.derived_from === nothing && !isempty(e.label), parts)
             @test sum(e.data[1, 1].nv2 for e in parts) == d.nv2
             @test sum(length(e.data[1, 1].t3phi) for e in parts) == length(d.t3phi)
@@ -63,30 +67,24 @@
             @test G.current_dataset(sh) === parts[end]
             @test occursin(parts[1].label, G.shell_dataset_names())
             # by instrument: each part holds its instrument's points only
-            G.shell_select_dataset(n0)
-            G.shell_tools_split("instrument", 0, "")
+            G.shell_tools_split(v1295, "instrument", 0, "")
             ins = sess.datasets[end-6:end]
             @test [e.label for e in ins][1] == "MIRCX"
             @test sum(e.data[1, 1].nv2 for e in ins) == d.nv2
             @test all(all(t -> x.data[1, 1].tables[t].insname == x.label, x.data[1, 1].v2_tab) for x in ins)
-            # a filtered dataset is not re-read: its cut would be lost
-            G.shell_select_dataset(n0)
-            @test !startswith(G.shell_apply_filter("bl_max\t200"), "!")
-            @test startswith(G.shell_tools_split("gap", 0.5, ""), "!")
         end
 
-        @testset "average channels" begin
-            G.shell_open(POLY)
-            src = sess.datasets[end]
-            msg = G.shell_tools_bin(10, "block", 1)
+        @testset "average channels, from the file" begin
+            src = readoifits(POLY; warn = false, verbose = false)[1, 1]
+            msg = G.shell_tools_bin(POLY, 10, "block", 1)
             @test startswith(msg, "averaged ×10") && occursin("scatter", msg)
             b = sess.datasets[end]
-            @test b.label == "binned ×10" && b.readopts[:binning] == 10
-            nch(e) = length(unique(e.data[1, 1].v2_lam))
-            @test nch(b) == cld(nch(src), 10)
-            @test startswith(G.shell_tools_bin(4, "pmoired", 1), "averaged ×4")
+            @test b.label == "binned ×10" && b.readopts[:binning] == 10 && b.path == POLY
+            @test length(unique(b.data[1, 1].v2_lam)) == cld(length(unique(src.v2_lam)), 10)
+            @test startswith(G.shell_tools_bin(POLY, 4, "pmoired", 1), "averaged ×4")
             @test sess.datasets[end].readopts[:binmode] == :pmoired
-            @test startswith(G.shell_tools_bin(1, "block", 1), "!")
+            @test startswith(G.shell_tools_bin(POLY, 1, "block", 1), "!")
+            @test startswith(G.shell_tools_bin("", 10, "block", 1), "!")
         end
 
         @testset "the script rebuilds every part" begin

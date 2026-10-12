@@ -175,6 +175,7 @@ is (a range whose minimum is above its maximum, a number that does not parse).
 | `bad`, `snr`, `v2_min`, `v2_max`, `t3amp_min`, `t3amp_max` | the quality cuts |
 | `remove_v2`, `remove_t3`, `remove_vis`, `remove_flux` (indices), `remove_uv` | the points picked by hand (`uv_bad` for uv points) |
 | `drop` (comma-separated: `t3amp`, `t3phi`, `visamp`, `visphi`, …) | `filter_data`'s `drop` |
+| `binning` (channels averaged into one; 1 = none), `binmode` (`block`, `pmoired`), `bincorr` | read options |
 """
 function filter_spec_kwargs(spec::AbstractString)
     d = Dict{String,String}()
@@ -224,6 +225,21 @@ function filter_spec_kwargs(spec::AbstractString)
         get(d, "use_$t", "1") == "0" && (read[Symbol("use_$t")] = false)
     end
     flag("ignore_flags") && (read[:ignore_flags] = true)
+    if haskey(d, "binning")
+        n = tryparse(Int, d["binning"])
+        (n === nothing || n < 1) && return "! average every: $(repr(d["binning"])) is not a channel count"
+        if n > 1
+            read[:binning] = n
+            m = get(d, "binmode", "block")
+            m in ("block", "pmoired") || return "! averaging mode: $(repr(m))"
+            m == "block" || (read[:binmode] = Symbol(m))
+            c = num("bincorr")
+            if c !== nothing && m == "block"
+                c >= 1 || return "! c: $(c) is below 1"
+                c == 1 || (read[:bincorr] = c)
+            end
+        end
+    end
 
     for (k, kk) in (("exclude_stations", :exclude_stations), ("exclude_baselines", :exclude_baselines),
                     ("exclude_triangles", :exclude_triangles))

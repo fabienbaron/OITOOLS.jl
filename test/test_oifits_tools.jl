@@ -35,10 +35,15 @@ import AstroFITS
     @testset "validate_oifits" begin
         @test isempty(sev(validate_oifits(joinpath(data, "AX_Cir.oifits")), :error))
         r = validate_oifits(joinpath(data, "AlphaCenA.oifits"))
-        @test any(x -> occursin("not in OI_ARRAY", x.message), sev(r, :warning))
+        @test any(x -> occursin("no telescope or station name", x.message), sev(r, :warning))
+        # 0-based TARGET_ID and STA_INDEX (old MIRC): OIFITS v2 numbers both from 1
+        r = validate_oifits(joinpath(data, "Bet_Lyr6T.oifits"))
+        @test any(x -> startswith(x.message, "TARGET_ID 0"), r) && any(x -> startswith(x.message, "STA_INDEX 0"), r)
+        @test !any(x -> startswith(x.message, "TARGET_ID"), validate_oifits(joinpath(data, "V1295_Aql.oifits")))
         r = validate_oifits(joinpath(data, "polaris.oifits"))
         @test any(x -> occursin("read as revision 1", x.message), sev(r, :warning))
-        @test isempty(sev(r, :error))
+        # its OI_TARGET is revision 2 and numbers its target 0: the one error
+        @test [x.message for x in sev(r, :error)] == ["TARGET_ID 0: OIFITS v2 numbers targets from 1"]
         @test any(x -> occursin("ZIP", x.message), validate_oifits(joinpath(dir, "zipped.fits")))
         # OI_VIS tables that disagree on PHITYP
         p = joinpath(dir, "phityp.oifits")

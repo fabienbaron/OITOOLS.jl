@@ -191,6 +191,11 @@ ColumnLayout {
             put("t3amp_min", t3Min.text); put("t3amp_max", t3Max.text)
         }
         if (!flagsBox.checked) out.push("ignore_flags\t1")
+        if (avgN.value > 1) {
+            out.push("binning\t" + avgN.value)
+            if (avgMode.currentIndex === 1) out.push("binmode\tpmoired")
+            else put("bincorr", avgC.text)
+        }
         for (var hk in root.handPicked)
             if (root.handPicked[hk].length > 0) out.push(hk + "\t" + root.handPicked[hk].join(","))
         return out.join("\n")
@@ -244,6 +249,9 @@ ColumnLayout {
             case "t3amp_min": t3Min.text = v; break
             case "t3amp_max": t3Max.text = v; break
             case "ignore_flags": flagsBox.checked = v !== "1"; break
+            case "binning": avgN.value = parseInt(v); break
+            case "binmode": avgMode.currentIndex = v === "pmoired" ? 1 : 0; break
+            case "bincorr": avgC.text = v; break
             default:
                 if (k.indexOf("remove_") === 0) hp[k] = v.split(",")
                 else e[k] = v
@@ -264,6 +272,7 @@ ColumnLayout {
         root.errText = ({})
         badBox.checked = false; snrField.text = ""; v2Min.text = ""; v2Max.text = ""
         t3Min.text = ""; t3Max.text = ""; flagsBox.checked = true
+        avgN.value = 1; avgMode.currentIndex = 0; avgC.text = ""
         root.handPicked = ({})
     }
 
@@ -459,6 +468,7 @@ ColumnLayout {
                 Label { id: lab; visible: cell.c === 0; text: root.errLabels[cell.obs]; anchors.verticalCenter: parent.verticalCenter }
                 TextField {
                     id: fld
+                    objectName: "err:" + key
                     visible: cell.c > 0
                     width: root.dp(44)
                     implicitWidth: root.dp(44)
@@ -520,15 +530,41 @@ ColumnLayout {
         TextField { Layout.preferredWidth: dp(64); onTextEdited: root.edited(); id: t3Max; enabled: badBox.checked; placeholderText: "1.5" }
     }
 
-    // Spectral binning stays where the polychromatic reconstruction is set up.
+    // Averaging channels, decided when the file is read. Grouping channels into bins, each
+    // channel kept, is set up where the polychromatic reconstruction is (Imaging › Setup).
     Section { id: secSpec; text: "Spectral" }
-    Label {
+    GridLayout {
         visible: secSpec.open
+        columns: 2; columnSpacing: dp(6); rowSpacing: dp(2)
         Layout.leftMargin: dp(8)
-        Layout.fillWidth: true
-        wrapMode: Text.WordWrap
-        text: "Binning by wavelength is in Imaging › Setup."
-        color: "#666"
+        Label { text: "average every" }
+        RowLayout {
+            SpinBox {
+                id: avgN; from: 1; to: 1000; value: 1; editable: true
+                onValueModified: root.edited()
+                ToolTip.visible: hovered
+                ToolTip.text: "Average N adjacent channels into one"
+            }
+            Label { text: avgN.value > 1 ? "channels" : "channel (off)"; color: "#666" }
+        }
+        Label { text: "mode"; visible: avgN.value > 1 }
+        RowLayout {
+            visible: avgN.value > 1
+            ComboBox {
+                id: avgMode; model: ["block", "pmoired"]
+                onActivated: root.edited()
+                ToolTip.visible: hovered
+                ToolTip.text: "block: weighted means · pmoired: PMOIRED's binning"
+            }
+            Label { text: "c"; color: "#666"; visible: avgMode.currentIndex === 0 }
+            TextField {
+                id: avgC; text: ""; placeholderText: "1"; visible: avgMode.currentIndex === 0
+                Layout.preferredWidth: dp(44)
+                onTextEdited: root.edited()
+                ToolTip.visible: hovered
+                ToolTip.text: "Adjacent-channel correlation (errors × √c)"
+            }
+        }
     }
 
     // Points picked by hand on the plot (Select, below), shown here because they are part of

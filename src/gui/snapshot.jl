@@ -88,7 +88,8 @@ function _live_panel(sh::ShellState, which::AbstractString)
         which == "residuals" ? sh.residplot   :
         which == "sed"       ? sh.sedplot     :
         which == "gantt"     ? sh.gantt       :
-        which == "delay"     ? sh.delayplot   : nothing
+        which == "delay"     ? sh.delayplot   :
+        which == "cube"      ? CUBE_CANVAS[]  : nothing
     p === nothing && return nothing
     (hasproperty(p, :figure) && hasproperty(p, :axis)) || return nothing
     return (; figure = p.figure, axis = p.axis)
@@ -178,8 +179,8 @@ function _snapshot_figure(sh::ShellState, which::AbstractString, size, detailed:
         end
         return fig
 
-    elseif which == "image" || which == "model"
-        c = which == "image" ? sh.imcanvas : sh.modelcanvas
+    elseif which == "image" || which == "model" || which == "cube"
+        c = which == "image" ? sh.imcanvas : which == "model" ? sh.modelcanvas : CUBE_CANVAS[]
         im = _canvas_image(c)
         im === nothing && return nothing
         fig = _snapshot_image_figure(im.image, im.pixsize, c.colormap[], size;

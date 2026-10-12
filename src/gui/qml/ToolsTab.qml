@@ -11,6 +11,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import jlqml            // supplies `Julia`
+import Makie            // MakieArea, for the cube viewer's canvas (`cubePlot`, built in gui())
 
 Item {
     id: root
@@ -24,21 +25,23 @@ Item {
 
     signal consoleChanged()                 // Julia wrote to the console
     signal datasetsChanged()                // new datasets were made; the window lists them
-    signal exportRequested()                // the window owns the Export picker
     signal statusReported(string text)
 
-    // What the result pane shows: "", "headers" or "validate".
+    // What the result pane shows: "", "headers", "validate", "split" or "cube".
     property string mode: ""
     property string headersPath: ""
 
     function failed(t) { return t.length > 0 && t[0] === "!" }
-    function report(t) { root.statusReported(t); root.consoleChanged() }
-
-    function useCurrentDataset() {
-        var p = Julia.shell_tools_source()
-        if (p.length === 0) { root.statusReported("! no single-file dataset is selected"); return }
-        filePath.text = p
+    function previewSplit(by, param) {
+        var t = Julia.shell_tools_split_preview(filePath.text, by, param)
+        root.mode = "split"
+        resultArea.text = failed(t) ? t : t.split("\n").length + " parts:\n" + t.split("\t").join("    ")
     }
+    function runSplit(by, param, folder) {
+        report(Julia.shell_tools_split(filePath.text, by, param, folder))
+        root.datasetsChanged()
+    }
+    function report(t) { root.statusReported(t); root.consoleChanged() }
 
     function refreshTargets() {
         var t = filePath.text.length > 0 ? Julia.shell_tools_targets(filePath.text) : ""
@@ -47,9 +50,15 @@ Item {
         targetBox.visible = names.length > 1
     }
 
+    function useCurrentDataset(field) {
+        var p = Julia.shell_tools_source()
+        if (p.length === 0) { root.statusReported("! no single-file dataset is selected"); return }
+        field.text = p
+    }
+
     function showHeaders() {
-        if (filePath.text.length === 0) return
-        var t = Julia.shell_tools_headers(filePath.text)
+        if (fitsPath.text.length === 0) return
+        var t = Julia.shell_tools_headers(fitsPath.text)
         root.consoleChanged()
         if (failed(t)) { root.statusReported(t); return }
         var rows = t.split("\n")
@@ -60,7 +69,7 @@ Item {
             hduModel.append({ idx: parseInt(f[0]), kind: f[1], extname: f[2] || "(primary)",
                               insname: f[3], revn: f[4], nrows: f[5], extra: f[6] })
         }
-        root.headersPath = filePath.text
+        root.headersPath = fitsPath.text
         root.mode = "headers"
         hduList.currentIndex = 0
         showHdu(1)
@@ -85,27 +94,80 @@ Item {
     }
 
     // ── pickers ───────────────────────────────────────────────────────────────
+    // One picker per file field: OIFITS handling takes OIFITS files, FITS handling FITS files.
     FilePicker {
         id: openPicker
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
-        title: "Choose a FITS / OIFITS file"
-        filters: [{ label: "FITS files (*.oifits *.fits *.fit)", patterns: "*.oifits,*.fits,*.fit" },
+        title: "Choose an OIFITS file"
+        filters: [{ label: "OIFITS files (*.oifits *.fits *.fit)", patterns: "*.oifits,*.fits,*.fit" },
                   { label: "All files", patterns: "*" }]
         onAccepted: function (path) { filePath.text = path }
     }
     FilePicker {
-        id: repairPicker
+        id: fitsPicker
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
-        title: "Write the repaired copy as"
+        title: "Choose a FITS file"
+        filters: [{ label: "FITS files (*.fits)", patterns: "*.fits" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { fitsPath.text = path }
+    }
+    FilePicker {
+        id: mergePicker
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Merge OIFITS files  (Ctrl- or Shift-click: several)"
+        multiSelect: true
+        filters: [{ label: "OIFITS files (*.oifits *.fits)", patterns: "*.oifits,*.fits" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (paths) {
+            report(Julia.shell_tools_merge(paths))
+            root.datasetsChanged()
+        }
+    }
+    FilePicker {
+        id: exportPicker
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Export the file as OIFITS v2"
         saveMode: true
         defaultSuffix: "oifits"
         filters: [{ label: "OIFITS files (*.oifits *.fits)", patterns: "*.oifits *.fits" },
                   { label: "All files", patterns: "*" }]
         onAccepted: function (path) {
-            report(Julia.shell_tools_repair(filePath.text, path,
+            report(Julia.shell_tools_export(filePath.text, path,
                                             targetBox.visible ? targetBox.currentText : ""))
         }
     }
+    FilePicker {
+        id: cubeSavePicker
+        property real pxw: 1000
+        property real pxh: 900
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save the plane as PNG"
+        saveMode: true
+        defaultSuffix: "png"
+        filters: [{ label: "PNG images (*.png)", patterns: "*.png" }, { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            Julia.shell_save_figure("cube", path, cubeSavePicker.pxw, cubeSavePicker.pxh, false)
+            root.consoleChanged()
+        }
+    }
+
+    // The cube on show: one label per plane, from `shell_cube_open`.
+    property var cubePlanes: []
+    function openCube(path) {
+        var t = Julia.shell_cube_open(path)
+        root.consoleChanged()
+        if (failed(t)) { root.statusReported(t); return }
+        root.cubePlanes = t.split("\n")
+        cubePlane.value = 1
+        cubeLabel.text = root.cubePlanes[0]
+        root.mode = "cube"
+        cubeArea.update()
+    }
+    function showPlane(k) {
+        cubeLabel.text = Julia.shell_cube_show(k)
+        cubeArea.update()
+    }
+
     FilePicker {
         id: folderPicker
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
@@ -114,173 +176,242 @@ Item {
         onAccepted: function (path) { folderField.text = path }
     }
 
-    RowLayout {
+    // Controls on the left, results on the right; the split is the user's to move.
+    SplitView {
         anchors.fill: parent
         anchors.margins: dp(6)
-        spacing: dp(8)
+        orientation: Qt.Horizontal
 
         // ── controls ──────────────────────────────────────────────────────────
         ScrollView {
-            Layout.preferredWidth: dp(400)
-            Layout.fillHeight: true
+            // Wide enough for the widest row on opening; narrower is the user's choice.
+            SplitView.preferredWidth: Math.max(dp(420), controls.implicitWidth + dp(24))
+            SplitView.minimumWidth: dp(260)
             contentWidth: availableWidth
             clip: true
 
             ColumnLayout {
+                id: controls
                 width: parent.width
-                spacing: dp(6)
+                spacing: dp(8)
 
-                Label { text: "File"; font.bold: true; font.pointSize: pt(baseFontPt + 1) }
-                Label {
-                    Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    color: "#666"; font.pointSize: pt(baseFontPt - 1)
-                    text: "Any FITS file: its headers, or a check of its OIFITS tables."
-                }
-                RowLayout {
+                // ── OIFITS handling ──────────────────────────────────────────────
+                GroupBox {
                     Layout.fillWidth: true
-                    TextField {
-                        id: filePath
-                        objectName: "toolsFilePath"
-                        Layout.fillWidth: true
-                        placeholderText: "a FITS / OIFITS file"
-                        selectByMouse: true
-                        onTextChanged: refreshTargets()
-                    }
-                    Button { text: "…"; onClicked: openPicker.openAt("")
-                             ToolTip.visible: hovered; ToolTip.text: "Choose a file" }
-                }
-                Button {
-                    text: "Use the current dataset's file"
-                    onClicked: useCurrentDataset()
-                }
-                RowLayout {
-                    Button {
-                        objectName: "toolsHeaders"
-                        text: "Headers"; enabled: filePath.text.length > 0
-                        onClicked: showHeaders()
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Every HDU, the ones OITOOLS does not read included; select one for its columns and cards"
-                    }
-                    Button {
-                        objectName: "toolsValidate"
-                        text: "Validate"; enabled: filePath.text.length > 0
-                        onClicked: validate()
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Check the file against the OIFITS standard and its data for suspect values"
-                    }
-                    Button {
-                        text: "Repaired copy…"; enabled: filePath.text.length > 0
-                        onClicked: {
-                            repairPicker.suggestedName = Julia.picker_suggest(
-                                filePath.text.replace(/^.*\//, "").replace(/\.(oi)?fits$/i, "") + "_repaired", "oifits")
-                            repairPicker.openAt("")
+                    label: Label { text: "OIFITS handling"; font.bold: true; font.pointSize: pt(baseFontPt + 2) }
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: dp(6)
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            TextField {
+                                id: filePath
+                                objectName: "toolsFilePath"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: dp(120)
+                                placeholderText: "an OIFITS file"
+                                selectByMouse: true
+                                onTextChanged: root.refreshTargets()
+                            }
+                            Button { text: "…"; objectName: "toolsFilePick"; onClicked: openPicker.openAt("")
+                                     ToolTip.visible: hovered; ToolTip.text: "Choose a file" }
+                            Button { text: "Current"; onClicked: root.useCurrentDataset(filePath)
+                                     ToolTip.visible: hovered; ToolTip.text: "The current dataset's file" }
                         }
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Read the file and write it again as clean OIFITS v2 (instruments kept). " +
-                                      "Not kept: non-OIFITS HDUs, columns OITOOLS does not read, flagged points, OI_CORR."
-                    }
-                }
-                RowLayout {
-                    visible: targetBox.visible
-                    Label { text: "Target"; color: "#666" }
-                    ComboBox { id: targetBox; visible: false; Layout.fillWidth: true }
-                }
+                        RowLayout {
+                            visible: targetBox.visible
+                            Label { text: "target"; color: "#666" }
+                            ComboBox { id: targetBox; visible: false; Layout.fillWidth: true }
+                        }
+                        Button {
+                            objectName: "toolsValidate"
+                            text: "Validate"; enabled: filePath.text.length > 0
+                            onClicked: validate()
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Check against the OIFITS standard"
+                        }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#ddd"; Layout.topMargin: dp(6) }
+                        Label { text: "Spectral binning"; font.bold: true; Layout.topMargin: dp(4) }
+                        RowLayout {
+                            Label { text: "every"; color: "#666" }
+                            SpinBox { id: binN; from: 1; to: 1000; value: 10; editable: true }
+                            Label { text: "channels"; color: "#666" }
+                            ComboBox {
+                                id: binKind
+                                model: ["average", "group"]
+                                ToolTip.visible: hovered
+                                ToolTip.text: "average: fewer channels · group: bins, every channel kept"
+                            }
+                        }
+                        RowLayout {
+                            visible: binKind.currentIndex === 0
+                            ComboBox {
+                                id: binMode
+                                model: ["block", "pmoired"]
+                                ToolTip.visible: hovered
+                                ToolTip.text: "block: weighted means · pmoired: PMOIRED's binning"
+                            }
+                            Label { text: "c"; color: "#666"; visible: binMode.currentIndex === 0 }
+                            TextField {
+                                id: binC; text: "1"; visible: binMode.currentIndex === 0
+                                Layout.preferredWidth: dp(50)
+                                validator: DoubleValidator { bottom: 1 }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Adjacent-channel correlation (errors × √c)"
+                            }
+                        }
+                        Button {
+                            objectName: "toolsAverage"
+                            text: "Bin into a new dataset"
+                            enabled: filePath.text.length > 0
+                            onClicked: {
+                                report(binKind.currentIndex === 0
+                                       ? Julia.shell_tools_bin(filePath.text, binN.value, binMode.currentText,
+                                                               parseFloat(binC.text) || 1)
+                                       : Julia.shell_tools_group(filePath.text, binN.value))
+                                root.datasetsChanged()
+                            }
+                        }
 
-                Label { text: "Current dataset"; font.bold: true; font.pointSize: pt(baseFontPt + 1) }
-                Label {
-                    Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    color: "#666"; font.pointSize: pt(baseFontPt - 1)
-                    text: "Averaging and splitting read the selected dataset's file again; each " +
-                          "result is a new dataset, listed in the Dataset box."
-                }
+                        Label { text: "Temporal binning"; font.bold: true; Layout.topMargin: dp(4) }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ComboBox {
+                                id: timeBy
+                                Layout.fillWidth: true
+                                textRole: "text"; valueRole: "value"
+                                model: [{ text: "gaps longer than (days)", value: "gap" },
+                                        { text: "windows of (days)", value: "width" }]
+                            }
+                            TextField {
+                                id: timeParam; text: "0.5"
+                                Layout.preferredWidth: dp(60)
+                                validator: DoubleValidator { bottom: 0 }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            CheckBox { id: writeFiles; text: "also write each epoch to" }
+                            TextField {
+                                id: folderField; Layout.fillWidth: true; enabled: writeFiles.checked
+                                Layout.minimumWidth: dp(60)
+                                placeholderText: "folder"
+                            }
+                            Button { text: "…"; enabled: writeFiles.checked; onClicked: folderPicker.openAt("") }
+                        }
+                        RowLayout {
+                            Button {
+                                text: "Preview"; enabled: filePath.text.length > 0
+                                onClicked: root.previewSplit(timeBy.currentValue, parseFloat(timeParam.text) || 0)
+                            }
+                            Button {
+                                objectName: "toolsSplit"
+                                text: "One dataset per epoch"; enabled: filePath.text.length > 0
+                                onClicked: root.runSplit(timeBy.currentValue, parseFloat(timeParam.text) || 0,
+                                                         writeFiles.checked ? folderField.text : "")
+                            }
+                        }
 
-                Label { text: "Average channels"; font.bold: true }
-                RowLayout {
-                    Label { text: "every"; color: "#666" }
-                    SpinBox { id: binN; from: 2; to: 1000; value: 10; editable: true }
-                    Label { text: "channels"; color: "#666" }
-                }
-                RowLayout {
-                    ComboBox {
-                        id: binMode
-                        model: ["block", "pmoired"]
-                        ToolTip.visible: hovered
-                        ToolTip.text: "block: 1/σ²-weighted means, circular-mean phases, σ·√c errors and a scatter check. " +
-                                      "pmoired: PMOIRED's resampling, to reproduce its results."
-                    }
-                    Label { text: "c"; color: "#666"; visible: binMode.currentIndex === 0 }
-                    TextField {
-                        id: binC; text: "1"; visible: binMode.currentIndex === 0
-                        Layout.preferredWidth: dp(50)
-                        validator: DoubleValidator { bottom: 1 }
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Correlation between adjacent channels: errors are multiplied by √c (1 = independent)"
-                    }
-                }
-                Button {
-                    objectName: "toolsAverage"
-                    text: "Average into a new dataset"
-                    onClicked: {
-                        report(Julia.shell_tools_bin(binN.value, binMode.currentText, parseFloat(binC.text) || 1))
-                        root.datasetsChanged()
-                    }
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Averaging makes fewer channels, each the mean of the ones it replaces. " +
-                                  "Not the same as grouping (Imaging › Setup), which keeps every channel in fewer bins."
-                }
+                        Label { text: "Split"; font.bold: true; Layout.topMargin: dp(4) }
+                        RowLayout {
+                            ComboBox {
+                                id: splitBy
+                                textRole: "text"; valueRole: "value"
+                                model: [{ text: "by instrument", value: "instrument" },
+                                        { text: "by target", value: "target" }]
+                            }
+                            Button { text: "Preview"; enabled: filePath.text.length > 0
+                                     onClicked: root.previewSplit(splitBy.currentValue, 0) }
+                            Button {
+                                objectName: "toolsSplitBy"
+                                text: "Split"; enabled: filePath.text.length > 0
+                                onClicked: root.runSplit(splitBy.currentValue, 0, "")
+                            }
+                        }
 
-                Label { text: "Split"; font.bold: true; Layout.topMargin: dp(4) }
-                RowLayout {
-                    ComboBox {
-                        id: splitBy
-                        Layout.fillWidth: true
-                        textRole: "text"; valueRole: "value"
-                        model: [{ text: "by time: gaps longer than (days)", value: "gap" },
-                                { text: "by time: windows of (days)", value: "width" },
-                                { text: "by instrument", value: "instrument" },
-                                { text: "by target", value: "target" }]
-                    }
-                    TextField {
-                        id: splitParam; text: "0.5"
-                        Layout.preferredWidth: dp(60)
-                        enabled: splitBy.currentValue === "gap" || splitBy.currentValue === "width"
-                        validator: DoubleValidator { bottom: 0 }
-                    }
-                }
-                RowLayout {
-                    CheckBox { id: writeFiles; text: "also write each part to" }
-                    TextField {
-                        id: folderField; Layout.fillWidth: true; enabled: writeFiles.checked
-                        placeholderText: "folder"
-                    }
-                    Button { text: "…"; enabled: writeFiles.checked; onClicked: folderPicker.openAt("") }
-                }
-                RowLayout {
-                    Button {
-                        text: "Preview"
-                        onClicked: {
-                            var t = Julia.shell_tools_split_preview(splitBy.currentValue, parseFloat(splitParam.text) || 0)
-                            root.mode = "split"
-                            resultArea.text = failed(t) ? t : t.split("\n").length + " parts:\n" + t.split("\t").join("    ")
+                        Label { text: "Merge"; font.bold: true; Layout.topMargin: dp(4) }
+                        Button {
+                            objectName: "toolsMerge"
+                            text: "Merge files…"
+                            onClicked: mergePicker.openAt("")
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Several OIFITS files as one dataset"
+                        }
+
+                        Button {
+                            objectName: "toolsExport"
+                            Layout.topMargin: dp(6)
+                            text: "Export OIFITS…"
+                            enabled: filePath.text.length > 0
+                            onClicked: {
+                                exportPicker.suggestedName = Julia.picker_suggest(
+                                    filePath.text.replace(/^.*\//, "").replace(/\.(oi)?fits$/i, "") + "_v2", "oifits")
+                                exportPicker.openAt("")
+                            }
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Write the file as clean OIFITS v2"
                         }
                     }
-                    Button {
-                        objectName: "toolsSplit"
-                        text: "Split into datasets"
-                        onClicked: {
-                            report(Julia.shell_tools_split(splitBy.currentValue, parseFloat(splitParam.text) || 0,
-                                                           writeFiles.checked ? folderField.text : ""))
-                            root.datasetsChanged()
-                        }
-                    }
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: "#ddd"; Layout.topMargin: dp(6) }
-                Button {
-                    text: "Export the current dataset as OIFITS…"
-                    onClicked: root.exportRequested()
+                // ── FITS handling ────────────────────────────────────────────────
+                GroupBox {
+                    Layout.fillWidth: true
+                    label: Label { text: "FITS handling"; font.bold: true; font.pointSize: pt(baseFontPt + 2) }
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: dp(6)
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            TextField {
+                                id: fitsPath
+                                objectName: "toolsFitsPath"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: dp(120)
+                                placeholderText: "a FITS file"
+                                selectByMouse: true
+                            }
+                            Button { text: "…"; objectName: "toolsFitsPick"; onClicked: fitsPicker.openAt("")
+                                     ToolTip.visible: hovered; ToolTip.text: "Choose a file" }
+                            Button { text: "Current"; onClicked: root.useCurrentDataset(fitsPath)
+                                     ToolTip.visible: hovered; ToolTip.text: "The current dataset's file" }
+                        }
+                        RowLayout {
+                            Button {
+                                objectName: "toolsHeaders"
+                                text: "Headers"; enabled: fitsPath.text.length > 0
+                                onClicked: showHeaders()
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Every HDU, its columns and header cards"
+                            }
+                            Button {
+                                objectName: "toolsCubeOpen"
+                                text: "Cube"; enabled: fitsPath.text.length > 0
+                                onClicked: root.openCube(fitsPath.text)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "The image, one plane at a time"
+                            }
+                        }
+                        RowLayout {
+                            visible: root.cubePlanes.length > 1
+                            Label { text: "plane"; color: "#666" }
+                            SpinBox {
+                                id: cubePlane
+                                from: 1; to: Math.max(1, root.cubePlanes.length); value: 1; editable: true
+                                onValueModified: root.showPlane(value)
+                            }
+                            Label { text: "of " + root.cubePlanes.length; color: "#666" }
+                        }
+                        Slider {
+                            Layout.fillWidth: true
+                            visible: root.cubePlanes.length > 1
+                            from: 1; to: Math.max(1, root.cubePlanes.length); stepSize: 1
+                            value: cubePlane.value
+                            onMoved: { cubePlane.value = value; root.showPlane(value) }
+                        }
+                    }
                 }
                 Item { Layout.fillHeight: true }
             }
@@ -288,22 +419,30 @@ Item {
 
         // ── results ───────────────────────────────────────────────────────────
         ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            SplitView.fillWidth: true
+            SplitView.minimumWidth: dp(300)
             spacing: dp(4)
 
             Label {
                 font.bold: true
                 text: root.mode === "headers" ? "Headers — " + root.headersPath.replace(/^.*\//, "")
                     : root.mode === "validate" ? "Validation — " + filePath.text.replace(/^.*\//, "")
-                    : root.mode === "split" ? "Split preview" : "Results"
+                    : root.mode === "split" ? "Split preview"
+                    : root.mode === "cube" ? "Cube — " + cubeLabel.text : "Results"
             }
+            Label { id: cubeLabel; visible: false }
+            // The HDU list over the selected HDU's cards (Headers), the split the user's to move;
+            // otherwise the report or the cube alone.
+            SplitView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                orientation: Qt.Vertical
             ListView {
                 id: hduList
                 objectName: "toolsHduList"
                 visible: root.mode === "headers"
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(contentHeight, dp(220))
+                SplitView.preferredHeight: dp(220)
+                SplitView.minimumHeight: dp(60)
                 clip: true
                 model: ListModel { id: hduModel }
                 delegate: ItemDelegate {
@@ -317,9 +456,35 @@ Item {
                 }
                 ScrollBar.vertical: ScrollBar {}
             }
+            Rectangle {
+                visible: root.mode === "cube"
+                SplitView.fillHeight: root.mode === "cube"
+                color: "#f4f4f4"
+                border.color: "#ddd"
+                MakieArea {
+                    id: cubeArea
+                    objectName: "toolsCubeArea"
+                    anchors.fill: parent
+                    scene: cubePlot
+                }
+                Button {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: dp(6)
+                    text: "Save PNG"
+                    opacity: hovered ? 1.0 : 0.6
+                    onClicked: {
+                        cubeSavePicker.pxw = Math.min(2400, Math.max(640, cubeArea.width))
+                        cubeSavePicker.pxh = Math.min(1800, Math.max(480, cubeArea.height))
+                        cubeSavePicker.suggestedName = Julia.picker_suggest("cube\t" + cubeLabel.text, "png")
+                        cubeSavePicker.openAt("")
+                    }
+                }
+            }
             ScrollView {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                visible: root.mode !== "cube"
+                SplitView.fillHeight: root.mode !== "cube"
+                SplitView.minimumHeight: dp(60)
                 TextArea {
                     id: resultArea
                     objectName: "toolsResult"
@@ -328,8 +493,8 @@ Item {
                     wrapMode: TextEdit.NoWrap
                     font.family: "monospace"
                     font.pointSize: pt(baseFontPt - 1)
-                    placeholderText: "Headers, validation reports and split previews appear here."
                 }
+            }
             }
         }
     }

@@ -375,6 +375,7 @@ Popup {
 
                     ListView {
                         id: fileList
+                        objectName: "pickerFiles"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
@@ -494,6 +495,7 @@ Popup {
             Label { text: root.saveMode ? "Save as" : "File"; color: "#555" }
             TextField {
                 id: nameField
+                objectName: "pickerName"
                 Layout.fillWidth: true
                 implicitHeight: root.dp(28)
                 placeholderText: root.saveMode ? "filename" : "or type a path, ~ for home"
@@ -536,6 +538,7 @@ Popup {
                          ? "Choose this folder"
                          : "Choose \"" + Julia.picker_basename(root.chosenFolder) + "\"")
                       : root.saveMode ? "Save" : "Open"
+                objectName: "pickerOk"
                 implicitHeight: root.dp(28)
                 highlighted: true
                 // Choosing a folder needs no selection -- the answer is where you have browsed
@@ -577,18 +580,15 @@ Popup {
         modal: true
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Yes | Dialog.No
-        // An explicit width, and a Label sized from it. Without both, Qt reports
-        //
-        //     QML Dialog: Binding loop detected for property "implicitWidth"
-        //
-        // on every open: a wrapping Label's implicitWidth depends on the width it is given,
-        // the Dialog takes its own implicitWidth from its content, and the two chase each
-        // other. Fixing the width breaks the cycle and gives the path something to wrap
-        // against — which it needs anyway, since a long path would otherwise stretch the
-        // dialog off the screen rather than wrap.
+        // Fixed widths on both the Dialog and its wrapped Label, neither read from the other. A
+        // Dialog sized from its content chases its header and footer (a binding loop on
+        // implicitWidth); a Label sized from the Dialog re-wraps whenever the Dialog's geometry
+        // changes, and its new height changes that geometry again (one on implicitHeight). The
+        // fixed width also gives the path something to wrap against, where a long path would
+        // otherwise stretch the dialog off the screen.
         width: root.dp(380)
         Label {
-            width: parent.width
+            width: root.dp(340)
             text: overwriteDialog.target + "\nalready exists."
             wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         }

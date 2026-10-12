@@ -113,6 +113,15 @@ function validate_oifits(path::AbstractString)
             add(:error, "OI_WAVELENGTH", "several OI_WAVELENGTH tables with INSNAME \"$(n)\"")
     end
 
+    # ── indices the standard numbers from 1 ──────────────────────────────────────────
+    for (ext, col, what, n, revn) in _index_columns(path)
+        bad = sort(unique(filter(<(1), n)))
+        isempty(bad) && continue
+        add(revn >= 2 ? :error : :warning, ext,
+            "$(col) $(join(bad, ", ")): OIFITS v2 numbers $(what) from 1" *
+            (revn >= 2 ? "" : " (this table is revision $(revn))"))
+    end
+
     # ── as readoifits opens it, and what that had to work around ─────────────────────
     notes = String[]
     ds = try
@@ -148,7 +157,8 @@ function validate_oifits(path::AbstractString)
         elseif !isempty(arr) && sta !== nothing
             miss = setdiff(Set(Int.(vec(sta))), arrays[arr])
             isempty(miss) || add(:warning, tlabel(t, ext),
-                "stations $(sort(collect(miss))) are not in OI_ARRAY \"$(arr)\"")
+                "stations $(join(sort(collect(miss)), ", ")) have no entry in OI_ARRAY \"$(arr)\" " *
+                "(no telescope or station name)")
         end
         tid = setdiff(Set(Int.(t.target_id)), targets)
         isempty(tid) || add(:error, tlabel(t, ext), "TARGET_ID $(sort(collect(tid))) not in OI_TARGET")
@@ -294,3 +304,29 @@ its OI_TARGET table.
 """
 split_by_target(path::AbstractString; kwargs...) =
     [String(n) => readoifits(path; targetname = n, kwargs...) for n in list_oifits_targets(path)]
+
+# OI_TARGET's TARGET_ID and OI_ARRAY's STA_INDEX columns as the file stores them, with each table's
+# OI_REVN: `(table, column, what is numbered, values, revn)`. A ZIP archive's FITS file is read.
+function _index_columns(path)
+    tmp = _is_zip(path) ? first(_unzip_fits(path)) : nothing
+    try
+        AstroFITS.FitsFile(something(tmp, path)) do f
+            out = Tuple{String,String,String,Vector{Int},Int}[]
+            for h in f
+                h isa AstroFITS.FitsTableHDU || continue
+                ext = something(h.extname, "")
+                col, what = ext == "OI_TARGET" ? ("TARGET_ID", "targets") :
+                            ext == "OI_ARRAY"  ? ("STA_INDEX", "stations") : ("", "")
+                (isempty(col) || !(col in h.column_names)) && continue
+                arr = get(String, h, "ARRNAME", "")
+                push!(out, (isempty(arr) ? ext : "$(ext) $(arr)", col, what,
+                            Int.(vec(read(h, col))), get(Int, h, "OI_REVN", 0)))
+            end
+            out
+        end
+    catch
+        Tuple{String,String,String,Vector{Int},Int}[]
+    finally
+        tmp === nothing || rm(tmp; force = true)
+    end
+end

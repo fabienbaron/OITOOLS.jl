@@ -486,6 +486,7 @@ ApplicationWindow {
             Label { text: "Dataset:"; font.bold: true }
             ComboBox {
                 id: datasetBox
+                objectName: "datasetBox"
                 Layout.preferredWidth: dp(320)
                 model: []
                 enabled: model.length > 0
@@ -1029,7 +1030,6 @@ ApplicationWindow {
                 onConsoleChanged: win.refreshConsole()
                 onStatusReported: function (text) { win.status = text }
                 onDatasetsChanged: win.selectCurrentDataset()
-                onExportRequested: win.exportData()
             }
         }
 
@@ -1089,6 +1089,99 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+    }
+
+    // Window walks (`OITOOLSGUI_WALK`, see `shell_walk_request`): a request names a control,
+    // the reply says where it is in window coordinates. Inert when `walkDir` is empty.
+    //
+    //   locate q   q = objectName | text:T (a visible item whose text is T) | popup:T (the same,
+    //              inside an open popup) | a/b (b searched inside a); one match, or an error
+    //   reveal q   the same, after scrolling it into view
+    //   dump       every visible named item
+    function walkKids(o) {
+        const k = []
+        if (o.modal !== undefined && o.contentItem !== undefined && o.opened !== undefined) {
+            if (!o.opened) return k
+            for (const x of [o.contentItem, o.header, o.footer]) if (x) k.push(x)
+            return k
+        }
+        if (o.data && typeof o.data !== "function" && o.data.length !== undefined)
+            for (let i = 0; i < o.data.length; i++) k.push(o.data[i])
+        if (o.popup && typeof o.popup === "object") k.push(o.popup)
+        return k
+    }
+    function walkSearch(root, test, all) {
+        const hits = [], seen = new Set()
+        const go = (o, inPopup) => {
+            if (!o || seen.has(o)) return
+            seen.add(o)
+            if (o.visible === false) return
+            const pop = inPopup || (o.modal !== undefined && o.opened === true)
+            if (o.mapToItem && test(o, pop)) hits.push(o)
+            for (const c of walkKids(o)) go(c, pop)
+        }
+        go(root, false)
+        // a Label and a Button may share a text: the one that can be clicked is meant
+        const live = hits.filter(o => typeof o.clicked === "function" || typeof o.toggled === "function")
+        return all || live.length === 0 ? hits : live
+    }
+    function walkFind(q) {
+        let root = win
+        const parts = q.split("/")
+        for (let i = 0; i < parts.length; i++) {
+            const p = parts[i]
+            const test = p.startsWith("text:") ? ((o, pop) => o.text === p.slice(5))
+                       : p.startsWith("popup:") ? ((o, pop) => pop && o.text === p.slice(6))
+                       : ((o, pop) => o.objectName === p)
+            const hits = walkSearch(root, test)
+            if (hits.length !== 1)
+                throw new Error(hits.length + " matches for " + p +
+                                hits.map(o => " [" + String(o) + "]").join(""))
+            root = hits[0]
+        }
+        return root
+    }
+    // One tab-separated line: name x y w h enabled checked current text (newlines as spaces).
+    function walkDescribe(o) {
+        const pt = o.mapToItem(null, 0, 0)
+        const flat = v => (v === undefined || v === null) ? "" : String(v).replace(/[\t\n]/g, " ")
+        return [o.objectName, Math.round(pt.x), Math.round(pt.y), Math.round(o.width),
+                Math.round(o.height), o.enabled, flat(o.checked), flat(o.currentText),
+                flat(o.text)].join("\t")
+    }
+    // Scroll every Flickable around `o` (a ScrollView's, a ListView) until `o` is in view.
+    function walkReveal(o) {
+        for (let p = o.parent; p; p = p.parent) {
+            if (p.contentY === undefined || p.contentItem === undefined || !(p.height > 0)) continue
+            const r = o.mapToItem(p.contentItem, 0, 0)
+            const most = Math.max(0, p.contentHeight - p.height)
+            if (r.y < p.contentY)
+                p.contentY = Math.max(0, r.y - 10)
+            else if (r.y + o.height > p.contentY + p.height)
+                p.contentY = Math.min(most, r.y + o.height - p.height + 10)
+        }
+        return o
+    }
+    function walkAnswer(req) {
+        const sp = req.indexOf(" ")
+        const cmd = sp < 0 ? req : req.slice(0, sp), arg = sp < 0 ? "" : req.slice(sp + 1)
+        if (cmd === "locate") return walkDescribe(walkFind(arg))
+        if (cmd === "reveal") return walkDescribe(walkReveal(walkFind(arg)))
+        if (cmd === "dump")
+            return walkSearch(win, (o, pop) => o.objectName !== "" && o.objectName !== "label", true).map(walkDescribe).join("\n")
+        throw new Error("unknown walk request: " + cmd)
+    }
+    Timer {
+        interval: 150
+        running: walkDir !== ""
+        repeat: true
+        onTriggered: {
+            const req = Julia.shell_walk_request()
+            if (req === "") return
+            let out
+            try { out = win.walkAnswer(req) } catch (e) { out = "!\t" + String(e) }
+            Julia.shell_walk_reply(out)
         }
     }
 

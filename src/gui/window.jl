@@ -65,15 +65,18 @@ function __init__()
                      shell_smearing, shell_set_smearing, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
                      shell_tools_source, shell_tools_headers, shell_tools_hdu, shell_tools_validate,
-                     shell_tools_targets, shell_tools_repair, shell_tools_bin,
-                     shell_tools_split_preview, shell_tools_split,
+                     shell_tools_bin, shell_tools_targets, shell_tools_export,
+                     shell_tools_split_preview, shell_tools_split, shell_tools_merge,
+                     shell_cube_open, shell_cube_show, shell_tools_group,
+                     shell_fit_each, shell_epochs_table, shell_save_epochs,
                      shell_import_pmoired, shell_import_pmoired_text, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
                      # Julia for everything the toolkit would otherwise supply.
                      picker_list, picker_places, picker_join, picker_parent, picker_basename, picker_suggest,
                      shell_initial_folder, shell_set_work_directory,
-                     picker_start, picker_kind, picker_would_overwrite, picker_examples)
+                     picker_start, picker_kind, picker_would_overwrite, picker_examples,
+                     shell_walk_request, shell_walk_reply)
         QML.qmlfunction(string(nameof(f)), (args...) -> _guarded(f, args...))
     end
     return nothing
@@ -407,6 +410,12 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(priax); style_axis!(prvax)
     profileplot = build_profile_plot(prfig, priax, prvax)
 
+    # And one for the Tools cube viewer, drawn by `show_image!` as the reconstruction is.
+    cfig = Makie.Figure(fonts = PLOT_FONTS)
+    cax  = Makie.Axis(cfig[1, 1]; xlabel = "α (mas)", ylabel = "δ (mas)", title = "cube")
+    style_axis!(cax)
+    CUBE_CANVAS[] = build_canvas(cfig, cax)
+
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false,
                      :none, :none, false,
                      "no dataset loaded", String[], canvas, "", nothing, imcanvas, nothing, gantt,
@@ -446,11 +455,13 @@ function OITOOLS.gui(session::Session = Session();
                 profilePlot     = prfig,
                 residPlot       = rfig,
                 sedPlot         = sfig,
+                cubePlot        = cfig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,
                 initialFolder   = _initial_folder(session),
                 fullscreenOnStart = get(ENV, "OITOOLSGUI_FULLSCREEN", "") == "1",
+                walkDir         = get(ENV, "OITOOLSGUI_WALK", ""),
                 # The startup scale and settings lines are diagnostics, not news: they print on
                 # every launch and say nothing a working window has not already shown. Kept
                 # behind a switch because the scale line is how the DPI exponent gets refitted
