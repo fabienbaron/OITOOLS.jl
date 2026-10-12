@@ -21,6 +21,7 @@ include("resources.jl")          # where shipped QML, configs and demo data are 
 include("graphics.jl")           # GL driver environment; must be callable before GLMakie
 include("gui_launcher.jl")       # oitoolsgui(): loads the GUI stack in the required order
 include("oifits_binning.jl")      # averaging spectral channels on reading (binning ≠ grouping)
+include("oifits_load.jl")         # opening a file: table by table, non-standard files and ZIPs
 include("readoifits.jl")
 include("write_oifits.jl")        # OIdata back to OIFITS v2, read back to the same points
 include("oifits_tools.jl")        # Tools: header inspector, validator / repair, splits

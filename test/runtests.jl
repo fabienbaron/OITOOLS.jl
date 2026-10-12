@@ -23,6 +23,7 @@ BLAS.set_num_threads(1)
     include("test_data_filter.jl")       # set_data_filter: stations, baselines, triangles by name
     include("test_write_oifits.jl")      # write_oifits reads back to the same points
     include("test_oifits_corpus.jl")     # every shipped OIFITS file: revision, readoifits, round trip
+    include("test_oifits_load.jl")       # non-standard files: per-table fallbacks, ZIPs
     include("test_oifits_tools.jl")      # header inspector, validator / repair, splits
     include("test_merge_oidata.jl")      # several files as one dataset
     include("test_bsmem_precision.jl")   # cheap structural checks first

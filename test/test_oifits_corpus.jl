@@ -8,8 +8,10 @@ import AstroFITS
 
 @testset "the shipped OIFITS corpus" begin
     root = joinpath(@__DIR__, "..", "demos", "data")
+    # o_Leo/ and HD210763/ hold files that break the standard on purpose; test_oifits_load.jl
+    # has them.
     files = sort([joinpath(r, f) for (r, _, fs) in walkdir(root) for f in fs
-                  if occursin(r"\.(oifits|fits)$"i, f) && !occursin("images", r)])
+                  if occursin(r"\.(oifits|fits)$"i, f) && !occursin(r"images|o_Leo|HD210763", r)])
     files = filter(files) do f            # OIFITS files only: an image has no OI_ table
         AstroFITS.FitsFile(ff -> any(h -> startswith(something(h.extname, ""), "OI_"), ff), f)
     end

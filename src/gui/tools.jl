@@ -166,7 +166,7 @@ end
 for a path that is not (yet) a readable OIFITS file -- the field asks on every keystroke."""
 function shell_tools_targets(path::AbstractString)
     p = strip_file_url(String(path))
-    (isfile(p) && !OITOOLS._is_zip(p)) || return ""
+    isfile(p) || return ""
     try
         return join(String.(OITOOLS.list_oifits_targets(p)), "\n")
     catch

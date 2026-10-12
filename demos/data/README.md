@@ -51,3 +51,16 @@ Several files were renamed in 0.15: `2019_v1295Aql.WL_SMOOTH.A.oifits` → `V129
 `MWC275_T4a` → `MWC275_4T`, `iota_peg4t`/`iota_peg6t` → `Iota_Peg4T`/`Iota_Peg6T`,
 `rho_Cas_example` → `Rho_Cas`, `pigru` → `Pi1_Gru`, `AXCir` → `AX_Cir`. A script of your own that
 refers to the old names needs updating; everything in this repository was swept.
+
+### `o_Leo/` and `HD210763/` — files that break the standard
+
+One file from each of PMOIRED's o Leo (EX5) and HD 210763 (EX6) examples, kept because they are
+the only examples of these defects, which `load_oifits` reads around (`PLAN_C14.md`):
+
+- **`o_Leo/GRAVI.2022-02-28…_singlesciviscalibrated.fits`** — GRAVITY, SC and FT. Its OI_ARRAY
+  declares revision 2 without the FOV column; its OI_FLUX tables name their data `FLUX`, not
+  `FLUXDATA`; a `TELLURICS` HDU. ~9750 V², ~6530 T3, ~9790 VIS, 6536 flux.
+- **`HD210763/2022-08-03-calibrated_cleaned.fits`** — a **ZIP archive** holding one FITS file
+  (written by OICLEAN). Revisions 5 and 3, which do not exist; OI_VIS without VISPHI; half the rows
+  with TARGET_ID 0 (not in OI_TARGET) and OI_FLUX with meaningless TARGET_IDs, so those rows and
+  that table are left out. 3588 V², 1651 T3, 3771 VIS amplitudes.

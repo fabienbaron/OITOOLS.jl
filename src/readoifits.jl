@@ -1,6 +1,6 @@
 #
 # Architecture:
-#   load_oifits(file)            → OIDataSet   (I/O only, try/catch for v1 files)
+#   load_oifits(file)            → OIDataSet   (oifits_load.jl: table by table, ZIPs)
 #   collect_station_info(...)    → NamedTuple  (station name/index mapping)
 #   read_flux_tables(...)        → NamedTuple  (flat arrays, all obs merged)
 #   read_vis_tables(...)         → NamedTuple
@@ -862,17 +862,6 @@ end
 # ===========================================================================
 # LOADING + PARSING HELPERS
 # ===========================================================================
-
-# ---------------------------------------------------------------------------
-# load_oifits: open an OIFITS file, falling back to hack_revn=1 for v1 files
-# ---------------------------------------------------------------------------
-function load_oifits(filename)
-    try
-        read(OIDataSet, filename)
-    catch
-        read(OIDataSet, filename, hack_revn=1)
-    end
-end
 
 # ---------------------------------------------------------------------------
 # AMPTYP / PHITYP (OIFITSv2 §6) name the flavour of OI_VIS data: "absolute",
@@ -1885,7 +1874,11 @@ function readoifits(oifitsfile;
         return [[]]
     end
 
-    ds = load_oifits(oifitsfile)
+    notes = String[]
+    ds = load_oifits(oifitsfile; notes)
+    warn && !isempty(notes) &&
+        @warn("$(basename(oifitsfile)) does not follow the OIFITS standard; read as follows:\n  " *
+              join(notes, "\n  "))
 
     # ---- Build OI_CORR lookup: corrname → symmetric SparseMatrixCSC ----------
     correlt = Dict{String, SparseMatrixCSC{T,Int64}}()
@@ -2044,9 +2037,13 @@ function readoifits(oifitsfile;
         if length(wavtables) > 1 && merge_oi_wavelength
             eff_wave_all = merge_wav_tables(wavtables; T, verbose)
         else
-            length(wavtables) > 1 &&
-                @warn("Multiple OI_WAVELENGTH tables — set merge_oi_wavelength=true to auto-merge if channels match, or specify spectralbin manually.")
-            eff_wave_all = sort(vcat([T.(db.eff_wave) for db in wavtables]...))
+            # Each channel once: tables sharing a grid would otherwise repeat a wavelength, and the
+            # zero-width bins between repeats (edges inclusive) would each hold the same points,
+            # counting every point once per table.
+            ew = sort(vcat([T.(db.eff_wave) for db in wavtables]...))
+            eff_wave_all = ew[[true; diff(ew) .> T(1e-6) .* ew[2:end]]]
+            length(eff_wave_all) > maximum(length(db.eff_wave) for db in wavtables) && warn &&
+                @warn("OI_WAVELENGTH tables with different channels — one bin per distinct channel; set merge_oi_wavelength=true to merge compatible tables, or specify spectralbin manually.")
         end
         # Use midpoints between adjacent channel centers as bin boundaries.
         # This guarantees each stored lam value (= eff_wave[k]) falls in exactly one bin,

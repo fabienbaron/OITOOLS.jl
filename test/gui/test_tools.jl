@@ -31,7 +31,8 @@
             r = G.shell_tools_validate(MONO)
             @test any(l -> startswith(l, "warning\t") && occursin("not in OI_ARRAY", l), split(r, "\n"))
             pol = joinpath(OIF, "polaris.oifits")
-            @test any(l -> startswith(l, "error\t"), split(G.shell_tools_validate(pol), "\n"))
+            @test any(l -> startswith(l, "warning\t") && occursin("revision 1", l),
+                      split(G.shell_tools_validate(pol), "\n"))
             out = joinpath(dir, "polaris_repaired.oifits")
             @test startswith(G.shell_tools_repair(pol, out, ""), "wrote")
             @test !any(l -> startswith(l, "error\t") || startswith(l, "warning\t"),

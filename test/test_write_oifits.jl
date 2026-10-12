@@ -52,6 +52,12 @@
         @test all(t -> x.tables[t].extname == "OI_VIS2", x.v2_tab)
     end
 
+    # Tables sharing a grid make one bin per channel even without merging: V1295 Aql's seven
+    # OI_WAVELENGTH tables hold the same 5 channels, and each point lies in exactly one bin.
+    u = rd(joinpath(data, "V1295_Aql.oifits"); polychromatic = true)
+    @test size(u, 1) == 5
+    @test [x.nv2 for x in u] == [x.nv2 for x in b] && sum(x.nv2 for x in u) == d.nv2
+
     # Averaged channels keep the tag: one per averaged point, its table's.
     a = rd(joinpath(data, "V1295_Aql.oifits"); binning = 3, redundance_remove = false)[1, 1]
     @test length(a.v2_tab) == length(a.v2) && all(t -> a.tables[t].extname == "OI_VIS2", a.v2_tab)

@@ -1,9 +1,6 @@
 # The Tools tab's operations on OIFITS files and datasets: the header inspector (T7), the
 # validator and its repaired copy (T6), and the splits (T1). See PLAN_Tools.md.
 
-# A ZIP archive starts with "PK\x03\x04"; some archives (EX6's) are named .fits.
-_is_zip(path) = open(io -> (b = read(io, 4); length(b) == 4 && b == UInt8['P', 'K', 3, 4]), path)
-
 """
     oifits_headers(path) -> Vector{NamedTuple}
 
@@ -19,12 +16,21 @@ dims, columns, cards)`:
 - `cards` — every header card in order, COMMENT and HISTORY included, as `(name, value,
   comment)`; a commentary card's text is its `value`, and its `comment` is `""`.
 
-Works on any FITS file, images included, whether or not OIFITS.jl reads it. A ZIP archive (some
-pipelines deliver `.fits` files zipped) is refused with that explanation.
+Works on any FITS file, images included, whether or not OIFITS.jl reads it. A ZIP archive holding
+one FITS file (some pipelines deliver their `.fits` files zipped) shows that file.
 """
 function oifits_headers(path::AbstractString)
     isfile(path) || throw(ArgumentError("$(path): no such file"))
-    _is_zip(path) && throw(ArgumentError("$(path) is a ZIP archive, not a FITS file; unzip it first"))
+    _is_zip(path) || return _headers(path)
+    tmp, _ = _unzip_fits(path)
+    try
+        return _headers(tmp)
+    finally
+        rm(tmp; force = true)
+    end
+end
+
+function _headers(path)
     AstroFITS.FitsFile(path) do ff
         map(enumerate(ff)) do (i, hdu)
             hdr = AstroFITS.FitsHeader(hdu)
@@ -63,12 +69,14 @@ Check an OIFITS file and report what is wrong with it, as `(severity, table, mes
 `severity` one of `:error` (the file breaks the standard or cannot be read), `:warning` (it reads,
 but some data are suspect) and `:info`. An empty report means nothing was found.
 
-The file is first read HDU by HDU (as [`oifits_headers`](@ref) does), so a table OIFITS.jl
-refuses is named with its cause rather than stopping the check; then through OIFITS.jl at the
-revision each table declares, and the data are checked:
+The file is first read HDU by HDU (as [`oifits_headers`](@ref) does), then as `readoifits` opens
+it ([`load_oifits`](@ref), table by table), and the data are checked:
 
-- a ZIP archive named `.fits`; an OI_FLUX at revision 1 with a `FLUX` column (GRAVITY), which
-  OIFITS.jl cannot read; a table that reads only as revision 1 although it declares 2;
+- everything the opening had to work around, as warnings -- a table that does not read at the
+  revision it declares (a missing column, a revision that does not exist), GRAVITY's `FLUX` read
+  as OI_FLUX's `FLUXDATA`, one half of an amplitude/phase pair missing, rows whose TARGET_ID is not
+  in OI_TARGET (dropped); a table that cannot be read at all, as an error. A ZIP archive is
+  checked through the FITS file it holds, and said to be one;
 - INSNAME / ARRNAME with no OI_WAVELENGTH / OI_ARRAY; two OI_WAVELENGTH tables with one INSNAME;
   OI_WAVELENGTH tables no data table uses; stations absent from their OI_ARRAY; TARGET_IDs absent
   from OI_TARGET;
@@ -82,10 +90,6 @@ function validate_oifits(path::AbstractString)
     rep = NamedTuple{(:severity, :table, :message),Tuple{Symbol,String,String}}[]
     add(sev, tab, msg) = push!(rep, (severity = sev, table = String(tab), message = String(msg)))
     isfile(path) || (add(:error, "", "no such file"); return rep)
-    if _is_zip(path)
-        add(:error, "", "a ZIP archive named like a FITS file; unzip it first")
-        return rep
-    end
     hdus = try
         oifits_headers(path)
     catch e
@@ -98,11 +102,6 @@ function validate_oifits(path::AbstractString)
     # ── the tables, from their headers ──────────────────────────────────────────────
     for h in hdus
         h.index == 1 && continue
-        if h.extname == "OI_FLUX" && h.revn == 1 && any(c -> c.name == "FLUX", h.columns) &&
-           !any(c -> c.name == "FLUXDATA", h.columns)
-            add(:error, label(h), "OI_FLUX at revision 1 with a FLUX column (the revision-2 name " *
-                "is FLUXDATA); OIFITS.jl cannot read this table")
-        end
         startswith(h.extname, "OI_") ||
             add(:info, label(h), "not an OIFITS table; a repaired copy does not keep it")
         h.kind == :table && h.nrows == 0 && startswith(h.extname, "OI_") &&
@@ -114,19 +113,20 @@ function validate_oifits(path::AbstractString)
             add(:error, "OI_WAVELENGTH", "several OI_WAVELENGTH tables with INSNAME \"$(n)\"")
     end
 
-    # ── through OIFITS.jl, at the declared revisions ─────────────────────────────────
+    # ── as readoifits opens it, and what that had to work around ─────────────────────
+    notes = String[]
     ds = try
-        read(OIFITS.OIDataSet, path)
+        load_oifits(path; notes)
     catch e
-        e1 = sprint(showerror, e)
-        try
-            d1 = read(OIFITS.OIDataSet, path; hack_revn = 1)
-            add(:error, "", "does not read at the revisions its tables declare ($(e1)); " *
-                "reads as revision 1")
-            d1
-        catch
-            add(:error, "", "OIFITS.jl cannot read it: $(e1)")
-            nothing
+        add(:error, "", "cannot be read: " * sprint(showerror, e))
+        nothing
+    end
+    for n in notes
+        if startswith(n, "a ZIP archive")
+            add(:info, "", n)
+        else
+            tab, msg = split(n, ": "; limit = 2)
+            add(:warning, tab, msg)
         end
     end
     ds === nothing && return rep
@@ -204,13 +204,13 @@ missing columns filled (e.g. FOV in OI_ARRAY), each instrument under its own nam
 revision 2. Never over `path` itself.
 
 What the copy does not keep: HDUs other than the OIFITS tables, columns OITOOLS does not read,
-flagged points, OI_CORR. A file with several targets is repaired one target at a time
+flagged points, OI_CORR, and whatever [`load_oifits`](@ref) had to leave out (rows whose
+TARGET_ID is not in OI_TARGET). A ZIP archive's FITS file is repaired into a plain FITS file. A file with several targets is repaired one target at a time
 (`targetname`). [`validate_oifits`](@ref) reports these before one repairs.
 """
 function repair_oifits(path::AbstractString, out::AbstractString; targetname::AbstractString = "",
                        overwrite::Bool = false)
     _same_file(path, out) && throw(ArgumentError("the repaired copy cannot replace $(path)"))
-    _is_zip(path) && throw(ArgumentError("$(path) is a ZIP archive, not a FITS file; unzip it first"))
     if isempty(targetname)
         names = list_oifits_targets(path)
         length(names) > 1 && throw(ArgumentError("$(path) holds $(length(names)) targets; " *

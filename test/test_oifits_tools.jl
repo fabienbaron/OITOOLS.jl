@@ -37,7 +37,8 @@ import AstroFITS
         r = validate_oifits(joinpath(data, "AlphaCenA.oifits"))
         @test any(x -> occursin("not in OI_ARRAY", x.message), sev(r, :warning))
         r = validate_oifits(joinpath(data, "polaris.oifits"))
-        @test any(x -> occursin("revision", x.message), sev(r, :error))
+        @test any(x -> occursin("read as revision 1", x.message), sev(r, :warning))
+        @test isempty(sev(r, :error))
         @test any(x -> occursin("ZIP", x.message), validate_oifits(joinpath(dir, "zipped.fits")))
         # OI_VIS tables that disagree on PHITYP
         p = joinpath(dir, "phityp.oifits")
@@ -49,7 +50,8 @@ import AstroFITS
         oleo = joinpath(homedir(), "SOFTWARE", "PMOIRED_examples", "DATA", "o_Leo")
         if isdir(oleo)
             r = validate_oifits(first(filter(endswith(".fits"), readdir(oleo; join = true))))
-            @test count(x -> occursin("FLUX column", x.message), sev(r, :error)) == 2
+            @test count(x -> occursin("FLUX read as FLUXDATA", x.message), sev(r, :warning)) == 2
+            @test isempty(sev(r, :error))
             @test any(x -> startswith(x.table, "TELLURICS"), sev(r, :info))
         end
     end
