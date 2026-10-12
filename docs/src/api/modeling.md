@@ -160,6 +160,7 @@ dict_to_model
 parse_model
 model_to_vis
 eval_model
+model_flux
 eval_model_grad
 eval_model_grad_ad
 eval_model_jac!

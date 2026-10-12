@@ -1,7 +1,8 @@
 # Graphical interface
 
-One window with four perspectives over a single session, so a dataset moves from planning to
-exploration to fitting to imaging without being exported and read back.
+One window with five perspectives over a single session — Exploring, Observing, Modeling,
+Imaging and Tools — so a dataset moves from planning to exploration to fitting to imaging without
+being exported and read back.
 
 ```julia
 using OITOOLS
@@ -46,6 +47,65 @@ julia --project=bin bin/oitoolsgui.jl [file.oifits]
 
 The console at the bottom echoes the equivalent OITOOLS call for every action, so anything below
 can be read off the window and pasted into a script.
+
+## Choosing observables
+
+Two levels, for two questions.
+
+**What the dataset holds** — Exploring › Filter › **Tables** › *observables*: V², T3amp, T3φ,
+VISamp, VISφ, flux. A box the data hold nothing of is disabled, and says so when hovered.
+Applying the filter makes a new dataset without the unticked observables, which every other
+perspective, an export and the script then see.
+
+A T3 amplitude and its closure phase are one point, as are a VIS amplitude and its phase.
+Unticking one half keeps the points for the other, with the unticked half "not measured": it is
+not counted, not fitted, not drawn, and is written as NaN on export. Unticking both halves leaves
+the table out when the file is read. The script line is
+`filter_data(d, set_data_filter(d; …); drop = [:t3amp])`.
+
+**What a run uses** — the Observables boxes of Modeling (v2, t3amp, t3phi, visamp, visφ, diffvis,
+flux) and of Imaging (v2, t3amp, t3phi, diffvis). They choose among what the dataset holds, for one
+fit or one reconstruction, and leave the dataset as it is: fitting V² and closure phases only is
+a tick, not a new dataset. The header χ²ᵣ is over the ticked observables, as the fit is.
+
+A box is enabled when the dataset holds that observable, so a dataset filtered without T3amp
+shows Modeling's and Imaging's t3amp boxes disabled.
+
+## Tools
+
+Operations on files and datasets that belong to none of the other perspectives.
+
+**Files** — any FITS file, chosen with **…** or taken from the current dataset (**Use the current
+dataset's file**). A file inside a ZIP archive is read through the archive.
+
+- **Headers**: every HDU, the ones OITOOLS does not read included (GRAVITY's `TELLURICS`, images,
+  cubes); selecting one shows its columns (format, unit, dimensions) and every header card in
+  order. [`oifits_headers`](@ref).
+- **Validate**: errors (the file cannot be read, or breaks the standard where nothing can be read
+  around), warnings (what was read around, references to stations or targets that are not
+  there, values with unusable errors, OI_VIS tables disagreeing on AMPTYP / PHITYP) and notes
+  (flagged fractions, HDUs and targets a repaired copy does not keep).
+  [`validate_oifits`](@ref).
+- **Repaired copy…**: the file written again as OIFITS v2 with each instrument under its own
+  name, one target at a time (a **Target** box appears for a file with several).
+  [`repair_oifits`](@ref).
+
+**Current dataset** — both operations read the selected dataset's file again with one more
+`readoifits` keyword, so each result is an ordinary dataset: it appears in the Dataset box, the
+Filter works on it, and the exported script rebuilds it. A filtered dataset is refused; work on
+the dataset it came from and filter the result.
+
+- **Average channels**: every *N* channels become one (`binning = N`). *block* takes 1/σ²-weighted
+  means, circular means for phases, errors multiplied by √c for a correlation *c* between adjacent
+  channels, and reports a scatter check (χ²/dof about a straight line in λ within each group);
+  *pmoired* reproduces PMOIRED's `binning`. Averaging makes fewer channels; grouping
+  (Imaging › Setup › *wavelengths*) keeps every channel and assigns them to bins.
+- **Split**: by time (a new epoch after a gap longer than the given days, or fixed windows of the
+  given days), by instrument (`insname`) or by target (`targetname`). **Preview** lists the parts
+  with their point counts; **also write each part to** a folder writes
+  `<file>_<part>.oifits` for each, never over the source or an existing file.
+
+**Export the current dataset as OIFITS…** is Exploring's Export.
 
 ## Building a model
 

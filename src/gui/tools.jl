@@ -1,6 +1,6 @@
 # The Tools perspective: operations on files and datasets that are none of the other four —
-# the header inspector, the validator and its repaired copy, channel averaging, and the splits
-# (PLAN_Tools.md). A split or an average is a RE-READ of the dataset's file with one more
+# the header inspector, the validator and its repaired copy, channel averaging, and the splits.
+# A split or an average is a RE-READ of the dataset's file with one more
 # `readoifits` keyword (`targetname`, `insname`, `temporalbin`, `binning`), so each part is an
 # ordinary dataset: the Filter section works on it, and the exported script replays it.
 

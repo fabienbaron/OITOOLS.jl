@@ -2,7 +2,7 @@
 # (`readoifits`, `list_oifits_targets`, `write_oifits`' template, the validator, the GUI).
 #
 # OIFITS.jl reads a file whole and stops at the first table it cannot read. Files in the wild
-# break the standard in ways that leave most of their data readable (PLAN_C14.md): a table
+# break the standard in ways that leave most of their data readable: a table
 # declaring a revision whose columns it lacks, or a revision that does not exist; GRAVITY's
 # OI_FLUX naming its data `FLUX`; an OI_VIS with amplitudes only; rows whose TARGET_ID is not in
 # OI_TARGET; a FITS file inside a ZIP archive. So the file is read here table by table, through

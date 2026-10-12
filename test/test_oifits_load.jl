@@ -1,4 +1,4 @@
-# load_oifits on files that break the standard (PLAN_C14.md): each is read table by table, the
+# load_oifits on files that break the standard: each is read table by table, the
 # failing table only worked around, and every workaround said. The shipped examples are one
 # GRAVITY file of PMOIRED's o Leo (OI_ARRAY without FOV, OI_FLUX with FLUX) and one of HD 210763
 # (a ZIP archive; revisions 5 and 3; OI_VIS without VISPHI; TARGET_IDs not in OI_TARGET).

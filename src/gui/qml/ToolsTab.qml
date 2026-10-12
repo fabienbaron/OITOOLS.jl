@@ -1,5 +1,5 @@
 // OITOOLS — the Tools perspective: operations on files and datasets that are none of the other
-// four (PLAN_Tools.md).
+// four.
 //
 // Files: the header inspector and the validator work on any FITS file, chosen here or taken
 // from the current dataset, and the validator's "repaired copy" writes a new file. Current

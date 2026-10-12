@@ -1,5 +1,5 @@
-# The Tools tab's operations on OIFITS files and datasets: the header inspector (T7), the
-# validator and its repaired copy (T6), and the splits (T1). See PLAN_Tools.md.
+# The Tools tab's operations on OIFITS files and datasets: the header inspector, the validator
+# and its repaired copy, and the splits.
 
 """
     oifits_headers(path) -> Vector{NamedTuple}
