@@ -1,6 +1,5 @@
 using NFFT
 using DelimitedFiles
-using FITSIO
 using Random
 
 import TOML

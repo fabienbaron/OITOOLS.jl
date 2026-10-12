@@ -313,7 +313,7 @@
         cube = rand(8, 8, length(lams), 1) .+ 0.1
         path = joinpath(mktempdir(), "cube.fits")
         writefits(cube, path; pixsize = 0.5, wavelengths = lams)
-        h = OITOOLS.FITSIO.read_header(OITOOLS.FITSIO.FITS(path)[1])
+        h = OITOOLS._fits_header(path)[1]
         @test h["NAXIS3"] == length(lams)
         @test h["CTYPE3"] == "WAVE"
         @test h["CUNIT3"] == "m"
@@ -325,6 +325,6 @@
         # than none.
         grey = joinpath(mktempdir(), "grey.fits")
         writefits(rand(8, 8), grey; pixsize = 0.5)
-        @test !haskey(OITOOLS.FITSIO.read_header(OITOOLS.FITSIO.FITS(grey)[1]), "CTYPE3")
+        @test !haskey(OITOOLS._fits_header(grey)[1], "CTYPE3")
     end
 end

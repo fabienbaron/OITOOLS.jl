@@ -64,6 +64,9 @@ function __init__()
                      shell_companion_defaults,
                      shell_smearing, shell_set_smearing, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
+                     shell_tools_source, shell_tools_headers, shell_tools_hdu, shell_tools_validate,
+                     shell_tools_targets, shell_tools_repair, shell_tools_bin,
+                     shell_tools_split_preview, shell_tools_split,
                      shell_import_pmoired, shell_import_pmoired_text, shell_export_pmoired,
                      # The in-window file picker: QtQuick.Dialogs leaves its window mapped on
                      # some systems, so the picker is drawn inside our own window and needs
@@ -151,10 +154,10 @@ function shell_initial_folder()
 end
 
 "Tab names, in the order Main.qml lists them."
-const TAB_NAMES = ("exploring", "observing", "modeling", "imaging")
+const TAB_NAMES = ("exploring", "observing", "modeling", "imaging", "tools")
 
 "The bare noun for each tab, accepted as well: nobody types the gerund from memory."
-const TAB_ALIASES = ("explore", "observe", "model", "image")
+const TAB_ALIASES = ("explore", "observe", "model", "image", "tool")
 
 """
 Which perspective the window opens on, from `\$OITOOLSGUI_TAB` (default Explore).

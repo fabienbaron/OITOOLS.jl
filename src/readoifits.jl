@@ -24,7 +24,8 @@
 # OIdata{T}: numeric arrays stored as type T (default Float64).
 # Use T=Float32 for ~50 % memory reduction.
 
-using OIFITS, FITSIO, Statistics, SparseArrays, Crayons
+using OIFITS, Statistics, SparseArrays, Crayons
+import AstroFITS   # qualified: it exports `readfits`/`writefits`, which OITOOLS exports too
 using NearestNeighbors
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,16 @@ end
 # Safely access a named property from an OIFITS table object.
 # Returns nothing if the field is missing, uninitialized, or otherwise errors.
 _safe_field(obj, field::Symbol) = try; getproperty(obj, field); catch; nothing; end
+_safe_string(obj, field::Symbol) = (x = _safe_field(obj, field); x isa AbstractString ? String(x) : "")
+
+# The OITableInfo of an observable table. For OI_VIS, an AMPTYP / PHITYP the table leaves
+# undefined or blank takes the fallback (the file's header value).
+function _tableinfo(db, extname::String, amptyp_fallback::String = "", phityp_fallback::String = "")
+    typ(f, fallback) = (x = _safe_string(db, f); isempty(x) ? fallback : String(_canon_obstype(x)))
+    at = extname == "OI_VIS" ? typ(:amptyp, amptyp_fallback) : ""
+    pt = extname == "OI_VIS" ? typ(:phityp, phityp_fallback) : ""
+    return OITableInfo((extname, _safe_string(db, :insname), _safe_string(db, :arrname), at, pt))
+end
 
 # Expand per-observation corrindx to a flat per-(wave,obs) index vector.
 # Per OIFITSv2 §7.2: index for channel j = CORRINDX + j − 1.
@@ -216,6 +227,11 @@ end
 # ---------------------------------------------------------------------------
 # OIdata{T}: central data container
 # ---------------------------------------------------------------------------
+# One observable table of the file: its extension, the instrument (OI_WAVELENGTH) and array it
+# refers to, and for OI_VIS its AMPTYP / PHITYP (canonical form, "" elsewhere).
+const OITableInfo = @NamedTuple{extname::String, insname::String, arrname::String,
+                                amptyp::String, phityp::String}
+
 """
     OIdata{T<:AbstractFloat}
 
@@ -259,6 +275,13 @@ vectors of length `nobs`; UV coordinates are stored in a `2×nuv` matrix.
 - `visamp_corr`, `visamp_corr_idx`, `visphi_corr`, `visphi_corr_idx`
 - `flux_corr`, `flux_corr_idx`
 - `*_corr_idx[i] == 0` means point `i` has no associated correlation row.
+
+# Source tables
+- `tables` — one entry per observable table read, a `NamedTuple` `(extname, insname, arrname,
+  amptyp, phityp)`: the extension (`"OI_VIS2"`…), its instrument and array names, and for
+  OI_VIS its AMPTYP / PHITYP
+- `vis_tab`, `v2_tab`, `t3_tab`, `flux_tab` — for each point, the index of its table in
+  `tables` (`0` when none is known)
 
 # Other
 - `mean_mjd::Float64` — mean MJD of the bin (always `Float64` regardless of `T`)
@@ -315,6 +338,10 @@ mutable struct OIdata{T<:AbstractFloat}
     amptyp::String                           # "absolute", "differential", "correlated flux", or ""
     phityp::String                           # "absolute", "differential", or ""
     filename::String
+    # The OIFITS table each point was read from: an index into `tables`, 0 when none is known.
+    vis_tab::Vector{Int64};   v2_tab::Vector{Int64}
+    t3_tab::Vector{Int64};    flux_tab::Vector{Int64}
+    tables::Vector{OITableInfo}
 end
 
 """
@@ -627,6 +654,7 @@ function filter_data(data_in::OIdata{T},
         data.vis_sta_index= data.vis_sta_index[:, vis_good]
         !isempty(data.visamp_corr_idx) && (data.visamp_corr_idx = data.visamp_corr_idx[vis_good])
         !isempty(data.visphi_corr_idx) && (data.visphi_corr_idx = data.visphi_corr_idx[vis_good])
+        data.vis_tab      = data.vis_tab[vis_good]
         data.nvisamp      = count(i -> !isnan(data.visamp[i]) && !isnan(data.visamp_err[i]) && data.visamp_err[i] > 0, eachindex(data.visamp))
         data.nvisphi      = count(i -> !isnan(data.visphi[i]) && !isnan(data.visphi_err[i]) && data.visphi_err[i] > 0, eachindex(data.visphi))
         _sanitize_paired_observables!(data.visamp, data.visamp_err, data.visphi, data.visphi_err, "visamp")
@@ -639,6 +667,7 @@ function filter_data(data_in::OIdata{T},
         data.v2_lam      = data.v2_lam[v2_good];      data.v2_dlam     = data.v2_dlam[v2_good]
         data.v2_flag     = data.v2_flag[v2_good];     data.v2_sta_index= data.v2_sta_index[:, v2_good]
         !isempty(data.v2_corr_idx) && (data.v2_corr_idx = data.v2_corr_idx[v2_good])
+        data.v2_tab      = data.v2_tab[v2_good]
         data.nv2         = length(data.v2)
     end
     if data.nt3amp > 0 || data.nt3phi > 0
@@ -653,6 +682,7 @@ function filter_data(data_in::OIdata{T},
         data.t3_sta_index   = data.t3_sta_index[:, t3_good]
         !isempty(data.t3amp_corr_idx) && (data.t3amp_corr_idx = data.t3amp_corr_idx[t3_good])
         !isempty(data.t3phi_corr_idx) && (data.t3phi_corr_idx = data.t3phi_corr_idx[t3_good])
+        data.t3_tab         = data.t3_tab[t3_good]
         data.nt3amp         = count(i -> !isnan(data.t3amp[i]) && !isnan(data.t3amp_err[i]) && data.t3amp_err[i] > 0, eachindex(data.t3amp))
         data.nt3phi         = count(i -> !isnan(data.t3phi[i]) && !isnan(data.t3phi_err[i]) && data.t3phi_err[i] > 0, eachindex(data.t3phi))
         _sanitize_paired_observables!(data.t3amp, data.t3amp_err, data.t3phi, data.t3phi_err, "t3amp")
@@ -664,6 +694,7 @@ function filter_data(data_in::OIdata{T},
         data.flux_dlam       = data.flux_dlam[flux_good];   data.flux_flag     = data.flux_flag[flux_good]
         data.flux_sta_index  = data.flux_sta_index[flux_good]
         !isempty(data.flux_corr_idx) && (data.flux_corr_idx = data.flux_corr_idx[flux_good])
+        data.flux_tab        = data.flux_tab[flux_good]
         data.nflux           = length(data.flux)
     end
     uv_sel = falses(data.nuv)
@@ -779,6 +810,13 @@ function merge_oidata(datas::AbstractVector{<:OIdata{T}}) where T
     end
     out.flux_sta_index = reduce(vcat, [re(m, d.flux_sta_index) for (d, m) in zip(datas, remap)])
     out.sta_name = sta_name; out.tel_name = tel_name; out.sta_index = collect(1:length(sta_name))
+    # every file's tables, in turn; a point's tag moves with its file's offset (0 stays 0)
+    toff = cumsum([0; [length(d.tables) for d in datas[1:end-1]]])
+    out.tables = reduce(vcat, [d.tables for d in datas])
+    for f in (:vis_tab, :v2_tab, :t3_tab, :flux_tab)
+        setfield!(out, f, reduce(vcat, [map(i -> i == 0 ? 0 : i + o, getfield(d, f))
+                                        for (d, o) in zip(datas, toff)]))
+    end
 
     for (c, ci, n) in ((:v2_corr, :v2_corr_idx, :v2), (:t3amp_corr, :t3amp_corr_idx, :t3amp),
                        (:t3phi_corr, :t3phi_corr_idx, :t3phi), (:visamp_corr, :visamp_corr_idx, :visamp),
@@ -850,23 +888,22 @@ _is_obstype(s, want::AbstractString) = _canon_obstype(s) == want
 # ---------------------------------------------------------------------------
 # _read_vis_header_keywords: read AMPTYP / PHITYP from OI_VIS FITS headers.
 # OIFITS.jl may not populate these fields (e.g. when OI_REVN = 1), so we
-# fall back to reading the raw FITS headers with FITSIO.
+# fall back to reading the raw FITS headers.
 # Returns (amptyp, phityp) strings — first non-empty value found wins.
 # ---------------------------------------------------------------------------
 function _read_vis_header_keywords(filename::String)
     amptyp = ""; phityp = ""
     try
-        f = FITS(filename)
-        for i in 1:length(f)
-            hdr = read_header(f[i])
-            get(hdr, "EXTNAME", "") == "OI_VIS" || continue
-            at = get(hdr, "AMPTYP", "")
-            pt = get(hdr, "PHITYP", "")
-            isempty(amptyp) && !isempty(at) && (amptyp = lowercase(strip(at)))
-            isempty(phityp) && !isempty(pt) && (phityp = lowercase(strip(pt)))
-            !isempty(amptyp) && !isempty(phityp) && break
+        AstroFITS.FitsFile(filename) do f
+            for hdu in f
+                something(hdu.extname, "") == "OI_VIS" || continue
+                at = get(String, hdu, "AMPTYP", "")
+                pt = get(String, hdu, "PHITYP", "")
+                isempty(amptyp) && !isempty(at) && (amptyp = lowercase(strip(at)))
+                isempty(phityp) && !isempty(pt) && (phityp = lowercase(strip(pt)))
+                !isempty(amptyp) && !isempty(phityp) && break
+            end
         end
-        close(f)
     catch
     end
     return amptyp, phityp
@@ -910,7 +947,7 @@ function collect_station_info(arraytables, v2tables, t3tables, arraytableref; wa
             corresp = arraytables[iarray].sta_index
             for jj in unique(db.sta_index)
                 if jj ∉ corresp
-                    @warn("V2 table $itable refers to station index $jj, not found in OI_ARRAY=$(db.arrname)")
+                    warn && @warn("V2 table $itable refers to station index $jj, not found in OI_ARRAY=$(db.arrname)")
                     push!(unknown_station_names, "UNKN$jj")
                     push!(unknown_tel_names,     "UNKN$jj")
                     push!(unknown_station_indexes, jj)
@@ -927,7 +964,7 @@ function collect_station_info(arraytables, v2tables, t3tables, arraytableref; wa
             corresp = arraytables[iarray].sta_index
             for jj in unique(db.sta_index)
                 if jj ∉ corresp
-                    @warn("T3 table $itable refers to station index $jj, not found in OI_ARRAY=$(db.arrname)")
+                    warn && @warn("T3 table $itable refers to station index $jj, not found in OI_ARRAY=$(db.arrname)")
                     push!(unknown_station_names, "UNKN$jj")
                     push!(unknown_tel_names,     "UNKN$jj")
                     push!(unknown_station_indexes, jj)
@@ -947,7 +984,7 @@ function collect_station_info(arraytables, v2tables, t3tables, arraytableref; wa
         unknown_station_indexes = unknown_station_indexes[sp]
         unknown_station_names   = unknown_station_names[sp]
         unknown_tel_names       = unknown_tel_names[sp]
-        @warn("Unknown stations: $unknown_station_names with indexes = $unknown_station_indexes")
+        warn && @warn("Unknown stations: $unknown_station_names with indexes = $unknown_station_indexes")
     end
 
     station_names_all   = vec(vcat(station_name...,   unknown_station_names))
@@ -1015,12 +1052,12 @@ function read_flux_tables(fluxtables, targetid_filter,
                         binspec::Union{Nothing,BinSpec}=nothing)
     flux_all = T[]; flux_err_all = T[]; flux_mjd_all = Float64[]
     flux_lam_all = T[]; flux_dlam_all = T[]; flux_flag_all = Bool[]
-    flux_sta_index_all = Int64[]
+    flux_sta_index_all = Int64[]; flux_tab_all = Int64[]
     flux_calibrated = false   # will be set true if any table has CALSTAT="C"
     flux_corr_idx_parts = Vector{Int64}[]
     seen_flux_names = String[]; flux_corr_offsets = Dict{String,Int}()
 
-    for db in fluxtables
+    for (itable, db) in enumerate(fluxtables)
         tid_ok = findall(sum([db.target_id .== id for id in targetid_filter], dims=1)[1] .> 0)
         isempty(tid_ok) && continue
 
@@ -1066,12 +1103,14 @@ function read_flux_tables(fluxtables, targetid_filter,
         append!(flux_mjd_all,      vec(fmjd));   append!(flux_lam_all,      vec(flam))
         append!(flux_dlam_all,     vec(fdlam));  append!(flux_flag_all,     vec(fflag))
         append!(flux_sta_index_all, fsi)
+        append!(flux_tab_all, fill(itable, length(fdata)))
     end
     flux_corr_idx = isempty(seen_flux_names) ? Int64[] : vcat(flux_corr_idx_parts...)
     flux_corr     = _assemble_corr(seen_flux_names, correlt, T)
     return (; flux=flux_all, flux_err=flux_err_all, flux_mjd=flux_mjd_all,
               flux_lam=flux_lam_all, flux_dlam=flux_dlam_all, flux_flag=flux_flag_all,
-              flux_sta_index=flux_sta_index_all, flux_calibrated, flux_corr, flux_corr_idx)
+              flux_sta_index=flux_sta_index_all, flux_calibrated, flux_corr, flux_corr_idx,
+              flux_tab=flux_tab_all)
 end
 
 # ---------------------------------------------------------------------------
@@ -1089,6 +1128,7 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
     vis_uv_all   = Matrix{T}(undef, 0, 2)   # N×2
     vis_baseline_all  = T[]
     vis_sta_index_all = Matrix{Int64}(undef, 2, 0)  # 2×N
+    vis_tab_all = Int64[]
     visamp_corr_idx_parts = Vector{Int64}[]; visphi_corr_idx_parts = Vector{Int64}[]
     seen_va_names = String[]; va_corr_offsets = Dict{String,Int}()
     seen_vp_names = String[]; vp_corr_offsets = Dict{String,Int}()
@@ -1152,6 +1192,7 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
         vis_uv_all = vcat(vis_uv_all, hcat(vu, vv))
         append!(vis_baseline_all, sqrt.(vu.^2 .+ vv.^2))
         vis_sta_index_all = hcat(vis_sta_index_all, reshape(si, 2, div(length(si), 2)))
+        append!(vis_tab_all, fill(itable, length(vamp)))
     end
     visamp_corr_idx = isempty(seen_va_names) ? Int64[] : vcat(visamp_corr_idx_parts...)
     visphi_corr_idx = isempty(seen_vp_names) ? Int64[] : vcat(visphi_corr_idx_parts...)
@@ -1163,7 +1204,7 @@ function read_vis_tables(vistables, targetid_filter, wavtables, wavtableref,
               vis_flag=vis_flag_all, vis_uv=vis_uv_all,
               vis_baseline=vis_baseline_all, vis_sta_index=vis_sta_index_all,
               visamp_corr, visamp_corr_idx, visphi_corr, visphi_corr_idx,
-              amptyp=amptyp_all, phityp=phityp_all)
+              amptyp=amptyp_all, phityp=phityp_all, vis_tab=vis_tab_all)
 end
 
 # ---------------------------------------------------------------------------
@@ -1179,6 +1220,7 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
     v2_uv_all   = Matrix{T}(undef, 0, 2)   # N×2
     v2_baseline_all  = T[]
     v2_sta_index_all = Matrix{Int64}(undef, 2, 0)  # 2×N
+    v2_tab_all = Int64[]
     v2_corr_idx_parts = Vector{Int64}[]
     seen_v2_names = String[]; v2_corr_offsets = Dict{String,Int}()
 
@@ -1219,13 +1261,14 @@ function read_v2_tables(v2tables, targetid_filter, wavtables, wavtableref,
         v2_uv_all = vcat(v2_uv_all, hcat(vu, vv))
         append!(v2_baseline_all, sqrt.(vu.^2 .+ vv.^2))
         v2_sta_index_all = hcat(v2_sta_index_all, reshape(si, 2, div(length(si), 2)))
+        append!(v2_tab_all, fill(itable, length(v2d)))
     end
     v2_corr_idx = isempty(seen_v2_names) ? Int64[] : vcat(v2_corr_idx_parts...)
     v2_corr     = _assemble_corr(seen_v2_names, correlt, T)
     return (; v2=v2_all, v2_err=v2_err_all, v2_mjd=v2_mjd_all,
               v2_lam=v2_lam_all, v2_dlam=v2_dlam_all, v2_flag=v2_flag_all,
               v2_uv=v2_uv_all, v2_baseline=v2_baseline_all, v2_sta_index=v2_sta_index_all,
-              v2_corr, v2_corr_idx)
+              v2_corr, v2_corr_idx, v2_tab=v2_tab_all)
 end
 
 # ---------------------------------------------------------------------------
@@ -1247,6 +1290,7 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
     t3_baseline_all    = T[]
     t3_maxbaseline_all = T[]
     t3_sta_index_all   = Matrix{Int64}(undef, 3, 0)  # 3×N
+    t3_tab_all = Int64[]
     t3amp_corr_idx_parts = Vector{Int64}[]; t3phi_corr_idx_parts = Vector{Int64}[]
     seen_ta_names = String[]; ta_corr_offsets = Dict{String,Int}()
     seen_tp_names = String[]; tp_corr_offsets = Dict{String,Int}()
@@ -1307,6 +1351,7 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
         append!(t3_baseline_all,    (b1 .* b2 .* b3) .^ (one(T)/3))
         append!(t3_maxbaseline_all, max.(b1, b2, b3))
         t3_sta_index_all = hcat(t3_sta_index_all, reshape(si, 3, div(length(si), 3)))
+        append!(t3_tab_all, fill(itable, length(t3a)))
     end
     t3amp_corr_idx = isempty(seen_ta_names) ? Int64[] : vcat(t3amp_corr_idx_parts...)
     t3phi_corr_idx = isempty(seen_tp_names) ? Int64[] : vcat(t3phi_corr_idx_parts...)
@@ -1321,7 +1366,8 @@ function read_t3_tables(t3tables, targetid_filter, wavtables, wavtableref,
               t3_u3=t3_u3_all, t3_v3=t3_v3_all,
               t3_baseline=t3_baseline_all, t3_maxbaseline=t3_maxbaseline_all,
               t3_sta_index=t3_sta_index_all,
-              t3amp_corr, t3amp_corr_idx, t3phi_corr, t3phi_corr_idx)
+              t3amp_corr, t3amp_corr_idx, t3phi_corr, t3phi_corr_idx,
+              t3_tab=t3_tab_all)
 end
 
 # ===========================================================================
@@ -1373,6 +1419,9 @@ mutable struct BinData{T<:AbstractFloat}
     flux_corr::SparseMatrixCSC{T,Int64};     flux_corr_idx::Vector{Int64}
     # OI_VIS metadata
     amptyp::String;                          phityp::String
+    # Source table of each point (index into the dataset's `tables`)
+    vis_tab::Vector{Int64};   v2_tab::Vector{Int64}
+    t3_tab::Vector{Int64};    flux_tab::Vector{Int64}
 end
 
 # ---------------------------------------------------------------------------
@@ -1398,13 +1447,14 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         indx_vis   = collect(1:length(visamp))
         visamp_corr_idx = isempty(raw_vis.visamp_corr_idx) ? Int64[] : raw_vis.visamp_corr_idx[bin_vis]
         visphi_corr_idx = isempty(raw_vis.visphi_corr_idx) ? Int64[] : raw_vis.visphi_corr_idx[bin_vis]
+        vis_tab    = raw_vis.vis_tab[bin_vis]
     else
         visamp = T[]; visamp_err = T[]; visphi = T[]; visphi_err = T[]
         vis_mjd = Float64[]; vis_lam = T[]; vis_dlam = T[]
         vis_flag = Bool[]; vis_baseline = T[]; vis_uv = Matrix{T}(undef, 2, 0)
         vis_sta_index = Matrix{Int64}(undef, 2, 0)
         nvisamp = 0; nvisphi = 0; indx_vis = Int64[]
-        visamp_corr_idx = Int64[]; visphi_corr_idx = Int64[]
+        visamp_corr_idx = Int64[]; visphi_corr_idx = Int64[]; vis_tab = Int64[]
     end
     visamp_corr = raw_vis.visamp_corr;  visphi_corr = raw_vis.visphi_corr
 
@@ -1419,12 +1469,13 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         nv2     = length(v2)
         indx_v2 = collect(length(visamp) .+ (1:nv2))
         v2_corr_idx = isempty(raw_v2.v2_corr_idx) ? Int64[] : raw_v2.v2_corr_idx[bin_v2]
+        v2_tab  = raw_v2.v2_tab[bin_v2]
     else
         v2 = T[]; v2_err = T[]; v2_mjd = Float64[]; v2_lam = T[]; v2_dlam = T[]
         v2_flag = Bool[]; v2_baseline = T[]; v2_uv = Matrix{T}(undef, 2, 0)
         v2_sta_index = Matrix{Int64}(undef, 2, 0)
         nv2 = 0; indx_v2 = Int64[]
-        v2_corr_idx = Int64[]
+        v2_corr_idx = Int64[]; v2_tab = Int64[]
     end
     v2_corr = raw_v2.v2_corr
 
@@ -1446,12 +1497,13 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         indx_t3_3 = collect(off .+ (2nt3+1:3nt3))
         t3amp_corr_idx = isempty(raw_t3.t3amp_corr_idx) ? Int64[] : raw_t3.t3amp_corr_idx[bin_t3]
         t3phi_corr_idx = isempty(raw_t3.t3phi_corr_idx) ? Int64[] : raw_t3.t3phi_corr_idx[bin_t3]
+        t3_tab = raw_t3.t3_tab[bin_t3]
     else
         t3amp = T[]; t3amp_err = T[]; t3phi = T[]; t3phi_err = T[]
         t3_mjd = Float64[]; t3_lam = T[]; t3_dlam = T[]; t3_flag = Bool[]
         t3_baseline = T[]; t3_maxbaseline = T[]; t3_sta_index = Matrix{Int64}(undef, 3, 0)
         nt3amp = 0; nt3phi = 0; indx_t3_1 = Int64[]; indx_t3_2 = Int64[]; indx_t3_3 = Int64[]
-        t3amp_corr_idx = Int64[]; t3phi_corr_idx = Int64[]
+        t3amp_corr_idx = Int64[]; t3phi_corr_idx = Int64[]; t3_tab = Int64[]
     end
     t3amp_corr = raw_t3.t3amp_corr;  t3phi_corr = raw_t3.t3phi_corr
 
@@ -1464,11 +1516,12 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         nflux     = length(flux)
         flux_calibrated = raw_flux.flux_calibrated
         flux_corr_idx = isempty(raw_flux.flux_corr_idx) ? Int64[] : raw_flux.flux_corr_idx[bin_flux]
+        flux_tab  = raw_flux.flux_tab[bin_flux]
     else
         flux = T[]; flux_err = T[]; flux_mjd = Float64[]; flux_lam = T[]
         flux_dlam = T[]; flux_flag = Bool[]; flux_sta_index = Int64[]; nflux = 0
         flux_calibrated = false
-        flux_corr_idx = Int64[]
+        flux_corr_idx = Int64[]; flux_tab = Int64[]
     end
     flux_corr = raw_flux.flux_corr
 
@@ -1517,6 +1570,7 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
         visphi_corr, visphi_corr_idx,
         flux_corr,   flux_corr_idx,
         raw_vis.amptyp, raw_vis.phityp,
+        vis_tab, v2_tab, t3_tab, flux_tab,
     )
 end
 
@@ -1586,6 +1640,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.vis_sta_index     = bd.vis_sta_index[:, vis_good]
         !isempty(bd.visamp_corr_idx) && (bd.visamp_corr_idx = bd.visamp_corr_idx[vis_good])
         !isempty(bd.visphi_corr_idx) && (bd.visphi_corr_idx = bd.visphi_corr_idx[vis_good])
+        bd.vis_tab           = bd.vis_tab[vis_good]
     end
 
     if use_v2
@@ -1601,6 +1656,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.v2_dlam           = bd.v2_dlam[v2_good];   bd.v2_flag       = bd.v2_flag[v2_good]
         bd.v2_sta_index      = bd.v2_sta_index[:, v2_good]
         !isempty(bd.v2_corr_idx) && (bd.v2_corr_idx = bd.v2_corr_idx[v2_good])
+        bd.v2_tab            = bd.v2_tab[v2_good]
     end
 
     if use_t3
@@ -1623,6 +1679,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.t3_sta_index      = bd.t3_sta_index[:, t3_good]
         !isempty(bd.t3amp_corr_idx) && (bd.t3amp_corr_idx = bd.t3amp_corr_idx[t3_good])
         !isempty(bd.t3phi_corr_idx) && (bd.t3phi_corr_idx = bd.t3phi_corr_idx[t3_good])
+        bd.t3_tab            = bd.t3_tab[t3_good]
     end
 
     # Prune UV plane: keep only points still referenced by surviving observables
@@ -1675,7 +1732,8 @@ end
 # ---------------------------------------------------------------------------
 # make_oidata: package a BinData + shared station info into OIdata{T}
 # ---------------------------------------------------------------------------
-function make_oidata(bd::BinData{T}, station_info, filename::String) where T
+function make_oidata(bd::BinData{T}, station_info, filename::String,
+                     tables::Vector{OITableInfo}) where T
     return OIdata{T}(
         bd.visamp, bd.visamp_err, bd.visphi, bd.visphi_err,
         bd.vis_baseline, bd.vis_mjd, bd.vis_lam, bd.vis_dlam, bd.vis_flag,
@@ -1698,7 +1756,8 @@ function make_oidata(bd::BinData{T}, station_info, filename::String) where T
         bd.visphi_corr, bd.visphi_corr_idx,
         bd.flux_corr,   bd.flux_corr_idx,
         bd.amptyp, bd.phityp,
-        filename
+        filename,
+        bd.vis_tab, bd.v2_tab, bd.t3_tab, bd.flux_tab, tables
     )
 end
 
@@ -1898,21 +1957,22 @@ function readoifits(oifitsfile;
     _ec = spzeros(T, 0, 0)   # empty corr matrix sentinel
     raw_flux = use_flux ? read_flux_tables(fluxtables, targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; flux=T[], flux_err=T[], flux_mjd=T[], flux_lam=T[], flux_dlam=T[], flux_flag=Bool[], flux_sta_index=Int64[],
-                  flux_calibrated=false, flux_corr=_ec, flux_corr_idx=Int64[])
+                  flux_calibrated=false, flux_corr=_ec, flux_corr_idx=Int64[], flux_tab=Int64[])
     raw_vis  = use_vis  ? read_vis_tables(vistables,  targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; visamp=T[], visamp_err=T[], visphi=T[], visphi_err=T[], vis_mjd=T[], vis_lam=T[], vis_dlam=T[], vis_flag=Bool[],
                   vis_uv=Matrix{T}(undef,0,2), vis_baseline=T[], vis_sta_index=Matrix{Int64}(undef,2,0),
                   visamp_corr=_ec, visamp_corr_idx=Int64[], visphi_corr=_ec, visphi_corr_idx=Int64[],
-                  amptyp="", phityp="")
+                  amptyp="", phityp="", vis_tab=Int64[])
     raw_v2   = use_v2   ? read_v2_tables(v2tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; v2=T[], v2_err=T[], v2_mjd=T[], v2_lam=T[], v2_dlam=T[], v2_flag=Bool[],
                   v2_uv=Matrix{T}(undef,0,2), v2_baseline=T[], v2_sta_index=Matrix{Int64}(undef,2,0),
-                  v2_corr=_ec, v2_corr_idx=Int64[])
+                  v2_corr=_ec, v2_corr_idx=Int64[], v2_tab=Int64[])
     raw_t3   = use_t3   ? read_t3_tables(t3tables,   targetid_filter, wavtables, wavtableref, arraytableref, ci, so; correlt, T, binspec) :
                (; t3amp=T[], t3amp_err=T[], t3phi=T[], t3phi_err=T[], t3_mjd=T[], t3_lam=T[], t3_dlam=T[], t3_flag=Bool[],
                   t3_u1=T[], t3_v1=T[], t3_u2=T[], t3_v2=T[], t3_u3=T[], t3_v3=T[], t3_baseline=T[], t3_maxbaseline=T[],
                   t3_sta_index=Matrix{Int64}(undef,3,0),
-                  t3amp_corr=_ec, t3amp_corr_idx=Int64[], t3phi_corr=_ec, t3phi_corr_idx=Int64[])
+                  t3amp_corr=_ec, t3amp_corr_idx=Int64[], t3phi_corr=_ec, t3phi_corr_idx=Int64[],
+                  t3_tab=Int64[])
 
     if binspec !== nothing
         sc = binning_scatter(binspec)
@@ -1925,7 +1985,7 @@ function readoifits(oifitsfile;
         end
     end
 
-    # ---- AMPTYP / PHITYP fallback via FITSIO headers -------------------------
+    # ---- AMPTYP / PHITYP fallback via the raw FITS headers --------------------
     if use_vis && isempty(raw_vis.amptyp) && isempty(raw_vis.phityp)
         _at, _pt = _read_vis_header_keywords(oifitsfile)
         raw_vis = merge(raw_vis, (; amptyp=_at, phityp=_pt))
@@ -1933,6 +1993,23 @@ function readoifits(oifitsfile;
     if use_vis && verbose && (!isempty(raw_vis.amptyp) || !isempty(raw_vis.phityp))
         printstyled("OI_VIS: AMPTYP=$(raw_vis.amptyp) PHITYP=$(raw_vis.phityp)\n", color=:cyan)
     end
+
+    # ---- The tables the points come from ------------------------------------
+    # One entry per table read, in the order flux, vis, v2, t3; each reader numbered its points'
+    # tables from 1, so they are shifted by the tables listed before them. An OI_VIS table whose
+    # AMPTYP / PHITYP OIFITS.jl left undefined takes the header's, as `raw_vis` did above.
+    tables = OITableInfo[]
+    use_flux && append!(tables, [_tableinfo(db, "OI_FLUX") for db in fluxtables])
+    nflux_t = length(tables)
+    use_vis  && append!(tables, [_tableinfo(db, "OI_VIS", raw_vis.amptyp, raw_vis.phityp) for db in vistables])
+    nvis_t = length(tables)
+    use_v2   && append!(tables, [_tableinfo(db, "OI_VIS2") for db in v2tables])
+    nv2_t = length(tables)
+    use_t3   && append!(tables, [_tableinfo(db, "OI_T3") for db in t3tables])
+    # in place: rebinding raw_v2 / raw_t3 would box them, as closures below capture them
+    raw_vis.vis_tab .+= nflux_t
+    raw_v2.v2_tab   .+= nvis_t
+    raw_t3.t3_tab   .+= nv2_t
 
     # ---- Determine spectral / temporal bins ---------------------------------
     splitting = splitting || polychromatic || temporalbin != [[]] || spectralbin != [[]]
@@ -2018,7 +2095,7 @@ function readoifits(oifitsfile;
 
         redundance_remove && remove_redundant_uv!(bd; uvtol)
 
-        OIdataArr[iwavbin, itimebin] = make_oidata(bd, station_info, oifitsfile)
+        OIdataArr[iwavbin, itimebin] = make_oidata(bd, station_info, oifitsfile, tables)
     end
 
     # ---- Post-treatment: cross-bin differential visibility filter -----------
@@ -2048,6 +2125,7 @@ function readoifits(oifitsfile;
                 d.vis_flag      = d.vis_flag[indx];      d.indx_vis      = d.indx_vis[indx]
                 !isempty(d.visamp_corr_idx) && (d.visamp_corr_idx = d.visamp_corr_idx[indx])
                 !isempty(d.visphi_corr_idx) && (d.visphi_corr_idx = d.visphi_corr_idx[indx])
+                d.vis_tab       = d.vis_tab[indx]
             end
         end
     end
@@ -2093,8 +2171,29 @@ end
 # FITS file utilities
 # ===========================================================================
 
+# The keywords of a FITS HDU as plain values, and their comments, both keyed by name; COMMENT and
+# HISTORY cards are left out. `_fits_header(path, ext)` reads HDU `ext` (1, the primary) of a file.
+function _header_values(hdu)
+    vals = Dict{String,Any}(); coms = Dict{String,String}()
+    for card in AstroFITS.FitsHeader(hdu)
+        card.name in ("COMMENT", "HISTORY", "", "END") && continue
+        vals[card.name] = card.value()
+        coms[card.name] = card.comment
+    end
+    return vals, coms
+end
+
+_fits_header(path::AbstractString, ext::Integer = 1) =
+    AstroFITS.FitsFile(f -> _header_values(f[ext]), String(path))
+
+# Keywords that describe the data's layout, never copied from one header to another: the writer
+# sets them from the array it writes.
+const _FITS_STRUCTURAL = ("SIMPLE", "BITPIX", "EXTEND", "PCOUNT", "GCOUNT", "BSCALE", "BZERO",
+                          "BLANK", "END")
+_fits_structural(name) = name in _FITS_STRUCTURAL || startswith(name, "NAXIS")
+
 function readfits(fitsfile; normalize=false, vectorize=false)
-    x = read((FITS(fitsfile))[1])
+    x = AstroFITS.readfits(String(fitsfile))
     normalize  && (x ./= sum(x))
     vectorize  && (x = vec(x))
     return x
@@ -2118,21 +2217,14 @@ FITS default, but only when that lands in a plausible range (1e-4 to 1e4 mas) �
 `nothing`, because a wrong pixel size is worse than an absent one.
 """
 function fits_pixsize(fitsfile)
-    hdr = try
-        read_header(FITS(String(fitsfile))[1])
+    hdr, com = try
+        _fits_header(fitsfile)
     catch
         return nothing
     end
-    get_num(k) = try
-        haskey(hdr, k) && hdr[k] isa Real && isfinite(hdr[k]) ? abs(Float64(hdr[k])) : nothing
-    catch; nothing end
-    get_str(k) = try
-        haskey(hdr, k) && hdr[k] isa AbstractString ? lowercase(strip(hdr[k])) : ""
-    catch; "" end
-
-    get_comment(k) = try
-        haskey(hdr, k) ? lowercase(FITSIO.get_comment(hdr, k)) : ""
-    catch; "" end
+    get_num(k) = (v = get(hdr, k, nothing); v isa Real && isfinite(v) ? abs(Float64(v)) : nothing)
+    get_str(k) = (v = get(hdr, k, nothing); v isa AbstractString ? lowercase(strip(v)) : "")
+    get_comment(k) = lowercase(get(com, k, ""))
 
     v, unit = nothing, ""
     for (kv, ku) in (("CDELT2", "CUNIT2"), ("CDELT1", "CUNIT1"),
@@ -2198,22 +2290,25 @@ and `read_model_image` recognises the old pair and warns.
 """
 function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
                    bandwidths = Float64[], mjds = Float64[])
-    f = FITS(fitsfile, "w")
-    try
+    AstroFITS.FitsFile(String(fitsfile), "w!") do f
         if pixsize == -1
-            write(f, data)
+            write(f, Pair{String,Any}[], data)
             return nothing
         end
         nx, ny = size(data, 1), size(data, 2)
         deg = Float64(pixsize) / 3.6e6
-        header = FITSHeader(
-            ["CTYPE1", "CUNIT1", "CDELT1", "CRPIX1", "CRVAL1",
-             "CTYPE2", "CUNIT2", "CDELT2", "CRPIX2", "CRVAL2", "PIXSIZE"],
-            Any["RA---SIN", "deg", deg, Float64(nx ÷ 2 + 1), 0.0,
-                "DEC--SIN", "deg", deg, Float64(ny ÷ 2 + 1), 0.0, Float64(pixsize)],
-            ["axis 1 increases EAST", "", "positive: RA increases with pixel index",
-             "phase centre: NFFT zero offset, pixel nx/2+1", "offset from the phase centre",
-             "axis 2 increases NORTH", "", "", "phase centre", "", "pixel size in mas"])
+        header = Pair{String,Any}[
+            "CTYPE1" => ("RA---SIN", "axis 1 increases EAST"),
+            "CUNIT1" => "deg",
+            "CDELT1" => (deg, "positive: RA increases with pixel index"),
+            "CRPIX1" => (Float64(nx ÷ 2 + 1), "phase centre: NFFT zero offset, pixel nx/2+1"),
+            "CRVAL1" => (0.0, "offset from the phase centre"),
+            "CTYPE2" => ("DEC--SIN", "axis 2 increases NORTH"),
+            "CUNIT2" => "deg",
+            "CDELT2" => deg,
+            "CRPIX2" => (Float64(ny ÷ 2 + 1), "phase centre"),
+            "CRVAL2" => 0.0,
+            "PIXSIZE" => (Float64(pixsize), "pixel size in mas")]
 
         # A linear axis only when it IS linear: a CDELT that is merely the mean step puts
         # every plane but the first at the wrong value, and the table says it exactly anyway.
@@ -2221,14 +2316,12 @@ function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
                     (s = (v[end] - v[1]) / (length(v) - 1);
                      s != 0 && maximum(abs.(diff(v) .- s)) <= 0.01 * abs(s))
         function axis!(n, ctype, cunit, v, irr)
-            header["CTYPE$n"] = ctype; header["CUNIT$n"] = cunit
+            push!(header, "CTYPE$n" => ctype, "CUNIT$n" => cunit)
             if linear(v)
-                header["CRPIX$n"] = 1.0
-                header["CRVAL$n"] = v[1]
-                header["CDELT$n"] = length(v) > 1 ? (v[end] - v[1]) / (length(v) - 1) : 0.0
+                push!(header, "CRPIX$n" => 1.0, "CRVAL$n" => v[1],
+                      "CDELT$n" => (length(v) > 1 ? (v[end] - v[1]) / (length(v) - 1) : 0.0))
             else
-                header[irr] = true
-                set_comment!(header, irr, "irregular: the table is the authority")
+                push!(header, irr => (true, "irregular: the table is the authority"))
             end
         end
 
@@ -2239,44 +2332,45 @@ function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
         hasmjd = ndims(data) == 4 && length(mjd) == size(data, 4) && !isempty(mjd)
         if hasmjd
             axis!(4, "TIME", "d", mjd, "TIMEIRR")
-            header["TIMESYS"] = "UTC"; header["MJDREF"] = 0.0
-            set_comment!(header, "MJDREF", "TIME axis values are MJD")
+            push!(header, "TIMESYS" => "UTC", "MJDREF" => (0.0, "TIME axis values are MJD"))
         end
 
         planes = reshape(data, nx, ny, :)
         if all(abs(sum(@view planes[:, :, k]) - 1) <= 1e-4 for k in 1:size(planes, 3))
-            header["NORMALIZ"] = "PLANE"
-            set_comment!(header, "NORMALIZ", "each plane sums to 1")
+            push!(header, "NORMALIZ" => ("PLANE", "each plane sums to 1"))
         end
 
-        write(f, data; header = header)
+        write(f, header, data)
         if haslam
-            cols = Dict{String,Any}("EFF_WAVE" => lam)
-            length(bandwidths) == length(lam) && (cols["EFF_BAND"] = Float64.(bandwidths))
-            write(f, cols; name = "CHANNELS")
+            cols = Pair{String,Any}["EFF_WAVE" => lam]
+            length(bandwidths) == length(lam) && push!(cols, "EFF_BAND" => Float64.(bandwidths))
+            write(f, ["EXTNAME" => "CHANNELS"], cols)
         end
-        hasmjd && write(f, Dict{String,Any}("MJD" => mjd); name = "EPOCHS")
-    finally
-        close(f)
+        hasmjd && write(f, ["EXTNAME" => "EPOCHS"], ["MJD" => mjd])
     end
     return nothing
 end
 
 function updatefits_aspro(fitsfile_in, fitsfile_out, res)
-    f      = FITS(fitsfile_in)
-    data   = read(f[1]);  header = read_header(f[1])
-    header["CDELT1"] = -res/1000.0;  header["CDELT2"] =  res/1000.0
-    header["CRVAL1"] = 0.0;          header["CRVAL2"] = 0.0
-    header["CRPIX1"] = size(data,1)/2; header["CRPIX2"] = size(data,1)/2
-    header["CUNIT1"] = "arcsec";     header["CUNIT2"] = "arcsec"
-    set_comment!(header, "CDELT1", "Arcseconds per Pixel")
-    set_comment!(header, "CDELT2", "Arcseconds per Pixel")
-    set_comment!(header, "CRVAL1", "X-coordinate of reference pixel")
-    set_comment!(header, "CRVAL2", "Y-coordinate of reference pixel")
-    set_comment!(header, "CRPIX1", "reference pixel in X")
-    set_comment!(header, "CRPIX2", "reference pixel in Y")
-    fout = FITS(fitsfile_out, "w"); write(fout, data, header=header)
-    close(f); close(fout)
+    data = AstroFITS.readfits(String(fitsfile_in))
+    cards = AstroFITS.FitsFile(f -> collect(AstroFITS.FitsHeader(f[1])), String(fitsfile_in))
+    new = ["CDELT1" => (-res/1000.0, "Arcseconds per Pixel"),
+           "CDELT2" => (res/1000.0, "Arcseconds per Pixel"),
+           "CRVAL1" => (0.0, "X-coordinate of reference pixel"),
+           "CRVAL2" => (0.0, "Y-coordinate of reference pixel"),
+           "CRPIX1" => (size(data,1)/2, "reference pixel in X"),
+           "CRPIX2" => (size(data,1)/2, "reference pixel in Y"),
+           "CUNIT1" => "arcsec", "CUNIT2" => "arcsec"]
+    replaced = Set(first.(new))
+    header = Pair{String,Any}[]
+    for c in cards
+        (_fits_structural(c.name) || c.name in replaced) && continue
+        push!(header, c.name in ("COMMENT", "HISTORY") ? c.name => c.comment :
+                      c.name => (c.value(), c.comment))
+    end
+    append!(header, new)
+    AstroFITS.FitsFile(f -> write(f, header, data), String(fitsfile_out), "w!")
+    return nothing
 end
 
 # ===========================================================================

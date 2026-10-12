@@ -956,6 +956,7 @@ ApplicationWindow {
             TabButton { text: "Observing" }
             TabButton { text: "Modeling" }
             TabButton { text: "Imaging" }
+            TabButton { text: "Tools" }
         }
 
         StackLayout {
@@ -1015,6 +1016,19 @@ ApplicationWindow {
                 fontScale:  win.fontScale
                 baseFontPt: win.baseFontPt
                 onConsoleChanged: win.refreshConsole()
+            }
+
+            // ── Tools ────────────────────────────────────────────────────────
+            // Splits and averages make new datasets, which the window lists and selects.
+            ToolsTab {
+                id: toolsTab
+                uiScale:    win.uiScale
+                fontScale:  win.fontScale
+                baseFontPt: win.baseFontPt
+                onConsoleChanged: win.refreshConsole()
+                onStatusReported: function (text) { win.status = text }
+                onDatasetsChanged: win.selectCurrentDataset()
+                onExportRequested: win.exportData()
             }
         }
 

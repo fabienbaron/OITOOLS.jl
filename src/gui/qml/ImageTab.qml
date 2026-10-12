@@ -1362,6 +1362,9 @@ Item {
                                 onActivated: root.applyBinning(
                                     currentIndex === 1 ? "channels" :
                                     currentIndex === 2 ? "groups"   : "single", root.binGroups)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Grouping keeps every channel and gives each group of channels its own image. " +
+                                              "To average channels into fewer, use Tools › Average channels."
                             }
                             RowLayout {
                                 Layout.fillWidth: true

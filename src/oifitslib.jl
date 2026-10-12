@@ -4,7 +4,7 @@
 """
     oifits_fix_tdim(file) -> Int
 
-Remove the redundant `TDIMn` cards that cfitsio writes for one-dimensional
+Remove the redundant `TDIMn` cards that CFITSIO writes for one-dimensional
 columns, and return how many were removed.
 
 Files written through `OIFITS.write` (i.e. by `simulate`,
@@ -20,34 +20,20 @@ The file is modified in place.
 """
 function oifits_fix_tdim(file::AbstractString)
     isfile(file) || error("oifits_fix_tdim: no such file: $file")
-    C = FITSIO.CFITSIO
-    f = C.fits_open_file(String(file), 1)   # 1 = read/write
     ndeleted = 0
-    try
-        for hdu in 1:C.fits_get_num_hdus(f)
-            C.fits_movabs_hdu(f, hdu)
-            tfields = try
-                C.fits_read_keyword(f, "TFIELDS")[1]
-            catch
-                nothing
-            end
-            tfields === nothing && continue
-            for i in 1:parse(Int, strip(tfields))
+    AstroFITS.FitsFile(String(file), "rw") do f
+        for hdu in f
+            hdu isa AstroFITS.FitsTableHDU || continue
+            for i in 1:hdu.ncols
                 key = "TDIM$i"
-                val = try
-                    C.fits_read_keyword(f, key)[1]
-                catch
-                    nothing
-                end
+                val = get(String, hdu, key, "")
                 # a one-dimensional TDIM has no comma, e.g. "(1)" or "(8)"
-                if val !== nothing && !occursin(",", val)
-                    C.fits_delete_key(f, key)
+                if !isempty(val) && !occursin(",", val)
+                    delete!(hdu, key)
                     ndeleted += 1
                 end
             end
         end
-    finally
-        C.fits_close_file(f)
     end
     return ndeleted
 end

@@ -35,20 +35,29 @@ mutable struct DatasetEntry
     # Every file the dataset was read from, when it is several read as one (`path` is then the
     # first). Empty for a single file.
     files       :: Vector{String}
+    # What a re-read made of the file (the Tools tab's splits and channel averaging):
+    # "MIRCX", "2019-05-02", "binned ×10"…; empty for a file as read.
+    label       :: String
 end
 DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from) =
     DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, "", String[])
 DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec) =
     DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec,
                  String[])
+DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec, files) =
+    DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec,
+                 files, "")
 
 """What `readoifits` reads for this entry: its file, or its list of files."""
 sources(e::DatasetEntry) = isempty(e.files) ? e.path : e.files
 
-"""The entry's file as a label: its name, or the first name and how many more."""
-source_label(e::DatasetEntry) =
-    length(e.files) > 1 ? string(basename(e.path), " + ", length(e.files) - 1, " more") :
-                          basename(e.path)
+"""The entry's file as a label: its name, or the first name and how many more, and what a
+re-read made of it."""
+function source_label(e::DatasetEntry)
+    f = length(e.files) > 1 ? string(basename(e.path), " + ", length(e.files) - 1, " more") :
+                              basename(e.path)
+    return isempty(e.label) ? f : string(f, " · ", e.label)
+end
 
 """
     ModelEntry

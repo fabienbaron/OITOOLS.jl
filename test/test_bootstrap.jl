@@ -99,6 +99,7 @@ end
     @test d1.v2 != d3.v2                       # and actually random
     @test d1.nv2 == length(d1.v2)              # counts stay consistent
     @test length(d1.indx_v2) == length(d1.v2)
+    @test length(d1.v2_tab) == length(d1.v2) && length(d1.t3_tab) == length(d1.t3phi)
     @test maximum(d1.indx_v2) <= size(d1.uv, 2)
     @test d1.uv == data.uv
     # values are never modified, only selected

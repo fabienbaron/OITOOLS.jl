@@ -1,8 +1,9 @@
 # OITOOLS.jl
 #
 # Dependencies:
-#   emmt/OIFITS.jl (new API: OIDataSet, read(OIDataSet, …), OIFITS.select(ds, OI_VIS2), …)
-#   FITSIO        (for readfits / writefits)
+#   emmt/OIFITS.jl 2 (OIDataSet, read(OIDataSet, …), OIFITS.write), on AstroFITS
+#   AstroFITS      (readfits / writefits, headers; imported qualified — it exports readfits and
+#                   writefits, as OITOOLS does)
 #   All other deps unchanged
 #
 # Float precision:
@@ -22,6 +23,7 @@ include("gui_launcher.jl")       # oitoolsgui(): loads the GUI stack in the requ
 include("oifits_binning.jl")      # averaging spectral channels on reading (binning ≠ grouping)
 include("readoifits.jl")
 include("write_oifits.jl")        # OIdata back to OIFITS v2, read back to the same points
+include("oifits_tools.jl")        # Tools: header inspector, validator / repair, splits
 include("image_component.jl")   # FITS images and cubes as model components (convention shared with ROTIR)
 include("oiplot_specs.jl")   # observable/plot metadata: no toolkit, used by every front-end
 include("plot_data.jl")      # what to draw: groups, colours, labels, click text -- no toolkit
@@ -186,6 +188,7 @@ export readoifits, readoifits_multiepochs, list_oifits_targets, write_oifits, me
 export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_image_plane, model_image_vis
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
+export oifits_headers, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 # ── The Makie plotting API (OITOOLSMakieExt) ─────────────────────────────────

@@ -2404,10 +2404,11 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
             # One failure is worth naming, because it is a property of the FILE rather than of
             # the simulation: this path re-writes the input through OIFITS.jl, and several
             # perfectly readable files cannot be written back by it (a missing CATEGORY column
-            # in OI_TARGET, a missing FOV in OI_ARRAY, a CFITSIO conversion error). Everything
+            # in OI_TARGET, a missing FOV in OI_ARRAY, a CFITSIO error). Everything
             # else — a cube with the wrong number of planes, say — is the caller's to fix and
             # must not be dressed up as the file's fault.
-            hint = (occursin("CFITSIO", why) || occursin("MissingColumn", why)) ?
+            hint = (occursin("CFITSIO", why) || occursin("FitsError", why) ||
+                    occursin("MissingColumn", why)) ?
                    " — $(basename(e.path)) is readable but cannot be written back by OIFITS.jl" : ""
             msg = "! simulating from $(basename(e.path)): " * why * hint
             console!(sh, msg); return msg

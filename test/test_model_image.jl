@@ -2,11 +2,11 @@
 # reader. The reader is what a model component will be built from, so what is asserted here is
 # the CONVENTION — East-first, phase centre at nx÷2+1, planes matched by wavelength and epoch —
 # and not merely that a file comes back as it went in.
-using FITSIO
+import AstroFITS   # qualified: it exports `readfits`/`writefits`, as OITOOLS does
 
 @testset "model images: the FITS convention shared with ROTIR" begin
     d = mktempdir()
-    hdr(path) = FITSIO.read_header(FITS(path)[1])
+    hdr(path) = OITOOLS._fits_header(path)[1]   # the primary header's values, by keyword
     nx = 16; c = nx ÷ 2 + 1
     unit_planes(a) = (b = copy(a); for k in CartesianIndices(size(b)[3:end])
                           b[:, :, k] ./= sum(b[:, :, k]); end; b)
@@ -87,8 +87,9 @@ using FITSIO
         # A third-party image in the usual astronomical layout: CDELT1 < 0, so the array index
         # increases WEST, and the same EAST point sits at c - k. It must come back at c + k.
         wf(name, keys, vals, a; comments = fill("", length(keys))) =
-            (path = joinpath(d, name); f = FITS(path, "w");
-             write(f, a; header = FITSHeader(keys, Any[vals...], comments)); close(f); path)
+            (path = joinpath(d, name);
+             AstroFITS.writefits!(path, [k => (v, c) for (k, v, c) in zip(keys, vals, comments)], a);
+             path)
         # Where a pixel IS, in mas East of the origin: its index from the phase centre, plus
         # the offset the reader carries for a reference pixel off that centre.
         east_of(mi) = (Tuple(argmax(mi.image[:, :, 1, 1]))[1] - c) * mi.pixsize + mi.offset[1]
@@ -105,7 +106,7 @@ using FITSIO
     @testset "a reference pixel elsewhere becomes an offset" begin
         img = unit_planes(rand(nx, nx))
         p = joinpath(d, "crpix.fits"); writefits(img, p; pixsize = 0.5)
-        f = FITS(p, "r+"); write_key(f[1], "CRPIX1", Float64(c + 2)); close(f)
+        AstroFITS.FitsFile(f -> (f[1]["CRPIX1"] = Float64(c + 2)), p, "rw")
         mi = read_model_image(p)
         # The origin is the file's reference pixel, two pixels EAST of the phase centre, so the
         # image content sits two pixels WEST of the origin.
@@ -114,13 +115,12 @@ using FITSIO
 
     @testset "what is refused, and why" begin
         cube3 = rand(nx, nx, 3) .+ 0.5
-        f = FITS(joinpath(d, "nax3.fits"), "w"); write(f, cube3); close(f)
+        AstroFITS.writefits!(joinpath(d, "nax3.fits"), Pair{String,Any}[], cube3)
         err = try read_model_image(joinpath(d, "nax3.fits"); pixsize = 0.3); nothing
               catch e; e end
         @test err isa ArgumentError && occursin("CTYPE3", err.msg)
 
-        f = FITS(joinpath(d, "time3.fits"), "w")
-        write(f, cube3; header = FITSHeader(["CTYPE3"], Any["TIME"], [""])); close(f)
+        AstroFITS.writefits!(joinpath(d, "time3.fits"), ["CTYPE3" => "TIME"], cube3)
         @test size(read_model_image(joinpath(d, "time3.fits"); pixsize = 0.3).image) ==
               (nx, nx, 1, 3)
 

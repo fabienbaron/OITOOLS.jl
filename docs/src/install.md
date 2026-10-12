@@ -149,8 +149,8 @@ using Pkg
 pkg"registry add General"
 pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.add([
-    "AstroTime", "CFITSIO", "Crayons", "Dates", "DelimitedFiles",
-    "FFTW", "FITSIO", "Glob", "LaTeXStrings", "LinearAlgebra",
+    "AstroTime", "AstroFITS", "Crayons", "Dates", "DelimitedFiles",
+    "FFTW", "Glob", "LaTeXStrings", "LinearAlgebra",
     "LsqFit", "Match", "NFFT", "NLopt", "NearestNeighbors",
     "Parameters", "Random", "SparseArrays",
     "SpecialFunctions", "Statistics", "UltraNest",

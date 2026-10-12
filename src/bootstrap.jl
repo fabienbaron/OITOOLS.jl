@@ -401,6 +401,7 @@ function apply_block_counts(data::OIdata, blocks::DataBlocks, counts::Vector{Int
     d.vis_sta_index = _reidx(data.vis_sta_index,   iv)
     d.visamp_corr_idx = _reidx(data.visamp_corr_idx, iv)
     d.visphi_corr_idx = _reidx(data.visphi_corr_idx, iv)
+    d.vis_tab       = _reidx(data.vis_tab,         iv)
 
     # ── OI_VIS2 ──────────────────────────────────────────────────────────────
     d.v2            = _reidx(data.v2,              i2)
@@ -413,6 +414,7 @@ function apply_block_counts(data::OIdata, blocks::DataBlocks, counts::Vector{Int
     d.indx_v2       = _reidx(data.indx_v2,         i2)
     d.v2_sta_index  = _reidx(data.v2_sta_index,    i2)
     d.v2_corr_idx   = _reidx(data.v2_corr_idx,     i2)
+    d.v2_tab        = _reidx(data.v2_tab,          i2)
 
     # ── OI_T3 ────────────────────────────────────────────────────────────────
     d.t3amp                     = _reidx(data.t3amp,                      i3)
@@ -431,6 +433,7 @@ function apply_block_counts(data::OIdata, blocks::DataBlocks, counts::Vector{Int
     d.t3_sta_index              = _reidx(data.t3_sta_index,               i3)
     d.t3amp_corr_idx            = _reidx(data.t3amp_corr_idx,             i3)
     d.t3phi_corr_idx            = _reidx(data.t3phi_corr_idx,             i3)
+    d.t3_tab                    = _reidx(data.t3_tab,                     i3)
 
     # ── OI_FLUX ──────────────────────────────────────────────────────────────
     d.flux           = _reidx(data.flux,           ifl)
@@ -441,6 +444,7 @@ function apply_block_counts(data::OIdata, blocks::DataBlocks, counts::Vector{Int
     d.flux_flag      = _reidx(data.flux_flag,      ifl)
     d.flux_sta_index = _reidx(data.flux_sta_index, ifl)
     d.flux_corr_idx  = _reidx(data.flux_corr_idx,  ifl)
+    d.flux_tab       = _reidx(data.flux_tab,       ifl)
 
     # ── Counts (same validity rules as readoifits) ───────────────────────────
     _nvalid(x, e) = count(i -> !isnan(x[i]) && !isnan(e[i]) && e[i] > 0, eachindex(x))

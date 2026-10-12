@@ -114,6 +114,7 @@ include(joinpath(GUIDIR, "chi2map.jl"))       # the grid-search chi2 surface, in
 include(joinpath(GUIDIR, "residuals.jl"))     # normalised model residuals, in Makie
 include(joinpath(GUIDIR, "sed.jl"))           # the model SED, in Makie
 include(joinpath(GUIDIR, "shell.jl"))
+include(joinpath(GUIDIR, "tools.jl"))         # Tools perspective: headers, validator, splits, averaging
 include(joinpath(GUIDIR, "snapshot.jl"))      # "Save PNG": rebuilds a panel offscreen
 include(joinpath(GUIDIR, "window.jl"))        # gui(): builds the window and runs Qt
 

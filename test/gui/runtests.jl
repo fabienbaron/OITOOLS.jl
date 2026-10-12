@@ -1238,6 +1238,7 @@ end
     include(joinpath(@__DIR__, "test_diagnostics.jl")) # residuals and SED panels
     include(joinpath(@__DIR__, "test_imaging.jl")) # Image perspective data layer
     include(joinpath(@__DIR__, "test_observing.jl")) # Observe perspective data layer
+    include(joinpath(@__DIR__, "test_tools.jl"))     # Tools perspective data layer
     include(joinpath(@__DIR__, "test_gantt.jl"))     # the Gantt port vs its oiplot original
 
     # ═════════════════════════════════════════════════════════════════════
@@ -2206,7 +2207,7 @@ end
 
             # A file the reader refuses never enters the model.
             cube = joinpath(d, "cube3.fits")
-            let ff = OITOOLS.FITSIO.FITS(cube, "w"); write(ff, rand(16, 16, 3)); close(ff); end
+            OITOOLS.AstroFITS.writefits!(cube, Pair{String,Any}[], rand(16, 16, 3))
             n = length(m.dict)
             @test startswith(G.shell_add_image_component("bad", cube), "!")
             @test length(m.dict) == n

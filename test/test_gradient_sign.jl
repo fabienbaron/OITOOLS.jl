@@ -13,7 +13,8 @@
 # (that correction lives in crit_fg).  We therefore test crit_fg with empty
 # regularizers, which applies the full chain rule through x/sum(x).
 
-using OITOOLS, FITSIO, LinearAlgebra, Printf
+using OITOOLS, LinearAlgebra, Printf
+import AstroFITS
 
 # ── Load data ────────────────────────────────────────────────────────────────
 datafile = joinpath(@__DIR__, "..", "demos", "data", "Beauty_Contest_2004", "2004-data1.oifits")
@@ -25,7 +26,7 @@ data = readoifits(datafile; warn=false)[1,1]
 # ── Load ground truth image and resize to small grid for speed ───────────────
 truefile = joinpath(@__DIR__, "..", "demos", "data", "images", "2004true.fits")
 if isfile(truefile)
-    img_full = Float64.(read(FITS(truefile)[1]))
+    img_full = Float64.(AstroFITS.readfits(truefile))
     # Downsample to 32×32 by block averaging
     nx_full = size(img_full, 1)
     nx = 32

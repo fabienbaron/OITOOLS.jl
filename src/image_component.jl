@@ -82,16 +82,9 @@ A plane summing to zero or less is an error.
 function read_model_image(path::AbstractString; pixsize = nothing, normalization = nothing)
     p = String(path)
     isfile(p) || throw(ArgumentError("no such FITS file: $(repr(p))"))
-    f = FITS(p)
-    raw, hdr, channels, epochs = try
+    raw, hdr, channels, epochs = AstroFITS.FitsFile(p) do f
         h1 = f[1]
-        x  = read(h1)
-        hd = read_header(h1)
-        ch = _fits_table(f, "CHANNELS")
-        ep = _fits_table(f, "EPOCHS")
-        (x, hd, ch, ep)
-    finally
-        close(f)
+        (read(h1), first(_header_values(h1)), _fits_table(f, "CHANNELS"), _fits_table(f, "EPOCHS"))
     end
 
     nd = ndims(raw)
@@ -210,10 +203,9 @@ end
 # A binary table's columns by name, or `nothing` when the file has no such extension.
 function _fits_table(f, extname)
     for h in f
-        h isa FITSIO.TableHDU || continue
-        name = try read_key(h, "EXTNAME")[1] catch; "" end
-        uppercase(strip(String(name))) == extname || continue
-        return Dict(c => read(h, c) for c in FITSIO.colnames(h))
+        h isa AstroFITS.FitsTableHDU || continue
+        uppercase(strip(something(h.extname, ""))) == extname || continue
+        return Dict(c => read(h, c) for c in h.column_names)
     end
     return nothing
 end

@@ -1,7 +1,7 @@
 # An image or a cube as a model component (`c,image`), judged against answers computed without
 # it: ROTIR's exact polygon-FT visibilities of a rendered star, the analytic uniform disc, an
 # analytic point source for the position convention, and a fit recovering injected values.
-using FITSIO, DelimitedFiles, LinearAlgebra, Statistics
+using DelimitedFiles, LinearAlgebra, Statistics
 
 @testset "the image component" begin
     d   = mktempdir()

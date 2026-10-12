@@ -7,9 +7,9 @@
 # both plotters paired a DESCENDING x coordinate vector with reversed axis limits, which drew
 # eastward pixels on the western side and mirrored every image the package produced.
 
-# `FITS`/`FITSHeader` for the pixel-size testset at the bottom: this file is included by
-# runtests.jl, which does not load FITSIO itself.
-using FITSIO
+# AstroFITS for the pixel-size testset at the bottom, imported qualified: it exports `readfits`
+# and `writefits`, as OITOOLS does.
+import AstroFITS
 
 @testset "image orientation" begin
     MAS = 2.0626480624709636e8
@@ -79,9 +79,7 @@ using FITSIO
         img = rand(16, 16)
         wf(name, keys, vals, comments) = begin
             path = joinpath(d, name)
-            f = FITS(path, "w")
-            write(f, img; header = FITSHeader(keys, Any[vals...], comments))
-            close(f)
+            AstroFITS.writefits!(path, [k => (v, c) for (k, v, c) in zip(keys, vals, comments)], img)
             path
         end
 
