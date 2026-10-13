@@ -158,15 +158,21 @@ wavelength-dependent differential phases, producing non-zero OI_VIS signals.
 The example writes OI_VIS2, OI_VIS (with differential phases), OI_T3, and
 OI_FLUX tables.
 
-For an image **cube**, the spectrum matters: each plane is normalised to unit total flux (as
-it must be, for the visibilities to be correct), but the plane-to-plane totals are captured
-first and used to weight the photon count per channel and to fill `OI_FLUX`.
+A FITS file is read by its keywords: each uv point is observed with the plane of its channel and
+its date, so the cube's wavelengths (and epochs) must cover the spectral setup's channels (and the
+dates) — a channel with no plane is an error naming the cube's. A file whose axes the keywords do
+not give is refused; fix it once in the GUI's Tools › FITS Image Handling (Set keywords, Save
+FITS) or with [`fits_set_keywords`](@ref). For a **cube** the spectrum matters: each plane is
+normalised to unit total flux (as it must be, for the visibilities to be correct), but the
+plane-to-plane totals are captured first and used to weight the photon count per channel and to
+fill `OI_FLUX`. A model may hold an image component as well (`"env,image" => path`): a SPARCO
+star plus image is simulated as a model, `flat_model`.
 
 ## Keyword arguments to `simulate`
 
 | keyword | default | meaning |
 |---|---|---|
-| `image` / `pixsize` | `""` / `0.1` | truth image (2-D) or cube (3-D), and its pixel scale in mas |
+| `image` / `pixsize` | `""` / from the file | truth image: a FITS path read by its keywords (2-D, wavelength cube, time series or 4-D; [`read_model_image`](@ref)), or an array (2-D, or 3-D one plane per channel); `pixsize` in mas overrides the header (an array's default is 0.1) |
 | `flat_model` / `flat_params` | `nothing` | parametric model instead of an image |
 | `mag` | `2.0` | target magnitude: a number, a `Dict("H"=>1.8, …)` of band magnitudes, or one value per spectral channel |
 | `mag_ao` | from `mag` | guide-star magnitude in the AO wavefront-sensor band |

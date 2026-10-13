@@ -9,6 +9,9 @@ using OITOOLS
 oitoolsgui()                  # or oitoolsgui("mydata.oifits")
 ```
 
+Left of the Dataset box, **?** opens About (the OITOOLS and Julia versions, the licence, author
+and acknowledgements) and **⚙** the appearance settings.
+
 [`oitoolsgui`](@ref) is the whole launch: it loads GLMakie, QMLMakie and QML itself, in the
 order the graphics hints require, then opens the window. Call it *before* loading GLMakie
 yourself — Mesa, GLFW and Qt each read their configuration exactly once, when the first OpenGL
@@ -78,9 +81,11 @@ shows Modeling's and Imaging's t3amp boxes disabled.
 
 Operations on files and datasets that belong to none of the other perspectives, in two frames.
 
-**OIFITS handling** — every operation works from the file in the frame's field (**…** to choose
-one, **Current** for the selected dataset's file); no dataset needs to be open.
+**OIFITS Handling** — every operation works from the file in the frame's field (**…** to choose
+one, **Current** for the selected dataset's file); no dataset needs to be open. A file chosen
+with **…** (or typed and Enter) shows its headers.
 
+- **Headers**: every HDU of the file, as in FITS Image Handling below.
 - **Validate**: errors (the file cannot be read, or breaks the standard where nothing can be read
   around — a revision-2 table numbering targets or stations from 0, for one), warnings (what was
   read around, stations with no entry in OI_ARRAY, values with unusable errors, OI_VIS tables
@@ -107,14 +112,27 @@ one, **Current** for the selected dataset's file); no dataset needs to be open.
 Each new dataset is the file read with one more `readoifits` keyword: it appears in the Dataset
 box, the Filter works on it, and the exported script rebuilds it.
 
-**FITS handling** works on the file in its own field (**…** lists `*.fits` files).
+**FITS Image Handling** works on the file in its own field (**…** lists `*.fits` files); a file
+chosen with **…** (or typed and Enter) is shown at once, as **View** does.
 
 - **Headers** of any FITS file (images, cubes and the HDUs OITOOLS does not read included): the
   HDUs above, the selected one's columns (format, unit, dimensions) and every header card below,
   in order; the split between the two is movable. A file inside a ZIP archive is read through the
   archive. [`oifits_headers`](@ref).
-- **Cube** shows the file's image or cube one plane at a time, East left, North up, with each
-  plane's wavelength and epoch; **Save PNG** writes the plane on screen.
+- **View** shows the file's image or cube one channel at a time, East left, North up. Beside it,
+  **Channel** steps through the wavelength channels (◀ ▶ or the slider), with each channel's
+  wavelength (λ= … µm) when the file gives it; a cube with epochs as well gets an **Epoch** slider
+  below, with each epoch's MJD (a time series alone steps its epochs on Channel). **Save PNG**
+  writes the plane on screen.
+- **Set keywords…** says what the file's axes are: the pixel size (mas, µas, arcsec, deg, rad),
+  whether the file stores East on the left, whether axis 3 is wavelength or time (axis 4 being
+  the other), and each axis as a start and a step (wavelength in m, µm, nm or Å; time as an MJD
+  and a step in d, h, min or s). It opens with what the file's header says, and lists the
+  file's WCS cards axis by axis (CTYPE, CUNIT, CRVAL, CDELT, CRPIX), ✓ present (the value on
+  hover) or ✗ missing; Apply shows the cube
+  with those values. **Save FITS…** then writes the file, to a new name or over itself, with the
+  keywords [`read_model_image`](@ref) reads and the file's other header cards
+  ([`fits_set_keywords`](@ref)).
 
 The frame on the left and the results on the right are separated by a movable split.
 
@@ -219,6 +237,23 @@ wavelength.
 Globals live in their own section above the components, because the parser groups bare keys
 under `__global__`.
 
+### SPARCO: a star and an environment with their own spectral slopes
+
+**SPARCO fluxes…** (Model Creation, beside **Fluxes sum to 1**) writes this form for two
+components: the star's flux a power law of fixed index (−4, Rayleigh–Jeans), the environment's
+of a free slope `env,slope`, and the global `fs`, the star's share at λ0 (1.6 µm by default):
+
+```julia
+"star,f" => "$fs * ($WL/1.6)^(-4) / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$env,slope)"
+"env,f"  => "(1 - $fs) * ($WL/1.6)^$env,slope / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$env,slope)"
+```
+
+`fs` and the slope are freed with bounds [0, 1] and [−4, 4]; other components keep their own
+fluxes. The environment can be any component — a Gaussian, a ring, or an image
+(`demos/models/SPARCO_Star_Image.toml` pairs a star with `SPARCO_env.fits`, an inclined ring;
+`SPARCO_Star_Disk.toml` with a Gaussian disc). Such a model is simulated as any model, in
+Observing › Source › Model.
+
 ### A constraint, only if you want the sum to be soft
 
 In the Constraints panel: **+ constraint**, then lhs `$star,f + $disk,f`, op `==`, rhs `1`,
@@ -305,6 +340,20 @@ order:
 If none is present the model will not build, and the error names all four. The panel prints the
 grid it actually got — "r ∈ [0.0, 4.0] mas from `udout`/2, 100 points" — naming the key that
 won, because a grid twice the size you expected is otherwise a silent puzzle.
+
+**Templates.** `demos/models/YSO_*.toml` are the six models of Ibrahim et al. (2023, ApJ 947, 68)
+for HD 190073 (V1295 Aql, `demos/data/V1295_Aql.oifits`), at the paper's epoch-A values: a star
+with a Rayleigh–Jeans spectrum, a disc and an over-resolved halo with their own spectral slopes,
+the disc's profile being
+
+| template | disc |
+|:--|:--|
+| `YSO_Doughnut` | PMOIRED's doughnut, `1 - (2*($R - ($RMIN + $RMAX)/2)/($RMAX - $RMIN))^2` on an annulus |
+| `YSO_DoubleSigmoid` | `1/(1 + exp(-($R - $rin)/$sigin)) * 1/(1 + exp(($R - $rout)/$sigout))` |
+| `YSO_AlphaDoubleSigmoid` | the same with a floor `$ain` inside the inner edge |
+| `YSO_SkewedRing` | the double sigmoid with a first azimuthal mode (`az amp1`, `az projang1`) |
+| `YSO_SkewedRing2` | and a second (`az amp2`, `az projang2`) |
+| `YSO_OffCenterStar` | the skewed ring, the star free to move (`star,x`, `star,y`) |
 
 Beside the profile the panel draws **I(r) and V(B) together**. The brightness distribution is
 what you write; the visibility is what the data constrains, and two profiles that look alike in

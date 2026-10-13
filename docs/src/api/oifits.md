@@ -10,7 +10,7 @@
 | `filter_data(data, idx; drop)` | Remove the points `set_data_filter` selects; `drop` removes whole observables (`:t3amp`, `:visphi`, …) |
 | `set_data_filter(data; kwargs...)` | Set persistent data filters |
 | `readfits(file)` | Read a FITS image into a matrix |
-| `writefits(data, file; pixsize, wavelengths, bandwidths, mjds)` | Write an image or a cube to FITS, with its WCS, in the convention shared with ROTIR |
+| `writefits(data, file; pixsize, wavelengths, bandwidths, mjds, header)` | Write an image or a cube to FITS, with its WCS, in the convention shared with ROTIR |
 | `read_model_image(file)` | Read a FITS image or cube for use as a model component: East-first, with its pixel scale, wavelengths and epochs |
 | `model_image_plane(image, λ, mjd)` | Which plane of a model image a data point uses |
 | `model_image_vis(image, uv; wl, mjd)` | Its complex visibilities at uv points, plane by plane |
@@ -72,6 +72,8 @@ as NaN. `filter_data(…; drop = [:t3amp])` makes the same of a half the file do
 | `split_by_time(data; gap, binwidth, edges)` | One `OIdata` per epoch, the epochs taken from every observable's times |
 | `split_by_instrument(data)` | One `OIdata` per instrument, from the table each point was read from |
 | `split_by_target(file; kwargs...)` | One dataset per target, each read with `targetname` |
+| `fits_set_keywords(file, out; pixsize, east_left, axis3, wavelengths, mjds)` | A FITS image or cube written with the keywords `read_model_image` reads; the file's other cards kept |
+| `fits_keyword_cube(file; east_left, axis3)` | Its array as an `(East, North, wavelength, epoch)` cube |
 
 ```@docs
 oifits_headers
@@ -80,6 +82,8 @@ repair_oifits
 split_by_time
 split_by_instrument
 split_by_target
+fits_set_keywords
+fits_keyword_cube
 ```
 
 ## Writing

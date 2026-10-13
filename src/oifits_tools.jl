@@ -330,3 +330,70 @@ function _index_columns(path)
         tmp === nothing || rm(tmp; force = true)
     end
 end
+
+# Cards `fits_set_keywords` writes itself: the WCS of every axis and the convention's own keys.
+_wcs_card(name) = occursin(r"^(CTYPE|CUNIT|CDELT|CRPIX|CRVAL|CROTA)\d+$|^(CD|PC)\d+_\d+$", name) ||
+                  name in ("PIXSIZE", "WAVEIRR", "TIMEIRR", "TIMESYS", "MJDREF", "NORMALIZ")
+
+"""
+    fits_keyword_cube(path; east_left = false, axis3 = :wave) -> Array{T,4}
+
+The primary array of a FITS file as an `(East, North, wavelength, epoch)` cube, in the file's own
+element type: axis 1 reversed when the file stores East on the left (`east_left`); a third axis
+read as wavelengths (`axis3 = :wave`) or epochs (`:time`, which for a 4-D file swaps the last two
+axes). A 2-D image is one plane.
+"""
+function fits_keyword_cube(path::AbstractString; east_left::Bool = false, axis3::Symbol = :wave)
+    axis3 in (:wave, :time) ||
+        throw(ArgumentError("axis3 must be :wave or :time, not $(repr(axis3))"))
+    img = AstroFITS.readfits(String(path))
+    nd = ndims(img)
+    2 <= nd <= 4 || throw(ArgumentError("$(basename(path)): $nd-D data, not an image or a cube"))
+    east_left && (img = reverse(img; dims = 1))
+    nx, ny = size(img, 1), size(img, 2)
+    nd == 2 && return reshape(img, nx, ny, 1, 1)
+    nd == 3 && return axis3 === :wave ? reshape(img, nx, ny, size(img, 3), 1) :
+                                        reshape(img, nx, ny, 1, size(img, 3))
+    return axis3 === :wave ? img : permutedims(img, (1, 2, 4, 3))
+end
+
+"""
+    fits_set_keywords(path, out; pixsize, east_left = false, axis3 = :wave,
+                      wavelengths = Float64[], mjds = Float64[]) -> String
+
+Write the image or cube of `path` to `out` with the keywords [`read_model_image`](@ref) reads: the
+array East-first (`east_left` when the file stores East on the left), the pixel size `pixsize` in
+mas, axis 3 the wavelengths (metres, one per plane) and axis 4 the epochs (MJD, one per plane), in
+the layout of [`writefits`](@ref). `axis3 = :time` says the file's third axis is time (a 4-D
+file's axes 3 and 4 are then swapped). Every other card of the primary header (OBJECT, DATE-OBS,
+…) is copied; other HDUs are not. `out` may be `path`, which is then overwritten.
+
+An axis with more than one plane needs its values, and their number must be the number of planes.
+"""
+function fits_set_keywords(path::AbstractString, out::AbstractString; pixsize::Real,
+                           east_left::Bool = false, axis3::Symbol = :wave,
+                           wavelengths = Float64[], mjds = Float64[])
+    pixsize > 0 || throw(ArgumentError("pixsize must be positive (mas), not $(pixsize)"))
+    cube = fits_keyword_cube(path; east_left, axis3)
+    nλ, nt = size(cube, 3), size(cube, 4)
+    for (v, n, what, kw) in ((wavelengths, nλ, "wavelengths", "wavelengths"),
+                             (mjds, nt, "epochs", "mjds"))
+        isempty(v) && n > 1 &&
+            throw(ArgumentError("$(basename(path)): $n $(what) on that axis and no `$(kw)`"))
+        isempty(v) || length(v) == n ||
+            throw(ArgumentError("`$(kw)` has $(length(v)) values for $n $(what)"))
+    end
+    cards = AstroFITS.FitsFile(String(path)) do f
+        c = Pair{String,Any}[]
+        for card in AstroFITS.FitsHeader(f[1])
+            (card.name in ("", "END") || _fits_structural(card.name) || _wcs_card(card.name)) &&
+                continue
+            push!(c, card.name in ("COMMENT", "HISTORY") ? card.name => card.comment :
+                     card.name => (card.value(), card.comment))
+        end
+        c
+    end
+    data = nt > 1 ? cube : nλ > 1 ? cube[:, :, :, 1] : cube[:, :, 1, 1]
+    writefits(data, out; pixsize, wavelengths, mjds, header = cards)
+    return String(out)
+end

@@ -30,12 +30,13 @@ end
 _x(w::Window, args...) = run(addenv(`xdotool $args`, "DISPLAY" => w.display))
 
 """
-    start(name; data_dir, display = ":117", screen = "1920x1440x24") -> Window
+    start(name; data_dir, display = ":117", screen = "1920x1440x24", env = []) -> Window
 
 A fresh Xvfb and a fresh window (`bin/oitoolsgui.jl`, an empty session) under `script`, so Qt's
-warnings reach the log line by line. Output in `~/.cache/oitools-claude/walks/<name>/`.
+warnings reach the log line by line; `cmd` replaces the launch (an AppImage, say); `env` adds variables (`"OITOOLSGUI_SCALE" => "1.6"`). Output in `~/.cache/oitools-claude/walks/<name>/`.
 """
-function start(name; data_dir = "", display = ":117", screen = "1920x1440x24")
+function start(name; data_dir = "", display = ":117", screen = "1920x1440x24", env = Pair{String,String}[],
+               cmd = "cd $(REPO) && julia --project=bin bin/oitoolsgui.jl")
     out = joinpath(homedir(), ".cache", "oitools-claude", "walks", name)
     io = joinpath(out, "io")
     rm(out; recursive = true, force = true); mkpath(io)
@@ -44,8 +45,7 @@ function start(name; data_dir = "", display = ":117", screen = "1920x1440x24")
                wait = false)
     sleep(2)
     log = joinpath(out, "run.log")
-    cmd = "cd $(REPO) && julia --project=bin bin/oitoolsgui.jl"
-    env = ["DISPLAY" => display, "OITOOLSGUI_WALK" => io, "OITOOLSGUI_DATA_DIR" => data_dir]
+    env = ["DISPLAY" => display, "OITOOLSGUI_WALK" => io, "OITOOLSGUI_DATA_DIR" => data_dir, env...]
     gui = run(pipeline(addenv(`script -qfec $cmd $log`, env...); stdout = devnull, stderr = devnull);
               wait = false)
     wid = ""
@@ -150,9 +150,10 @@ function choose(w::Window, q, item; pause = 0.8)
     got == item || error("$q shows \"$got\" after choosing \"$item\"")
 end
 
-"Set a tick box (by its text) to `on`."
+"Set a tick box (by its objectName, else its text) to `on`."
 function tick(w::Window, label, on::Bool)
-    q = startswith(label, "text:") || occursin(":", label) ? label : "text:" * label
+    q = occursin(":", label) ? label :
+        (try locate(w, label; timeout = 2); label catch; "text:" * label end)
     locate(w, q).checked == on || click(w, q)
     locate(w, q).checked == on || error("$label did not change to $on")
 end

@@ -326,6 +326,27 @@ end
 # Production runs leave it `nothing`, so the timer calls a no-op.
 const READY_HOOK = Ref{Any}(nothing)
 
+"""
+    shell_about() -> String
+
+What the About panel shows, as `key\tvalue` lines: `version` (OITOOLS), `julia`, and `license`,
+the licence named at the top of the package's `LICENSE.md` with its version line when it has one
+(blank when the file is not shipped).
+"""
+function shell_about()
+    lic = ""
+    try
+        f = joinpath(pkgdir(OITOOLS), "LICENSE.md")
+        if isfile(f)
+            l = filter(!isempty, strip.(readlines(f)))
+            lic = isempty(l) ? "" : length(l) > 1 && startswith(l[2], "Version") ?
+                  "$(l[1]), $(l[2])" : String(l[1])
+        end
+    catch
+    end
+    return join(["version\t$(pkgversion(OITOOLS))", "julia\t$(VERSION)", "license\t$(lic)"], "\n")
+end
+
 """Run the automation hook, if one was installed. Never throws: a failing hook must not take
 the window down with it, or the transcript explaining the failure dies too."""
 function shell_ready()
@@ -2309,6 +2330,11 @@ function shell_sim_band(setup::AbstractString)
     return string(band_for_wavelength(λ).name, '\t', round(λ * 1e6; digits = 3))
 end
 
+# The image arguments of a simulation, as the console line writes them: `, image = "…",
+# pixsize = …` for an image, nothing for a model.
+_sky_args(sky) = haskey(sky, :image) ?
+    ", image = $(_literal(String(sky.image))), pixsize = $(sky.pixsize)" : ""
+
 """
     _simulate_sky(sh, o) -> NamedTuple or String
 
@@ -2350,17 +2376,11 @@ function _simulate_sky(sh::ShellState, o::AbstractDict)
         end
     end
 
-    isfile(path) || return "! no file at '$(path)'"
-    img = try
-        Float64.(readfits(path))
-    catch err
-        return "! could not read '$(basename(path))': " * _cause(err)
-    end
-    want = kind == "cube" ? 3 : 2
-    ndims(img) == want || return "! '$(basename(path))' is $(ndims(img))-D; " *
-        (want == 2 ? "a grey image must be 2-D — choose Image cube" :
-                     "a cube must be 3-D — choose Image")
-    return (; image = img, pixsize = _optreal(o, "pixsize", 0.1))
+    # an image of any dimension, by path: `simulate` reads its keywords; the panel's pixel size,
+    # pre-filled from the header, is passed as the override
+    i = simulate_source_info("image", path)
+    i.ok || return "! " * i.summary
+    return (; image = path, pixsize = _optreal(o, "pixsize", 0.1))
 end
 
 """
@@ -2382,8 +2402,10 @@ TWO simulators behind one button, chosen by the `copy` option:
     only one whose result is comparable to the original point by point.
 
 `options` is `key\tvalue` lines, as the Image panel's engine options are: `source`
-(image | cube | model), `path`, `pixsize`, `mag`, `mag_ao`, `noise`, `debias`, `n_samples`,
-`seed`, `observability`, `alt_limit`, `alt_max`, `copy`, `copy_mode`.
+(image | model; `cube` is read as image), `path`, `pixsize`, `image_channels` (1: the channels
+of the image, or of the model's image cube, instead of the spectral setup — `wave_from_image`),
+`mag`, `mag_ao`, `noise`, `debias`, `n_samples`, `seed`, `observability`, `alt_limit`,
+`alt_max`, `copy`, `copy_mode`.
 """
 function shell_simulate(outfile::AbstractString, facility::AbstractString,
                         telescopes::AbstractString, combiner::AbstractString,
@@ -2446,7 +2468,7 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
             console!(sh, msg); return msg
         end
         console!(sh, "simulate_from_oifits(\"$(e.path)\", \"$(out)\"; mode = \"$(mode)\"" *
-                     (noise ? "" : ", noise = false") * ")"; kind = :cmd)
+                     _sky_args(sky) * (noise ? "" : ", noise = false") * ")"; kind = :cmd)
     else
         f = try
             facility_subset(read_facility_file(String(facility)),
@@ -2470,8 +2492,16 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
         obs = _optbool(o, "observability", false) ?
               (; alt_limit = _optreal(o, "alt_limit", DEFAULT_ALT_LIMIT),
                  alt_max   = _optreal(o, "alt_max",   DEFAULT_ALT_MAX)) : nothing
+        # the image's own channels (an image, or a model holding a cube), else the setup
+        imgch = _optbool(o, "image_channels", false)
+        wave = try
+            !imgch ? read_wave_file(String(wavelength)) :
+            haskey(sky, :image) ? wave_from_image(sky.image) : wave_from_image(sky.flat_model)
+        catch err
+            msg = "! " * _cause(err); console!(sh, msg; kind = :err); return msg
+        end
         try
-            simulate(f, tgt, read_comb_file(String(combiner)), read_wave_file(String(wavelength)),
+            simulate(f, tgt, read_comb_file(String(combiner)), wave,
                      dates, out;
                      mag = _optreal(o, "mag", 2.0), mag_ao = _optreal(o, "mag_ao", 2.0),
                      noise = noise, debias = _optbool(o, "debias", true),
@@ -2484,10 +2514,12 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
         end
         # The command log has to be runnable, so every NON-DEFAULT switch has to appear in it.
         kw = String[]
+        isempty(_sky_args(sky)) || push!(kw, _sky_args(sky)[3:end])
         noise       || push!(kw, "noise = false")
         systematics || push!(kw, "systematics = false")
         ftrack      || push!(kw, "fringe_tracker = false")
-        console!(sh, "simulate(facility, target, combiner, wavelength, dates, \"$(out)\"" *
+        console!(sh, "simulate(facility, target, combiner, " * (imgch ? ":image" : "wavelength") *
+                     ", dates, \"$(out)\"" *
                      (isempty(kw) ? "" : "; " * join(kw, ", ")) * ")   # $(length(dates)) epochs, " *
                      "$(f.ntel) telescopes"; kind = :cmd)
     end
@@ -4015,6 +4047,59 @@ function shell_add_param(component, name, value)
     console!(sh, "  added " * (isempty(cn) ? "the global " : "") * key * " = " *
                  string(Float64(value)) * "; nothing refers to it yet -- write \$" * key *
                  " in an expression")
+    return ""
+end
+
+"""
+    shell_sparco_fluxes(star, env, index, lambda0) -> String
+
+SPARCO's chromatic fluxes on two components of the model: `star` follows a power law of fixed
+`index` (−4, Rayleigh–Jeans, for a photosphere in the near infrared) and `env` (a disc, a ring,
+an image…) its own slope, the global `fs` being the star's share of the flux at `lambda0`
+(µm). Writes
+
+    star,f = \$fs·(\$WL/λ0)^index / N        env,f = (1 − \$fs)·(\$WL/λ0)^\$env,slope / N
+    N      = \$fs·(\$WL/λ0)^index + (1 − \$fs)·(\$WL/λ0)^\$env,slope
+
+so the two sum to 1 at every wavelength, and frees `fs` in [0, 1] and `env,slope` in [−4, 4]
+(created at 0.5 and 0 when absent; kept when present). Other components keep their own fluxes.
+Returns `""` or a message beginning with `!`.
+"""
+function shell_sparco_fluxes(star, env, index::Real, lambda0::Real)
+    sh = _shell(); m = _model(sh)
+    st, en = String(star), String(env)
+    comps = OITOOLS._component_names(m.dict)
+    (st in comps && en in comps) || return "! choose two components of the model"
+    st == en && return "! the star and the environment must be two components"
+    isfinite(index) || return "! the star index must be a number"
+    lambda0 > 0 || return "! λ0 must be a positive wavelength in µm"
+    slope = en * ",slope"
+    if !haskey(m.dict, "fs")
+        msg = _param_name_problem(m, "", "fs")
+        isempty(msg) || return "! fs: " * msg
+        m.dict["fs"] = 0.5
+    end
+    if !haskey(m.dict, slope)
+        msg = _param_name_problem(m, en, "slope")
+        isempty(msg) || return "! $(slope): " * msg
+        m.dict[slope] = 0.0
+    end
+    l0, k = @sprintf("%g", lambda0), @sprintf("%g", index)
+    sp = "\$fs * (\$WL/$l0)^($k)"
+    ep = "(1 - \$fs) * (\$WL/$l0)^\$$slope"
+    norm = "($sp + $ep)"
+    for (key, num) in ((st * ",f", sp), (en * ",f", ep))
+        m.dict[key] = "$num / $norm"
+        filter!(!=(key), m.free)
+    end
+    for (key, lo, hi) in (("fs", 0.0, 1.0), (slope, -4.0, 4.0))
+        m.dict[key] isa Real || (m.dict[key] = key == "fs" ? 0.5 : 0.0)   # free means numeric
+        m.lb[key] = lo; m.ub[key] = hi
+        key in m.free || push!(m.free, key)
+    end
+    others = setdiff(comps, [st, en])
+    console!(sh, "  SPARCO fluxes: $(st),f and $(en),f sum to 1 at every wavelength; fs and $(slope) free" *
+                 (isempty(others) ? "" : " ($(join(others, ", ")) keep their own fluxes)"))
     return ""
 end
 

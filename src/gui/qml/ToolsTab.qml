@@ -1,11 +1,10 @@
-// OITOOLS — the Tools perspective: operations on files and datasets that are none of the other
-// four.
+// OITOOLS — the Tools perspective: operations on files that are none of the other four.
 //
-// Files: the header inspector and the validator work on any FITS file, chosen here or taken
-// from the current dataset, and the validator's "repaired copy" writes a new file. Current
-// dataset: channel averaging and the splits, each a re-read of the dataset's file that becomes
-// a new dataset (so Explore, Modeling and Imaging use it at once), and Export. Everything is
-// done by `src/gui/tools.jl`; this file only lays it out.
+// OIFITS Handling works on the file in its field: Headers, Validate, spectral and temporal
+// binning, the splits and Merge (each a re-read that becomes a new dataset, so Explore,
+// Modeling and Imaging use it at once), and Export OIFITS. FITS Image Handling works on the file
+// in its own field: Headers, the cube viewer, Set keywords and Save FITS. Everything is done by
+// `src/gui/tools.jl`; this file only lays it out.
 
 import QtQuick
 import QtQuick.Controls
@@ -54,11 +53,12 @@ Item {
         var p = Julia.shell_tools_source()
         if (p.length === 0) { root.statusReported("! no single-file dataset is selected"); return }
         field.text = p
+        showHeaders(p)
     }
 
-    function showHeaders() {
-        if (fitsPath.text.length === 0) return
-        var t = Julia.shell_tools_headers(fitsPath.text)
+    function showHeaders(path) {
+        if (path.length === 0) return
+        var t = Julia.shell_tools_headers(path)
         root.consoleChanged()
         if (failed(t)) { root.statusReported(t); return }
         var rows = t.split("\n")
@@ -69,7 +69,7 @@ Item {
             hduModel.append({ idx: parseInt(f[0]), kind: f[1], extname: f[2] || "(primary)",
                               insname: f[3], revn: f[4], nrows: f[5], extra: f[6] })
         }
-        root.headersPath = fitsPath.text
+        root.headersPath = path
         root.mode = "headers"
         hduList.currentIndex = 0
         showHdu(1)
@@ -94,14 +94,15 @@ Item {
     }
 
     // ── pickers ───────────────────────────────────────────────────────────────
-    // One picker per file field: OIFITS handling takes OIFITS files, FITS handling FITS files.
+    // One picker per file field: OIFITS Handling takes OIFITS files and shows their headers, FITS
+    // Image Handling takes FITS files and views them.
     FilePicker {
         id: openPicker
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
         title: "Choose an OIFITS file"
         filters: [{ label: "OIFITS files (*.oifits *.fits *.fit)", patterns: "*.oifits,*.fits,*.fit" },
                   { label: "All files", patterns: "*" }]
-        onAccepted: function (path) { filePath.text = path }
+        onAccepted: function (path) { filePath.text = path; root.showHeaders(path) }
     }
     FilePicker {
         id: fitsPicker
@@ -109,7 +110,161 @@ Item {
         title: "Choose a FITS file"
         filters: [{ label: "FITS files (*.fits)", patterns: "*.fits" },
                   { label: "All files", patterns: "*" }]
-        onAccepted: function (path) { fitsPath.text = path }
+        onAccepted: function (path) { fitsPath.text = path; root.openCube(path) }
+    }
+    FilePicker {
+        id: fitsSavePicker
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save FITS"
+        saveMode: true
+        defaultSuffix: "fits"
+        filters: [{ label: "FITS files (*.fits)", patterns: "*.fits" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            report(Julia.shell_fits_save(path))
+            root.keywordSource = Julia.shell_fits_keyword_source()
+            if (path === fitsPath.text) root.openCube(path)
+        }
+    }
+
+    // The file Set keywords was applied to; Save FITS writes it.
+    property string keywordSource: ""
+
+    // ── Set keywords ──────────────────────────────────────────────────────────
+    Dialog {
+        id: keywordsDialog
+        objectName: "keywordsDialog"
+        title: "Set keywords"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: root.dp(460)
+        property string path: ""
+        property var dims: []
+        property string problem: ""
+        // the file's WCS cards: { name, ok, value }
+        property var cards: []
+        readonly property int n3: dims.length > 2 ? dims[2] : 1
+        readonly property int n4: dims.length > 3 ? dims[3] : 1
+        // planes along wavelength and time, after the axis-3 choice
+        readonly property int nWave: kwAxis3.currentIndex === 0 ? n3 : n4
+        readonly property int nTime: kwAxis3.currentIndex === 0 ? n4 : n3
+        function openFor(p) {
+            var t = Julia.shell_fits_keywords(p)
+            if (root.failed(t)) { root.statusReported(t); return }
+            var kv = {}, cs = []
+            var lines = t.split("\n")
+            for (var i = 0; i < lines.length; ++i) {
+                var f = lines[i].split("\t")
+                if (f[0] === "card") cs.push({ name: f[1], ok: f[2] === "1", value: f.length > 3 ? f[3] : "" })
+                else kv[f[0]] = f.length > 1 ? f[1] : ""
+            }
+            cards = cs
+            path = p
+            dims = kv["dims"].split(" ").map(Number)
+            kwPix.text = kv["pixsize"]; kwPixUnit.currentIndex = 0
+            kwEast.checked = kv["eastleft"] === "1"
+            kwAxis3.currentIndex = kv["axis3"] === "time" ? 1 : 0
+            kwWStart.text = kv["wstart"]; kwWStep.text = kv["wstep"]; kwWUnit.currentIndex = 1
+            kwTStart.text = kv["tstart"]; kwTStep.text = kv["tstep"]; kwTUnit.currentIndex = 0
+            problem = ""
+            open()
+        }
+        GridLayout {
+            width: root.dp(420)
+            columns: 5
+            columnSpacing: root.dp(6)
+            rowSpacing: root.dp(6)
+
+            Label { text: "size"; color: "#666" }
+            Label { Layout.columnSpan: 4; text: keywordsDialog.dims.join(" × ") }
+
+            Label { text: "pixel"; color: "#666" }
+            TextField { id: kwPix; objectName: "kwPix"; Layout.preferredWidth: root.dp(110) }
+            ComboBox { id: kwPixUnit; objectName: "kwPixUnit"; Layout.columnSpan: 2
+                       Layout.preferredWidth: root.dp(90); model: ["mas", "µas", "arcsec", "deg", "rad"] }
+            CheckBox {
+                id: kwEast; objectName: "kwEast"; text: "East left"
+                ToolTip.visible: hovered; ToolTip.text: "The file stores East on the left"
+            }
+
+            Label { text: "axis 3"; color: "#666"; visible: keywordsDialog.dims.length > 2 }
+            ComboBox {
+                id: kwAxis3; objectName: "kwAxis3"
+                visible: keywordsDialog.dims.length > 2
+                Layout.columnSpan: 4
+                Layout.fillWidth: true
+                model: keywordsDialog.dims.length > 3 ? ["wavelength (axis 4: time)", "time (axis 4: wavelength)"]
+                                                      : ["wavelength", "time"]
+            }
+
+            Label { text: "λ start"; color: "#666"; visible: keywordsDialog.nWave > 1 }
+            TextField { id: kwWStart; objectName: "kwWStart"; Layout.preferredWidth: root.dp(110)
+                        visible: keywordsDialog.nWave > 1 }
+            Label { text: "step"; color: "#666"; visible: keywordsDialog.nWave > 1 }
+            TextField { id: kwWStep; objectName: "kwWStep"; Layout.preferredWidth: root.dp(90)
+                        visible: keywordsDialog.nWave > 1 }
+            ComboBox { id: kwWUnit; objectName: "kwWUnit"; Layout.preferredWidth: root.dp(80)
+                       visible: keywordsDialog.nWave > 1; model: ["m", "µm", "nm", "Å"] }
+
+            Label { text: "MJD start"; color: "#666"; visible: keywordsDialog.nTime > 1 }
+            TextField { id: kwTStart; objectName: "kwTStart"; Layout.preferredWidth: root.dp(110)
+                        visible: keywordsDialog.nTime > 1 }
+            Label { text: "step"; color: "#666"; visible: keywordsDialog.nTime > 1 }
+            TextField { id: kwTStep; objectName: "kwTStep"; Layout.preferredWidth: root.dp(90)
+                        visible: keywordsDialog.nTime > 1 }
+            ComboBox { id: kwTUnit; objectName: "kwTUnit"; Layout.preferredWidth: root.dp(80)
+                       visible: keywordsDialog.nTime > 1; model: ["d", "h", "min", "s"] }
+
+            // What the file's header has now: ✓ present (its value on hover), ✗ missing.
+            Label { text: "WCS in the file"; color: "#666"; Layout.columnSpan: 5; Layout.topMargin: root.dp(4) }
+            // one row per axis: CTYPE CUNIT CRVAL CDELT CRPIX
+            Grid {
+                objectName: "kwCards"
+                Layout.columnSpan: 5
+                columns: 5
+                columnSpacing: root.dp(12)
+                rowSpacing: root.dp(2)
+                Repeater {
+                    model: keywordsDialog.cards
+                    Label {
+                        required property var modelData
+                        text: (modelData.ok ? "\u2713 " : "\u2717 ") + modelData.name
+                        color: modelData.ok ? "#1a7f37" : "#b00020"
+                        font.pointSize: root.pt(root.baseFontPt - 1)
+                        HoverHandler { id: cardHover }
+                        ToolTip.visible: cardHover.hovered && modelData.ok
+                        ToolTip.text: modelData.value
+                    }
+                }
+            }
+
+            Label {
+                Layout.columnSpan: 5
+                Layout.preferredWidth: root.dp(420)
+                visible: keywordsDialog.problem.length > 0
+                text: keywordsDialog.problem
+                color: "#b00020"
+                wrapMode: Text.WordWrap
+            }
+        }
+        // Apply is not an accept role: the dialog closes only when the values are taken, and
+        // otherwise stays open saying what is wrong.
+        footer: DialogButtonBox {
+            Button { text: "Apply"; onClicked: keywordsDialog.apply() }
+            Button { text: "Cancel"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+        }
+        function apply() {
+            var t = Julia.shell_fits_apply(path, kwPix.text, kwPixUnit.currentText, kwEast.checked,
+                                           kwAxis3.currentIndex === 1 ? "time" : "wave",
+                                           kwWStart.text, kwWStep.text, kwWUnit.currentText,
+                                           kwTStart.text, kwTStep.text, kwTUnit.currentText)
+            root.consoleChanged()
+            if (root.failed(t)) { problem = t.substring(2); return }
+            problem = ""
+            close()
+            root.keywordSource = Julia.shell_fits_keyword_source()
+            root.refreshCubeAxes()
+        }
     }
     FilePicker {
         id: mergePicker
@@ -151,21 +306,59 @@ Item {
         }
     }
 
-    // The cube on show: one label per plane, from `shell_cube_open`.
-    property var cubePlanes: []
+    // The cube on show: its wavelength channels and epochs (`shell_cube_axes`), each with its
+    // value where the file gives one (µm, MJD), and the channel and epoch on the canvas.
+    property int cubeNW: 0
+    property int cubeNT: 0
+    property var cubeWL: []
+    property var cubeMJ: []
+    property int cubeW: 1
+    property int cubeT: 1
     function openCube(path) {
         var t = Julia.shell_cube_open(path)
         root.consoleChanged()
         if (failed(t)) { root.statusReported(t); return }
-        root.cubePlanes = t.split("\n")
-        cubePlane.value = 1
-        cubeLabel.text = root.cubePlanes[0]
+        refreshCubeAxes()
+    }
+    // After Julia has opened a cube (or set its keywords): read its axes, show the first plane.
+    function refreshCubeAxes() {
+        var t = Julia.shell_cube_axes()
+        if (failed(t)) return
+        var l = t.split("\n"), n = l[0].split("\t")
+        cubeNW = parseInt(n[0]); cubeNT = parseInt(n[1])
+        cubeWL = l[1].split("\t"); cubeMJ = l[2].split("\t")
         root.mode = "cube"
+        showAt(1, 1)
+    }
+    function showAt(w, t) {
+        cubeW = Math.max(1, Math.min(cubeNW, w)); cubeT = Math.max(1, Math.min(cubeNT, t))
+        cubeLabel.text = Julia.shell_cube_show_at(cubeW, cubeT)
         cubeArea.update()
     }
-    function showPlane(k) {
-        cubeLabel.text = Julia.shell_cube_show(k)
-        cubeArea.update()
+
+    // One channel axis: ◀ slider ▶, the index and the channel's value (µm or MJD) when known.
+    component AxisSlider: RowLayout {
+        id: ax
+        property string name: "Channel"
+        property int n: 1
+        property int value: 1
+        property string info: ""
+        signal stepped(int k)
+        spacing: root.dp(2)
+        // as wide as the longer name, so the two sliders line up
+        Label { text: ax.name; color: "#666"; Layout.preferredWidth: nameWidth.advanceWidth("Channel") + root.dp(4) }
+        FontMetrics { id: nameWidth }
+        ToolButton { text: "◀"; enabled: ax.value > 1; onClicked: ax.stepped(ax.value - 1) }
+        Slider {
+            Layout.fillWidth: true
+            Layout.minimumWidth: root.dp(60)
+            from: 1; to: Math.max(1, ax.n); stepSize: 1; snapMode: Slider.SnapAlways
+            value: ax.value
+            onMoved: ax.stepped(Math.round(value))
+        }
+        ToolButton { text: "▶"; enabled: ax.value < ax.n; onClicked: ax.stepped(ax.value + 1) }
+        Label { text: ax.value + "/" + ax.n; color: "#666" }
+        Label { text: ax.info; Layout.preferredWidth: root.dp(116); Layout.leftMargin: root.dp(6) }
     }
 
     FilePicker {
@@ -195,10 +388,10 @@ Item {
                 width: parent.width
                 spacing: dp(8)
 
-                // ── OIFITS handling ──────────────────────────────────────────────
+                // ── OIFITS Handling ──────────────────────────────────────────────
                 GroupBox {
                     Layout.fillWidth: true
-                    label: Label { text: "OIFITS handling"; font.bold: true; font.pointSize: pt(baseFontPt + 2) }
+                    label: Label { text: "OIFITS Handling"; font.bold: true; font.pointSize: pt(baseFontPt + 2) }
                     ColumnLayout {
                         anchors.fill: parent
                         spacing: dp(6)
@@ -212,6 +405,7 @@ Item {
                                 Layout.minimumWidth: dp(120)
                                 placeholderText: "an OIFITS file"
                                 selectByMouse: true
+                                onAccepted: root.showHeaders(text)
                                 onTextChanged: root.refreshTargets()
                             }
                             Button { text: "…"; objectName: "toolsFilePick"; onClicked: openPicker.openAt("")
@@ -224,12 +418,21 @@ Item {
                             Label { text: "target"; color: "#666" }
                             ComboBox { id: targetBox; visible: false; Layout.fillWidth: true }
                         }
-                        Button {
-                            objectName: "toolsValidate"
-                            text: "Validate"; enabled: filePath.text.length > 0
-                            onClicked: validate()
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Check against the OIFITS standard"
+                        RowLayout {
+                            Button {
+                                objectName: "toolsOifitsHeaders"
+                                text: "Headers"; enabled: filePath.text.length > 0
+                                onClicked: showHeaders(filePath.text)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Every HDU, its columns and header cards"
+                            }
+                            Button {
+                                objectName: "toolsValidate"
+                                text: "Validate"; enabled: filePath.text.length > 0
+                                onClicked: validate()
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Check against the OIFITS standard"
+                            }
                         }
 
                         Label { text: "Spectral binning"; font.bold: true; Layout.topMargin: dp(4) }
@@ -355,10 +558,10 @@ Item {
                     }
                 }
 
-                // ── FITS handling ────────────────────────────────────────────────
+                // ── FITS Image Handling ────────────────────────────────────────────────
                 GroupBox {
                     Layout.fillWidth: true
-                    label: Label { text: "FITS handling"; font.bold: true; font.pointSize: pt(baseFontPt + 2) }
+                    label: Label { text: "FITS Image Handling"; font.bold: true; font.pointSize: pt(baseFontPt + 2) }
                     ColumnLayout {
                         anchors.fill: parent
                         spacing: dp(6)
@@ -372,44 +575,71 @@ Item {
                                 Layout.minimumWidth: dp(120)
                                 placeholderText: "a FITS file"
                                 selectByMouse: true
+                                onAccepted: root.openCube(text)
                             }
                             Button { text: "…"; objectName: "toolsFitsPick"; onClicked: fitsPicker.openAt("")
                                      ToolTip.visible: hovered; ToolTip.text: "Choose a file" }
-                            Button { text: "Current"; onClicked: root.useCurrentDataset(fitsPath)
-                                     ToolTip.visible: hovered; ToolTip.text: "The current dataset's file" }
-                        }
-                        RowLayout {
                             Button {
                                 objectName: "toolsHeaders"
                                 text: "Headers"; enabled: fitsPath.text.length > 0
-                                onClicked: showHeaders()
+                                onClicked: showHeaders(fitsPath.text)
                                 ToolTip.visible: hovered
                                 ToolTip.text: "Every HDU, its columns and header cards"
                             }
+                        }
+                        // View, beside the channel slider: wavelength channels when the cube
+                        // has several, else its epochs; a cube with both gets an Epoch slider too.
+                        RowLayout {
                             Button {
-                                objectName: "toolsCubeOpen"
-                                text: "Cube"; enabled: fitsPath.text.length > 0
+                                id: viewButton
+                                objectName: "toolsView"
+                                text: "View"; enabled: fitsPath.text.length > 0
                                 onClicked: root.openCube(fitsPath.text)
                                 ToolTip.visible: hovered
-                                ToolTip.text: "The image, one plane at a time"
+                                ToolTip.text: "The image, one channel at a time"
                             }
+                            AxisSlider {
+                                objectName: "toolsChannel"
+                                Layout.fillWidth: true
+                                visible: root.cubeNW > 1 || root.cubeNT > 1
+                                readonly property bool wave: root.cubeNW > 1
+                                n: wave ? root.cubeNW : root.cubeNT
+                                value: wave ? root.cubeW : root.cubeT
+                                info: (wave ? root.cubeWL : root.cubeMJ)[value - 1] || ""
+                                onStepped: function (k) { wave ? root.showAt(k, root.cubeT) : root.showAt(1, k) }
+                            }
+                        }
+                        AxisSlider {
+                            objectName: "toolsEpoch"
+                            Layout.fillWidth: true
+                            // under the Channel slider, past the View button
+                            Layout.leftMargin: viewButton.width + root.dp(5)
+                            visible: root.cubeNW > 1 && root.cubeNT > 1
+                            name: "Epoch"
+                            n: root.cubeNT
+                            value: root.cubeT
+                            info: root.cubeMJ[value - 1] || ""
+                            onStepped: function (k) { root.showAt(root.cubeW, k) }
                         }
                         RowLayout {
-                            visible: root.cubePlanes.length > 1
-                            Label { text: "plane"; color: "#666" }
-                            SpinBox {
-                                id: cubePlane
-                                from: 1; to: Math.max(1, root.cubePlanes.length); value: 1; editable: true
-                                onValueModified: root.showPlane(value)
+                            Button {
+                                objectName: "toolsSetKeywords"
+                                text: "Set keywords…"; enabled: fitsPath.text.length > 0
+                                onClicked: keywordsDialog.openFor(fitsPath.text)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Pixel size, orientation, wavelength and time axes"
                             }
-                            Label { text: "of " + root.cubePlanes.length; color: "#666" }
-                        }
-                        Slider {
-                            Layout.fillWidth: true
-                            visible: root.cubePlanes.length > 1
-                            from: 1; to: Math.max(1, root.cubePlanes.length); stepSize: 1
-                            value: cubePlane.value
-                            onMoved: { cubePlane.value = value; root.showPlane(value) }
+                            Button {
+                                objectName: "toolsSaveFits"
+                                text: "Save FITS…"
+                                enabled: root.keywordSource.length > 0 && root.keywordSource === fitsPath.text
+                                onClicked: {
+                                    fitsSavePicker.suggestedName = fitsPath.text.replace(/^.*\//, "")
+                                    fitsSavePicker.openAt(fitsPath.text)
+                                }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Write the file with the keywords set"
+                            }
                         }
                     }
                 }

@@ -88,6 +88,75 @@
         rm(tmp; recursive = true, force = true)
     end
 
+    @testset "an image source of any dimension, read by its keywords" begin
+        tmp = mktempdir()
+        img(nx) = [hypot(i - nx ÷ 2 - 1, j - nx ÷ 2 - 1) < 8 ? 1.0 : 0.0 for i in 1:nx, j in 1:nx]
+        g = joinpath(tmp, "grey.fits"); writefits(img(33), g; pixsize = 0.1)
+        i = GUI.simulate_source_info("image", g)
+        @test i.ok && i.ndims == 2 && occursin("33×33 · 1 λ · 1 epoch · 0.1 mas", i.summary)
+        w = read_wave_file("MIRCX_LOWH")
+        c = joinpath(tmp, "cube.fits")
+        writefits(cat((img(33) for _ in w.λ)...; dims = 3), c; pixsize = 0.1, wavelengths = w.λ)
+        i = GUI.simulate_source_info("image", c)
+        @test i.ok && i.ndims == 3 && i.nwav == length(w.λ) && occursin("$(length(w.λ)) λ (", i.summary)
+        q = joinpath(tmp, "four.fits")
+        writefits(cat((img(33) for _ in 1:6)...; dims = 3) |> x -> reshape(x, 33, 33, 2, 3), q;
+                  pixsize = 0.1, wavelengths = [1.6e-6, 2.2e-6], mjds = [60000.0, 60001.0, 60002.0])
+        i = GUI.simulate_source_info("image", q)
+        @test i.ok && i.ndims == 4 && occursin("2 λ (1.6–2.2 µm) · 3 epochs (MJD 60000.0–60002.0)", i.summary)
+        @test GUI.simulate_source_info("cube", q).ok                 # an older session's kind
+        bare = joinpath(tmp, "bare.fits")
+        OITOOLS.AstroFITS.writefits!(bare, ["OBJECT" => "x"], rand(33, 33, 3) .+ 0.1)
+        i = GUI.simulate_source_info("image", bare)
+        @test !i.ok && occursin("CTYPE3", i.summary) && occursin("FITS Image Handling", i.summary)
+
+        # through the panel: the wavelength cube, simulated by path, logged with it
+        prev = GUI.SHELL[]
+        GUI.SHELL[] = GUI.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing, "",
+                          nothing, nothing, nothing, nothing, nothing, nothing, nothing, Any[],
+                          nothing, nothing, nothing, nothing, "", "", nothing)
+        out = joinpath(tmp, "sim.oifits")
+        r = GUI.shell_simulate(out, "CHARA", "", "MIRCX", "MIRCX_LOWH", "T", VEGA_RA, VEGA_DEC,
+                               "2026-06-21", -1.0, 1.0, 30.0,
+                               join(["source\timage", "path\t" * c, "pixsize\t0.1", "mag\t5",
+                                     "mag_ao\t5", "seed\t1", "n_samples\t20"], "\n"))
+        @test startswith(r, "ok\t")
+        log = join(GUI._shell().console, "\n")
+        @test occursin("image = \"$(c)\", pixsize = 0.1", log)
+        r = GUI.shell_simulate(joinpath(tmp, "no.oifits"), "CHARA", "", "MIRCX", "MIRCX_LOWH", "T",
+                               VEGA_RA, VEGA_DEC, "2026-06-21", -1.0, 1.0, 30.0,
+                               join(["source\timage", "path\t" * bare, "pixsize\t0.1"], "\n"))
+        @test startswith(r, "!") && occursin("CTYPE3", r)
+
+        # the image's own channels, for an image and for a model holding the cube
+        own = joinpath(tmp, "own.fits")
+        λc = [1.52e-6, 1.6e-6, 1.68e-6]
+        writefits(cat((img(33) for _ in λc)...; dims = 3), own; pixsize = 0.1, wavelengths = λc)
+        mfile = joinpath(tmp, "star_cube.toml")
+        write(mfile, """
+            [model]
+            "star,ud" = 0.5
+            "star,f" = 0.6
+            "env,image" = "own.fits"
+            "env,f" = 0.4
+            """)
+        for (src, path) in (("image", own), ("model", mfile))
+            o = joinpath(tmp, "own_$(src).oifits")
+            r = GUI.shell_simulate(o, "CHARA", "", "MIRCX", "MIRCX_LOWH", "T", VEGA_RA, VEGA_DEC,
+                                   "2026-06-21", -1.0, 1.0, 30.0,
+                                   join(["source\t" * src, "path\t" * path, "pixsize\t0.1",
+                                         "image_channels\t1", "mag\t5", "mag_ao\t5", "seed\t1",
+                                         "n_samples\t20"], "\n"))
+            @test startswith(r, "ok\t")
+            x = readoifits(o; T = Float64, warn = false, verbose = false)[1, 1]
+            @test isapprox(sort(unique(x.uv_lam)), λc; rtol = 1e-6)
+        end
+        @test occursin("simulate(facility, target, combiner, :image, dates", join(GUI._shell().console, "\n"))
+        GUI.SHELL[] = prev
+        rm(tmp; recursive = true, force = true)
+    end
+
     @testset "telescope order is the facility's own" begin
         tels = facility_telescopes("CHARA")
         @test tels == ["S1", "S2", "E1", "E2", "W1", "W2"]

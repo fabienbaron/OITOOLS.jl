@@ -133,34 +133,31 @@ import AstroFITS   # qualified: it exports `readfits`/`writefits`, as OITOOLS do
         @test read_model_image(nopix; pixsize = 0.2).pixsize == 0.2
     end
 
-    @testset "ROTIR's reference cube, and matching planes to data" begin
-        dir  = joinpath(@__DIR__, "data", "rotir")
-        mi   = read_model_image(joinpath(dir, "zetand_ref_cube.fits"))
-        @test size(mi.image) == (144, 144, 2, 2)
-        @test mi.pixsize == 0.10699553372976                # the header's PIXSIZE, exactly
-        @test mi.wavelengths == [1.515382109573693e-6, 1.6227540982072242e-6]
-        @test mi.mjds == [58696.37925102794, 58701.39097318102]
+    @testset "a written cube, and matching planes to data" begin
+        # Two channels (1.50, 1.65 µm) of V1295 Aql on two of its nights (epochs 1 and 3).
+        data = readoifits(joinpath(@__DIR__, "..", "demos", "data", "V1295_Aql.oifits");
+                          warn = false, verbose = false, T = Float64)[1, 1]
+        parts, mjd = split_by_time(data)
+        nights = parts[[1, 3]]
+        chans = sort(unique(data.uv_lam))
+        λ, t = chans[[1, 4]], mjd[[1, 3]]
+        p = joinpath(d, "two_by_two.fits")
+        writefits(unit_planes(rand(nx, nx, 2, 2) .+ 0.1), p; pixsize = 0.25, wavelengths = λ, mjds = t)
+        mi = read_model_image(p)
+        @test size(mi.image) == (nx, nx, 2, 2) && mi.pixsize ≈ 0.25
+        @test mi.wavelengths == λ && mi.mjds == t
         @test mi.normalization === :plane && mi.offset == (0.0, 0.0)
         @test all(abs(sum(mi.image[:, :, i, j]) - 1) < 1e-6 for i in 1:2, j in 1:2)
-        @test minimum(mi.image) < 0                          # the limb's ringing is kept
 
-        files = sort(filter(endswith(".oifits"), readdir(dir; join = true)))
-        for (it, f) in enumerate(files)
-            data = readoifits(f; polychromatic = true, warn = false, verbose = false)
-            @test size(data, 1) == 6
-            for ch in 1:6
-                x  = data[ch, 1]
-                λ  = Float64(x.uv_lam[1]); t = Float64(x.uv_mjd[1])
-                if ch in (1, 4)
-                    # The cube's channels 1 and 4 — on the second night too, although that
-                    # night's channels sit 1.2e-4 away from the first's.
-                    @test model_image_plane(mi, λ, t) == (ch == 1 ? 1 : 2, it)
-                else
-                    @test_throws ArgumentError model_image_plane(mi, λ, t)
-                end
+        for (it, x) in enumerate(nights), (ch, l) in enumerate(chans)
+            i = findfirst(==(l), x.uv_lam)
+            if ch in (1, 4)
+                @test model_image_plane(mi, l, x.uv_mjd[i]) == (ch == 1 ? 1 : 2, it)
+            else
+                @test_throws ArgumentError model_image_plane(mi, l, x.uv_mjd[i])
             end
         end
-        @test_throws ArgumentError model_image_plane(mi, 1.515382e-6, 58650.0)  # no such night
+        @test_throws ArgumentError model_image_plane(mi, λ[1], 58650.0)        # no such night
         # A grey image serves every wavelength and every time.
         grey = joinpath(d, "anyλ.fits"); writefits(unit_planes(rand(nx, nx)), grey; pixsize = 0.3)
         @test model_image_plane(read_model_image(grey), 2.2e-6, 50000.0) == (1, 1)

@@ -40,6 +40,7 @@ index_runs
 |----------|-------------|
 | `simulate(facility, target, combiner, wave, dates, outfile)` | Simulate observations from array geometry |
 | `simulate_from_oifits(infile, outfile)` | Simulate using UV coverage of an existing OIFITS file |
+| `wave_from_image(file_or_model)` | The spectral setup a cube defines (one channel per plane), for `simulate(…, :image, …)` |
 | `get_uv(l, h, λ, δ, baselines)` | UV coordinates from latitude `l` (rad), hour angles `h` (rad, row vector), wavelengths `λ` (m), declination `δ` (rad) and a 3×n baseline matrix (m). Returns `(nuv, uv, u_M, v_M, w_M)`; `uv` is in cycles/rad |
 | `read_facility_file(file)` | Read facility configuration (TOML) |
 | `read_obs_file(file)` | Read target configuration (TOML) |
@@ -70,7 +71,9 @@ index_runs
 | `WaveConfig` | Wavelength/spectral configuration |
 
 ```@docs
+simulate
 simulate_from_oifits
+wave_from_image
 observable_epochs
 AOConfig
 CombinerConfig

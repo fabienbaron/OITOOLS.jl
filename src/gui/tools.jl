@@ -420,6 +420,18 @@ say what it is (no `CTYPE3`) is wavelength when `CUNIT3` is a length (planes at 
 (k - CRPIX3)·CDELT3`), else unlabelled; the pixel scale from the WCS when there is one, 1 mas
 (said in the console) when not.
 """
+# Axis 3's wavelengths (metres) from a linear WCS whose CUNIT3 is a length, CTYPE3 or not; empty
+# when the header does not give them.
+function _axis3_wavelengths(kw, n)
+    unit = Dict("m" => 1.0, "um" => 1e-6, "µm" => 1e-6, "micron" => 1e-6, "microns" => 1e-6,
+                "nm" => 1e-9, "angstrom" => 1e-10)
+    u = lowercase(strip(string(get(kw, "CUNIT3", ""))))
+    (n > 1 && haskey(unit, u) && get(kw, "CRVAL3", nothing) isa Real &&
+     get(kw, "CDELT3", nothing) isa Real) || return Float64[]
+    c0, d, r = Float64(kw["CRVAL3"]), Float64(kw["CDELT3"]), Float64(get(kw, "CRPIX3", 1.0))
+    return [(c0 + (k - r) * d) * unit[u] for k in 1:n]
+end
+
 function _viewer_cube(p::AbstractString, sh)
     try
         return OITOOLS.read_model_image(p)
@@ -429,13 +441,7 @@ function _viewer_cube(p::AbstractString, sh)
     ndims(raw) in (2, 3, 4) || throw(ArgumentError("$(ndims(raw))-D data, not an image or a cube"))
     img = reshape(raw, size(raw, 1), size(raw, 2), size(raw, 3), size(raw, 4))
     kw = first(OITOOLS._fits_header(p))
-    unit = Dict("m" => 1.0, "um" => 1e-6, "micron" => 1e-6, "nm" => 1e-9, "angstrom" => 1e-10)
-    u = lowercase(strip(string(get(kw, "CUNIT3", ""))))
-    wl = Float64[]
-    if size(img, 3) > 1 && haskey(unit, u) && haskey(kw, "CRVAL3") && haskey(kw, "CDELT3")
-        c0, d, r = Float64(kw["CRVAL3"]), Float64(kw["CDELT3"]), Float64(get(kw, "CRPIX3", 1.0))
-        wl = [(c0 + (k - r) * d) * unit[u] for k in 1:size(img, 3)]
-    end
+    wl = _axis3_wavelengths(kw, size(img, 3))
     ps = OITOOLS.fits_pixsize(p)
     ps === nothing && console!(sh, "  no pixel scale in the header; shown at 1 mas per pixel")
     console!(sh, "  read as stored planes" * (isempty(wl) ? ", unlabelled" : ", wavelengths from CUNIT3/CRVAL3/CDELT3"))
@@ -482,6 +488,183 @@ function shell_cube_show(k::Real)
     c === nothing || show_image!(c, m.image[:, :, w, t], m.pixsize;
                                  title = basename(m.path) * " — " * lab)
     return lab
+end
+
+"""
+    shell_cube_axes() -> String
+
+The open cube's two channel axes, three lines: `nwave\tnepoch`, then each wavelength channel's
+value in µm and each epoch's MJD, tab-separated (blank where the file does not say).
+"""
+function shell_cube_axes()
+    m = CUBE[]
+    m === nothing && return "! no cube open"
+    nλ, nt = size(m.image, 3), size(m.image, 4)
+    lab(v, k, f) = k <= length(v) && isfinite(v[k]) ? f(v[k]) : ""
+    wl = [lab(m.wavelengths, k, x -> @sprintf("λ=%.5g µm", x * 1e6)) for k in 1:nλ]
+    mj = [lab(m.mjds, k, x -> @sprintf("MJD %.4f", x)) for k in 1:nt]
+    return join(["$(nλ)\t$(nt)", join(wl, "\t"), join(mj, "\t")], "\n")
+end
+
+"""
+    shell_cube_show_at(w, t) -> String
+
+Show wavelength channel `w` of epoch `t` (both 1-based, clamped) on the viewer's canvas.
+"""
+function shell_cube_show_at(w::Real, t::Real)
+    m = CUBE[]
+    m === nothing && return "! no cube open"
+    nλ = size(m.image, 3)
+    w = clamp(round(Int, w), 1, nλ); t = clamp(round(Int, t), 1, size(m.image, 4))
+    return shell_cube_show((t - 1) * nλ + w)
+end
+
+# ── Set keywords / Save FITS ──────────────────────────────────────────────────────────
+
+# What Set keywords applied, for Save FITS: the source file and `fits_set_keywords`' arguments.
+const FITSKW = Ref{Any}(nothing)
+
+const _PIX_MAS = Dict("mas" => 1.0, "µas" => 1e-3, "arcsec" => 1e3, "deg" => 3.6e6,
+                      "rad" => 3.6e6 * 180 / π)
+const _WAVE_M  = Dict("m" => 1.0, "µm" => 1e-6, "nm" => 1e-9, "Å" => 1e-10)
+const _STEP_D  = Dict("d" => 1.0, "h" => 1 / 24, "min" => 1 / 1440, "s" => 1 / 86400)
+
+_g(x) = @sprintf("%.10g", x)
+
+"""
+    shell_fits_keywords(path) -> String
+
+What Set keywords starts from, as `key\tvalue` lines read from the file: `dims` (the array's
+sizes), `pixsize` (mas; blank when the header has no scale), `eastleft` (1 when its WCS stores
+East on the left), `axis3` (`wave` or `time`), `wstart`/`wstep` (µm) and `tstart`/`tstep` (MJD,
+days), blank where the file does not say — axis 3's wavelengths also from a CUNIT3/CRVAL3/CDELT3
+without CTYPE3; then one `card\tNAME\t1\tvalue` (present) or `card\tNAME\t0\t` (missing) line per
+WCS card of each axis (CTYPE, CUNIT, CRVAL, CDELT or a CD entry, CRPIX).
+"""
+function shell_fits_keywords(path::AbstractString)
+    p = strip_file_url(String(path))
+    dims = try
+        OITOOLS.AstroFITS.FitsFile(f -> collect(f[1].data_size), p)
+    catch err
+        return "! cannot read $(basename(p)): " * _cause(err)
+    end
+    2 <= length(dims) <= 4 || return "! $(basename(p)): $(length(dims))-D data, not an image or a cube"
+    h = first(OITOOLS._fits_header(p))
+    ps = OITOOLS.fits_pixsize(p)
+    cd1 = get(h, "CDELT1", 0.0)
+    eastleft = startswith(uppercase(string(get(h, "CTYPE1", ""))), "RA") && cd1 isa Real && cd1 < 0
+    axis3 = uppercase(strip(string(get(h, "CTYPE3", "")))) in ("TIME", "MJD") ? "time" : "wave"
+    wl, mj = try
+        m = OITOOLS.read_model_image(p)
+        (m.wavelengths, m.mjds)
+    catch
+        (_axis3_wavelengths(h, length(dims) > 2 ? dims[3] : 1), Float64[])
+    end
+    first2(v, scale) = isempty(v) || !isfinite(v[1]) ? ("", "") :
+        (_g(v[1] * scale), length(v) > 1 && isfinite(v[2]) ? _g((v[2] - v[1]) * scale) : "")
+    ws, wd = first2(wl, 1e6)
+    ts, td = first2(mj, 1.0)
+    # the WCS cards of each axis: present (with its value) or missing; a CD matrix entry
+    # stands for CDELT on axes 1 and 2
+    cards = String[]
+    for k in eachindex(dims), c in ("CTYPE", "CUNIT", "CRVAL", "CDELT", "CRPIX")
+        name = "$(c)$(k)"
+        v = get(h, name, nothing)
+        v === nothing && c == "CDELT" && k <= 2 && (v = get(h, "CD$(k)_$(k)", nothing))
+        push!(cards, "card\t$(name)\t" * (v === nothing ? "0\t" : "1\t" * strip(string(v))))
+    end
+    return join(["dims\t" * join(dims, " "), "pixsize\t" * (ps === nothing ? "" : _g(ps)),
+                 "eastleft\t" * (eastleft ? "1" : "0"), "axis3\t" * axis3,
+                 "wstart\t" * ws, "wstep\t" * wd, "tstart\t" * ts, "tstep\t" * td, cards...], "\n")
+end
+
+"""
+    shell_fits_apply(path, pixsize, pixunit, eastleft, axis3, wstart, wstep, wunit,
+                     tstart, tstep, tunit) -> String
+
+Set keywords: check the values against the file's planes, keep them for Save FITS, and show the
+cube with them (nothing is written). Pixel size in `pixunit` (mas, µas, arcsec, deg, rad);
+wavelengths `wstart + k·wstep` in `wunit` (m, µm, nm, Å); epochs `tstart + k·tstep`, the start an
+MJD and the step in `tunit` (d, h, min, s). Returns the planes' labels, one per line.
+"""
+function shell_fits_apply(path::AbstractString, pixsize::AbstractString, pixunit::AbstractString,
+                          eastleft::Bool, axis3::AbstractString,
+                          wstart::AbstractString, wstep::AbstractString, wunit::AbstractString,
+                          tstart::AbstractString, tstep::AbstractString, tunit::AbstractString)
+    sh = _shell()
+    p = strip_file_url(String(path))
+    num(x) = isempty(strip(x)) ? nothing : tryparse(Float64, strip(x))
+    ps = num(pixsize)
+    (ps === nothing || !(ps > 0) || !haskey(_PIX_MAS, pixunit)) &&
+        return "! the pixel size must be a positive number"
+    ax = axis3 == "time" ? :time : :wave
+    cube = try
+        OITOOLS.fits_keyword_cube(p; east_left = eastleft, axis3 = ax)
+    catch err
+        return "! " * _cause(err)
+    end
+    nλ, nt = size(cube, 3), size(cube, 4)
+    function axis(n, s0, ds, scale, what)
+        n == 1 && num(s0) === nothing && return Float64[]
+        a, d = num(s0), num(ds)
+        a === nothing && return "! the $(what) start must be a number"
+        n > 1 && (d === nothing || d == 0) && return "! the $(what) step must be a non-zero number"
+        return [(a + (k - 1) * something(d, 0.0)) * scale for k in 1:n]
+    end
+    wl = axis(nλ, wstart, wstep, _WAVE_M[wunit], "wavelength")
+    wl isa String && return wl
+    t0 = num(tstart); dt = num(tstep)
+    mj = nt == 1 && t0 === nothing ? Float64[] :
+         t0 === nothing ? "! the epoch start (MJD) must be a number" :
+         nt > 1 && (dt === nothing || dt == 0) ? "! the epoch step must be a non-zero number" :
+         [t0 + (k - 1) * something(dt, 0.0) * _STEP_D[tunit] for k in 1:nt]
+    mj isa String && return mj
+    mas = ps * _PIX_MAS[pixunit]
+    FITSKW[] = (; path = p, pixsize = mas, east_left = eastleft, axis3 = ax,
+                  wavelengths = wl, mjds = mj)
+    m = (; image = cube, pixsize = mas, wavelengths = wl, mjds = mj, path = p)
+    CUBE[] = m
+    console!(sh, "keywords set for $(basename(p)): $(_g(mas)) mas" *
+                 (isempty(wl) ? "" : ", $(nλ) wavelength" * (nλ == 1 ? "" : "s")) *
+                 (isempty(mj) ? "" : ", $(nt) epoch" * (nt == 1 ? "" : "s")) * " (not saved)")
+    shell_cube_show(1)
+    return join([_cube_label(m, w, t) for (w, t) in _cube_planes(m)], "\n")
+end
+
+"The file whose keywords Set keywords holds, or \"\"."
+shell_fits_keyword_source() = FITSKW[] === nothing ? "" : FITSKW[].path
+
+# A vector as the code that rebuilds it: an evenly spaced one as a range.
+function _range_literal(v)
+    length(v) == 1 && return "[$(_g(v[1]))]"
+    return "collect(range($(_g(v[1])), step = $(_g(v[2] - v[1])), length = $(length(v))))"
+end
+
+"""
+    shell_fits_save(out) -> String
+
+Save FITS: write the file Set keywords was applied to, with those keywords, to `out`
+(`fits_set_keywords`; `out` may be the file itself).
+"""
+function shell_fits_save(out::AbstractString)
+    sh = _shell()
+    k = FITSKW[]
+    k === nothing && return "! set the keywords first"
+    o = strip_file_url(String(out))
+    args = "pixsize = $(_g(k.pixsize))" * (k.east_left ? ", east_left = true" : "") *
+           (k.axis3 === :time ? ", axis3 = :time" : "") *
+           (isempty(k.wavelengths) ? "" : ", wavelengths = " * _range_literal(k.wavelengths)) *
+           (isempty(k.mjds) ? "" : ", mjds = " * _range_literal(k.mjds))
+    console!(sh, "fits_set_keywords($(_literal(k.path)), $(_literal(o)); $(args))"; kind = :cmd)
+    try
+        OITOOLS.fits_set_keywords(k.path, o; pixsize = k.pixsize, east_left = k.east_left,
+                                  axis3 = k.axis3, wavelengths = k.wavelengths, mjds = k.mjds)
+    catch err
+        return console!(sh, "! could not save $(basename(o)): " * _cause(err); kind = :err)
+    end
+    # an overwritten file is now East-first in the convention's axis order
+    o == k.path && (FITSKW[] = merge(k, (; east_left = false, axis3 = :wave)))
+    return console!(sh, "wrote " * basename(o))
 end
 
 # ── fit each dataset ──────────────────────────────────────────────────────────────────

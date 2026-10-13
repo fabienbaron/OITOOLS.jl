@@ -1,6 +1,6 @@
 # What the window does with features the core already has: averaging channels from Explore's
-# Filter, merging datasets and the cube viewer (Tools), and fitting each of several datasets
-# (Modeling).
+# Filter, merging datasets, the cube viewer and a FITS file's keywords (Tools), and fitting each
+# of several datasets (Modeling).
 
 @testset "Filter averaging, merge, cube viewer, fit each" begin
     G = GUI
@@ -88,6 +88,92 @@
             @test length(lq) == 4 && occursin("2.003 µm", lq[4])
             r = joinpath(dir, "bare.fits"); OITOOLS.AstroFITS.writefits!(r, ["OBJECT" => "x"], rand(8, 8, 3))
             @test split(G.shell_cube_open(r), "\n") == ["plane 1", "plane 2", "plane 3"]
+        end
+
+        @testset "Tools › Set keywords, Save FITS" begin
+            # a cube with no axis keywords: 3 wavelength channels × 2 epochs
+            cube = Float32[hypot(x - 8 - t, y - 8) < 5 ? w + t : 0.01 for x in 1:16, y in 1:16, w in 1:3, t in 1:2]
+            bare = joinpath(dir, "bare.fits")
+            OITOOLS.AstroFITS.writefits!(bare, ["OBJECT" => "disc"], cube)
+            kv = Dict(split(l, "\t"; limit = 2) for l in split(G.shell_fits_keywords(bare), "\n"))
+            @test kv["dims"] == "16 16 3 2" && kv["pixsize"] == "" && kv["eastleft"] == "0"
+            @test kv["axis3"] == "wave" && kv["wstart"] == ""
+            cards = [split(l, "\t") for l in split(G.shell_fits_keywords(bare), "\n") if startswith(l, "card")]
+            @test length(cards) == 20 && all(c -> c[3] == "0", cards)     # 4 axes × 5 cards, none there
+            # no CTYPE3, but CUNIT3 / CRVAL3 / CDELT3 in microns: the wavelengths are prefilled
+            amhra = joinpath(dir, "amhra.fits")
+            OITOOLS.AstroFITS.writefits!(amhra, ["CTYPE1" => "RA---TAN", "CDELT1" => -2.7e-7, "CDELT2" => 2.7e-7,
+                                                 "CRVAL3" => 1.0, "CDELT3" => 1.5, "CUNIT3" => "MICRON"],
+                                         rand(8, 8, 5))
+            ka = Dict(split(l, "\t"; limit = 2) for l in split(G.shell_fits_keywords(amhra), "\n"))
+            @test ka["wstart"] == "1" && ka["wstep"] == "1.5" && ka["eastleft"] == "1"
+            ca = Dict(c[2] => c[3] for c in (split(l, "\t") for l in split(G.shell_fits_keywords(amhra), "\n"))
+                      if c[1] == "card")
+            @test ca["CTYPE1"] == "1" && ca["CDELT3"] == "1" && ca["CTYPE3"] == "0" && ca["CRPIX3"] == "0"
+            G.FITSKW[] = nothing                                        # nothing set yet
+            @test startswith(G.shell_fits_save(joinpath(dir, "z.fits")), "!")
+            # Apply: values in the dialog's units; problems named
+            @test startswith(G.shell_fits_apply(bare, "", "mas", false, "wave", "1.5", "0.1", "µm",
+                                                "58000.5", "2", "d"), "! the pixel size")
+            @test startswith(G.shell_fits_apply(bare, "0.25", "mas", false, "wave", "1.5", "", "µm",
+                                                "58000.5", "2", "d"), "! the wavelength step")
+            labs = split(G.shell_fits_apply(bare, "250", "µas", false, "wave", "1.5", "0.1", "µm",
+                                            "58000.5", "48", "h"), "\n")
+            @test length(labs) == 6 && occursin("1.5 µm", labs[1]) && G.shell_fits_keyword_source() == bare
+            # the viewer's two axes, and a channel of an epoch
+            ax = split(G.shell_cube_axes(), "\n")
+            @test ax[1] == "3\t2" && split(ax[2], "\t") == ["λ=1.5 µm", "λ=1.6 µm", "λ=1.7 µm"]
+            @test split(ax[3], "\t") == ["MJD 58000.5000", "MJD 58002.5000"]
+            @test G.shell_cube_show_at(2, 2) == "λ 1.6 µm · MJD 58002.5000"
+            @test G.CUBE_CANVAS[].imagedata[] == Float32.(cube[:, :, 2, 2])
+            @test G.shell_cube_show_at(9, 9) == "λ 1.7 µm · MJD 58002.5000"   # clamped
+            out = joinpath(dir, "keys.fits")
+            @test G.shell_fits_save(out) == "wrote keys.fits"
+            m = read_model_image(out)
+            @test m.wavelengths ≈ [1.5e-6, 1.6e-6, 1.7e-6] && m.mjds ≈ [58000.5, 58002.5]
+            @test m.pixsize ≈ 0.25 && m.image ≈ cube ./ sum(cube; dims = (1, 2))
+            # the logged line writes the same file
+            line = last(filter(l -> occursin("fits_set_keywords(", l), sh.console))
+            line = line[findfirst("fits_set_keywords(", line)[1]:end]
+            again = joinpath(dir, "again.fits")
+            mod = Module(:ReplayKeywords); Core.eval(mod, :(using OITOOLS))
+            Core.eval(mod, Meta.parse(replace(line, out => again)))
+            @test read_model_image(again).wavelengths ≈ m.wavelengths && read_model_image(again).mjds ≈ m.mjds
+            # the saved file's own keywords prefill the dialog
+            kv = Dict(split(l, "\t"; limit = 2) for l in split(G.shell_fits_keywords(out), "\n"))
+            @test parse(Float64, kv["pixsize"]) ≈ 0.25 && parse(Float64, kv["wstart"]) ≈ 1.5
+            @test parse(Float64, kv["tstep"]) ≈ 2.0
+        end
+
+        @testset "Modeling › SPARCO fluxes" begin
+            p = joinpath(dir, "two.toml")
+            write(p, """
+                free = ["disk,fwhm"]
+                [model]
+                "star,ud" = 0.3
+                "star,f" = 1.0
+                "disk,fwhm" = 3.0
+                "disk,f" = 1.0
+                """)
+            G.shell_open_model(p)
+            @test startswith(G.shell_sparco_fluxes("star", "star", -4, 1.6), "!")
+            @test startswith(G.shell_sparco_fluxes("star", "halo", -4, 1.6), "!")
+            @test startswith(G.shell_sparco_fluxes("star", "disk", -4, 0), "!")
+            @test G.shell_sparco_fluxes("star", "disk", -4, 1.6) == ""
+            m = G._model(sh)
+            @test m.dict["star,f"] == "\$fs * (\$WL/1.6)^(-4) / (\$fs * (\$WL/1.6)^(-4) + (1 - \$fs) * (\$WL/1.6)^\$disk,slope)"
+            @test occursin("(1 - \$fs) * (\$WL/1.6)^\$disk,slope /", m.dict["disk,f"])
+            @test m.dict["fs"] == 0.5 && m.dict["disk,slope"] == 0.0
+            @test issubset(["fs", "disk,slope", "disk,fwhm"], m.free) && !("star,f" in m.free)
+            @test (m.lb["fs"], m.ub["fs"], m.lb["disk,slope"], m.ub["disk,slope"]) == (0.0, 1.0, -4.0, 4.0)
+            # the fluxes sum to 1 at any wavelength, whatever fs and the slope
+            fm = dict_to_model(merge(copy(m.dict), Dict{String,Any}("fs" => 0.3, "disk,slope" => 1.7)), String[])
+            for λ in (1.5e-6, 1.6e-6, 2.2e-6)
+                @test real(eval_model(fm, Float64[], zeros(2, 1); wl = [λ])[1]) ≈ 1.0
+            end
+            # applied again: fs and the slope keep their values
+            m.dict["fs"] = 0.42
+            @test G.shell_sparco_fluxes("star", "disk", -4, 1.6) == "" && m.dict["fs"] == 0.42
         end
 
         @testset "Modeling › Fit each" begin

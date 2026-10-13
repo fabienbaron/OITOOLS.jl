@@ -2299,7 +2299,7 @@ end
 
 """
     writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[], bandwidths = Float64[],
-              mjds = Float64[])
+              mjds = Float64[], header = Pair{String,Any}[])
 
 Write an image or a cube to a FITS file, in the convention shared with ROTIR's
 `write_sky_cube` so that what is written here loads back as a model component
@@ -2329,15 +2329,19 @@ the authority.
 
 `NORMALIZ = 'PLANE'` is written when every plane sums to 1, which is what a reconstruction is.
 
+`header` holds further cards (`name => value` or `name => (value, comment)`), written ahead of
+the ones above.
+
 See also [`fits_pixsize`](@ref), which reads the pixel scale back. Files written before this
 convention — radians, a negative `CDELT1`, `CRPIX = nx/2` — still read: the unit is honoured,
 and `read_model_image` recognises the old pair and warns.
 """
 function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
-                   bandwidths = Float64[], mjds = Float64[])
+                   bandwidths = Float64[], mjds = Float64[], header = Pair{String,Any}[])
+    extra = Pair{String,Any}[c for c in header]
     AstroFITS.FitsFile(String(fitsfile), "w!") do f
         if pixsize == -1
-            write(f, Pair{String,Any}[], data)
+            write(f, extra, data)
             return nothing
         end
         nx, ny = size(data, 1), size(data, 2)
@@ -2354,6 +2358,7 @@ function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
             "CRPIX2" => (Float64(ny ÷ 2 + 1), "phase centre"),
             "CRVAL2" => 0.0,
             "PIXSIZE" => (Float64(pixsize), "pixel size in mas")]
+        header = vcat(extra, header)
 
         # A linear axis only when it IS linear: a CDELT that is merely the mean step puts
         # every plane but the first at the wrong value, and the table says it exactly anyway.

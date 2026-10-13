@@ -1,0 +1,49 @@
+# Ibrahim et al. 2023, ApJ 947, 68 — HD 190073 (V1295 Aql), the Doughnut model:
+# a parabolic ring between r_min and r_max (Eq. 1).
+#
+# Three components, as in the paper: an unresolved star with a Rayleigh-Jeans spectrum
+# (λ/λ0)^−4, the disc, and an over-resolved halo, the disc and the halo each with its own
+# spectral slope. The fluxes are expressions in `$WL` (microns) over one shared denominator, so
+# they sum to 1 at every wavelength: `fs` and `fd` are the star's and the disc's fractions at
+# λ0 = 1.6 µm, the halo has the rest. Values: the paper's best fit for epoch A (Table 4),
+# a starting point for demos/data/V1295_Aql.oifits.
+#
+# The doughnut is PMOIRED's, which the paper's fits used: 1 − (2(r − r̄)/(r_max − r_min))², zero at
+# both edges, r̄ the mean radius. It is written here on the annulus the diameters define, $RMIN
+# and $RMAX being its radii.
+
+name = "HD 190073 — Doughnut (Ibrahim et al. 2023)"
+wl_unit = "um"     # `$WL` in the expressions is in microns
+
+free = ["fs", "fd", "disk,slope", "halo,slope", "disk,incl", "disk,projang", "disk,diamin", "disk,diamout"]
+
+[model]
+# The star: unresolved.
+"star,f" = "$fs * ($WL/1.6)^(-4) / ($fs * ($WL/1.6)^(-4) + $fd * ($WL/1.6)^$disk,slope + (1 - $fs - $fd) * ($WL/1.6)^$halo,slope)"
+
+# The disc.
+"disk,profile" = "1 - (2*($R - ($RMIN + $RMAX)/2)/($RMAX - $RMIN))^2"
+"disk,diamin"  = 0.58     # 2 × R_in = 0.29 mas
+"disk,diamout" = 5.2      # 2 × R_out = 2.60 mas
+"disk,incl"     = 10.94
+"disk,projang"  = 42.3
+"disk,f"     = "$fd * ($WL/1.6)^$disk,slope / ($fs * ($WL/1.6)^(-4) + $fd * ($WL/1.6)^$disk,slope + (1 - $fs - $fd) * ($WL/1.6)^$halo,slope)"
+"disk,slope" = -0.1
+
+# The halo: over-resolved, all its flux at baselines shorter than any measured.
+"halo,resolved" = true
+"halo,f"     = "(1 - $fs - $fd) * ($WL/1.6)^$halo,slope / ($fs * ($WL/1.6)^(-4) + $fd * ($WL/1.6)^$disk,slope + (1 - $fs - $fd) * ($WL/1.6)^$halo,slope)"
+"halo,slope" = 2.08
+
+fs = 0.43
+fd = 0.51
+
+[bounds]
+fs                = [0.0, 1.0]
+fd                = [0.0, 1.0]
+"disk,slope"      = [-4.0, 4.0]
+"halo,slope"      = [-4.0, 8.0]
+"disk,incl"       = [0.0, 90.0]
+"disk,projang"    = [-180.0, 180.0]
+"disk,diamin"     = [0.0, 8.0]
+"disk,diamout"    = [0.1, 12.0]

@@ -1,6 +1,6 @@
 # The Tools tab's file operations: the header inspector (oifits_headers), the validator and its
-# repaired copy (validate_oifits, repair_oifits), and the splits (split_by_time,
-# split_by_instrument, split_by_target).
+# repaired copy (validate_oifits, repair_oifits), the splits (split_by_time,
+# split_by_instrument, split_by_target) and a FITS image's keywords (fits_set_keywords).
 import AstroFITS
 
 @testset "OIFITS tools" begin
@@ -101,5 +101,44 @@ import AstroFITS
         # by target, re-read
         t = split_by_target(joinpath(data, "MWC275_4T.oifits"); T = Float64, warn = false, verbose = false)
         @test first.(t) == ["MWC 275", "HD163296"] && t[1][2][1, 1].nv2 > 0
+    end
+
+    @testset "fits_set_keywords" begin
+        # a cube with no axis keywords: a disc brightening with wavelength, moving with time
+        cube = Float32[hypot(x - 8 - t, y - 8) < 5 ? w + t : 0.01 for x in 1:16, y in 1:16, w in 1:3, t in 1:2]
+        bare = joinpath(dir, "bare.fits")
+        AstroFITS.writefits!(bare, ["OBJECT" => ("disc", "a test cube")], cube)
+        @test_throws ArgumentError read_model_image(bare)                 # no axis keywords
+        wl = collect(range(1.5e-6, step = 0.1e-6, length = 3))
+        mj = collect(range(58000.5, step = 2.0, length = 2))
+        out = fits_set_keywords(bare, joinpath(dir, "keys.fits"); pixsize = 0.25,
+                                wavelengths = wl, mjds = mj)
+        m = read_model_image(out)
+        @test m.wavelengths ≈ wl && m.mjds ≈ mj && m.pixsize ≈ 0.25
+        @test m.image ≈ cube ./ sum(cube; dims = (1, 2))                 # planes, normalised
+        h = first(OITOOLS._fits_header(out))
+        @test h["OBJECT"] == "disc" && h["CTYPE3"] == "WAVE" && h["CTYPE4"] == "TIME"
+        @test eltype(OITOOLS.readfits(out)) == Float32                   # the file's own type
+        # time on axis 3: the axes are swapped into (wavelength, time)
+        swapped = joinpath(dir, "swapped.fits")
+        AstroFITS.writefits!(swapped, ["OBJECT" => "x"], permutedims(cube, (1, 2, 4, 3)))
+        m2 = read_model_image(fits_set_keywords(swapped, joinpath(dir, "s2.fits"); pixsize = m.pixsize,
+                                                axis3 = :time, wavelengths = wl, mjds = mj))
+        @test m2.image ≈ m.image && m2.mjds ≈ m.mjds
+        # East on the left in the file: flipped East-first
+        img = rand(Float64, 8, 6)
+        el = joinpath(dir, "eastleft.fits"); AstroFITS.writefits!(el, ["OBJECT" => "x"], reverse(img; dims = 1))
+        @test fits_keyword_cube(el; east_left = true)[:, :, 1, 1] == img
+        # a 3-D time series; overwriting the file itself
+        ts = joinpath(dir, "series.fits"); AstroFITS.writefits!(ts, ["OBJECT" => "x"], rand(8, 8, 3) .+ 0.1)
+        fits_set_keywords(ts, ts; pixsize = 0.3, axis3 = :time, mjds = [1.0, 2.0, 3.0])
+        @test read_model_image(ts).mjds == [1.0, 2.0, 3.0] && size(read_model_image(ts).image) == (8, 8, 1, 3)
+        # refusals
+        @test_throws ArgumentError fits_set_keywords(bare, joinpath(dir, "x.fits"); pixsize = 0.1, mjds = mj)
+        @test_throws ArgumentError fits_set_keywords(bare, joinpath(dir, "x.fits"); pixsize = 0.1,
+                                                     wavelengths = [1e-6], mjds = mj)
+        @test_throws ArgumentError fits_set_keywords(bare, joinpath(dir, "x.fits"); pixsize = 0,
+                                                     wavelengths = wl, mjds = mj)
+        @test_throws ArgumentError fits_keyword_cube(bare; axis3 = :space)
     end
 end

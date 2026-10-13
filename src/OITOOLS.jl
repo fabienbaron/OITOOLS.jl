@@ -189,7 +189,8 @@ export readoifits, readoifits_multiepochs, list_oifits_targets, write_oifits, me
 export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_image_plane, model_image_vis
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
-export oifits_headers, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target
+export oifits_headers, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target,
+       fits_set_keywords, fits_keyword_cube
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 # ── The Makie plotting API (OITOOLSMakieExt) ─────────────────────────────────
@@ -288,7 +289,7 @@ export auto_pixsize, gaussian_prior, gaussian_prior_cube
 
 # ── Simulation ───────────────────────────────────────────────────────────────
 export simulate, simulate_from_oifits, get_uv
-export read_facility_file, read_obs_file, read_comb_file, read_wave_file
+export read_facility_file, read_obs_file, read_comb_file, read_wave_file, wave_from_image
 export list_configs
 export predict_errors
 export FacilityConfig, TargetConfig, CombinerConfig, WaveConfig, AOConfig

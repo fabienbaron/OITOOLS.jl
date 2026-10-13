@@ -1,0 +1,42 @@
+# SPARCO star + image: an unresolved star on top of an environment given as an image — a
+# reconstruction, a radiative-transfer model, any FITS image or cube — with the two fluxes
+# varying independently across the band.
+#
+# The star is a photosphere, so in the near infrared its flux follows Rayleigh-Jeans,
+# (λ/λ0)^−4. The environment has its own slope, `env,slope`. The two `f` entries are
+# expressions in `$WL` (microns) sharing one denominator, so the fluxes sum to 1 at every
+# wavelength; `fs` is the star's fraction at λ0 = 1.6 µm. Modeling's "SPARCO fluxes…" writes the
+# same pair for any two components.
+#
+# `env,image` names the image, relative to this file: SPARCO_env.fits is a Gaussian ring of
+# radius 2.5 mas, 50° inclined, its major axis at PA 30°, 0.1 mas pixels. Replace it with your
+# own (Modeling › Model Creation, the image card's file button). A 2-D image serves every
+# channel; a wavelength or time cube serves the data's channels and nights it has planes for,
+# and its keywords say which — fix a file whose axes they do not give in Tools › FITS Image
+# Handling.
+#
+# The image's own geometry is fixed by the file; add `env,x` / `env,y` to fit an offset.
+
+name = "SPARCO star + image"
+wl_unit = "um"     # `$WL` in the expressions is in microns
+
+free = ["fs", "env,slope"]
+
+[model]
+# The star: unresolved, so it has no geometry key at all — only a flux.
+"star,f"    = "$fs * ($WL/1.6)^(-4) / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$env,slope)"
+
+# The environment: an image, with a free spectral slope.
+"env,image" = "SPARCO_env.fits"
+"env,f"     = "(1 - $fs) * ($WL/1.6)^$env,slope / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$env,slope)"
+"env,slope" = 0.0
+
+# The star's flux fraction at λ0. It belongs to no component, which is why it has no comma in
+# its name.
+fs = 0.5
+
+# `fs` is a fraction: outside [0, 1] the environment's flux goes negative. −4 is the star's own
+# slope, so an environment at or below it cannot be told apart from the photosphere.
+[bounds]
+fs          = [0.0, 1.0]
+"env,slope" = [-4.0, 4.0]

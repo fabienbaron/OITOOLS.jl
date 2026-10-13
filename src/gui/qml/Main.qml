@@ -443,6 +443,27 @@ ApplicationWindow {
             anchors.leftMargin: dp(8); anchors.rightMargin: dp(8)
             spacing: dp(10)
 
+            // About: the version, licence and credits, styled as the settings button beside it.
+            ToolButton {
+                id: aboutButton
+                objectName: "aboutButton"
+                text: "?"
+                font.pointSize: pt(baseFontPt + 8)
+                font.bold: true
+                implicitWidth: dp(38)
+                implicitHeight: dp(38)
+                background: Rectangle {
+                    radius: dp(3)
+                    border.color: "#000000"
+                    border.width: 1
+                    color: aboutButton.down ? "#d4d4d4"
+                           : aboutButton.hovered ? "#ececec" : "transparent"
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: "About OITOOLS"
+                onClicked: aboutPanel.opened ? aboutPanel.close() : aboutPanel.openWith(Julia.shell_about())
+            }
+
             // Settings. Left of the dataset because it governs the whole window rather than
             // any one perspective, and because the dataset is what the eye should land on.
             ToolButton {
@@ -550,6 +571,65 @@ ApplicationWindow {
     // change it live. The plot font is shown but disabled, for a stated reason, and the
     // controls style takes effect at the next launch because Qt reads it once, at load.
     // "Save config" writes the lot to a per-user file that the window reads at startup.
+    // About: version, licence, author and acknowledgements. Fixed widths on the panel and its
+    // wrapped labels, neither read from the other (see the settings panel on binding loops).
+    Popup {
+        id: aboutPanel
+        objectName: "aboutPanel"
+        x: Math.max(dp(12), Math.round((parent.width  - width)  / 2))
+        y: Math.max(dp(12), Math.round((parent.height - height) / 2))
+        width: dp(460)
+        modal: true
+        dim: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+        padding: dp(16)
+        property var info: ({})
+        function openWith(t) {
+            var kv = {}
+            var lines = t.split("\n")
+            for (var i = 0; i < lines.length; ++i) {
+                var f = lines[i].split("\t"); kv[f[0]] = f.length > 1 ? f[1] : ""
+            }
+            info = kv
+            open()
+        }
+        ColumnLayout {
+            width: dp(428)
+            spacing: dp(8)
+            Label { text: "OITOOLS"; font.bold: true; font.pointSize: pt(baseFontPt + 6) }
+            Label {
+                objectName: "aboutVersion"
+                text: "Version " + (aboutPanel.info.version || "?") + "  ·  Julia " + (aboutPanel.info.julia || "?")
+            }
+            Label {
+                objectName: "aboutLicense"
+                Layout.preferredWidth: dp(428)
+                wrapMode: Text.WordWrap
+                visible: (aboutPanel.info.license || "").length > 0
+                text: "License: " + (aboutPanel.info.license || "")
+            }
+            Label {
+                Layout.preferredWidth: dp(428)
+                wrapMode: Text.WordWrap
+                text: "Developed by Prof. Fabien Baron, Georgia State University"
+            }
+            Label { text: "Acknowledgements"; font.bold: true; Layout.topMargin: dp(4) }
+            Label {
+                Layout.preferredWidth: dp(428)
+                wrapMode: Text.WordWrap
+                // each credit kept on one line; the lines break between them
+                text: ["Jean-Marie Mariotti Center", "Prof. Ryan Norris (NMT)", "Dr. Arturo Martinez",
+                       "PMOIRED by Dr. Antoine Mérand", "VMLMB by Dr. Éric Thiébaut"].map(function (c) {
+                          return c.replace(/ /g, "\u00a0") }).join(" · ")
+            }
+            Button {
+                Layout.alignment: Qt.AlignRight
+                text: "Close"
+                onClicked: aboutPanel.close()
+            }
+        }
+    }
+
     Popup {
         id: settingsPanel
         // Centred. Anchored to the top-left it landed on the Observing settings column, which

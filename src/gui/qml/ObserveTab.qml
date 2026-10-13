@@ -140,7 +140,9 @@ Item {
     // one argument with a flag: an image (2-D grey, or 3-D one plane per channel) goes in as
     // `image` with a `pixsize`, a model goes in as `flat_model` plus its current `flat_params`.
     // So the panel has to know which it holds before it can say Simulate is possible.
-    property string simSource: "image"          // image | cube | model
+    property string simSource: "image"          // image (a FITS file, any dimension) | model
+    // the channels of the image (or the model's image cube) instead of the spectral setup
+    property bool   simImageChannels: false
     property string simImagePath: ""
     property string simModelPath: ""            // empty ⇒ the Modeling perspective's model
     property real   simPixsize: 0.1             // mas, images only; a model carries its own scale
@@ -310,6 +312,7 @@ Item {
         put("source", simSource)
         put("path", simSource === "model" ? simModelPath : simImagePath)
         if (simSource !== "model") put("pixsize", simPixsize)
+        if (simImageChannels && !simCopyStructure) put("image_channels", 1)
         put("noise", simNoise ? 1 : 0)
         put("seed", simSeed)
         if (simCopyStructure) {
@@ -1803,10 +1806,12 @@ Item {
                     Label { text: "Source"; font.bold: true }
                     ComboBox {
                         Layout.preferredWidth: dp(140)
-                        model: ["Image", "Image cube", "Model"]
-                        currentIndex: root.simSource === "cube" ? 1
-                                    : root.simSource === "model" ? 2 : 0
-                        onActivated: root.simSource = ["image", "cube", "model"][currentIndex]
+                        objectName: "simSourceBox"
+                        model: ["Image", "Model"]
+                        currentIndex: root.simSource === "model" ? 1 : 0
+                        onActivated: root.simSource = ["image", "model"][currentIndex]
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Image: a FITS image or cube, any dimension · Model: a model, SPARCO included"
                     }
 
                     Button {
@@ -1842,6 +1847,16 @@ Item {
                     Label { text: "mas"; visible: root.simSource !== "model"; color: "#666"
                             font.pointSize: pt(baseFontPt - 2) }
 
+                    CheckBox {
+                        objectName: "simImageChannels"
+                        text: "Image's channels"
+                        checked: root.simImageChannels
+                        enabled: !root.simCopyStructure
+                        onToggled: root.simImageChannels = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Observe at the cube's wavelengths (the image, or the model's image cube) instead of the spectral setup"
+                    }
+
                     // Here rather than on a row of its own: it is one switch, and the panel is
                     // long enough already. What it means is in the tooltip and in the line
                     // below, which only appears once it is on.
@@ -1862,6 +1877,7 @@ Item {
                     // modes — with the coverage's provenance appended when it is not the
                     // array's, since that is what makes the HA range and the magnitudes idle.
                     Label {
+                        objectName: "simSourceText"
                         Layout.fillWidth: true
                         text: root.simSourceText +
                               (root.simCopyStructure ? "   ·   uv + SNR from the loaded file" : "")

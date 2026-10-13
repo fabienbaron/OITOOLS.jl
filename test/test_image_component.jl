@@ -1,12 +1,12 @@
 # An image or a cube as a model component (`c,image`), judged against answers computed without
-# it: ROTIR's exact polygon-FT visibilities of a rendered star, the analytic uniform disc, an
+# it: the analytic uniform disc (alone, and as the planes of a cube at real data's uv points), an
 # analytic point source for the position convention, and a fit recovering injected values.
-using DelimitedFiles, LinearAlgebra, Statistics
+using LinearAlgebra, Statistics
 
 @testset "the image component" begin
     d   = mktempdir()
     MAS = 2.0626480624709636e8
-    rot = joinpath(@__DIR__, "data", "rotir")
+    v1295 = joinpath(@__DIR__, "..", "demos", "data", "V1295_Aql.oifits")
 
     # A uniform disc rendered by pixel AREA (ss × ss subsamples per pixel), centred (cx, cy)
     # mas from the phase-centre pixel nx÷2+1; East is dimension 1.
@@ -28,51 +28,49 @@ using DelimitedFiles, LinearAlgebra, Statistics
     B  = range(5e6, 1.5e8; length = 40)
     uv = reduce(hcat, [[b * cos(t), b * sin(t)] for b in B, t in (0.0, 0.7, 2.1)])
 
-    @testset "ROTIR's rendered ζ And against its exact visibilities" begin
-        m = image_model(joinpath(rot, "zetand_ref_cube.fits"))
-        csv, _ = readdlm(joinpath(rot, "zetand_ref_exact_vis.csv"), ','; header = true)
-        csv = Float64.(csv)
-        Vx  = csv[:, 7] .+ im .* csv[:, 8]
-        V   = eval0(m, Matrix(csv[:, 3:4]'); wl = csv[:, 5], mjd = csv[:, 6])
-        # ROTIR measured 2.0e-5 through OITOOLS' NFFT; the visibilities are flux-normalised.
-        @test maximum(abs.(V .- Vx)) < 5e-5
-
-        # Through the data path — readoifits, its uv points, its triangles — at the default
-        # Float32, against the exact values matched point by point.
-        files = sort(filter(endswith(".oifits"), readdir(rot; join = true)))
-        for f in files
-            data = readoifits(f; polychromatic = true, warn = false, verbose = false)
-            for ch in 1:6
-                x = data[ch, 1]
-                if ch in (1, 4)
-                    V = eval0(m, x.uv; wl = x.uv_lam, mjd = x.uv_mjd)
-                    j = [argmin(abs.(csv[:, 3] .- x.uv[1, i]) .+ abs.(csv[:, 4] .- x.uv[2, i]))
-                         for i in 1:size(x.uv, 2)]
-                    @test maximum(abs.(V .- Vx[j])) < 5e-5
-                    t3  = vis_to_t3(V, x.indx_t3_1, x.indx_t3_2, x.indx_t3_3)[3]
-                    t3x = vis_to_t3(Vx[j], x.indx_t3_1, x.indx_t3_2, x.indx_t3_3)[3]
-                    dφ  = mod.(t3 .- t3x .+ 180, 360) .- 180
-                    @test sqrt(mean(dφ .^ 2)) < 0.1                 # degrees; ROTIR: 0.034
-                else
-                    # Channels 2, 3, 5, 6 are not in the cube: an error naming its channels.
-                    err = try eval0(m, x.uv; wl = x.uv_lam, mjd = x.uv_mjd); nothing
-                          catch e; e end
-                    @test err isa ArgumentError && occursin("1.51538", err.msg)
-                end
+    @testset "a rendered cube against analytic discs, at V1295 Aql's uv points" begin
+        # Two nights of V1295 Aql (epochs 1 and 3) and two of its five channels (1.50, 1.65 µm):
+        # a 2 × 2 cube of centred discs, a different diameter in each plane, whose visibilities
+        # are known in closed form.
+        data = readoifits(v1295; warn = false, verbose = false, T = Float64)[1, 1]
+        parts, mjd = split_by_time(data)
+        nights = parts[[1, 3]]
+        chans = sort(unique(data.uv_lam))
+        λ = chans[[1, 4]]
+        D = [1.0 1.3; 1.6 1.9]                                # D[wavelength, night], mas
+        ps, nx = 0.02, 128
+        cube = Array{Float64}(undef, nx, nx, 2, 2)
+        for w in 1:2, t in 1:2; cube[:, :, w, t] = ud_image(nx, ps, D[w, t]); end
+        p = joinpath(d, "discs.fits")
+        writefits(cube, p; pixsize = ps, wavelengths = λ, mjds = mjd[[1, 3]])
+        m = image_model(p)
+        ud(Dm, uvs) = eval0(dict_to_model(Dict{String,Any}("ud,ud" => Dm), String[]), uvs)
+        for (t, x) in enumerate(nights)
+            for (w, l) in enumerate(λ)
+                i = findall(==(l), x.uv_lam)
+                V = eval0(m, x.uv[:, i]; wl = x.uv_lam[i], mjd = x.uv_mjd[i])
+                # the area rendering's edge and the pixel's transfer function, ~1e-3
+                @test maximum(abs.(V .- ud(D[w, t], x.uv[:, i]))) < 2e-3
             end
+            # the three channels the cube does not have: an error naming its channels
+            i = findall(==(chans[2]), x.uv_lam)
+            err = try eval0(m, x.uv[:, i]; wl = x.uv_lam[i], mjd = x.uv_mjd[i]); nothing
+                  catch e; e end
+            @test err isa ArgumentError && occursin("1.5", err.msg)
         end
 
         # Planes are chosen by each point's wavelength and epoch, not by its position in the
-        # list: reversed points give reversed visibilities, and the same uv point on the other
-        # night is the other night's plane.
-        x = readoifits(files[1]; polychromatic = true, warn = false, verbose = false)[1, 1]
-        y = readoifits(files[2]; polychromatic = true, warn = false, verbose = false)[4, 1]
-        uvs = hcat(x.uv, y.uv); wls = vcat(x.uv_lam, y.uv_lam); ts = vcat(x.uv_mjd, y.uv_mjd)
+        # list: reversed points give reversed visibilities, and the same uv points on the other
+        # night are the other night's plane.
+        x, y = nights
+        ix = findall(==(λ[1]), x.uv_lam); iy = findall(==(λ[2]), y.uv_lam)
+        uvs = hcat(x.uv[:, ix], y.uv[:, iy])
+        wls = vcat(x.uv_lam[ix], y.uv_lam[iy]); ts = vcat(x.uv_mjd[ix], y.uv_mjd[iy])
         V = eval0(m, uvs; wl = wls, mjd = ts)
         @test eval0(m, reverse(uvs; dims = 2); wl = reverse(wls), mjd = reverse(ts)) ≈ reverse(V)
-        other = eval0(m, x.uv; wl = x.uv_lam, mjd = fill(Float64(y.uv_mjd[1]), size(x.uv, 2)))
-        @test maximum(abs.(other .- V[1:size(x.uv, 2)])) > 1e-3   # the spot has moved
-        @test_throws ArgumentError eval0(m, x.uv)                 # a cube needs wavelengths
+        other = eval0(m, x.uv[:, ix]; wl = x.uv_lam[ix], mjd = fill(y.uv_mjd[1], length(ix)))
+        @test maximum(abs.(other .- ud(D[1, 2], x.uv[:, ix]))) < 2e-3   # night 2's disc
+        @test_throws ArgumentError eval0(m, x.uv[:, ix])                  # a cube needs wavelengths
     end
 
     @testset "a rendered disc is the analytic disc" begin

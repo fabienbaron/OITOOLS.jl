@@ -766,7 +766,8 @@ end
 #
 # `simulate` needs a sky, and it takes one of two kinds:
 #
-#     image      = a FITS path or an array — 2-D is grey, 3-D is one plane per channel
+#     image      = a FITS path, read by its keywords: 2-D, a wavelength cube, a time series or
+#                  4-D (a SPARCO model, star plus image, is a model)
 #     flat_model = a compiled model, plus `flat_params`, its current values
 #
 # Those are genuinely different inputs, not one input with a flag, and the panel has to say
@@ -843,12 +844,14 @@ end
 
 Describe the sky a simulation would use, and whether it is usable.
 
-`kind` is `"image"`, `"cube"` or `"model"`. For the two image kinds `path` is a FITS file; for
-`"model"` it is a TOML model file (see [`read_model_file`](@ref)) — or empty, meaning the model
-currently held by the Modeling perspective.
+`kind` is `"image"` or `"model"` (`"cube"`, from older sessions, is read as `"image"`). For an
+image `path` is a FITS file of any dimension, read as `simulate` reads it ([`read_model_image`](@ref)):
+the summary gives its size, wavelengths and epochs, and its pixel scale. For `"model"` it is a
+TOML model file (see [`read_model_file`](@ref)) — or empty, meaning the model currently held by
+the Modeling perspective. A model may hold image components (a SPARCO star plus image).
 
-`ok = false` comes with a `summary` saying why, which is the whole point: "3-D file chosen as a
-grey image" is a mistake worth catching before it produces an OIFITS nobody can explain.
+`ok = false` comes with a `summary` saying why — for an image whose axes the keywords do not
+give, the reader's reason and where to set them.
 """
 function simulate_source_info(kind::AbstractString, path::AbstractString = "")
     k = lowercase(strip(String(kind)))
@@ -874,34 +877,28 @@ function simulate_source_info(kind::AbstractString, path::AbstractString = "")
                   detail = join(sort(collect(keys(m.model))), ", "))
     end
 
+    k in ("image", "cube") || return no("unknown source '$kind'; expected image or model")
     isempty(p) && return no("no file chosen")
     isfile(p)  || return no("no file at '$p'")
-    img = try
-        readfits(p)
-    catch err
-        return no("could not read '$(basename(p))': " * sprint(showerror, err))
-    end
-
-    nd = ndims(img)
-    # The file's own pixel size, when its header carries one. A truth image already knows its
-    # scale, and retyping it is how a simulation ends up at a different scale from the image it
-    # is of -- a mistake that produces a perfectly plausible OIFITS of the wrong source size.
+    # Read as `simulate` will read it: by its keywords. A file with no pixel scale is still
+    # described (the panel's pixel size is then the one used); any other refusal is the reason.
     px = fits_pixsize(p)
-    pxnote = px === nothing ? "" : @sprintf(", %.4g mas/pixel", px)
-    if k == "image"
-        nd == 2 || return no("'$(basename(p))' is $(nd)-D; a grey image must be 2-D " *
-                             (nd == 3 ? "— choose Image cube instead" : ""))
-        return (; ok = true, kind = k,
-                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) grey" * pxnote,
-                  ndims = 2, nx = size(img, 1), nwav = 1, detail = "",
-                  pixsize = px === nothing ? 0.0 : px)
-    elseif k == "cube"
-        nd == 3 || return no("'$(basename(p))' is $(nd)-D; a cube must be 3-D " *
-                             (nd == 2 ? "— choose Image instead" : ""))
-        return (; ok = true, kind = k,
-                  summary = "$(basename(p)): $(size(img,1))×$(size(img,2)) × $(size(img,3)) channels" * pxnote,
-                  ndims = 3, nx = size(img, 1), nwav = size(img, 3), detail = "",
-                  pixsize = px === nothing ? 0.0 : px)
+    mi = try
+        read_model_image(p; pixsize = something(px, 1.0))
+    catch err
+        # the reader's own message already names the file
+        why = err isa ArgumentError ? err.msg : sprint(showerror, err)
+        return no(why * " — fix it in Tools › FITS Image Handling (Set keywords, Save FITS)")
     end
-    return no("unknown source '$kind'; expected image, cube or model")
+    nx, ny, nλ, nt = size(mi.image)
+    λs = filter(isfinite, mi.wavelengths); ts = filter(isfinite, mi.mjds)
+    wave = nλ == 1 ? "1 λ" : "$nλ λ" * (isempty(λs) ? "" :
+           @sprintf(" (%.4g–%.4g µm)", minimum(λs) * 1e6, maximum(λs) * 1e6))
+    time = nt == 1 ? "1 epoch" : "$nt epochs" * (isempty(ts) ? "" :
+           @sprintf(" (MJD %.1f–%.1f)", minimum(ts), maximum(ts)))
+    scale = px === nothing ? "no pixel scale in the header" : @sprintf("%.4g mas", px)
+    return (; ok = true, kind = "image",
+              summary = "$(basename(p)): $(nx)×$(ny) · $wave · $time · $scale",
+              ndims = nλ > 1 && nt > 1 ? 4 : nλ > 1 || nt > 1 ? 3 : 2, nx, nwav = nλ,
+              detail = "", pixsize = px === nothing ? 0.0 : px)
 end

@@ -1091,12 +1091,118 @@ function get_uv_indxes(nhours,nuv,nv2,nt3,v2_indx,t3_indx_1,t3_indx_2,t3_indx_3,
     return v2_indx_M,t3_indx_1_M,t3_indx_2_M,t3_indx_3_M,v2_indx_w,t3_indx_1_w,t3_indx_2_w,t3_indx_3_w
  end
 
-function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,
+"""
+    wave_from_image(src) -> WaveConfig
+
+The spectral setup a cube defines: one channel per wavelength plane, at its wavelength, with its
+`EFF_BAND` as the width when the file gives one, else the spacing to the neighbouring planes.
+`src` is a FITS path (read by [`read_model_image`](@ref)) or a compiled model, whose image
+components' cubes are used — several must agree. A setup taken from the cube matches it plane
+for plane, which is what [`simulate`](@ref)`(…, :image, …)` uses to observe a cube on its own
+channels.
+"""
+function wave_from_image(path::AbstractString)
+    mi = read_model_image(String(path))
+    return _wave_of(mi, basename(String(path)))
+end
+
+function wave_from_image(m::FlatModel)
+    cubes = [c.image for c in m.components
+             if c isa ImageSpec && length(c.image.wavelengths) > 1 && all(isfinite, c.image.wavelengths)]
+    isempty(cubes) && throw(ArgumentError(
+        "the model holds no wavelength cube to take channels from (its image components are " *
+        "grey or it has none); choose a spectral setup"))
+    w = _wave_of(cubes[1], basename(cubes[1].path))
+    for c in cubes[2:end]
+        (length(c.wavelengths) == length(w.λ) && isapprox(c.wavelengths, w.λ; rtol = 1e-9)) ||
+            throw(ArgumentError("the model's cubes have different channels " *
+                                "($(basename(cubes[1].path)), $(basename(c.path)))"))
+    end
+    return w
+end
+
+function _wave_of(mi::ModelImage, name::AbstractString)
+    λ = mi.wavelengths
+    (isempty(λ) || !all(isfinite, λ)) &&
+        throw(ArgumentError("$name has no wavelengths to take channels from"))
+    δ = if all(isfinite, mi.bandwidths) && length(mi.bandwidths) == length(λ)
+        copy(mi.bandwidths)
+    elseif length(λ) > 1
+        o = sortperm(λ); s = λ[o]; g = diff(s)
+        w = similar(s)
+        for k in eachindex(s)
+            w[k] = k == 1 ? g[1] : k == length(s) ? g[end] : (g[k-1] + g[k]) / 2
+        end
+        w[invperm(o)]
+    else
+        throw(ArgumentError("$name has one wavelength plane and no EFF_BAND: no channel width"))
+    end
+    return WaveConfig(combiner = "", mode = "from $name", λ = copy(λ), δλ = δ)
+end
+
+# A FITS image or cube as the simulators observe it: read by `read_model_image` — East-first,
+# its pixel scale (`pixsize`, mas, overrides the header), reference pixel, wavelengths and epochs
+# — each plane scaled to sum to 1, which V² and T3 measure, and each plane's own flux relative to
+# the brightest returned beside it: the spectrum and light curve a photon count follows. A file
+# that says NORMALIZ = 'PLANE' has none to give, and its planes all weigh 1.
+function _sim_image(path::AbstractString, pixsize)
+    nrm = uppercase(strip(string(get(first(_fits_header(path)), "NORMALIZ", "")))) == "PLANE" ?
+          :plane : :relative
+    mi = read_model_image(path; pixsize, normalization = nrm)
+    nλ, nt = size(mi.image, 3), size(mi.image, 4)
+    flux = [sum(@view mi.image[:, :, i, j]) for i in 1:nλ, j in 1:nt]
+    img = similar(mi.image)
+    for i in 1:nλ, j in 1:nt
+        img[:, :, i, j] .= @view(mi.image[:, :, i, j]) ./ flux[i, j]
+    end
+    return ModelImage(img, mi.pixsize, mi.wavelengths, mi.bandwidths, mi.mjds, :plane,
+                      mi.offset, mi.path), flux
+end
+
+# What `_sim_image` read, for the console: size, channels, epochs, scale.
+function _sim_image_summary(mi::ModelImage)
+    nx, ny, nλ, nt = size(mi.image)
+    s = "$(nx)×$(ny)"
+    s *= nλ > 1 ? " × $nλ wavelengths" : ""
+    s *= nt > 1 ? " × $nt epochs" : ""
+    return s * ", $(round(mi.pixsize; sigdigits = 4)) mas/pixel"
+end
+
+"""
+    simulate(facility, target, combiner, wavelength, dates, out_file; image | flat_model, ...)
+
+Simulate an observation of a sky with `facility` and `combiner` at the `wavelength` channels on
+`dates`, and write it to `out_file` (OIFITS).
+
+The sky is `image` or `flat_model` with `flat_params`:
+
+- `image` a FITS path: read by [`read_model_image`](@ref) — East-first, its pixel scale, its
+  wavelength and time axes from the keywords, so a 2-D image, a 3-D wavelength cube, a 3-D time
+  series and a 4-D cube are all observed as what they are: each uv point with the plane of its
+  channel and its date. `pixsize` (mas) overrides the header's scale. A cube's planes may differ
+  in flux; that spectrum weights each channel's photon count. A file whose third axis says
+  nothing (no CTYPE3) is refused: set its keywords in Tools › FITS Image Handling, or with
+  [`fits_set_keywords`](@ref).
+- `image` an array: 2-D grey, or 3-D with one plane per channel in order; `pixsize` (default
+  0.1 mas) is its scale. `dft = true` transforms an array by DFT instead of NFFT.
+- `flat_model`: a compiled model (image components included) at `flat_params`.
+
+`wavelength` is a `WaveConfig` (see [`read_wave_file`](@ref)), or `:image` for the cube's own
+channels ([`wave_from_image`](@ref)): one per plane of the image, or of the model's image cube,
+so the two match plane for plane. The combiner still sets the throughput and the noise.
+"""
+function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Union{Nothing,Real}=nothing, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,
                   noise::Bool=true, nonoise::Union{Nothing,Bool}=nothing, debias::Bool=true,
                   systematics::Bool=true, fringe_tracker::Bool=true,
                   mag=2.0, mag_ao::Union{Nothing,Real}=nothing,
                   n_samples::Int=100, rng::Union{Nothing,AbstractRNG}=nothing, seed::Union{Nothing,Integer}=nothing,
                   observability=nothing)
+    # the cube's own channels: a setup taken from the image (or the model's cube)
+    if wavelength === :image
+        wavelength = image isa AbstractString && image != "" ? wave_from_image(image) :
+                     flat_model !== nothing ? wave_from_image(flat_model) :
+                     throw(ArgumentError("simulate: wavelength = :image needs an image path or a model holding a cube"))
+    end
     #simulate an observation using input hour angles, info about array and combiner, and input image
     ntel=facility.ntel;
 
@@ -1159,9 +1265,22 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     spec_weight = ones(nwavs)
     # Determine if image or model
 
-    if (((typeof(image) == String) && (image !="")) || ((typeof(image) != String) && (image !="")) )
-        # TODO: Update polychromatic and dynamic imaging and non square images
-        x = image isa AbstractString ? readfits(image) : Float64.(image)
+    if image isa AbstractString && image != ""
+        mi, flux = _sim_image(image, pixsize)
+        println("Simulating from $(basename(image)): $(_sim_image_summary(mi))")
+        # uv is (baseline, hour, channel) flattened, baseline fastest, channel slowest
+        mjds = datetime_to_mjd.(dates)
+        cvis_model = model_image_vis(mi, uv; wl = repeat(λ, inner = nuv * nhours),
+                                     mjd = repeat(repeat(mjds, inner = nuv), outer = nwavs),
+                                     name = basename(image))
+        # each channel's flux, over the dates observed
+        chan = [sum(flux[model_image_plane(mi, λ[c], t)...] for t in mjds) / length(mjds)
+                for c in 1:nwavs]
+        mean_flux = sum(chan) / nwavs
+        spec_weight = mean_flux > 0 ? chan ./ mean_flux : ones(nwavs)
+    elseif !(image isa AbstractString)
+        pixsize = something(pixsize, 0.1)
+        x = Float64.(image)
         nx = size(x,1); 
         if ndims(x) == 2 # Monochromatic image
             println("Simulating monochromatic observations...")
@@ -1198,6 +1317,10 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
                 end
             end
             cvis_model = vec(hcat(cvis...))
+        else
+            throw(ArgumentError("simulate: an image array is 2-D (grey) or 3-D (one plane per " *
+                "channel); write a $(ndims(x))-D cube with writefits(…; wavelengths, mjds) and " *
+                "pass its path, which says what its axes are"))
         end
     elseif flat_model !== nothing
         # Flat-dict parametric model
@@ -1637,10 +1760,13 @@ come from the input, so the answer is comparable to the original point by point.
     absolute errors would claim a precision the geometry never had.
   * `"noise_model"` — `errors.v2_multit`/`v2_addit` and the T3 equivalents.
 
-The sky is either `image` (a 2-D grey image, or a 3-D cube with one plane per channel of the
-input, ordered by increasing wavelength) with its `pixsize` in mas, or `flat_model` with
-`flat_params`. Each channel of a cube is normalised by its own flux, which is what V², T3amp
-and T3φ measure — the spectrum cannot be expressed in those observables and is not written.
+The sky is `image` or `flat_model` with `flat_params`. A FITS path is read by
+[`read_model_image`](@ref), as in [`simulate`](@ref): East-first, its scale (`pixsize`, mas,
+overrides it), and every uv point of the input with the plane of its wavelength and date — a
+2-D image, a wavelength cube, a time series or a 4-D cube alike. An array is 2-D grey, or 3-D
+with one plane per channel of the input in increasing wavelength, at `pixsize` (default 0.1
+mas). Each plane is normalised by its own flux, which is what V², T3amp and T3φ measure — the
+spectrum cannot be expressed in those observables and is not written.
 
 `noise = false` writes the noiseless observables with the error bars still filled in. That is
 the honest form of a truth file: what the instrument would measure with no realisation of the
@@ -1648,7 +1774,7 @@ noise, alongside the noise it would have had.
 """
 function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[],
         image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64,3}, Array{Float64,4}}="",
-        pixsize::Float64=0.1, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[],
+        pixsize::Union{Nothing,Real}=nothing, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[],
         noise::Bool=true, rng::Union{Nothing,AbstractRNG}=nothing, seed::Union{Nothing,Integer}=nothing)
 
     # NEVER over the input. Every read here happens before the write, so writing back would not
@@ -1665,8 +1791,17 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
     data = readoifits(in_oifits, filter_bad_data=false)[1]
 
     # Compute complex visibilities from truth image or model
-    if (((typeof(image) == String) && (image != "")) || ((typeof(image) != String) && (image != "")))
-        x = image isa AbstractString ? readfits(image) : Float64.(image)
+    if image isa AbstractString && image != ""
+        mi, _ = _sim_image(image, pixsize)
+        println("Simulating from $(basename(image)): $(_sim_image_summary(mi))")
+        cvis_model = model_image_vis(mi, data.uv; wl = data.uv_lam, mjd = data.uv_mjd,
+                                     name = basename(image))
+    elseif !(image isa AbstractString)
+        pixsize = something(pixsize, 0.1)
+        x = Float64.(image)
+        ndims(x) in (2, 3) || throw(ArgumentError("simulate_from_oifits: an image array is 2-D " *
+            "(grey) or 3-D (one plane per channel); write a $(ndims(x))-D cube with " *
+            "writefits(…; wavelengths, mjds) and pass its path"))
         nx = size(x, 1)
         if ndims(x) == 3
             # One plane per channel of the INPUT file, matched by increasing wavelength, each

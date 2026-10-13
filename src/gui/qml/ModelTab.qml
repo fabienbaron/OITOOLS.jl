@@ -1200,7 +1200,7 @@ Item {
                                 spacing: root.dp(4)
                                 Label { text: "parameter"; Layout.preferredWidth: root.dp(150)
                                         font.pointSize: root.pt(root.baseFontPt - 2); color: "#555" }
-                                Label { text: "mode"; Layout.preferredWidth: root.dp(78)
+                                Label { text: "mode"; Layout.preferredWidth: root.dp(86)
                                         font.pointSize: root.pt(root.baseFontPt - 2); color: "#555" }
                                 Label { text: "value"; Layout.preferredWidth: root.dp(96)
                                         font.pointSize: root.pt(root.baseFontPt - 2); color: "#555" }
@@ -1320,8 +1320,8 @@ Item {
                                     ComboBox {
                                         id: modeBox
                                         objectName: "param:" + rowItem.rComp + "," + rowItem.rParam + ":mode"
-                                        Layout.preferredWidth: root.dp(78)
-                                        Layout.maximumWidth: root.dp(78)
+                                        Layout.preferredWidth: root.dp(86)
+                                        Layout.maximumWidth: root.dp(86)
                                         implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
                                         font.pointSize: root.pt(root.baseFontPt - 2)
                                         // "derived" is what this panel, the inspector and the
@@ -2438,6 +2438,15 @@ Item {
                                                                          tol: parseFloat(f[3]),
                                                                          satisfied: true })
                                             }
+                                        }
+                                        Button {
+                                            objectName: "sparcoButton"
+                                            text: "SPARCO fluxes…"
+                                            implicitHeight: Math.max(root.dp(24), implicitContentHeight + topPadding + bottomPadding)
+                                            enabled: componentModel.count >= 2
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "Star and environment fluxes with spectral slopes, summing to 1"
+                                            onClicked: sparcoDialog.open()
                                         }
                                         // Checks what is ON SCREEN, including a constraint
                                         // being edited and not yet used in a fit -- the panel's
@@ -4435,6 +4444,56 @@ Item {
     //
     // Where it lives, what it is called, what it starts at. The name is checked against Julia
     // as it is typed, so OK is only ever pressed on a name that will be accepted.
+    // SPARCO: the star's flux a power law of fixed index, the environment's of a free slope, the
+    // two summing to 1 at every wavelength (`shell_sparco_fluxes`).
+    Dialog {
+        id: sparcoDialog
+        objectName: "sparcoDialog"
+        title: "SPARCO fluxes"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: root.dp(360)
+        property var names: []
+        onOpened: {
+            var n = []
+            for (var i = 0; i < componentModel.count; ++i) n.push(componentModel.get(i).name)
+            names = n
+            var s = n.indexOf("star")
+            sparcoStar.currentIndex = s >= 0 ? s : 0
+            sparcoEnv.currentIndex = sparcoStar.currentIndex === 0 ? Math.min(1, n.length - 1) : 0
+        }
+        GridLayout {
+            width: root.dp(320)
+            columns: 2
+            columnSpacing: root.dp(8)
+            rowSpacing: root.dp(6)
+            Label { text: "star" }
+            ComboBox { id: sparcoStar; objectName: "sparcoStar"; Layout.fillWidth: true; model: sparcoDialog.names }
+            Label { text: "star index" }
+            TextField {
+                id: sparcoIndex; objectName: "sparcoIndex"; Layout.fillWidth: true; text: "-4"
+                validator: DoubleValidator {}
+                ToolTip.visible: hovered; ToolTip.text: "−4: Rayleigh–Jeans"
+            }
+            Label { text: "environment" }
+            ComboBox { id: sparcoEnv; objectName: "sparcoEnv"; Layout.fillWidth: true; model: sparcoDialog.names }
+            Label { text: "λ0 (µm)" }
+            TextField {
+                id: sparcoL0; objectName: "sparcoL0"; Layout.fillWidth: true; text: "1.6"
+                validator: DoubleValidator { bottom: 0 }
+            }
+        }
+        onAccepted: {
+            var err = Julia.shell_sparco_fluxes(sparcoStar.currentText, sparcoEnv.currentText,
+                                                parseFloat(sparcoIndex.text), parseFloat(sparcoL0.text))
+            root.consoleChanged()
+            if (err.length > 0) { root.fitText = err; return }
+            root.modelDirty = true
+            root.refreshModel()
+        }
+    }
+
     Dialog {
         id: addParamDialog
         title: "Add a parameter"

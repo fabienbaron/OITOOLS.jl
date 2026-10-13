@@ -45,8 +45,9 @@ Item {
     // The plot kind as the menu shows it, for the window's PNG file name.
     readonly property string currentKind: kindBox.currentText
     property string pickText: ""
-    property string selectTool: "none"
-    property string selectionText: ""
+    // The point-selection tool and the selection, shown in the Filter's Select points section.
+    property alias selectTool: filterPanel.selectTool
+    property alias selectionText: filterPanel.selectionText
 
     signal statusReported(string text)      // a status line for the window's header
     signal actionDone()                     // the window refreshes everything that follows the data
@@ -290,6 +291,7 @@ Item {
                         onStatusReported: function (text) { root.statusReported(text) }
                         onApplied: root.filterApplied()
                         onPreviewChanged: root.redraw()
+                        onSelectionCleared: root.redraw()
                     }
                 }
 
@@ -421,66 +423,6 @@ Item {
                                 ToolTip.visible: hovered && !enabled
                                 ToolTip.text: root.compareWhy(modelData.needModel)
                                 onClicked: { root.compareMode = modelData.key; root.setCompareView() }
-                            }
-                        }
-                    }
-                }
-
-                // Selection: a box or a lasso drawn on the plot picks points, ringed in red;
-                // "Add to filter" hands them to the Filter section, whose Apply removes them.
-                // With "none" the plot's own zoom, pan, pick and reset are untouched.
-                GroupBox {
-                    title: "Select"
-                    Layout.fillWidth: true
-                    Layout.leftMargin: dp(6); Layout.rightMargin: dp(6)
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        spacing: dp(2)
-                        RowLayout {
-                            ButtonGroup { id: toolGroup }
-                            Repeater {
-                                model: ["none", "box", "lasso"]
-                                RadioButton {
-                                    required property string modelData
-                                    text: modelData
-                                    ButtonGroup.group: toolGroup
-                                    checked: root.selectTool === modelData
-                                    onClicked: {
-                                        root.selectTool = modelData
-                                        Julia.shell_set_select_tool(modelData)
-                                    }
-                                }
-                            }
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            text: root.selectionText.length > 0 ? root.selectionText
-                                  : root.selectTool === "none" ? "choose box or lasso, then drag on the plot"
-                                  : "drag on the plot"
-                            color: root.selectionText.length > 0 ? "#000" : "#888"
-                            font.pointSize: pt(baseFontPt - 1)
-                        }
-                        RowLayout {
-                            Button {
-                                text: "Add to filter"
-                                enabled: root.selectionText.length > 0
-                                onClicked: {
-                                    filterPanel.addHandPicked(Julia.shell_selection_spec())
-                                    Julia.shell_clear_selection()
-                                    root.selectionText = ""
-                                    root.redraw()
-                                }
-                            }
-                            Button {
-                                text: "Clear"
-                                enabled: root.selectionText.length > 0
-                                onClicked: {
-                                    Julia.shell_clear_selection()
-                                    root.selectionText = ""
-                                    root.redraw()
-                                }
                             }
                         }
                     }

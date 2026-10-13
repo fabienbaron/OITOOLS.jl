@@ -1,0 +1,61 @@
+# Ibrahim et al. 2023, ApJ 947, 68 — HD 190073 (V1295 Aql), the Off-center Star model:
+# the skewed ring with the star free to sit off its centre.
+#
+# Three components, as in the paper: an unresolved star with a Rayleigh-Jeans spectrum
+# (λ/λ0)^−4, the disc, and an over-resolved halo, the disc and the halo each with its own
+# spectral slope. The fluxes are expressions in `$WL` (microns) over one shared denominator, so
+# they sum to 1 at every wavelength: `fs` and `fd` are the star's and the disc's fractions at
+# λ0 = 1.6 µm, the halo has the rest. Values: the paper's best fit for epoch A (Table 6),
+# a starting point for demos/data/V1295_Aql.oifits.
+#
+# The star's offset is `star,x` (East) and `star,y` (North), in mas. The paper finds it
+# 0.12 mas west and 0.15 mas south of the ring's centre in epoch A, hence the negative values.
+
+name = "HD 190073 — Off-center Star (Ibrahim et al. 2023)"
+wl_unit = "um"     # `$WL` in the expressions is in microns
+
+free = ["fs", "fd", "disk,slope", "halo,slope", "disk,incl", "disk,projang", "disk,rin", "disk,rout", "disk,sigin", "disk,sigout", "disk,az amp1", "disk,az projang1", "star,x", "star,y"]
+
+[model]
+# The star: unresolved but free to move.
+"star,f" = "$fs * ($WL/1.6)^(-4) / ($fs * ($WL/1.6)^(-4) + $fd * ($WL/1.6)^$disk,slope + (1 - $fs - $fd) * ($WL/1.6)^$halo,slope)"
+"star,x" = -0.12
+"star,y" = -0.15
+
+# The disc.
+"disk,profile" = "1/(1 + exp(-($R - $rin)/$sigin)) * 1/(1 + exp(($R - $rout)/$sigout))"
+"disk,rin"     = 1.16
+"disk,rout"    = 1.14
+"disk,sigin"   = 0.18
+"disk,sigout"  = 0.44
+"disk,diamout" = 12.0     # the profile's grid, r from 0 to 6 mas: the sigmoids have fallen to nothing well inside it
+"disk,az amp1"     = 0.08
+"disk,az projang1" = -170.4
+"disk,incl"     = 10.7
+"disk,projang"  = 3.0
+"disk,f"     = "$fd * ($WL/1.6)^$disk,slope / ($fs * ($WL/1.6)^(-4) + $fd * ($WL/1.6)^$disk,slope + (1 - $fs - $fd) * ($WL/1.6)^$halo,slope)"
+"disk,slope" = -0.13
+
+# The halo: over-resolved, all its flux at baselines shorter than any measured.
+"halo,resolved" = true
+"halo,f"     = "(1 - $fs - $fd) * ($WL/1.6)^$halo,slope / ($fs * ($WL/1.6)^(-4) + $fd * ($WL/1.6)^$disk,slope + (1 - $fs - $fd) * ($WL/1.6)^$halo,slope)"
+"halo,slope" = 4.1
+
+fs = 0.42
+fd = 0.54
+
+[bounds]
+fs                = [0.0, 1.0]
+fd                = [0.0, 1.0]
+"disk,slope"      = [-4.0, 4.0]
+"halo,slope"      = [-4.0, 8.0]
+"disk,incl"       = [0.0, 90.0]
+"disk,projang"    = [-180.0, 180.0]
+"disk,rin"        = [0.1, 4.0]
+"disk,rout"       = [0.1, 4.0]
+"disk,sigin"      = [0.005, 2.0]
+"disk,sigout"     = [0.005, 2.0]
+"disk,az amp1"    = [0.0, 1.0]
+"disk,az projang1" = [-180.0, 180.0]
+"star,x"          = [-1.0, 1.0]
+"star,y"          = [-1.0, 1.0]

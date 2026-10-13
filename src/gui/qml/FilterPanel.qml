@@ -28,6 +28,11 @@ ColumnLayout {
     signal statusReported(string text)
     signal applied()                 // a new dataset was made and selected
     signal previewChanged()          // the plot needs a repaint
+    signal selectionCleared()        // the selection was added or cleared; repaint
+
+    // Select points: the drawing tool and what is selected, also read by the Explore tab.
+    property string selectTool: "none"
+    property string selectionText: ""
 
     // ── what the dataset offers, from `shell_filter_choices` ──────────────────
     property var extentWav: ["", ""]
@@ -582,6 +587,63 @@ ColumnLayout {
             text: "clear"
             implicitHeight: dp(22)
             onClicked: { root.handPicked = ({}); root.edited() }
+        }
+    }
+
+    // Select points: a box or a lasso drawn on the plot picks points, ringed in red; "Add to
+    // filter" adds them to the points this filter removes. With "none" the plot's own zoom,
+    // pan, pick and reset are untouched. The tool and the selection are the Explore tab's.
+    Section { id: secSel; text: "Select points" }
+    ColumnLayout {
+        visible: secSel.open
+        Layout.leftMargin: dp(8)
+        Layout.fillWidth: true
+        spacing: dp(2)
+        RowLayout {
+            ButtonGroup { id: toolGroup }
+            Repeater {
+                model: ["none", "box", "lasso"]
+                RadioButton {
+                    required property string modelData
+                    text: modelData
+                    ButtonGroup.group: toolGroup
+                    checked: root.selectTool === modelData
+                    onClicked: {
+                        root.selectTool = modelData
+                        Julia.shell_set_select_tool(modelData)
+                    }
+                }
+            }
+        }
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: root.selectionText.length > 0 ? root.selectionText
+                  : root.selectTool === "none" ? "choose box or lasso, then drag on the plot"
+                  : "drag on the plot"
+            color: root.selectionText.length > 0 ? "#000" : "#888"
+            font.pointSize: pt(baseFontPt - 1)
+        }
+        RowLayout {
+            Button {
+                text: "Add to filter"
+                enabled: root.selectionText.length > 0
+                onClicked: {
+                    root.addHandPicked(Julia.shell_selection_spec())
+                    Julia.shell_clear_selection()
+                    root.selectionText = ""
+                    root.selectionCleared()
+                }
+            }
+            Button {
+                text: "Clear"
+                enabled: root.selectionText.length > 0
+                onClicked: {
+                    Julia.shell_clear_selection()
+                    root.selectionText = ""
+                    root.selectionCleared()
+                }
+            }
         }
     }
 

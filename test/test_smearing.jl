@@ -121,11 +121,13 @@ using Statistics
     end
 
     @testset "an image component keeps its channel's plane" begin
-        rot = joinpath(@__DIR__, "data", "rotir")
-        f = sort(filter(endswith(".oifits"), readdir(rot; join = true)))[1]
+        f = joinpath(@__DIR__, "..", "demos", "data", "V1295_Aql.oifits")
         d = readoifits(f; polychromatic = true, warn = false, verbose = false, T = Float64)[1, 1]
-        m = dict_to_model(Dict{String,Any}("sky,image" => joinpath(rot, "zetand_ref_cube.fits"),
-                                           "smear" => 4), String[])
+        # a disc on the data's first channel only: every smearing sample must use that plane
+        disc = [hypot(i - 33, j - 33) < 20 ? 1.0 : 0.0 for i in 1:64, j in 1:64]
+        p = joinpath(mktempdir(), "disc.fits")
+        writefits(reshape(disc, 64, 64, 1), p; pixsize = 0.05, wavelengths = [Float64(d.uv_lam[1])])
+        m = dict_to_model(Dict{String,Any}("sky,image" => p, "smear" => 4), String[])
         @test isfinite(model_to_chi2(m, Float64[], d))
     end
 
