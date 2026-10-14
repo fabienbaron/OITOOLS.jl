@@ -64,6 +64,31 @@ using OITOOLS, Test, Random
         @test rc.nclamped == 2 && maximum(rc.starts[1, :]) == 1.0
     end
 
+    @testset "held parameters: a χ² profile" begin
+        # B,x and B,y fixed in the model, gridded: each node fits B,f alone, at that position
+        mh = copy(m)
+        rh = multistart_fit(mh, ["B,f"], d; grid = ["B,x" => (1, 5, 1), "B,y" => (-4, 0, 1)],
+                            lb = Dict("B,f" => 0.0), ub = Dict("B,f" => 1.0), verbose = false,
+                            threaded = false)
+        @test rh.held == ["B,x", "B,y"] && size(rh.starts) == (3, 25)
+        @test count(==(:did_not_move), rh.status) == 0                # nothing explored is free
+        b = rh.minima[1]
+        v = OITOOLS._ms_values(rh, b)
+        @test (v["B,x"], v["B,y"]) == (3.0, -2.0)                     # the truth is a node
+        @test v["B,f"] ≈ 0.3 rtol = 1e-4
+        # every fit's held values are its node's
+        for (s, f) in enumerate(rh.fits)
+            f === nothing && continue
+            @test f.list_free_params == ["B,f"]
+        end
+        rt = multistart_fit(mh, ["B,f"], d; grid = ["B,x" => (1, 5, 1), "B,y" => (-4, 0, 1)],
+                            lb = Dict("B,f" => 0.0), ub = Dict("B,f" => 1.0), verbose = false,
+                            threaded = true)
+        @test [f === nothing ? nothing : f.x_opt for f in rt.fits] ==
+              [f === nothing ? nothing : f.x_opt for f in rh.fits]
+        @test_throws ArgumentError multistart_fit(mh, ["B,f"], d; grid = ["nope" => (0, 1, 1)], verbose = false)
+    end
+
     @testset "an orbit's minima across whole periods" begin
         torb = Dict{String,Any}("1,ud" => 0.3, "2,f" => 0.3, "2,x" => "orbit", "2,y" => "orbit",
                                 "2,orb P" => 30.0, "2,orb MJD0" => "\$dMJD0 + 58640", "dMJD0" => 0.0,

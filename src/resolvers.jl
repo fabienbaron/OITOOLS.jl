@@ -226,6 +226,12 @@ A parameter is per-point ("chromatic") when its expression mentions `\$WL` or `\
 refers to a chromatic parameter; the rest stay scalar, so a chromatic flux does not make a
 fixed diameter a vector. One of time alone (`\$MJD`, no `\$WL`, no chromatic parameter) is
 computed once per run of equal MJDs and copied along it.
+
+The fixed parameters' values are data, not code: the generated functions read them from a
+vector, which `fn` and `fill!` pass in. The generated code depends only on the model's
+structure — its keys, which are free, its expressions — so a model compiled again with other
+fixed values (an edit in the parameter table, a grid over a fixed parameter) reuses the
+compiled code: compiling it again is parsing, not code generation.
 """
 struct Resolver
     all_names ::Vector{String}
@@ -257,9 +263,14 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
                    if (refs = extract_refs(derived[name]); "MJD" in refs && "WL" ∉ refs &&
                        !any(r -> r in chromatic, refs)))
 
-    # 3. The body shared by both functions: free parameters from x, fixed ones as literals.
-    head = [[:($(Symbol(mangle(list_free_params[i]))) = x[$i]) for i in eachindex(list_free_params)];
-            [:($(Symbol(mangle(name))) = $val) for (name, val) in fixed]]
+    # 3. The body shared by both functions: free parameters from x, fixed ones from c. The
+    # generated functions' own arguments are named `#x`, `#c`, `#s`, `#cols`, which no
+    # parameter's mangled name can be (a global named `s` or `c` would otherwise overwrite one).
+    X, C, S, COLS = Symbol("#x"), Symbol("#c"), Symbol("#s"), Symbol("#cols")
+    fixed_names = sort(collect(keys(fixed)))
+    cvals = Float64[fixed[n] for n in fixed_names]
+    head = [[:($(Symbol(mangle(list_free_params[i]))) = $X[$i]) for i in eachindex(list_free_params)];
+            [:($(Symbol(mangle(name))) = $C[$j]) for (j, name) in enumerate(fixed_names)]]
 
     # `fn`: every derived expression broadcast when any is chromatic, as vector WL/MJD then
     # propagate; plain scalar code otherwise.
@@ -276,10 +287,10 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
         $(fn_stmts...)
         return $(Expr(:vect, [Symbol(mangle(n)) for n in all_names]...))
     end
-    compiled_fn = @RuntimeGeneratedFunction(:((x, WL, MJD) -> $fn_body))
-    # Wrap with default NaN for backward compatibility: fn(x) still works. The wavelength
-    # arrives in metres; the expressions read it in microns (`preprocess`).
-    wrapped_fn(x, WL=NaN, MJD=NaN) = compiled_fn(x, WL, MJD)
+    # `fn(x)` works too (WL and MJD default to NaN). The wavelength arrives in metres; the
+    # expressions read it in microns (`preprocess`).
+    compiled_fn = @RuntimeGeneratedFunction(:(($X, $C, WL, MJD) -> $fn_body))
+    wrapped_fn(x, WL = NaN, MJD = NaN) = compiled_fn(x, cvals, WL, MJD)
 
     # `fill!`: chromatic expressions broadcast in place into their column; the others scalar.
     slot = zeros(Int, length(all_names))
@@ -297,13 +308,13 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
         ex  = Meta.parse(preprocess(derived[name]))
         if name in chromatic
             j = -slot[findfirst(==(name), all_names)]
-            push!(fill_stmts, :($sym = cols[$j]))
+            push!(fill_stmts, :($sym = $COLS[$j]))
             push!(fill_stmts, name in by_epoch ? epoch_fill(sym, ex) : :($sym .= $(broadcastify(ex))))
         else
             push!(fill_stmts, :($sym = $ex))
         end
     end
-    stores = [:(s[$(slot[i])] = $(Symbol(mangle(n))))
+    stores = [:($S[$(slot[i])] = $(Symbol(mangle(n))))
               for (i, n) in enumerate(all_names) if slot[i] > 0]
     fill_body = quote
         $(head...)
@@ -311,9 +322,11 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
         $(stores...)
         return nothing
     end
-    compiled_fill = @RuntimeGeneratedFunction(:((s, cols, x, WL, MJD) -> $fill_body))
+    compiled_fill = @RuntimeGeneratedFunction(:(($S, $COLS, $X, $C, WL, MJD) -> $fill_body))
 
-    Resolver(all_names, wrapped_fn, compiled_fill, slot, ns, nc)
+    fill_c(s, cols, x, WL, MJD) = compiled_fill(s, cols, x, cvals, WL, MJD)
+
+    Resolver(all_names, wrapped_fn, fill_c, slot, ns, nc)
 end
 
 function (r::Resolver)(x::Vector{Float64}, wl=NaN, mjd=NaN)

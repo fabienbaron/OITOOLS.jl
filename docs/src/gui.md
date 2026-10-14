@@ -409,7 +409,9 @@ curves.
 
 **Multi-start…** (Model Optimization, beside **Companion search…**) fits the model from many
 starting points and lists the distinct minima they reach — PMOIRED's `gridFit`
-(`multistart_fit`). One row per free parameter says where its starts come from: **start** (its
+(`multistart_fit`). One row per parameter says where its starts come from — the free ones, then
+the fixed ones (greyed), which an explored row holds at each start's value, so a grid over them
+is a χ² profile: **start** (its
 value in the table), **grid** (min, max, step: every node; several grids make every
 combination), **uniform** (min, max) or **normal** (mean, σ), drawn once per start. Without a
 grid, **Starts** sets how many; **Seed** fixes the draws. **Conditions**, one per line

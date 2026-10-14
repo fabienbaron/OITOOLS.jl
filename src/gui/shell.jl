@@ -1346,13 +1346,13 @@ function shell_chi2_map_info()
     end
     if m isa MultiStartResult
         isempty(m.minima) && return ""
-        names = [m.explored; filter(n -> n ∉ m.explored, m.list_free_params)]
+        names = [m.explored; filter(n -> n ∉ m.explored, [m.list_free_params; m.held])]
         v = MULTISTART_VIEW[]
         a = v.p1 in names ? v.p1 : names[1]
         b = v.p2 in names ? v.p2 : names[min(2, length(names))]
-        x = m.minima[clamp(v.selected, 1, length(m.minima))].fit
-        ia, ib = findfirst(==(a), x.list_free_params), findfirst(==(b), x.list_free_params)
-        return join((a, b, string(x.x_opt[ia]), string(x.x_opt[ib]), string(x.chi2r), "minima"), "\t")
+        q = m.minima[clamp(v.selected, 1, length(m.minima))]
+        val = OITOOLS._ms_values(m, q)
+        return join((a, b, string(val[a]), string(val[b]), string(q.fit.chi2r), "minima"), "\t")
     end
     b = argmin(m.chi2)
     return join((m.p1, m.p2, string(m.v1[b[1]]), string(m.v2[b[2]]),
@@ -1381,6 +1381,12 @@ function shell_fit_values()
     f = last(sh.fits)
     r = f.result
     kv = [string(k, "=", v) for (k, v) in zip(r.list_free_params, r.x_opt)]
+    if f.map isa MultiStartResult && !isempty(f.map.held)
+        # the held parameters of the selected minimum, which its start set
+        m = f.map.minima[clamp(MULTISTART_VIEW[].selected, 1, length(f.map.minima))]
+        v = OITOOLS._ms_values(f.map, m)
+        append!(kv, [string(h, "=", v[h]) for h in f.map.held])
+    end
     if f.map isa CompanionSearch
         # A refined minimum's fit has the position among its parameters already.
         for (a, v) in ((",x", f.map.best.x), (",y", f.map.best.y))
@@ -1780,7 +1786,8 @@ function shell_multistart(free_lines::AbstractString, constraint_lines::Abstract
     end
     isempty(grid) && isempty(urand) && isempty(nrand) && return "! explore at least one parameter"
     for (n, _) in [grid; urand; nrand]
-        n in free || return "! $n is explored but not free"
+        n in free || get(md, n, nothing) isa Real ||
+            return "! $n is explored but is neither free nor a fixed number"
     end
     isempty(grid) && nstarts < 1 && return "! give the number of starts"
     weights = fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis)
@@ -1825,9 +1832,10 @@ function shell_multistart_minima()
     isempty(sh.fits) && return ""
     r = last(sh.fits).map
     r isa MultiStartResult || return ""
+    names = [r.list_free_params; r.held]
     return join((string(@sprintf("%.4f", m.fit.chi2r), "\t", length(m.starts), "\t",
-                        join((@sprintf("%s=%.6g", k, v) for (k, v) in
-                              zip(m.fit.list_free_params, m.fit.x_opt)), " "))
+                        (v = OITOOLS._ms_values(r, m);
+                         join((@sprintf("%s=%.6g", k, v[k]) for k in names), " ")))
                  for m in r.minima), "\n")
 end
 
@@ -1882,7 +1890,7 @@ function shell_multistart_names()
     isempty(sh.fits) && return ""
     r = last(sh.fits).map
     r isa MultiStartResult || return ""
-    return join([r.explored; filter(n -> n ∉ r.explored, r.list_free_params)], "\n")
+    return join([r.explored; filter(n -> n ∉ r.explored, [r.list_free_params; r.held])], "\n")
 end
 
 """

@@ -207,12 +207,15 @@ search samples the parameter space at its starts, it does not map it.
 """
 function update_chi2_map!(c, r::MultiStartResult; p1::AbstractString = "",
                           p2::AbstractString = "", selected::Integer = 1)
-    names = r.list_free_params
+    # the free parameters, then the held ones (a fit's held values are its start's)
+    names = [r.list_free_params; r.held]
     pick = [r.explored; filter(n -> n ∉ r.explored, names)]
     a = isempty(p1) || p1 ∉ names ? pick[1] : String(p1)
     b = isempty(p2) || p2 ∉ names ? pick[min(2, length(pick))] : String(p2)
     ia, ib = findfirst(==(a), names), findfirst(==(b), names)
+    nf = length(r.list_free_params)
     pt(v) = Makie.Point2f(v[ia], v[ib])
+    ends(s) = [r.fits[s].x_opt; r.starts[(nf + 1):end, s]]
     owner = Dict{Int,Int}()
     for (k, m) in enumerate(r.minima), s in m.starts
         owner[s] = k
@@ -222,13 +225,12 @@ function update_chi2_map!(c, r::MultiStartResult; p1::AbstractString = "",
         p0 = pt(view(r.starts, :, s))
         if haskey(owner, s)
             push!(st, p0)
-            f = r.fits[s]
-            push!(seg, p0, pt(f.x_opt))
+            push!(seg, p0, pt(ends(s)))
         else
             push!(bad, p0)
         end
     end
-    mins = [pt(m.fit.x_opt) for m in r.minima]
+    mins = [pt(ends(m.best)) for m in r.minima]
     col = Float32[log10(max(m.fit.chi2r, 1e-12)) for m in r.minima]
     lo, hi = isempty(col) ? (0.0f0, 1.0f0) : extrema(col)
     # nothing behind the points: the surface's plots get one blank cell

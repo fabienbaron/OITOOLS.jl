@@ -1,9 +1,12 @@
 # Many Levenberg-Marquardt fits of one model from many starting points, and the distinct minima
 # they reach — PMOIRED's `gridFit` / `analyseGrid` (`pmoired/oimodels.py`): starts on a grid,
 # uniform or normal draws per parameter, conditions that drop starts before fitting, and the
-# same rules for setting fits aside and for grouping the rest into minima. Here the fits run on
-# threads (one compiled model per thread), start i draws from `Xoshiro(seed + i)` whatever the
-# thread count, and a component on an orbit has its minima merged across whole periods of MJD0.
+# same rules for setting fits aside and for grouping the rest into minima. An explored parameter
+# that is not free is held at its start's value in that fit (PMOIRED's grid parameter in
+# `doNotFit`): a χ² profile over it. Here the fits run on threads (one compiled model per thread,
+# or per start when parameters are held — compiling again is parsing, the generated code is
+# reused), start i draws from `Xoshiro(seed + i)` whatever the thread count, and a component on
+# an orbit has its minima merged across whole periods of MJD0.
 
 using Random, Printf, LinearAlgebra, ForwardDiff
 
@@ -11,11 +14,13 @@ using Random, Printf, LinearAlgebra, ForwardDiff
     MultiStartMinimum
 
 One distinct minimum of a [`multistart_fit`](@ref): `fit`, the best fit that reached it (an
-`LsqFitResult`), and `starts`, the indices of the starts that ended there.
+`LsqFitResult`), `best` the index of its start, and `starts`, the indices of the starts that
+ended there.
 """
 struct MultiStartMinimum
     fit    :: LsqFitResult
     starts :: Vector{Int}
+    best   :: Int
 end
 
 """
@@ -25,8 +30,9 @@ What [`multistart_fit`](@ref) returns.
 
 - `minima` — the distinct minima, lowest χ²ᵣ first ([`MultiStartMinimum`](@ref));
   `minima[1].fit` is the global one;
-- `starts` — the starting point of every fit (free parameters × starts), `list_free_params` and
-  `explored` (the parameters drawn or gridded);
+- `starts` — the starting point of every fit (the free parameters then the held ones × starts),
+  `list_free_params`, `held` (explored parameters that are not free, held at their start's
+  value in each fit) and `explored` (the parameters drawn or gridded);
 - `fits` — every fit, `nothing` where it failed; `status` — `:minimum` (grouped into a
   minimum), `:failed` (an error, or χ² not finite), `:no_uncertainties`, `:did_not_move` (the
   explored parameters moved less than 1σ in all), `:chi2` (above the best χ²ᵣ + `deltachi2`);
@@ -37,6 +43,7 @@ What [`multistart_fit`](@ref) returns.
 struct MultiStartResult
     minima           :: Vector{MultiStartMinimum}
     list_free_params :: Vector{String}
+    held             :: Vector{String}
     explored         :: Vector{String}
     starts           :: Matrix{Float64}
     fits             :: Vector{Union{Nothing,LsqFitResult}}
@@ -95,7 +102,7 @@ end
 # draws from `Xoshiro(seed + i)`.
 function _ms_starts(x0, free, grid, urand, nrand, nstarts, seed)
     idx(n) = (i = findfirst(==(n), free); i === nothing ?
-              throw(ArgumentError("$n is explored but not free; free it first")) : i)
+              throw(ArgumentError("$n is explored but is not a parameter of the model")) : i)
     names = [first.(grid); first.(urand); first.(nrand)]
     length(unique(names)) == length(names) ||
         throw(ArgumentError("a parameter is explored once: in grid, rand or randn"))
@@ -139,14 +146,21 @@ function _ms_period_shift(fm, model_dict, x)
     return (iM, iP, nz[1], g[nz[1]])
 end
 
-# PMOIRED's `analyseGrid`: fits set aside, then the rest grouped into distinct minima.
-function _ms_analyse(fits, X, free, explored, deltachi2, shift, fm)
+# A minimum's parameters by name: the fitted free ones and the held ones of its best start.
+_ms_values(r, m) = Dict{String,Float64}([zip(r.list_free_params, m.fit.x_opt)...;
+                                         zip(r.held, r.starts[(length(r.list_free_params) + 1):end, m.best])...])
+
+# PMOIRED's `analyseGrid`: fits set aside, then the rest grouped into distinct minima. `X` has
+# the free parameters' starts then the held ones'; `gstep` is the grid step of each held
+# parameter (NaN for a drawn one).
+function _ms_analyse(fits, X, free, explored, deltachi2, shift, fm, gstep)
     N = length(fits)
+    nf = length(free)
     status = fill(:minimum, N)
     chi2 = [f === nothing ? NaN : f.chi2r for f in fits]
     fin = filter(isfinite, chi2)
     chi2min = isempty(fin) ? NaN : minimum(fin)
-    ie = [findfirst(==(n), free) for n in explored]
+    ie = [k for k in (findfirst(==(n), free) for n in explored) if k !== nothing]
     for i in 1:N
         f = fits[i]
         if f === nothing || !isfinite(chi2[i])
@@ -157,46 +171,53 @@ function _ms_analyse(fits, X, free, explored, deltachi2, shift, fm)
             status[i] = :no_uncertainties
         else
             # the explored parameters moved by less than 1σ in all
+            # (when only held parameters are explored, there is nothing to have moved: unlike
+            # PMOIRED, which would set every fit aside, the test is not made)
             mv = 0.0
             for k in ie
                 s = f.stderror[k]
                 isfinite(s) && s > 0 && (mv += (f.x_opt[k] - X[k, i])^2 / s^2)
             end
-            mv < 1 && (status[i] = :did_not_move)
+            !isempty(ie) && mv < 1 && (status[i] = :did_not_move)
         end
     end
     # MJD0 and P of each kept fit, for the period merge
     resolved = shift === nothing ? nothing :
                Dict(i => (fm.resolver.fn(fits[i].x_opt)[shift[1]], fm.resolver.fn(fits[i].x_opt)[shift[2]])
                     for i in 1:N if status[i] === :minimum)
-    nf = length(free)
+    # the free parameters, then the gridded held ones with σ = step/2 (PMOIRED's: a held drawn
+    # parameter takes no part in the distance)
+    hg = [h for h in eachindex(gstep) if isfinite(gstep[h])]
+    vec_b(i) = [fits[i].x_opt; X[nf .+ hg, i]]
+    vec_s(i) = [fits[i].stderror; gstep[hg] ./ 2]
     keep = [i for i in 1:N if status[i] === :minimum]
     remaining = copy(keep)
     minima = MultiStartMinimum[]
     for i in keep
         i in remaining || continue
-        bi, si = fits[i].x_opt, fits[i].stderror
+        bi, si = vec_b(i), vec_s(i)
+        nd = length(bi)
         grp = Int[]
         for j in remaining
-            bj = fits[j].x_opt
+            bj = vec_b(j)
             if shift !== nothing
                 (Mi, Pi), (Mj, _) = resolved[i], resolved[j]
                 n = round((Mj - Mi) / Pi)
                 n != 0 && (bj = copy(bj); bj[shift[3]] -= n * Pi / shift[4])
             end
-            sj = fits[j].stderror
+            sj = vec_s(j)
             # PMOIRED's distance: the mean over the fitted parameters (NaN terms left out) of
             # (bᵢ − bⱼ)²/(σᵢσⱼ), divided once more by their number
             s, c = 0.0, 0
-            for k in 1:nf
+            for k in 1:nd
                 t = (bi[k] - bj[k])^2 / (si[k] * sj[k])
                 isnan(t) || (s += t; c += 1)
             end
-            c > 0 && (s / c) / nf < 1 && push!(grp, j)
+            c > 0 && (s / c) / nd < 1 && push!(grp, j)
         end
         isempty(grp) && (grp = [i])
         best = grp[argmin([chi2[j] for j in grp])]
-        push!(minima, MultiStartMinimum(fits[best], sort(grp)))
+        push!(minima, MultiStartMinimum(fits[best], sort(grp), best))
         filter!(j -> j ∉ grp, remaining)
     end
     sort!(minima; by = m -> m.fit.chi2r)
@@ -217,8 +238,10 @@ The parameters explored, each in one of
 - `rand` — `"p" => (min, max)`: uniform; `randn` — `"p" => (mean, σ)`: normal; one draw per start;
 
 as a Dict (taken by name) or a vector of pairs (in order). With a grid the number of starts is
-its node count (draws added to each node); without one, `nstarts`. Every explored parameter is
-free; the others start from `model_dict`. A start outside `lb`/`ub` is moved onto the bound.
+its node count (draws added to each node); without one, `nstarts`. The other free parameters
+start from `model_dict`. An explored parameter that is not free (a fixed number in
+`model_dict`) is held at the start's value in that fit — a grid over held parameters is a χ²
+profile, every node's fit of the rest. A start outside `lb`/`ub` is moved onto the bound.
 
 `constrain` drops starts before fitting: conditions in the form of `constraints`
 (`("sqrt(\$B,x^2 + \$B,y^2)", "<=", 12)`, [`ModelConstraint`](@ref)), held when not violated.
@@ -228,8 +251,8 @@ free; the others start from `model_dict`. A start outside `lb`/`ub` is moved ont
 The fits are then sorted as PMOIRED's `analyseGrid` does: set aside when they failed, have no
 uncertainties, moved their explored parameters by less than 1σ in all, or end above the best
 χ²ᵣ + `deltachi2` (when given); the rest grouped — two fits are one minimum when the mean over
-the free parameters of (bᵢ − bⱼ)²/(σᵢσⱼ), divided by their number, is below 1 — each minimum
-kept as its lowest χ²ᵣ. For a component on an orbit, MJD0 values whole periods apart count as
+the free parameters of (bᵢ − bⱼ)²/(σᵢσⱼ), divided by their number, is below 1 (a gridded held
+parameter counts, with σ half its step) — each minimum kept as its lowest χ²ᵣ. For a component on an orbit, MJD0 values whole periods apart count as
 the same.
 
 Threads (`threaded = true`): one compiled model per thread; start i draws its values from
@@ -245,9 +268,18 @@ function multistart_fit(model_dict::Dict{String}, list_free_params::Vector{Strin
                         verbose::Bool = true)
     t0 = time()
     free = list_free_params
+    nf = length(free)
     gp, up, np_ = _ms_pairs(grid), _ms_pairs(rand), _ms_pairs(randn)
+    held = [n for n in [first.(gp); first.(up); first.(np_)] if n ∉ free]
+    for n in held
+        get(model_dict, n, nothing) isa Real ||
+            throw(ArgumentError("$n is explored but is neither free nor a fixed number in the model"))
+    end
     x0 = Float64[model_dict[p] for p in free]
-    X, explored = _ms_starts(x0, free, gp, up, np_, nstarts, UInt64(seed))
+    X, explored = _ms_starts([x0; Float64[model_dict[h] for h in held]], [free; held], gp, up, np_,
+                             nstarts, UInt64(seed))
+    gstep = [(i = findfirst(p -> first(p) == h, gp); i === nothing ? NaN : Float64(last(gp[i])[3]))
+             for h in held]
 
     # one model with the constraints and the start conditions as extra expressions
     cons, conds = parse_constraints(constraints), parse_constraints(constrain)
@@ -258,14 +290,23 @@ function multistart_fit(model_dict::Dict{String}, list_free_params::Vector{Strin
         k = "__start_$(i)__"; augmented[k] = constraint_expr(c); push!(skeys, k)
     end
     nB = size(data.uv, 2)
-    compile() = parse_model(augmented, free; nB_workspace = nB)
+    # the model with the held parameters at `hv` (the same generated code whatever the values)
+    function compile(hv = Float64[])
+        md = augmented
+        isempty(held) || (md = copy(augmented); for (h, v) in zip(held, hv); md[h] = v; end)
+        return parse_model(md, free; nB_workspace = nB)
+    end
     fm = compile()
     cidx = [findfirst(==(k), fm.all_names) for k in ckeys]
     sidx = [findfirst(==(k), fm.all_names) for k in skeys]
+    hvals(s) = X[(nf + 1):end, s]
+    model_at(s) = isempty(held) ? fm : compile(hvals(s))
 
     # starts outside `constrain` dropped; inside the bounds
-    ok = [all(iszero(_violation(c.op, v)) for (c, i) in zip(conds, sidx)
-              for v in _as_penalty_vec(fm.resolver.fn(X[:, s])[i])) for s in axes(X, 2)]
+    ok = [isempty(conds) ||
+          (m = model_at(s); all(iszero(_violation(c.op, v)) for (c, i) in zip(conds, sidx)
+                                for v in _as_penalty_vec(m.resolver.fn(X[1:nf, s])[i])))
+          for s in axes(X, 2)]
     nrejected = count(!, ok)
     X = X[:, ok]
     N = size(X, 2)
@@ -273,14 +314,17 @@ function multistart_fit(model_dict::Dict{String}, list_free_params::Vector{Strin
     lo = Float64[get(lb, p, -Inf) for p in free]; hi = Float64[get(ub, p, Inf) for p in free]
     nclamped = 0
     for s in 1:N
-        c = clamp.(view(X, :, s), lo, hi)
-        c == view(X, :, s) || (nclamped += 1; X[:, s] .= c)
+        c = clamp.(view(X, 1:nf, s), lo, hi)
+        c == view(X, 1:nf, s) || (nclamped += 1; X[1:nf, s] .= c)
     end
     rvix = rv === nothing ? nothing : _rv_index(fm, _orbit_component(model_dict))
 
     # the fits, threads taking the next start as they free up
     nw = threaded ? min(Threads.nthreads(), N) : 1
-    models = [w == 1 ? fm : compile() for w in 1:nw]
+    # one model per thread; with held parameters, one per start, compiled under a lock (the
+    # generated-function cache is shared)
+    models = isempty(held) ? [w == 1 ? fm : compile() for w in 1:nw] : nothing
+    lk = ReentrantLock()
     fits = Vector{Union{Nothing,LsqFitResult}}(nothing, N)
     errors = fill("", N)
     next = Threads.Atomic{Int}(1)
@@ -289,7 +333,8 @@ function multistart_fit(model_dict::Dict{String}, list_free_params::Vector{Strin
     try
         work(w) = while (i = Threads.atomic_add!(next, 1)) <= N
             try
-                fits[i] = _lsqfit_compiled(models[w], free, X[:, i], data, lo, hi; weights, cons,
+                m = isempty(held) ? models[w] : lock(() -> compile(hvals(i)), lk)
+                fits[i] = _lsqfit_compiled(m, free, X[1:nf, i], data, lo, hi; weights, cons,
                                            constraint_idx = cidx, rv, rvix, maxIter,
                                            verb = false, warn_cov = false)
             catch e
@@ -308,9 +353,15 @@ function multistart_fit(model_dict::Dict{String}, list_free_params::Vector{Strin
         BLAS.set_num_threads(nblas)
     end
 
-    shift = _ms_period_shift(fm, model_dict, x0)
-    minima, status = _ms_analyse(fits, X, free, explored, deltachi2, shift, fm)
-    r = MultiStartResult(minima, copy(free), explored, X, fits, status, errors, nrejected,
+    # (an orbit whose period or periastron depends on a held parameter is not merged across
+    # periods: the shift is applied to a free one)
+    cn = try _orbit_component(model_dict) catch; "" end
+    uses_held(k) = (v = get(model_dict, k, nothing); k in held ||
+                    (v isa AbstractString && any(r -> r in held, extract_refs(v))))
+    shift = !isempty(cn) && (uses_held("$cn,orb MJD0") || uses_held("$cn,orb P")) ? nothing :
+            _ms_period_shift(fm, model_dict, x0)
+    minima, status = _ms_analyse(fits, X, free, explored, deltachi2, shift, fm, gstep)
+    r = MultiStartResult(minima, copy(free), held, explored, X, fits, status, errors, nrejected,
                          nclamped, UInt64(seed), time() - t0, nw)
     verbose && show(stdout, MIME"text/plain"(), r)
     return r

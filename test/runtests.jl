@@ -39,6 +39,7 @@ BLAS.set_num_threads(1)
     include("test_rv.jl")                # radial velocities in the fits and the bootstrap
     include("test_residuals_inplace.jl")  # residuals and Jacobian written into buffers
     include("test_multistart.jl")        # many starts and their distinct minima (PMOIRED's gridFit)
+    include("test_resolver_fixed.jl")    # fixed values as data: compiling again reuses the code
     include("test_aspro_noise.jl")       # the noise model against ASPRO 2's own error bars
     include("test_planning.jl")          # astrometry, twilight, observability conventions
     include("test_simbad.jl")            # SIMBAD over TAP: parsing, offline fixture

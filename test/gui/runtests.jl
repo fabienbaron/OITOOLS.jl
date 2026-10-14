@@ -1683,6 +1683,27 @@ end
             @test G.shell_multistart_pmoired("{'grid':{'c,x':(-40, 40, 4)}, 'rand':{'MJD0-59800':(-20, 20)}, 'randn':{'c,f':(0.1, 0.01)}}") ==
                   "c,x\tgrid\t-40\t40\t4\nMJD0_59800\tuniform\t-20\t20\nc,f\tnormal\t0.1\t0.01"
             @test startswith(G.shell_multistart_pmoired("not a dict"), "!")
+            # the companion's position fixed and gridded: held at each node, the rest fitted
+            hfree = "star,ud\t0\t3\ncompanion,f\t0\t0.5"
+            hex = "companion,x\tgrid\t4\t8\t2\ncompanion,y\tgrid\t-30\t-26\t2"
+            G.shell_set_param("companion,x", "mode", "fixed"); G.shell_set_param("companion,y", "mode", "fixed")
+            @test G.shell_multistart(hfree, "", hex, "", true, false, true, false, false, false, false,
+                                     20, 1, NaN, 100, false) == "searching…"
+            hl = ""
+            for _ in 1:1200
+                r = G.shell_job_poll()
+                startswith(r, "running") || (hl = r; break)
+                sleep(0.25)
+            end
+            @test startswith(hl, "done\t")
+            mh = last(sh.fits).map
+            @test mh.held == ["companion,x", "companion,y"] && size(mh.starts, 2) == 9
+            hv = Dict(split(l, '=')[1] => parse(Float64, split(l, '=')[2])
+                      for l in split(G.shell_fit_values(), '\n'))
+            @test (hv["companion,x"], hv["companion,y"]) == (6.0, -28.0)      # the node nearest PMOIRED's
+            @test occursin("companion,x=", split(G.shell_multistart_minima(), '\n')[1])
+            @test "companion,x" in split(G.shell_multistart_names(), '\n')
+
             # a companion search after it empties the minima
             G.update_chi2_map!(sh.chi2map, sr)
             @test isempty(sh.chi2map.mmin[1][]) && isempty(sh.chi2map.mseg[])

@@ -4397,8 +4397,9 @@ Item {
                 if (multiModel.get(i).kind === "grid") return true
             return false
         }
-        // One row per free parameter, keeping what was set for a parameter still free; a new
-        // one starts at the table's value, its bounds offered for a uniform draw.
+        // One row per free parameter, then per fixed one (explored, a fixed parameter is held
+        // at each start's value: a χ² profile over it). What was set for a parameter is kept; a
+        // new free one offers its bounds for a uniform draw.
         function rebuild() {
             var keep = {}
             for (var i = 0; i < multiModel.count; ++i) {
@@ -4412,7 +4413,13 @@ Item {
                 var lo = isFinite(parseFloat(f[1])) ? f[1] : ""
                 var hi = isFinite(parseFloat(f[2])) ? f[2] : ""
                 var o = keep[f[0]] || { kind: "start", a: lo, b: hi, c: "" }
-                multiModel.append({ name: f[0], kind: o.kind, a: o.a, b: o.b, c: o.c })
+                multiModel.append({ name: f[0], kind: o.kind, a: o.a, b: o.b, c: o.c, held: false })
+            }
+            for (var j = 0; j < paramModel.count; ++j) {
+                var p = paramModel.get(j)
+                if (p.mode !== "fixed" || !isFinite(p.value)) continue
+                var q = keep[p.key] || { kind: "start", a: "", b: "", c: "" }
+                multiModel.append({ name: p.key, kind: q.kind, a: q.a, b: q.b, c: q.c, held: true })
             }
             multiModel.revision++
         }
@@ -4430,7 +4437,7 @@ Item {
                 if (!found) missing.push(f[0])
             }
             multiModel.revision++
-            multiNote.text = missing.length > 0 ? "! not free: " + missing.join(", ") : ""
+            multiNote.text = missing.length > 0 ? "! not in the model: " + missing.join(", ") : ""
         }
         onOpened: {
             var ok = standardButton(Dialog.Ok)
@@ -4460,8 +4467,12 @@ Item {
                             readonly property string pname: model.name
                             Label {
                                 text: model.name
+                                color: model.held ? "#777" : palette.windowText
                                 Layout.preferredWidth: root.dp(150)
                                 elide: Text.ElideRight
+                                ToolTip.visible: model.held && heldHover.hovered
+                                ToolTip.text: "fixed: held at each start's value"
+                                HoverHandler { id: heldHover }
                             }
                             ComboBox {
                                 objectName: "multi:" + parent.pname + ":kind"

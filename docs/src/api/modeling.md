@@ -82,7 +82,9 @@ detection_sigma
 (`grid = ["p" => (min, max, step)]`) and/or from uniform or normal draws (`rand`, `randn`,
 `nstarts`), starts outside `constrain` dropped, then the fits sorted as PMOIRED's `analyseGrid`
 does — set aside when failed, without uncertainties or unmoved, the rest grouped into distinct
-minima, lowest χ²ᵣ first. The fits run on threads, one compiled model each; start i draws from
+minima, lowest χ²ᵣ first. An explored parameter that is fixed in the model is held at each
+start's value (PMOIRED's grid parameter in `doNotFit`): a grid over held parameters is a χ²
+profile, every node fitting the rest. The fits run on threads, one compiled model each; start i draws from
 `Xoshiro(seed + i)`, so the result does not depend on the thread count. For a component on an
 orbit, minima whose MJD0 differ by whole periods are one.
 
