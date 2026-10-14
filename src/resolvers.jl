@@ -142,6 +142,15 @@ function broadcastify(expr)
     end
 end
 
+# The number type of parameters `x` (through dual numbers): the type the fixed values take, so
+# a model evaluated in Float32 has its fixed values in Float32 too.
+_fixed_type(::Type{<:ForwardDiff.Dual{<:Any,V}}) where {V} = _fixed_type(V)
+_fixed_type(::Type{T}) where {T<:Real} = float(T)
+# The fixed values `c64` (Float64) as type `T`: the two common types kept, any other converted.
+_fixed_in(::Type{Float64}, c64, c32) = c64
+_fixed_in(::Type{Float32}, c64, c32) = c32
+_fixed_in(::Type{T}, c64, c32) where {T} = T.(c64)
+
 ##############################################################################
 # The resolver: RuntimeGeneratedFunctions.jl
 ##############################################################################
@@ -151,7 +160,7 @@ using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
 using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS,
-                _REF_PATTERN, _mangle, _wl_expr, orbit_x, orbit_y, orbit_a
+                _REF_PATTERN, _mangle, _wl_expr, orbit_x, orbit_y, orbit_a, _fixed_type, _fixed_in
 
 const mangle = _mangle
 
@@ -228,7 +237,8 @@ fixed diameter a vector. One of time alone (`\$MJD`, no `\$WL`, no chromatic par
 computed once per run of equal MJDs and copied along it.
 
 The fixed parameters' values are data, not code: the generated functions read them from a
-vector, which `fn` and `fill!` pass in. The generated code depends only on the model's
+vector, which `fn` and `fill!` pass in, in the parameters' number type (Float32 parameters,
+Float32 fixed values). The generated code depends only on the model's
 structure — its keys, which are free, its expressions — so a model compiled again with other
 fixed values (an edit in the parameter table, a grid over a fixed parameter) reuses the
 compiled code: compiling it again is parsing, not code generation.
@@ -269,6 +279,7 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
     X, C, S, COLS = Symbol("#x"), Symbol("#c"), Symbol("#s"), Symbol("#cols")
     fixed_names = sort(collect(keys(fixed)))
     cvals = Float64[fixed[n] for n in fixed_names]
+    c32 = Float32.(cvals)
     head = [[:($(Symbol(mangle(list_free_params[i]))) = $X[$i]) for i in eachindex(list_free_params)];
             [:($(Symbol(mangle(name))) = $C[$j]) for (j, name) in enumerate(fixed_names)]]
 
@@ -290,7 +301,7 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
     # `fn(x)` works too (WL and MJD default to NaN). The wavelength arrives in metres; the
     # expressions read it in microns (`preprocess`).
     compiled_fn = @RuntimeGeneratedFunction(:(($X, $C, WL, MJD) -> $fn_body))
-    wrapped_fn(x, WL = NaN, MJD = NaN) = compiled_fn(x, cvals, WL, MJD)
+    wrapped_fn(x, WL = NaN, MJD = NaN) = compiled_fn(x, _fixed_in(_fixed_type(eltype(x)), cvals, c32), WL, MJD)
 
     # `fill!`: chromatic expressions broadcast in place into their column; the others scalar.
     slot = zeros(Int, length(all_names))
@@ -324,7 +335,7 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
     end
     compiled_fill = @RuntimeGeneratedFunction(:(($S, $COLS, $X, $C, WL, MJD) -> $fill_body))
 
-    fill_c(s, cols, x, WL, MJD) = compiled_fill(s, cols, x, cvals, WL, MJD)
+    fill_c(s, cols, x, WL, MJD) = compiled_fill(s, cols, x, _fixed_in(_fixed_type(eltype(x)), cvals, c32), WL, MJD)
 
     Resolver(all_names, wrapped_fn, fill_c, slot, ns, nc)
 end

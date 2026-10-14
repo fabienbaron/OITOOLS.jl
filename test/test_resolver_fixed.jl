@@ -39,4 +39,16 @@ using OITOOLS, Test
             @test eltype(eval_model(fm, Float32.(x), Float32.(uv))) == ComplexF32
         end
     end
+
+    # the fixed values in the parameters' type: Float32 parameters, Float32 values throughout
+    m = Dict{String,Any}("1,ud" => "\$d0 * \$k", "d0" => 0.6, "k" => 1.0, "2,f" => 0.3, "2,x" => 1.0, "2,y" => -2.0)
+    fm = dict_to_model(m, ["k"])
+    n2i = Dict(n => i for (i, n) in enumerate(fm.all_names))
+    v32 = fm.resolver.fn(Float32[1.1]); v64 = fm.resolver.fn([1.1])
+    @test v32[n2i["d0"]] isa Float32 && v32[n2i["1,ud"]] isa Float32 && v32[n2i["2,x"]] isa Float32
+    @test v64[n2i["d0"]] isa Float64 && v64[n2i["1,ud"]] === 0.6 * 1.1
+    uv = Float32[3e7 1e7; -2e7 4e7]
+    V, J = eval_model_jac(fm, Float32[1.1], uv)
+    @test eltype(V) == ComplexF32 && eltype(J) == ComplexF32
+    @test V ≈ eval_model(fm, [1.1], Float64.(uv)) rtol = 1e-5
 end
