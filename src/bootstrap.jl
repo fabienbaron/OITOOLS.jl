@@ -145,9 +145,7 @@ Partition `data` into resampling blocks.
     that would collapse onto one value and their blocks would merge.  `readoifits`
     therefore stores `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` as `Float64`
     whatever `T` is — the block structure is identical at `T=Float32` and
-    `T=Float64`.  (`uv_mjd` follows `T`, so it is coarser than these — see the
-    `\$MJD` note in the modelling docs — but block structure is built from the
-    per-table MJDs above, not from `uv_mjd`, so bootstrapping is unaffected.)
+    `T=Float64`.  (`uv_mjd`, the model's time, is `Float64` too.)
 """
 function data_blocks(data::OIdata; granularity::Symbol=:config, mjd_digits::Int=5)
     granularity in (:config, :epoch, :point) ||
@@ -726,6 +724,8 @@ Monte Carlo or the analytic errors are the better tool.
   PMOIRED's scheme and is biased low by about √2 — comparison only
 - `granularity` — `:config` (default), `:epoch` or `:point`; see [`data_blocks`](@ref)
 - `fitter` — `:lsqfit` (default, Levenberg-Marquardt with analytic Jacobian) or `:nlopt`
+- `rv` — radial velocities ([`read_rv`](@ref)) fitted with the interferometry (`:lsqfit`); each
+  replicate resamples them with replacement, as it resamples the blocks
 - `lb`, `ub`, `weights`, `nB_workspace` — passed through to the fitter
 - `method`, `maxeval` — NLopt settings (`fitter=:nlopt`)
 - `maxIter` — LsqFit iterations (`fitter=:lsqfit`)
@@ -763,6 +763,7 @@ function bootstrap_fit(model_dict       ::Dict{String},
     ub                      = Dict{String,Float64}(),
     weights                 = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     nB_workspace            = nothing,
+    rv                      = nothing,
     method         ::Symbol = :LD_LBFGS,
     maxeval        ::Int    = 2000,
     maxIter        ::Int    = 200,
@@ -775,6 +776,9 @@ function bootstrap_fit(model_dict       ::Dict{String},
 )
     fitter in (:lsqfit, :nlopt) ||
         error("bootstrap_fit: fitter must be :lsqfit or :nlopt (got :$fitter)")
+    rv === nothing || fitter === :lsqfit ||
+        error("bootstrap_fit: radial velocities are fitted with fitter = :lsqfit")
+    rvc = rv === nothing ? "" : _orbit_component(model_dict)
     npar = length(list_free_params)
     nB   = something(nB_workspace, size(data.uv, 2))
 
@@ -782,7 +786,7 @@ function bootstrap_fit(model_dict       ::Dict{String},
     verb && println("Fitting the full dataset...")
     x_opt, x_sigma = if fitter == :lsqfit
         f = fit_model_lsqfit(model_dict, list_free_params, data;
-                             lb=lb, ub=ub, weights=weights,
+                             lb=lb, ub=ub, weights=weights, rv=rv,
                              nB_workspace=nB, maxIter=maxIter)
         f.x_opt, f.stderror
     else
@@ -818,9 +822,11 @@ function bootstrap_fit(model_dict       ::Dict{String},
         rd = resample_blocks(data, blocks; mode=mode, rng=rng)
         x0 = start_scatter > 0 ?
              x_opt .+ start_scatter .* x_sigma .* randn(rng, npar) : x_opt
+        # the radial velocities resampled with the interferometry, after it (fixed rng order)
+        rr = rv === nothing ? nothing : resample_rv(rv, rng)
         r = fitter == :lsqfit ?
-            fit_model_lsqfit(fm, x0, rd; lb=lb, ub=ub, weights=weights,
-                             maxIter=maxIter) :
+            fit_model_lsqfit(fm, x0, rd; lb=lb, ub=ub, weights=weights, rv=rr,
+                             rv_component=rvc, maxIter=maxIter) :
             fit_model(fm, x0, rd; lb=lb, ub=ub, weights=weights,
                       method=method, maxeval=maxeval)
         return r.x_opt, r.chi2r

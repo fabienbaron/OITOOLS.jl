@@ -149,7 +149,7 @@ end
         @test eltype(d.t3_mjd)   === Float64
         @test eltype(d.vis_mjd)  === Float64
         @test eltype(d.flux_mjd) === Float64
-        @test eltype(d.uv_mjd)   === eltype(d.v2)   # uv_mjd follows T: it feeds $MJD
+        @test eltype(d.uv_mjd)   === Float64        # what $MJD reads
     end
     @test f32.v2_mjd == f64.v2_mjd
     @test f32.mean_mjd == f64.mean_mjd

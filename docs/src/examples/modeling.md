@@ -260,22 +260,9 @@ These implicit variables are available in expressions:
 `B` is not a variable, so `\$disk,B` is an ordinary parameter, as PMOIRED's notebooks write a
 spectral slope.
 
-!!! warning "`\$MJD` resolves to ~5.6 minutes at the default precision"
-    `\$MJD` is read from `data.uv_mjd`, which is stored in the `OIdata` element type `T`.
-    `T` defaults to `Float32`, whose spacing at a present-day MJD is 2⁻⁸ d = **5.6 minutes**
-    (so a worst-case rounding error of ±2.8 min). Epochs closer together than that merge into
-    one: on a real dataset carrying 119 distinct `v2_mjd` values, `uv_mjd` held **5**.
-
-    That is harmless when the epochs are nights or years apart, and fatal for within-night
-    variability, which is what a `\$MJD` model is usually written for. Read with
-    `T = Float64` when the time behaviour matters:
-
-    ```julia
-    data = readoifits("target.oifits"; T = Float64)[1, 1]
-    ```
-
-    Measured on the same `\$MJD` model, the two differ by 0.28% in χ² and by up to 3.2e-4 in
-    |V|. `\$WL` is unaffected: `Float32` holds a wavelength to ample relative precision.
+`\$MJD` is read from `data.uv_mjd`, which is `Float64` whatever the data's element type `T`:
+`Float32` spacing at a present-day MJD is 2⁻⁸ d = 5.6 minutes, which would merge epochs
+minutes apart. The model itself stays in `T`.
 
 Referencing `\$WL` or `\$MJD` in *any* derived expression makes the resolver broadcast **all**
 derived expressions, so every parameter becomes a per-uv-point vector — chromatic diameters

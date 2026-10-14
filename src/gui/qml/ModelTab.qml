@@ -145,6 +145,11 @@ Item {
 
     // Which optional geometry the selected component carries.
     property bool hasPosition: false
+    property bool onOrbit: false          // x = y = "orbit"
+    // Radial velocities: the model's component on an orbit, the open table, whether to fit it.
+    property string orbitComponent: ""
+    property string rvSummary: ""
+    property bool fitRV: false
     property bool hasOrientation: false
 
     // Row index of a parameter key, or -1. `commitParam` addresses rows; the profile
@@ -156,12 +161,13 @@ Item {
     }
 
     function refreshGeometry() {
-        root.hasPosition = false; root.hasOrientation = false
+        root.hasPosition = false; root.hasOrientation = false; root.onOrbit = false
         if (root.selectedComponent.length === 0) return
         var f = Julia.shell_component_geometry(root.selectedComponent).split("\t")
-        if (f.length === 2) {
+        if (f.length === 3) {
             root.hasPosition    = f[0] === "1"
             root.hasOrientation = f[1] === "1"
+            root.onOrbit        = f[2] === "1"
         }
     }
 
@@ -624,6 +630,7 @@ Item {
         running = true
         searchPending = false
         eachPending = false
+        multiPending = false
         fitText = "fitting…"
         fitTimer.restart()
     }
@@ -635,10 +642,39 @@ Item {
     // "Fit each…": the same fit on each ticked dataset, one after another on the worker.
     property bool eachPending: false
     property string eachNames: ""
+    // "Multi-start…": many fits from grid / random starts (`multistart_fit`), the global minimum
+    // landing in the table, every minimum in the map panel.
+    property bool multiPending: false
+    property var multiNames: []         // what the Minima view can be drawn over
+    property var multiMinima: []        // one label per minimum, lowest χ²ᵣ first
+    function startMulti() {
+        if (!canRun) return
+        running = true
+        searchPending = false
+        eachPending = false
+        multiPending = true
+        fitText = "searching…"
+        fitTimer.restart()
+    }
+    function refreshMinima() {
+        var t = Julia.shell_multistart_minima()
+        var n = Julia.shell_multistart_names()
+        root.multiNames = n.length > 0 ? n.split("\n") : []
+        var out = []
+        if (t.length > 0) {
+            var lines = t.split("\n")
+            for (var i = 0; i < lines.length; ++i) {
+                var f = lines[i].split("\t")
+                out.push((i + 1) + ": χ²ᵣ " + f[0] + "  ×" + f[1])
+            }
+        }
+        root.multiMinima = out
+    }
     function startEach(names) {
         if (!canRun || names.length === 0) return
         running = true
         searchPending = false
+        multiPending = false
         eachPending = true
         eachNames = names
         fitText = "fitting each…"
@@ -648,6 +684,7 @@ Item {
         if (!canRun || root.companionNames.length === 0) return
         running = true
         searchPending = true
+        multiPending = false
         eachPending = false
         fitText = "searching…"
         fitTimer.restart()
@@ -664,6 +701,15 @@ Item {
                       root.useV2, root.useT3amp, root.useT3phi,
                       root.useVisamp, root.useVisphi, root.useFlux, root.useDiffvis,
                       root.optimiser, root.maxeval, root.uncertainty)
+                : root.multiPending
+                ? Julia.shell_multistart(
+                      root.freeAsLines(), root.constraintsAsLines(),
+                      multiDialog.exploreLines(), multiConds.text,
+                      root.useV2, root.useT3amp, root.useT3phi,
+                      root.useVisamp, root.useVisphi, root.useFlux, root.useDiffvis,
+                      multiStarts.value, multiSeed.value, root.numOrNaN(multiDelta.text),
+                      root.maxeval, root.fitRV && root.rvSummary.length > 0 &&
+                      root.orbitComponent.length > 0)
                 : root.searchPending
                 ? Julia.shell_companion_search(
                       root.freeAsLines(),
@@ -682,7 +728,8 @@ Item {
                       root.optimiser, root.maxeval,
                       gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value,
                       root.uncertainty, root.nboot, root.bootMode, root.bootGranularity,
-                      root.bootSeed, root.bootThreaded)
+                      root.bootSeed, root.bootThreaded, root.fitRV && root.rvSummary.length > 0 &&
+                      root.orbitComponent.length > 0)
             root.fitOutput = ""
             if (root.fitText.length > 0 && root.fitText.charAt(0) === "!") {
                 root.running = false
@@ -730,6 +777,11 @@ Item {
             }
             root.refreshFits()
             root.refreshChi2Map()
+            root.refreshMinima()
+            if (root.multiPending && root.multiMinima.length > 0) {
+                multiMinBox.currentIndex = 0
+                root.diagView = "chi2map"
+            }
             root.refreshCorrelation()
             // A corner plot on screen follows the latest fit; an older one would be another fit's.
             if (root.diagView === "corner") root.showCorner()
@@ -1760,6 +1812,7 @@ Item {
                                             CheckBox {
                                                 text: "position (x, y)"
                                                 checked: root.hasPosition
+                                                enabled: !root.onOrbit
                                                 ToolTip.visible: hovered
                                                 ToolTip.text: "offset from the phase centre, in mas"
                                                 onToggled: root.setGeometry("position", checked)
@@ -1779,6 +1832,14 @@ Item {
                                                       "it was made with; rotate or tilt the " +
                                                       "image itself and save it again"
                                                 onToggled: root.setGeometry("orientation", checked)
+                                            }
+                                            CheckBox {
+                                                objectName: "geomOrbit"
+                                                text: "orbit"
+                                                checked: root.onOrbit
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: "position from orbital elements around the origin (PMOIRED's)"
+                                                onToggled: root.setGeometry("orbit", checked)
                                             }
                                             Item { Layout.fillWidth: true }
                                             InfoTip { tip: "Added at 0, which leaves the component exactly as it was." }
@@ -2718,6 +2779,26 @@ Item {
                                         ToolTip.visible: hovered && !enabled
                                         ToolTip.text: "the file has no OI_FLUX"
                                     }
+                                    // Radial velocities, fitted with the interferometry against
+                                    // the orbit of the model's component on one.
+                                    CheckBox {
+                                        objectName: "fitRV"
+                                        text: "RVs"
+                                        enabled: root.rvSummary.length > 0 && root.orbitComponent.length > 0
+                                        checked: root.fitRV && enabled
+                                        onToggled: root.fitRV = checked
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: root.rvSummary.length === 0 ? "open an RV table first"
+                                                    : root.orbitComponent.length === 0 ? "needs a component on an orbit (Geometry › orbit)"
+                                                    : root.rvSummary
+                                    }
+                                    Button {
+                                        objectName: "rvOpen"
+                                        text: "RV table…"
+                                        onClicked: rvPicker.openAt("")
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "radial velocities: CSV MJD,RV,sigma,star"
+                                    }
 
                                     // Bandwidth smearing: how the model is compared with
                                     // channel-averaged data. Kept in the model (`smear`,
@@ -2748,6 +2829,7 @@ Item {
                                     // over a companion's position rather than fitting the model.
                                     Button {
                                         id: companionButton
+                                        objectName: "companionButton"
                                         Layout.leftMargin: root.dp(12)
                                         text: "Companion search…"
                                         enabled: !root.running && root.canRun && root.companionNames.length > 0
@@ -2756,6 +2838,15 @@ Item {
                                             ? "map χ² over a companion's position around the primary"
                                             : "needs a component with f, x and y to move"
                                         onClicked: companionDialog.open()
+                                    }
+                                    Button {
+                                        id: multiButton
+                                        objectName: "multiButton"
+                                        text: "Multi-start…"
+                                        enabled: !root.running && root.canRun
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "fits from many starts: grid or random"
+                                        onClicked: multiDialog.open()
                                     }
 
                                     Item { Layout.fillWidth: true }
@@ -3005,10 +3096,11 @@ Item {
                                     }
                                     Label { text: "mode"; color: "#666" }
                                     ComboBox {
+                                        objectName: "bootMode"
                                         Layout.preferredWidth: root.dp(140)
                                         model: ["replacement", "halfsample", "weights", "pmoired"]
                                         onActivated: root.bootMode =
-                                            ["replacement", "halfsample", "weights", "pmoired"][index]
+                                            ["replacement", "halfsample", "weights", "pmoired"][currentIndex]
                                     }
                                     Label {
                                         visible: root.bootMode === "pmoired"
@@ -3137,6 +3229,15 @@ Item {
                                                 ? "flux against wavelength, total and per component"
                                                 : "this model references no $WL, so its SED is flat"
                                             onClicked: root.showSed()
+                                        }
+                                        Button {
+                                            objectName: "orbitButton"
+                                            text: "Orbit"; implicitHeight: root.dp(20)
+                                            enabled: root.orbitComponent.length > 0
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: enabled ? "the orbit on the sky, and the radial velocities"
+                                                                  : "needs a component on an orbit"
+                                            onClicked: root.showOrbit()
                                         }
                                         Button {
                                             text: "Adopt"; implicitHeight: root.dp(20)
@@ -3310,6 +3411,14 @@ Item {
                                 scene: sedPlot
                             }
 
+                            MakieArea {
+                                id: orbitArea
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                visible: root.diagView === "orbit"
+                                scene: orbitPlot
+                            }
+
                                 // ── Save PNG ──────────────────────────────────
                                 //
                                 // Overlaid on the plot rather than placed in a toolbar, so every
@@ -3326,7 +3435,7 @@ Item {
                                     // Saves whichever plot is on screen. One button in
                                     // the corner every other plot area puts one in, rather than
                                     // a second that appears and disappears with the view.
-                                    visible: root.diagView !== "correlations"
+                                    visible: root.diagView !== "correlations" && root.diagView !== "orbit"
                                     enabled: root.diagView === "sed" ? root.sedText.length > 0
                                            : root.diagView === "corner" ? root.cornerPath.length > 0
                                                                         : root.chi2MapP1.length > 0
@@ -3356,7 +3465,7 @@ Item {
                                     }
                                     Label {
                                         Layout.alignment: Qt.AlignHCenter
-                                        text: "run a grid search or a companion search to see a map"
+                                        text: "run a grid, companion or multi-start search to see a map"
                                         color: "#aaa"
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
@@ -3389,6 +3498,56 @@ Item {
                                 }
                             }
 
+                            // A multi-start search: the two parameters it is drawn over, and which
+                            // minimum Adopt takes and the ring marks.
+                            RowLayout {
+                                visible: root.diagView === "chi2map" && root.chi2MapKind === "minima"
+                                enabled: !root.running
+                                anchors.left: parent.left
+                                anchors.bottom: parent.bottom
+                                anchors.margins: root.dp(6)
+                                spacing: root.dp(4)
+                                function redraw() {
+                                    Julia.shell_multistart_view(multiXBox.currentText, multiYBox.currentText)
+                                    chi2MapArea.update()
+                                }
+                                ComboBox {
+                                    id: multiXBox
+                                    objectName: "multiX"
+                                    model: root.multiNames
+                                    implicitHeight: root.dp(24)
+                                    Layout.preferredWidth: root.dp(130)
+                                    currentIndex: 0
+                                    onActivated: parent.redraw()
+                                }
+                                ComboBox {
+                                    id: multiYBox
+                                    objectName: "multiY"
+                                    model: root.multiNames
+                                    implicitHeight: root.dp(24)
+                                    Layout.preferredWidth: root.dp(130)
+                                    currentIndex: Math.min(1, root.multiNames.length - 1)
+                                    onActivated: parent.redraw()
+                                }
+                                ComboBox {
+                                    id: multiMinBox
+                                    objectName: "multiMinimum"
+                                    model: root.multiMinima
+                                    implicitHeight: root.dp(24)
+                                    Layout.preferredWidth: root.dp(190)
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "the minimum Adopt takes"
+                                    onActivated: {
+                                        var err = Julia.shell_multistart_select(currentIndex + 1)
+                                        if (err.length > 0) root.fitText = err
+                                        root.refreshFits()
+                                        root.refreshCorrelation()
+                                        chi2MapArea.update()
+                                        root.consoleChanged()
+                                    }
+                                }
+                            }
+
                             Label {
                                 visible: root.diagView === "chi2map" && root.chi2MapP1.length > 0 &&
                                          root.chi2MapKind === "grid"
@@ -3401,11 +3560,13 @@ Item {
                             }
 
                             Label {
-                                visible: root.diagView === "sed" && root.sedText.length > 0
+                                visible: (root.diagView === "sed" && root.sedText.length > 0) ||
+                                         (root.diagView === "orbit" && root.orbitText.length > 0)
                                 anchors.left: parent.left
                                 anchors.bottom: parent.bottom
                                 anchors.margins: root.dp(6)
-                                text: root.sedText
+                                objectName: "diagCaption"
+                                text: root.diagView === "orbit" ? root.orbitText : root.sedText
                                 color: "#666"
                                 font.pointSize: root.pt(root.baseFontPt - 2)
                             }
@@ -3605,6 +3766,8 @@ Item {
 
     function refreshModel() {
         root.modelDescription = Julia.shell_model_description()
+        root.orbitComponent = Julia.shell_orbit_component()
+        root.rvSummary = Julia.shell_rv_summary()
         paramModel.clear()
         var rows = Julia.shell_model_rows()
         if (rows.length > 0) {
@@ -3688,6 +3851,15 @@ Item {
     // on its own; residuals are drawn when asked for.
     property string diagView: "chi2map"
     property string sedText: ""
+    property string orbitText: ""
+
+    function showOrbit() {
+        root.orbitText = Julia.shell_orbit_view()
+        root.consoleChanged()
+        if (root.orbitText.charAt(0) === "!") { root.fitText = root.orbitText; return }
+        root.diagView = "orbit"
+        orbitArea.update()
+    }
 
     function showSed() {
         root.sedText = Julia.shell_model_sed()
@@ -4022,6 +4194,7 @@ Item {
             Label { text: "Companion" }
             ComboBox {
                 id: companionBox
+                objectName: "companionBox"
                 Layout.preferredWidth: root.dp(180)
                 model: root.companionNames
                 onActivated: companionDialog.refreshChoices()
@@ -4030,6 +4203,7 @@ Item {
             Label { text: "Primary" }
             ComboBox {
                 id: primaryModeBox
+                objectName: "primaryModeBox"
                 Layout.preferredWidth: root.dp(300)
                 model: ["held at its current values", "refitted at every node"]
                 currentIndex: 1
@@ -4077,6 +4251,7 @@ Item {
             Label { text: "Per-node fitter" }
             ComboBox {
                 id: fitterBox
+                objectName: "fitterBox"
                 Layout.preferredWidth: root.dp(390)
                 model: companionDialog.fitters
                 textRole: "name"
@@ -4099,6 +4274,7 @@ Item {
             Label { text: "Grid step (mas)" }
             TextField {
                 id: compStep
+                objectName: "compStep"
                 Layout.preferredWidth: root.dp(120)
                 placeholderText: "λ/(2 B_max)"
                 onEditingFinished: root.refreshCompanionGrid()
@@ -4109,6 +4285,7 @@ Item {
                 spacing: root.dp(6)
                 TextField {
                     id: compRmin
+                    objectName: "compRmin"
                     Layout.preferredWidth: root.dp(120)
                     placeholderText: "primary"
                     onEditingFinished: root.refreshCompanionGrid()
@@ -4118,6 +4295,7 @@ Item {
                 Label { text: "–"; color: "#666" }
                 TextField {
                     id: compRmax
+                    objectName: "compRmax"
                     Layout.preferredWidth: root.dp(120)
                     placeholderText: "R λ/(2 B_max)"
                     onEditingFinished: root.refreshCompanionGrid()
@@ -4129,6 +4307,7 @@ Item {
             Label { text: "Mask" }
             TextField {
                 id: compMask
+                objectName: "compMask"
                 Layout.preferredWidth: root.dp(120)
                 text: "0.01"
                 onEditingFinished: root.refreshCompanionGrid()
@@ -4140,6 +4319,7 @@ Item {
             Label { text: "Flux fraction ≤" }
             TextField {
                 id: compFmax
+                objectName: "compFmax"
                 Layout.preferredWidth: root.dp(120)
                 text: "0.5"
             }
@@ -4151,6 +4331,7 @@ Item {
                 spacing: root.dp(6)
                 SpinBox {
                     id: compRefine
+                    objectName: "compRefine"
                     from: 0; to: 50; value: 5; editable: true
                     implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
                     ToolTip.visible: hovered
@@ -4170,6 +4351,224 @@ Item {
                 wrapMode: Text.WordWrap
                 elide: Text.ElideRight
                 maximumLineCount: 2
+            }
+        }
+    }
+
+    // The multi-start search's settings (`multistart_fit`, PMOIRED's gridFit): per free
+    // parameter its start — the table's value, a grid, or a uniform or normal draw — the number
+    // of starts when nothing is gridded, conditions that drop starts, the seed. A PMOIRED `expl`
+    // dict pasted below fills the rows.
+    Dialog {
+        id: multiDialog
+        objectName: "multiDialog"
+        title: "Multi-start"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: root.dp(660)
+        height: Math.min(root.dp(640), root.height - root.dp(40))
+        background: Rectangle {
+            color: multiDialog.palette.window
+            border.color: "#606060"
+            border.width: root.dp(2)
+        }
+        header: Label {
+            text: multiDialog.title
+            font.bold: true
+            padding: root.dp(12)
+            bottomPadding: 0
+        }
+        readonly property var kinds: ["start", "grid", "uniform", "normal"]
+        property string pasteText: ""
+        // The explored rows as `name<TAB>kind<TAB>a<TAB>b<TAB>c`, for `shell_multistart`.
+        function exploreLines() {
+            var out = []
+            for (var i = 0; i < multiModel.count; ++i) {
+                var r = multiModel.get(i)
+                if (r.kind === "start") continue
+                out.push([r.name, r.kind, r.a, r.b, r.c].join("\t"))
+            }
+            return out.join("\n")
+        }
+        readonly property bool hasGrid: {
+            var _ = multiModel.revision
+            for (var i = 0; i < multiModel.count; ++i)
+                if (multiModel.get(i).kind === "grid") return true
+            return false
+        }
+        // One row per free parameter, keeping what was set for a parameter still free; a new
+        // one starts at the table's value, its bounds offered for a uniform draw.
+        function rebuild() {
+            var keep = {}
+            for (var i = 0; i < multiModel.count; ++i) {
+                var r = multiModel.get(i); keep[r.name] = { kind: r.kind, a: r.a, b: r.b, c: r.c }
+            }
+            multiModel.clear()
+            var lines = root.freeAsLines().split("\n")
+            for (var k = 0; k < lines.length; ++k) {
+                var f = lines[k].split("\t")
+                if (f[0].length === 0) continue
+                var lo = isFinite(parseFloat(f[1])) ? f[1] : ""
+                var hi = isFinite(parseFloat(f[2])) ? f[2] : ""
+                var o = keep[f[0]] || { kind: "start", a: lo, b: hi, c: "" }
+                multiModel.append({ name: f[0], kind: o.kind, a: o.a, b: o.b, c: o.c })
+            }
+            multiModel.revision++
+        }
+        function applyPmoired() {
+            var t = Julia.shell_multistart_pmoired(multiDialog.pasteText)
+            if (t.length > 0 && t.charAt(0) === "!") { multiNote.text = t; return }
+            var lines = t.split("\n"), missing = []
+            for (var i = 0; i < lines.length; ++i) {
+                var f = lines[i].split("\t"), found = false
+                for (var j = 0; j < multiModel.count; ++j) {
+                    if (multiModel.get(j).name !== f[0]) continue
+                    multiModel.set(j, { kind: f[1], a: f[2] || "", b: f[3] || "", c: f[4] || "" })
+                    found = true
+                }
+                if (!found) missing.push(f[0])
+            }
+            multiModel.revision++
+            multiNote.text = missing.length > 0 ? "! not free: " + missing.join(", ") : ""
+        }
+        onOpened: {
+            var ok = standardButton(Dialog.Ok)
+            if (ok) ok.text = "Search"
+            rebuild()
+            multiNote.text = ""
+        }
+        onAccepted: root.startMulti()
+
+        ListModel { id: multiModel; property int revision: 0 }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: root.dp(6)
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                ColumnLayout {
+                    spacing: root.dp(3)
+                    Repeater {
+                        model: multiModel
+                        delegate: RowLayout {
+                            spacing: root.dp(6)
+                            readonly property int row: index
+                            readonly property string pname: model.name
+                            Label {
+                                text: model.name
+                                Layout.preferredWidth: root.dp(150)
+                                elide: Text.ElideRight
+                            }
+                            ComboBox {
+                                objectName: "multi:" + parent.pname + ":kind"
+                                Layout.preferredWidth: root.dp(110)
+                                model: multiDialog.kinds
+                                currentIndex: Math.max(0, multiDialog.kinds.indexOf(multiModel.get(parent.row).kind))
+                                onActivated: { multiModel.setProperty(parent.row, "kind", multiDialog.kinds[currentIndex])
+                                               multiModel.revision++ }
+                            }
+                            TextField {
+                                objectName: "multi:" + model.name + ":a"
+                                Layout.preferredWidth: root.dp(100)
+                                enabled: model.kind !== "start"
+                                text: model.a
+                                placeholderText: model.kind === "normal" ? "mean" : "min"
+                                onEditingFinished: multiModel.setProperty(parent.row, "a", text)
+                            }
+                            TextField {
+                                objectName: "multi:" + model.name + ":b"
+                                Layout.preferredWidth: root.dp(100)
+                                enabled: model.kind !== "start"
+                                text: model.b
+                                placeholderText: model.kind === "normal" ? "σ" : "max"
+                                onEditingFinished: multiModel.setProperty(parent.row, "b", text)
+                            }
+                            TextField {
+                                objectName: "multi:" + model.name + ":c"
+                                Layout.preferredWidth: root.dp(100)
+                                visible: model.kind === "grid"
+                                text: model.c
+                                placeholderText: "step"
+                                onEditingFinished: multiModel.setProperty(parent.row, "c", text)
+                            }
+                        }
+                    }
+                }
+            }
+
+            GridLayout {
+                columns: 2
+                columnSpacing: root.dp(10)
+                rowSpacing: root.dp(4)
+                Label { text: "Starts" }
+                RowLayout {
+                    spacing: root.dp(10)
+                    SpinBox {
+                        id: multiStarts
+                        objectName: "multiStarts"
+                        from: 1; to: 100000; value: 100; editable: true
+                        enabled: !multiDialog.hasGrid
+                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
+                        ToolTip.visible: hovered
+                        ToolTip.text: multiDialog.hasGrid ? "set by the grid" : "random starts"
+                    }
+                    Label { text: "Seed" }
+                    SpinBox {
+                        id: multiSeed
+                        objectName: "multiSeed"
+                        from: 0; to: 1000000; value: 1; editable: true
+                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
+                    }
+                    Label { text: "Δχ²ᵣ ≤" }
+                    TextField {
+                        id: multiDelta
+                        objectName: "multiDelta"
+                        Layout.preferredWidth: root.dp(80)
+                        placeholderText: "all"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "keep minima within this of the best χ²ᵣ"
+                    }
+                }
+                Label { text: "Conditions"; Layout.alignment: Qt.AlignTop }
+                TextArea {
+                    id: multiConds
+                    objectName: "multiConds"
+                    Layout.preferredWidth: root.dp(480)
+                    Layout.preferredHeight: root.dp(48)
+                    placeholderText: "sqrt($B,x^2 + $B,y^2) <= 12   (one per line)"
+                    ToolTip.visible: hovered
+                    ToolTip.text: "starts that break one are dropped"
+                }
+                Label { text: "PMOIRED expl"; Layout.alignment: Qt.AlignTop }
+                RowLayout {
+                    spacing: root.dp(6)
+                    TextArea {
+                        id: multiPaste
+                        objectName: "multiPaste"
+                        Layout.preferredWidth: root.dp(400)
+                        Layout.preferredHeight: root.dp(48)
+                        placeholderText: "{'grid': {'B,x': (-12, 12, 1.5)}, 'rand': {...}}"
+                        onTextChanged: multiDialog.pasteText = text
+                    }
+                    Button {
+                        objectName: "multiPasteApply"
+                        text: "Apply"
+                        enabled: multiPaste.text.length > 0
+                        ToolTip.visible: hovered
+                        ToolTip.text: "fill the rows from the dict"
+                        onClicked: multiDialog.applyPmoired()
+                    }
+                }
+                Label { text: "" }
+                Label {
+                    id: multiNote
+                    color: root.cBad
+                    font.pointSize: root.pt(root.baseFontPt - 1)
+                }
             }
         }
     }
@@ -4843,6 +5242,21 @@ Item {
     // emits `accepted` while leaving its window on screen on some systems -- measured with
     // `test/gui/filepicker_min.jl`, and see FilePicker.qml for what else was ruled out.
     // A Popup has no window of its own to leave behind.
+    FilePicker {
+        id: rvPicker
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Open radial velocities"
+        filters: [{ label: "RV tables (*.csv)", patterns: "*.csv" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            var t = Julia.shell_rv_open(path)
+            root.consoleChanged()
+            if (t.charAt(0) === "!") { root.fitText = t; return }
+            root.fitRV = true
+            root.refreshModel()
+        }
+    }
+
     FilePicker {
         id: openModelDialog
         uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt

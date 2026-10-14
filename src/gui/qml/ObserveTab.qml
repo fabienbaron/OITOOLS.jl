@@ -897,7 +897,11 @@ Item {
                                                 // next Compute would overwrite anything set here.
                                                 enabled: root.telescopeConfig[index] > 0 && !root.autoPops
                                                 currentIndex: Math.max(0, root.popAt(index) - 1)
-                                                onActivated: root.setPop(index, currentIndex + 1)
+                                                // the telescope's row, captured: inside the
+                                                // handler `index` would be the entry activated
+                                                readonly property int telescopeRow: index
+                                                objectName: "pop:" + index
+                                                onActivated: root.setPop(telescopeRow, currentIndex + 1)
                                             }
                                             // Takes up the slack, so the label and its dropdown sit at the
                                             // left of every cell and the six line up in columns.

@@ -20,18 +20,19 @@ using RuntimeGeneratedFunctions
 # $RMIN, $RMAX         — the grid's own bounds, in mas (profile expressions)
 # $DMIN, $DMAX         — the same as diameters (profile expressions)
 # $WL                  — wavelength in metres (per UV point, from data.uv_lam)
-# $MJD                 — Modified Julian Date  (per UV point, from data.uv_mjd, which is
-#                        stored in T: ~5.6 min resolution at the default Float32)
+# $MJD                 — Modified Julian Date  (per UV point, from data.uv_mjd, Float64
+#                        whatever the data's T)
 #
 # The five grid variables are PMOIRED's, spelled the same way, so a profile written for one
 # package reads in the other. They are substituted where the profile is compiled, by which
 # point the grid is known.
 const IMPLICIT_VARS = Set(["R", "MU", "D", "RMIN", "RMAX", "DMIN", "DMAX", "WL", "MJD"])
 
-# A `$`-reference: a name, then optionally `,` and a suffix. The suffix is an identifier, or
-# one of the two keys written with a space, PMOIRED's spelling of an azimuthal mode
-# (`az amp1`, `az projang1`). No other space belongs to a reference: `$a,b c` is `$a,b`, then c.
-const _REF_PATTERN = r"\$([A-Za-z_][A-Za-z0-9_]*(?:,(?:az (?:amp|projang)[0-9]+|[A-Za-z_][A-Za-z0-9_]*))?)"
+# A `$`-reference: a name (PMOIRED's components are often `1`, `2`), then optionally `,` and a
+# suffix. The suffix is an identifier, or one of PMOIRED's keys written with a space: an
+# azimuthal mode (`az amp1`, `az projang1`) or an orbit's element (`orb P`). No other space
+# belongs to a reference: `$a,b c` is `$a,b`, then c.
+const _REF_PATTERN = r"\$([A-Za-z0-9_][A-Za-z0-9_]*(?:,(?:az (?:amp|projang)[0-9]+|orb [A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*))?)"
 
 # `$WL` in an expression is in MICRONS, the unit the field writes a wavelength in; every
 # wavelength outside the expression language (the `wl` arguments, `uv_lam`, `model_to_sed`'s
@@ -40,8 +41,10 @@ const _REF_PATTERN = r"\$([A-Za-z_][A-Za-z0-9_]*(?:,(?:az (?:amp|projang)[0-9]+|
 # fused broadcast, so it allocates nothing and keeps the wavelength's own precision.
 _wl_expr(wl::Real) = wl * oftype(float(wl), 1e6)
 
-# A reference as a Julia identifier: `,` → `__`, the space of an azimuthal mode's key → `_`.
-_mangle(name::AbstractString) = replace(name, "," => "__", " " => "_")
+# A reference as a Julia identifier: `,` → `__`, the space of a two-word key → `_`, and a `_`
+# before a name that starts with a digit (`2,orb P` → `_2__orb_P`).
+_mangle(name::AbstractString) =
+    (m = replace(name, "," => "__", " " => "_"); isdigit(first(m)) ? "_" * m : m)
 
 """
     extract_refs(expr_str) -> Vector{String}
@@ -139,7 +142,6 @@ function broadcastify(expr)
     end
 end
 
-
 ##############################################################################
 # The resolver: RuntimeGeneratedFunctions.jl
 ##############################################################################
@@ -149,12 +151,62 @@ using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
 using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS,
-                _REF_PATTERN, _mangle, _wl_expr
+                _REF_PATTERN, _mangle, _wl_expr, orbit_x, orbit_y, orbit_a
 
 const mangle = _mangle
 
 function preprocess(s::String)::String
     replace(s, _REF_PATTERN => s -> (n = s[2:end]; n == "WL" ? "_wl_expr(WL)" : mangle(n)))
+end
+
+# A per-point expression of time alone (`$MJD`, no `$WL`, no other per-point parameter), written
+# as a loop that evaluates it as scalar code once per run of equal MJDs and copies it along the
+# run: `uv_mjd` comes in runs, one per epoch, so an orbit's Kepler equation is solved per epoch.
+# Inline in the generated body (a closure there would be boxed). `epoch_fill` writes into the
+# column `sym`; `epoch_vector` returns a new vector (a scalar for a scalar MJD). The loop's own
+# names (`#y#<sym>`, …) are fixed by `sym` and cannot be a mangled parameter's, so the same
+# model always generates the same body and reuses its compiled code.
+function epoch_loop(sym, ex, y)
+    i, t = Symbol("#i#", sym), Symbol("#t#", sym)
+    quote
+        $i = firstindex(MJD)
+        @inbounds while $i <= lastindex(MJD)
+            $t = MJD[$i]
+            $y = let MJD = $t; $ex; end
+            $sym[$i] = $y
+            $i += 1
+            while $i <= lastindex(MJD) && MJD[$i] == $t
+                $sym[$i] = $y
+                $i += 1
+            end
+        end
+    end
+end
+
+function epoch_fill(sym, ex)
+    y = Symbol("#y#", sym)
+    quote
+        if MJD isa Number
+            $sym .= $ex
+        elseif !isempty(MJD)
+            local $y
+            $(epoch_loop(sym, ex, y))
+        end
+    end
+end
+
+function epoch_vector(sym, ex)
+    y, v = Symbol("#y#", sym), Symbol("#v#", sym)
+    quote
+        $sym = if MJD isa Number || isempty(MJD)
+            $(broadcastify(ex))
+        else
+            local $y = let MJD = MJD[firstindex(MJD)]; $ex; end
+            $v = Vector{typeof($y)}(undef, length(MJD))
+            $(epoch_loop(v, ex, y))
+            $v
+        end
+    end
 end
 
 """
@@ -172,7 +224,8 @@ The compiled resolver of one model.
 
 A parameter is per-point ("chromatic") when its expression mentions `\$WL` or `\$MJD`, or
 refers to a chromatic parameter; the rest stay scalar, so a chromatic flux does not make a
-fixed diameter a vector.
+fixed diameter a vector. One of time alone (`\$MJD`, no `\$WL`, no chromatic parameter) is
+computed once per run of equal MJDs and copied along it.
 """
 struct Resolver
     all_names ::Vector{String}
@@ -199,6 +252,10 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
             push!(chromatic, name)
     end
     uses_wl_mjd = !isempty(chromatic)
+    # Those of time alone, evaluated once per run of equal MJDs.
+    by_epoch = Set(name for name in chromatic
+                   if (refs = extract_refs(derived[name]); "MJD" in refs && "WL" ∉ refs &&
+                       !any(r -> r in chromatic, refs)))
 
     # 3. The body shared by both functions: free parameters from x, fixed ones as literals.
     head = [[:($(Symbol(mangle(list_free_params[i]))) = x[$i]) for i in eachindex(list_free_params)];
@@ -207,7 +264,8 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
     # `fn`: every derived expression broadcast when any is chromatic, as vector WL/MJD then
     # propagate; plain scalar code otherwise.
     fn_stmts = if uses_wl_mjd
-        [:($(Symbol(mangle(name))) = $(broadcastify(Meta.parse(preprocess(derived[name])))))
+        [(ex = Meta.parse(preprocess(derived[name])); sym = Symbol(mangle(name));
+          name in by_epoch ? epoch_vector(sym, ex) : :($sym = $(broadcastify(ex))))
          for name in sorted]
     else
         [:($(Symbol(mangle(name))) = $(Meta.parse(preprocess(derived[name]))))
@@ -240,7 +298,7 @@ function build_resolver(model_dict::Dict{String}, list_free_params::Vector{Strin
         if name in chromatic
             j = -slot[findfirst(==(name), all_names)]
             push!(fill_stmts, :($sym = cols[$j]))
-            push!(fill_stmts, :($sym .= $(broadcastify(ex))))
+            push!(fill_stmts, name in by_epoch ? epoch_fill(sym, ex) : :($sym .= $(broadcastify(ex))))
         else
             push!(fill_stmts, :($sym = $ex))
         end

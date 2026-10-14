@@ -292,8 +292,9 @@ and their wavelength range, the valid points per observable, AMPTYP / PHITYP, th
 what a filtered dataset was filtered from.
 
 Counted over every bin of the dataset, so a binned dataset reports what it holds, not its first
-bin. Target, instrument and array names are not kept in `OIdata`, so they are read from the
-file's own tables (a filtered or re-read entry keeps its path).
+bin. The instruments are those the points come from (`OIdata.tables`); target and array names
+are not kept in `OIdata`, so they are read from the file's own tables (a filtered or re-read
+entry keeps its path).
 """
 function dataset_summary(e::DatasetEntry)
     data = vec(e.data)
@@ -308,7 +309,13 @@ function dataset_summary(e::DatasetEntry)
         tn = get(e.readopts, :targetname, "")
         targets = isempty(tn) ? unique(String[t.target for h in hdrs for t in h.target]) : [String(tn)]
         push!(rows, "target" => _first_few(targets))
-        push!(rows, "instrument" => _first_few(unique(String[i.insname for h in hdrs for i in h.instr])))
+        # the instruments the points come from (a dataset read with one `insname` holds one),
+        # else the file's
+        ins = unique(String[d.tables[t].insname for d in data
+                            for t in vcat(d.v2_tab, d.t3_tab, d.vis_tab, d.flux_tab)
+                            if 0 < t <= length(d.tables)])
+        isempty(ins) && (ins = unique(String[i.insname for h in hdrs for i in h.instr]))
+        push!(rows, "instrument" => _first_few(ins))
         push!(rows, "array" => _first_few(unique(String[a.arrname for h in hdrs for a in h.array])))
     end
     used = Int[]

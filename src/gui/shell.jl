@@ -1043,7 +1043,7 @@ function shell_fit_model(free_lines::AbstractString,
                          uncertainty::AbstractString = "jacobian", nboot::Integer = 200,
                          bootmode::AbstractString = "replacement",
                          granularity::AbstractString = "config", seed::Integer = 1,
-                         threaded::Bool = true)
+                         threaded::Bool = true, fit_rv::Bool = false)
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
@@ -1065,6 +1065,16 @@ function shell_fit_model(free_lines::AbstractString,
 
     data = e.data[1, 1]
     opt  = String(optimiser)
+    rv = fit_rv ? RVSET[] : nothing
+    if fit_rv
+        rv === nothing && return "! no radial-velocity table open"
+        opt in ("grid", "nested") &&
+            return "! radial velocities are fitted with Levenberg-Marquardt or NLopt"
+        isempty(_orbit_name(_model(sh))) &&
+            return "! radial velocities need a component on an orbit (Geometry › orbit)"
+        String(uncertainty) == "bootstrap" && opt != "lsqfit" &&
+            return "! a bootstrap with radial velocities refits with Levenberg-Marquardt"
+    end
 
     unc = String(uncertainty)
     unc in ("none", "jacobian", "bootstrap", "posterior") ||
@@ -1103,7 +1113,7 @@ function shell_fit_model(free_lines::AbstractString,
                      "n1 = $(Int(gridn)), n2 = $(n2), weights = $(weights))")
     else
         console!(sh, "> fit_model(model, $(free), data; " *
-                     "weights = $(weights), method = :$(opt))")
+                     "weights = $(weights), method = :$(opt)" * (rv === nothing ? "" : ", rv") * ")")
     end
     unc == "bootstrap" &&
         console!(sh, "> bootstrap_fit(model, $(free), data; nboot = $(Int(nboot)), " *
@@ -1138,7 +1148,7 @@ function shell_fit_model(free_lines::AbstractString,
                               n2 = gridn2 > 1 ? Int(gridn2) : Int(gridn))
             FitResult(themap)
         elseif opt == "lsqfit"
-            fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons,
+            fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons, rv,
                              maxIter = Int(maxeval), verb = true)
         elseif opt == "nested"
             # Whichever sampler is loaded. `nested_backend()` picks it; the panel says which,
@@ -1146,7 +1156,7 @@ function shell_fit_model(free_lines::AbstractString,
             fit_model_nested(md, free, data; lb, ub, weights, constraints = cons,
                              verb = true, cornerplot = false)
         else
-            fit_model(md, free, data; lb, ub, weights, priors, constraints = cons,
+            fit_model(md, free, data; lb, ub, weights, priors, constraints = cons, rv,
                       method = optsym, maxeval = Int(maxeval), verb = true)
         end
         boot = nothing
@@ -1156,7 +1166,7 @@ function shell_fit_model(free_lines::AbstractString,
             mb = copy(md)
             for (k, v) in zip(r.list_free_params, r.x_opt); mb[k] = v; end
             boot = bootstrap_fit(mb, free, data; nboot = Int(nboot), mode = bmode,
-                                 granularity = bgran, fitter = bfitter, lb, ub, weights,
+                                 granularity = bgran, fitter = bfitter, lb, ub, weights, rv,
                                  method = bfitter == :nlopt ? optsym : :LD_LBFGS,
                                  maxeval = Int(maxeval), seed = Int(seed), threaded,
                                  verb = true)
@@ -1177,6 +1187,64 @@ function shell_fit_model(free_lines::AbstractString,
     return "fitting…"
 end
 
+# ── radial velocities (Modeling) ──────────────────────────────────────────────────────
+
+# The radial-velocity table the Modeling perspective fits with the interferometry, when one is
+# open (`read_rv`).
+const RVSET = Ref{Any}(nothing)
+
+# The component on an orbit in the model, or "".
+function _orbit_name(m)
+    for cn in OITOOLS._component_names(m.dict)
+        get(m.dict, "$cn,x", nothing) == "orbit" && return cn
+    end
+    return ""
+end
+
+"""
+    shell_rv_open(path) -> String
+
+Read a radial-velocity table (`read_rv`: CSV `MJD,RV,sigma,star`) for the fits. When the model
+has a component on an orbit without velocity elements, adds them (`c,orb Ka`, `Kb`, `gamma`,
+fixed, at 10, 10 and 0 km/s). Returns the table's summary, or a message beginning with `!`.
+"""
+function shell_rv_open(path::AbstractString)
+    sh = _shell()
+    p = strip_file_url(String(path))
+    rv = try
+        OITOOLS.read_rv(p)
+    catch err
+        return console!(sh, "! " * _cause(err); kind = :err)
+    end
+    RVSET[] = rv
+    console!(sh, "rv = read_rv($(_literal(p)))"; kind = :cmd)
+    m = _model(sh); cn = _orbit_name(m)
+    if !isempty(cn) && !(haskey(m.dict, "$cn,orb M") && haskey(m.dict, "$cn,orb q"))
+        added = String[]
+        for (k, v) in ("Ka" => 10.0, "Kb" => 10.0, "gamma" => 0.0)
+            key = "$cn,orb $k"
+            haskey(m.dict, key) || (m.dict[key] = v; push!(added, key))
+        end
+        isempty(added) || console!(sh, "  added " * join(added, ", ") * " for the velocities")
+    end
+    return shell_rv_summary()
+end
+
+"The open radial-velocity table: `name: N velocities (a, b), MJD range`, or \"\"."
+function shell_rv_summary()
+    rv = RVSET[]
+    rv === nothing && return ""
+    na = count(==(:a), rv.star)
+    return @sprintf("%s: %d velocities (%d a, %d b), MJD %.1f–%.1f", basename(rv.path),
+                    length(rv), na, length(rv) - na, minimum(rv.mjd), maximum(rv.mjd))
+end
+
+"The model's component on an orbit, or \"\"."
+shell_orbit_component() = _orbit_name(_model())
+
+"Close the radial-velocity table."
+shell_rv_close() = (RVSET[] = nothing; "")
+
 """
     finish_fit!(sh, res) -> String
 
@@ -1192,6 +1260,9 @@ function finish_fit!(sh::ShellState, res)
     end
     f = res.result
     r = f.result
+    r isa LsqFitResult && r.chi2_rv > 0 &&
+        console!(sh, @sprintf("  χ² interferometry %.1f, radial velocities %.1f (%d)",
+                              r.chi2 - r.chi2_rv, r.chi2_rv, RVSET[] === nothing ? 0 : length(RVSET[])))
     # The grid search prints nothing -- it is a comprehension over `chi2_flat`, not an optimiser
     # with a trace -- so the console gets the one thing worth saying about it.
     sh.fitlog = isempty(strip(res.output)) && f.optimiser == "grid" ?
@@ -1229,6 +1300,19 @@ function finish_fit!(sh::ShellState, res)
         end
         return line
     end
+    if f.map isa MultiStartResult
+        m = f.map
+        nmin = count(==(:minimum), m.status)
+        line = @sprintf("%d starts, %d kept, %d minima; best χ²r %.4f from %d start(s)   %.1f s",
+                        size(m.starts, 2), nmin, length(m.minima), r.chi2r,
+                        length(m.minima[1].starts), f.seconds)
+        console!(sh, "  " * line)
+        for (k, q) in enumerate(m.minima[1:min(10, end)])
+            console!(sh, @sprintf("    minimum %d: χ²r %.4f   %d start(s)", k, q.fit.chi2r,
+                                  length(q.starts)))
+        end
+        return line
+    end
     it, ev = _fit_work(r)
     start  = isfinite(f.chi2_start) ? f.chi2_start / max(r.ndof, 1) : NaN
     line = @sprintf("chi2r %s -> %.4f   ndof %d   %d free   %s   %.2f s",
@@ -1259,6 +1343,16 @@ function shell_chi2_map_info()
     if m isa CompanionSearch
         return join(("x", "y", string(m.best.x), string(m.best.y), string(m.best.chi2r),
                      "companion"), "\t")
+    end
+    if m isa MultiStartResult
+        isempty(m.minima) && return ""
+        names = [m.explored; filter(n -> n ∉ m.explored, m.list_free_params)]
+        v = MULTISTART_VIEW[]
+        a = v.p1 in names ? v.p1 : names[1]
+        b = v.p2 in names ? v.p2 : names[min(2, length(names))]
+        x = m.minima[clamp(v.selected, 1, length(m.minima))].fit
+        ia, ib = findfirst(==(a), x.list_free_params), findfirst(==(b), x.list_free_params)
+        return join((a, b, string(x.x_opt[ia]), string(x.x_opt[ib]), string(x.chi2r), "minima"), "\t")
     end
     b = argmin(m.chi2)
     return join((m.p1, m.p2, string(m.v1[b[1]]), string(m.v2[b[2]]),
@@ -1606,6 +1700,219 @@ function shell_companion_map_view(which::AbstractString)
     (m isa CompanionSearch && sh.chi2map !== nothing) || return ""
     update_chi2_map!(sh.chi2map, m; show = which == "flux" ? :flux : :chi2r)
     return ""
+end
+
+# ── multi-start search (Model Optimization) ───────────────────────────────────────────
+
+# One explored parameter per line, `name<TAB>kind<TAB>a<TAB>b<TAB>c`: kind `grid` (min, max,
+# step), `uniform` (min, max) or `normal` (mean, σ). Lines of another kind are not explored.
+function _parse_explore_lines(lines::AbstractString)
+    grid, urand, nrand = Pair{String,Any}[], Pair{String,Any}[], Pair{String,Any}[]
+    for l in split(lines, '\n')
+        f = split(l, '\t')
+        length(f) >= 2 || continue
+        name, kind = String(f[1]), String(f[2])
+        num(i) = (i <= length(f) ? tryparse(Float64, strip(f[i])) : nothing)
+        if kind == "grid"
+            v = (num(3), num(4), num(5))
+            any(isnothing, v) && throw(ArgumentError("$name: grid needs min, max and step"))
+            push!(grid, name => v)
+        elseif kind == "uniform"
+            v = (num(3), num(4))
+            any(isnothing, v) && throw(ArgumentError("$name: uniform needs min and max"))
+            push!(urand, name => v)
+        elseif kind == "normal"
+            v = (num(3), num(4))
+            any(isnothing, v) && throw(ArgumentError("$name: normal needs mean and σ"))
+            push!(nrand, name => v)
+        end
+    end
+    return grid, urand, nrand
+end
+
+# One condition per line, `lhs op rhs` (`<=`, `>=`, `<`, `>`, `=`), as `constrain` takes them.
+function _parse_condition_text(text::AbstractString)
+    out = ModelConstraint[]
+    for l in split(String(text), '\n')
+        isempty(strip(l)) && continue
+        m = match(r"^(.*?)\s*(<=|>=|<|>|=)\s*(.*)$", strip(l))
+        m === nothing && throw(ArgumentError("condition \"$(strip(l))\": lhs op rhs, op one of <= >= < > ="))
+        lhs, rhs = String(strip(m.captures[1])), String(strip(m.captures[3]))
+        (isempty(lhs) || isempty(rhs)) &&
+            throw(ArgumentError("condition \"$(strip(l))\": both sides are needed"))
+        push!(out, ModelConstraint(lhs, m.captures[2],
+                                   something(tryparse(Float64, rhs), rhs)))
+    end
+    return out
+end
+
+# The latest multi-start view: its two parameters ("" for the defaults) and the selected minimum.
+const MULTISTART_VIEW = Ref((p1 = "", p2 = "", selected = 1))
+
+"""
+    shell_multistart(free_lines, constraint_lines, explore_lines, constrain_lines,
+                     v2, t3amp, t3phi, visamp, visphi, flux, diffvis,
+                     nstarts, seed, deltachi2, maxeval, fit_rv) -> String
+
+Run [`multistart_fit`](@ref) on the current dataset and model as a job: the free rows' bounds,
+the constraints, the observables and the radial velocities as the Fit button uses them;
+`explore_lines` the explored parameters (see `_parse_explore_lines`), `constrain_lines` the
+conditions on the starts in the constraint panel's form. The global minimum becomes the fit's
+result, the search its map (the Minima view).
+"""
+function shell_multistart(free_lines::AbstractString, constraint_lines::AbstractString,
+                          explore_lines::AbstractString, constrain_lines::AbstractString,
+                          v2::Bool, t3amp::Bool, t3phi::Bool, visamp::Bool, visphi::Bool,
+                          flux::Bool, diffvis::Bool, nstarts::Integer, seed::Integer,
+                          deltachi2::Real, maxeval::Integer, fit_rv::Bool)
+    sh = _shell()
+    e = current_dataset(sh)
+    e === nothing && return "! no dataset loaded"
+    md = copy(_model(sh).dict)
+    isempty(md) && return "! no model"
+    free, lb, ub = parse_free_lines(free_lines)
+    isempty(free) && return "! no free parameters"
+    cons, conds, (grid, urand, nrand) = try
+        parse_constraint_lines(constraint_lines), _parse_condition_text(constrain_lines),
+        _parse_explore_lines(explore_lines)
+    catch err
+        msg = "! " * _cause(err); console!(sh, msg); return msg
+    end
+    isempty(grid) && isempty(urand) && isempty(nrand) && return "! explore at least one parameter"
+    for (n, _) in [grid; urand; nrand]
+        n in free || return "! $n is explored but not free"
+    end
+    isempty(grid) && nstarts < 1 && return "! give the number of starts"
+    weights = fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis)
+    all(iszero, weights) && return "! no observables selected"
+    rv = fit_rv ? RVSET[] : nothing
+    fit_rv && rv === nothing && return "! no radial-velocity table open"
+    dc = isfinite(deltachi2) && deltachi2 > 0 ? Float64(deltachi2) : nothing
+    data = e.data[1, 1]
+    kw = (; grid, rand = urand, randn = nrand, nstarts = isempty(grid) ? Int(nstarts) : nothing,
+            constrain = conds, lb, ub, weights, constraints = cons, rv, deltachi2 = dc,
+            seed = Int(seed), maxIter = Int(maxeval))
+    shown = [string(k, " = ", k === :rv ? "rv" : repr(v)) for (k, v) in pairs(kw)
+             if !(v === nothing || (v isa AbstractVector && isempty(v)))]
+    console!(sh, "> multistart_fit(model, $(free), data; " * join(shown, ", ") * ")")
+    sh.fitlog = ""
+    MULTISTART_VIEW[] = (p1 = "", p2 = "", selected = 1)
+    start_job!(sh, :fit, function (_stop)
+        t0 = time()
+        chi2_start = try
+            OITOOLS.chi2_flat(parse_model(md, free), Float64[Float64(md[k]) for k in free],
+                              data; weights)
+        catch
+            NaN
+        end
+        r = multistart_fit(md, free, data; kw..., verbose = true)
+        isempty(r.minima) && error("no fit converged with uncertainties")
+        best = r.minima[1].fit
+        return (; result = best, map = r, seconds = time() - t0, optimiser = "multi-start",
+                  free, chi2_start, sigma = _jacobian_sigma(best))
+    end)
+    return "searching…"
+end
+
+"""
+    shell_multistart_minima() -> String
+
+The latest multi-start search's minima, one per line: `χ²ᵣ<TAB>starts<TAB>name=value …`, lowest
+χ²ᵣ first; `""` when the latest fit was not a multi-start search.
+"""
+function shell_multistart_minima()
+    sh = _shell()
+    isempty(sh.fits) && return ""
+    r = last(sh.fits).map
+    r isa MultiStartResult || return ""
+    return join((string(@sprintf("%.4f", m.fit.chi2r), "\t", length(m.starts), "\t",
+                        join((@sprintf("%s=%.6g", k, v) for (k, v) in
+                              zip(m.fit.list_free_params, m.fit.x_opt)), " "))
+                 for m in r.minima), "\n")
+end
+
+"""
+    shell_multistart_select(k) -> String
+
+Make minimum `k` (1 = the global one) of the latest multi-start search the result that Adopt
+writes into the table and the χ² readout reports, and ring it in the Minima view.
+"""
+function shell_multistart_select(k::Integer)
+    sh = _shell()
+    isempty(sh.fits) && return "! no fit"
+    f = last(sh.fits)
+    r = f.map
+    r isa MultiStartResult || return "! the latest fit is not a multi-start search"
+    1 <= k <= length(r.minima) || return "! no minimum $k"
+    m = r.minima[k].fit
+    sh.fits[end] = merge(f, (; result = m, sigma = _jacobian_sigma(m)))
+    v = MULTISTART_VIEW[]
+    MULTISTART_VIEW[] = (; v.p1, v.p2, selected = Int(k))
+    sh.chi2map === nothing || update_chi2_map!(sh.chi2map, r; v.p1, v.p2, selected = k)
+    console!(sh, @sprintf("  minimum %d selected: χ²r %.4f, from %d start(s)", k, m.chi2r,
+                          length(r.minima[k].starts)))
+    return ""
+end
+
+"""
+    shell_multistart_view(p1, p2) -> String
+
+Draw the latest multi-start search over the parameters `p1`, `p2`: each start joined to the
+minimum it reached, the minima coloured by χ²ᵣ.
+"""
+function shell_multistart_view(p1::AbstractString, p2::AbstractString)
+    sh = _shell()
+    isempty(sh.fits) && return ""
+    r = last(sh.fits).map
+    (r isa MultiStartResult && sh.chi2map !== nothing) || return ""
+    MULTISTART_VIEW[] = (p1 = String(p1), p2 = String(p2), selected = MULTISTART_VIEW[].selected)
+    update_chi2_map!(sh.chi2map, r; p1 = String(p1), p2 = String(p2),
+                     selected = MULTISTART_VIEW[].selected)
+    return ""
+end
+
+"""
+    shell_multistart_names() -> String
+
+The parameters the latest multi-start search can be drawn over, newline-separated: the explored
+ones first, then the other free ones.
+"""
+function shell_multistart_names()
+    sh = _shell()
+    isempty(sh.fits) && return ""
+    r = last(sh.fits).map
+    r isa MultiStartResult || return ""
+    return join([r.explored; filter(n -> n ∉ r.explored, r.list_free_params)], "\n")
+end
+
+"""
+    shell_multistart_pmoired(text) -> String
+
+A PMOIRED `expl` dict (`{'grid': {'B,x': (-12, 12, 1.5)}, 'rand': {...}, 'randn': {...}}`) as
+the dialog's explore lines (`name<TAB>kind<TAB>a<TAB>b<TAB>c`); a global whose name is not an
+identifier renamed as the model import renames it (`MJD0-59800` → `MJD0_59800`). `"! …"` when
+the text is not such a dict.
+"""
+function shell_multistart_pmoired(text::AbstractString)
+    d = try
+        Core.eval(OITOOLS, Meta.parse(OITOOLS.pmoired_to_julia(String(text))))
+    catch err
+        return "! not a PMOIRED expl dict: " * _cause(err)
+    end
+    d isa AbstractDict || return "! not a PMOIRED expl dict"
+    lines = String[]
+    for (pk, kind) in ("grid" => "grid", "rand" => "uniform", "randn" => "normal")
+        haskey(d, pk) || continue
+        d[pk] isa AbstractDict || return "! expl['$pk'] is not a dict"
+        for (n, v) in sort(collect(d[pk]); by = first)
+            name = String(n)
+            (occursin(',', name) || occursin(r"^[A-Za-z0-9_]+$", name)) ||
+                (name = replace(name, r"[^A-Za-z0-9_]" => "_"))
+            push!(lines, join([name; kind; string.(collect(v))], "\t"))
+        end
+    end
+    isempty(lines) && return "! expl has no grid, rand or randn"
+    return join(lines, "\n")
 end
 
 """
@@ -1998,6 +2305,49 @@ function shell_model_sed()
         line
     catch err
         msg = "! SED not available: " * _cause(err)
+        console!(sh, msg; kind = :err)
+        msg
+    end
+end
+
+"""
+    shell_orbit_view() -> String
+
+Draw the Orbit view for the model's component on an orbit: the sky track over one period, the
+positions at the current dataset's nights, and the open radial velocities against phase with the
+model's curves. Returns a one-line summary, or a message beginning with `!`.
+"""
+function shell_orbit_view()
+    sh = _shell(); m = _model(sh)
+    cn = _orbit_name(m)
+    isempty(cn) && return "! no component on an orbit (Geometry › orbit)"
+    return try
+        fm = parse_model(Dict{String,Any}(String(k) => v for (k, v) in m.dict), String.(m.free);
+                         nB_workspace = 1)
+        vals = fm.resolver.fn(Float64[_row_value(m, k) for k in m.free])
+        val(k) = (i = findfirst(==("$cn,orb $k"), fm.all_names); i === nothing ? nothing : Float64(vals[i]))
+        a = something(val("a"), (val("M") !== nothing && val("plx") !== nothing) ?
+                      orbit_a(val("P"), val("M"), val("plx")) : nothing, NaN)
+        el = (; P = val("P"), MJD0 = val("MJD0"), e = val("e"), omega = val("omega"),
+                OMEGA = val("OMEGA"), incl = val("incl"), a)
+        e = current_dataset(sh)
+        mjds = e === nothing ? Float64[] :
+               sort(unique(round.(reduce(vcat, (Float64.(d.uv_mjd) for d in vec(e.data))); digits = 1)))
+        rv = RVSET[]
+        K = if val("Ka") !== nothing && val("Kb") !== nothing
+            (; Ka = val("Ka"), Kb = val("Kb"), gamma = something(val("gamma"), 0.0))
+        elseif val("M") !== nothing && val("q") !== nothing
+            ka, kb = orbit_semiamplitudes(el.P, el.e, el.incl, val("M"), val("q"))
+            (; Ka = ka, Kb = kb, gamma = something(val("gamma"), 0.0))
+        else
+            nothing
+        end
+        update_orbit_view!(ORBIT_CANVAS[], el, mjds, rv, K)
+        @sprintf("%s: P %.4g d, e %.3f, a %.4g mas, i %.1f°; %d nights%s", cn, el.P, el.e, el.a,
+                 el.incl, length(mjds),
+                 rv === nothing ? "" : K === nothing ? "; RVs open, no Ka/Kb" : "; $(length(rv)) RVs")
+    catch err
+        msg = "! orbit not available: " * _cause(err)
         console!(sh, msg; kind = :err)
         msg
     end
@@ -3221,9 +3571,7 @@ function shell_expression_keywords(key::AbstractString)
             ("DMAX", "grid outer diameter",    "the grid's outer diameter, mas"),
             ("BL",   "baseline, Mλ",           "baseline length in Mλ, one per uv point"),
             ("WL",   "wavelength, µm",         "wavelength in MICRONS, one per uv point"),
-            ("MJD",  "date, MJD",              "Modified Julian Date, one per uv point (~5.6 min " *
-                                               "resolution unless the file was read with " *
-                                               "T = Float64)"))
+            ("MJD",  "date, MJD",              "Modified Julian Date, one per uv point"))
     return join((string("\$", n, '\t', short, '\t', n in inscope ? "1" : "0", '\t',
                         n in inscope ? "" : _implicit_scope_reason(n), '\t', long)
                  for (n, short, long) in rows), "\n")
@@ -3722,8 +4070,14 @@ function shell_component_geometry(name::AbstractString)
     m = _model(); cn = String(name)
     pos = haskey(m.dict, cn * ",x")    || haskey(m.dict, cn * ",y")
     ori = haskey(m.dict, cn * ",incl") || haskey(m.dict, cn * ",pa")
-    return string(pos ? "1" : "0", '\t', ori ? "1" : "0")
+    orb = get(m.dict, cn * ",x", nothing) == "orbit"
+    return string(pos ? "1" : "0", '\t', ori ? "1" : "0", '\t', orb ? "1" : "0")
 end
+
+# The elements a component put on an orbit starts with (PMOIRED's keys); MJD0 is the current
+# dataset's mean date when there is one.
+const _ORBIT_START = ["P" => 10.0, "MJD0" => 60000.0, "e" => 0.0, "omega" => 0.0,
+                      "OMEGA" => 0.0, "incl" => 45.0, "a" => 5.0]
 
 """
     shell_set_component_geometry(name, which, on) -> String
@@ -3740,6 +4094,33 @@ function shell_set_component_geometry(name::AbstractString, which::AbstractStrin
     cn = String(name)
     any(startswith(k, cn * ",") for k in keys(m.dict)) ||
         return "! no component called " * cn
+    if String(which) == "orbit"
+        if Bool(on)
+            mjd = try
+                e = current_dataset(sh)
+                e === nothing ? NaN : sum(Float64(d.mean_mjd) for d in e.data) / length(e.data)
+            catch
+                NaN
+            end
+            for (k, v) in _ORBIT_START
+                key = "$cn,orb $k"
+                haskey(m.dict, key) || (m.dict[key] = k == "MJD0" && isfinite(mjd) ? round(mjd; digits = 2) : v)
+            end
+            for c in ("x", "y")
+                k = "$cn,$c"; m.dict[k] = "orbit"; filter!(!=(k), m.free)
+                delete!(m.lb, k); delete!(m.ub, k)
+            end
+            console!(sh, "  $cn: on an orbit ($cn,x = $cn,y = \"orbit\"; elements $cn,orb P, MJD0, " *
+                         "e, omega, OMEGA, incl, a)")
+        else
+            for k in [k for k in keys(m.dict) if startswith(k, "$cn,orb ")]
+                delete!(m.dict, k); delete!(m.lb, k); delete!(m.ub, k); filter!(!=(k), m.free)
+            end
+            m.dict["$cn,x"] = 0.0; m.dict["$cn,y"] = 0.0
+            console!(sh, "  $cn: off its orbit (x, y = 0)")
+        end
+        return ""
+    end
     keys_ = String(which) == "position"    ? ("x", "y") :
             String(which) == "orientation" ? ("incl", "pa") :
             return "! unknown geometry: " * String(which)

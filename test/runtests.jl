@@ -35,6 +35,10 @@ BLAS.set_num_threads(1)
     include("test_simulate.jl")          # simulate(): geometry, noise model, observability
     include("test_simulate_fits.jl")     # simulating from a FITS image or cube, by its keywords
     include("test_yso_templates.jl")     # the YSO templates of Ibrahim et al. 2023: parse, normalise, fit
+    include("test_orbit.jl")             # binary orbits: PMOIRED's keys and definition, against PMOIRED
+    include("test_rv.jl")                # radial velocities in the fits and the bootstrap
+    include("test_residuals_inplace.jl")  # residuals and Jacobian written into buffers
+    include("test_multistart.jl")        # many starts and their distinct minima (PMOIRED's gridFit)
     include("test_aspro_noise.jl")       # the noise model against ASPRO 2's own error bars
     include("test_planning.jl")          # astrometry, twilight, observability conventions
     include("test_simbad.jl")            # SIMBAD over TAP: parsing, offline fixture

@@ -32,10 +32,12 @@ include("model_chainrules.jl")
 include("model_kernels.jl")          # component visibilities point by point, with closed-form derivatives
 
 # ── Flat-dict model fitting stack ────────────────────────────────────────────
+include("orbit.jl")             # binary orbits (PMOIRED's definition): positions and RVs
 include("resolvers.jl")          # SharedUtils, RGF, HandRolled, Symbolic
 include("hankel.jl")             # Hankel transform + chainrules + profile compiler
 include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
 include("model_jacobian.jl")     # eval_model_jac!: the Jacobian from the closed-form kernels
+include("radial_velocity.jl")    # radial velocities fitted with the interferometry (orbits)
 include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
 include("constraints.jl")        # ModelConstraint: NLopt constraints, and penalties elsewhere
 include("model_file.jl")         # TOML model files: model + free + bounds + constraints + priors
@@ -43,6 +45,7 @@ include("fit_lm.jl")             # Levenberg-Marquardt whose bounds are honoured
 include("fit_model.jl")          # fit_model (NLopt), fit_model_nested, display_model
 include("chi2_map.jl")           # grid search over two free parameters, and its chi2 surface
 include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
+include("multistart.jl")         # many fits from grid / random starts, and their distinct minima (PMOIRED's gridFit)
 include("companion_search.jl")    # grid search for a companion around any primary, and its significance
 
 
@@ -219,6 +222,7 @@ export companion_search, companion_grid, CompanionSearch, companion_flux_map, de
 export FlatModel, dict_to_model, parse_model, eval_model, model_flux, eval_model_grad, eval_model_grad_ad,
        eval_model_jac, eval_model_jac!, ModelJacWorkspace, ModelJacCache, eval_model_sub, smear_samples, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
 export fit_model, fit_model_lsqfit, fit_model_nested, fit_model_ultranest
+export RVData, read_rv, orbit_x, orbit_y, orbit_rv, orbit_a, orbit_semiamplitudes, kepler_E
 export nested_backend, set_nested_backend!
 export ModelConstraint, parse_constraints, check_constraints, DEFAULT_CONSTRAINT_TOL
 export read_model_file, write_model_file, model_warnings
@@ -244,6 +248,7 @@ public vis_ud, vis_ldlin, vis_ldquad, vis_ldsqrt, vis_ldclaret4, vis_ldpow
 
 # ── Uncertainty estimation by resampling ─────────────────────────────────────
 export bootstrap_fit, bootstrap_driver, BootstrapResult
+export multistart_fit, MultiStartResult, MultiStartMinimum
 export data_blocks, DataBlocks, resample_blocks
 export block_counts, apply_block_counts, block_weights, apply_block_weights
 export perturb_data

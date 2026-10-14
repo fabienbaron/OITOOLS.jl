@@ -18,9 +18,9 @@ imaging. Use `T=Float64` for double precision:
 data = readoifits("mystar.oifits"; T=Float64)
 ```
 
-MJDs (`v2_mjd`, `t3_mjd`, `vis_mjd`, `flux_mjd`, `mean_mjd`) are `Float64` whatever `T` is;
-`uv_mjd`, the time a `$MJD` model is evaluated at, is stored in `T` and resolves ~5.6 min at
-`Float32`.
+MJDs (`v2_mjd`, `t3_mjd`, `vis_mjd`, `flux_mjd`, `mean_mjd`, and `uv_mjd`, the time a `$MJD`
+model is evaluated at) are `Float64` whatever `T` is; `Float32` would resolve them only to
+~5.6 min.
 
 ## Keyword reference
 

@@ -256,9 +256,9 @@ vectors of length `nobs`; UV coordinates are stored in a `2×nuv` matrix.
 - `uv` — `2×nuv` matrix of (u, v) spatial frequencies as baseline/λ. This is
   **dimensionless — cycles per radian**, not cycles/m. Plots divide by 1e6 and label Mλ;
   multiply by λ to recover the projected baseline in metres.
-- `uv_lam`, `uv_dlam`, `uv_mjd`, `uv_baseline`. `uv_mjd` is the array `\$MJD` resolves from
-  and is stored in `T`, so at the default `Float32` it holds an MJD only to ~5.6 min; the
-  per-table `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` are `Float64` whatever `T` is.
+- `uv_lam`, `uv_dlam`, `uv_mjd`, `uv_baseline`. `uv_mjd` is the array `\$MJD` resolves from;
+  like the per-table `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` it is `Float64` whatever `T`
+  is (Float32 would resolve an MJD only to ~5.6 min).
 - `indx_v2`, `indx_vis` — index of each V²/vis point into the UV array
 - `indx_t3_1`, `indx_t3_2`, `indx_t3_3` — UV indices for the three legs of each triangle
 
@@ -313,7 +313,7 @@ mutable struct OIdata{T<:AbstractFloat}
     flux_calibrated::Bool          # true if CALSTAT="C" (calibrated source spectrum)
     # UV coverage (columns = uv points, rows = [u; v])
     uv::Matrix{T};                 uv_lam::Vector{T};    uv_dlam::Vector{T}
-    uv_mjd::Vector{T};             uv_baseline::Vector{T}
+    uv_mjd::Vector{Float64};       uv_baseline::Vector{T}
     # Sizes
     nflux::Int64;  nvisamp::Int64; nvisphi::Int64
     nv2::Int64;    nt3amp::Int64;  nt3phi::Int64;  nuv::Int64
@@ -1439,7 +1439,7 @@ mutable struct BinData{T<:AbstractFloat}
     flux_calibrated::Bool      # true if CALSTAT="C"
     # UV plane (2×nuv: row 1 = u/λ, row 2 = v/λ)
     uv::Matrix{T};             uv_lam::Vector{T};     uv_dlam::Vector{T}
-    uv_mjd::Vector{T};         uv_baseline::Vector{T}
+    uv_mjd::Vector{Float64};   uv_baseline::Vector{T}
     nuv::Int64;                mean_mjd::Float64
     # Correlation matrices (empty sparse if no OI_CORR in file)
     v2_corr::SparseMatrixCSC{T,Int64};       v2_corr_idx::Vector{Int64}
@@ -1565,23 +1565,16 @@ function slice_to_bin(raw_vis, raw_v2, raw_t3, raw_flux,
     uv = hcat(vis_uv, v2_uv, t3_uv)
     uv_lam  = vcat(use_vis ? vis_lam  : T[], use_v2 ? v2_lam  : T[], use_t3 ? repeat(t3_lam,  3) : T[])
     uv_dlam = vcat(use_vis ? vis_dlam : T[], use_v2 ? v2_dlam : T[], use_t3 ? repeat(t3_dlam, 3) : T[])
-    # uv_mjd stays in T, unlike the per-table `*_mjd` above, which are Float64 whatever T is.
-    #
-    # The cost is time resolution: Float32 spacing at a present-day MJD is 2^-8 d = 5.6 min,
-    # so epochs closer than that merge -- measured on AZ Cyg, 119 distinct v2_mjd values
-    # collapse to 5 in uv_mjd, and the same $MJD model's chi2 moves by 0.28%. Read with
-    # T = Float64 when the time behaviour is the point.
-    #
-    # It buys no type stability in return: eval_model's accumulator is
-    # promote_type(eltype(x), float(eltype(uv))) and never involves mjd, so a Float64 MJD
-    # against a Float32 x and Float32 uv still returns ComplexF32. What it does buy is one
-    # Vector{Float32} instead of Vector{Float64}.
-    uv_mjd_f64 = vcat(use_vis ? vis_mjd : Float64[], use_v2 ? v2_mjd : Float64[],
-                      use_t3 ? repeat(t3_mjd, 3) : Float64[])
-    uv_mjd  = T.(uv_mjd_f64)
+    # uv_mjd is Float64 whatever T is, like the per-table `*_mjd` above: Float32 spacing at a
+    # present-day MJD is 2^-8 d = 5.6 min, so epochs closer than that would merge (AZ Cyg: 119
+    # distinct v2_mjd values onto 5). The model's type does not follow it: eval_model's
+    # accumulator is promote_type(eltype(x), float(eltype(uv))), so a Float32 x and uv still
+    # give ComplexF32.
+    uv_mjd = vcat(use_vis ? vis_mjd : Float64[], use_v2 ? v2_mjd : Float64[],
+                  use_t3 ? repeat(t3_mjd, 3) : Float64[])
     uv_baseline = vec(sqrt.(sum(uv.^2, dims=1)))
     nuv      = size(uv, 2)
-    mean_mjd = isempty(uv_mjd_f64) ? 0.0 : mean(uv_mjd_f64)
+    mean_mjd = isempty(uv_mjd) ? 0.0 : mean(uv_mjd)
 
     return BinData{T}(
         visamp, visamp_err, visphi, visphi_err,
@@ -1743,7 +1736,7 @@ function filter_bad_observables!(bd::BinData{T};
         bd.indx_t3_2 = iconv[good_uv_t3_2]
         bd.indx_t3_3 = iconv[good_uv_t3_3]
     end
-    # averaged over the Float64 per-table MJDs, not over uv_mjd, which is stored in T
+    # averaged over the per-table MJDs
     mjd_f64 = vcat(bd.vis_mjd, bd.v2_mjd, bd.t3_mjd)
     bd.mean_mjd = isempty(mjd_f64) ? 0.0 : mean(mjd_f64)
     return bd

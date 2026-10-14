@@ -529,6 +529,8 @@ Fit a parametric model to interferometric data using NLopt.
   [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples. Handed to NLopt as real
   nonlinear constraints, so they hold at the optimum; a `method` that cannot take them is
   wrapped in `:AUGLAG` rather than replaced. The reported `chi2` is the data χ², unaffected
+- `rv` — radial velocities ([`read_rv`](@ref)) fitted with the interferometry, against the
+  orbit of the model's component on an orbit; their χ² is added, and `ndof` counts them
 - `method` — NLopt algorithm (default `:LD_LBFGS`; use `:LN_NELDERMEAD` for gradient-free)
 - `maxeval` — maximum function evaluations (default 2000)
 - `ftol_rel`, `xtol_rel` — convergence tolerances
@@ -543,6 +545,7 @@ function fit_model(model_dict   ::Dict{String},
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     priors       = [],
     constraints  = [],
+    rv           ::Union{Nothing,RVData} = nothing,
     method       = :LD_LBFGS,
     maxeval      = 2000,
     ftol_rel     = 1e-8,
@@ -571,6 +574,8 @@ function fit_model(model_dict   ::Dict{String},
     # ── 3. Resolve prior and constraint indices ──────────────────────────────
     prior_idx      = [findfirst(==(k), fm.all_names) for k in prior_keys]
     constraint_idx = [findfirst(==(k), fm.all_names) for k in constraint_keys]
+    rvix = rv === nothing ? nothing : _rv_index(fm, _orbit_component(model_dict))
+    rvchi2(x) = sum(abs2, rv_residuals(fm, x, rv, rvix))
 
     # ── 4. Detect gradient need ──────────────────────────────────────────────
     use_grad = startswith(string(method), "LD_")
@@ -583,12 +588,17 @@ function fit_model(model_dict   ::Dict{String},
         if use_grad
             chi2, grad = chi2_flat_fg(fm, x, data; weights, verb, jkw...)
             chi2 += prior_penalty_and_grad!(grad, x, priors, fm, prior_idx)
+            if rv !== nothing
+                chi2 += rvchi2(x)
+                grad .+= ForwardDiff.gradient(rvchi2, x)
+            end
             # NLopt hands back a zero-length array when it wants the value without the
             # gradient, which AUGLAG does at some of its evaluations.
             length(g) > 0 && (g .= grad)
         else
             chi2 = chi2_flat(fm, x, data; weights, verb)
             chi2 += prior_penalty(x, priors, fm, prior_idx)
+            rv === nothing || (chi2 += rvchi2(x))
         end
         return chi2
     end
@@ -629,7 +639,7 @@ function fit_model(model_dict   ::Dict{String},
         v > 1 && @warn "Fit ended outside a constraint" constraint = c violation_in_tol_units = v
     end
 
-    ndof = _ndof(data, weights)
+    ndof = _ndof(data, weights) + (rv === nothing ? 0 : length(rv))
     return FitResult(minx, list_free_params, minf, minf / ndof, ndof, n_evals[], ret, fm)
 end
 
@@ -957,12 +967,15 @@ struct LsqFitResult
                                          # `length(trace)` is the iteration count
     reason      ::Symbol                # what stopped it: :chi2, :gradient, :step, :bounds, :maxiter
     at_bound    ::Vector{String}        # parameters the minimum holds on a bound
+    chi2_rv     ::Float64               # the radial velocities' part of chi2 (0 without them)
 end
 
 function Base.show(io::IO, r::LsqFitResult)
     @printf(io, "LsqFitResult: χ²r = %.4f  (chi2=%.2f, ndof=%d, converged=%s: %s)\n",
             r.chi2r, r.chi2, r.ndof, r.converged, _LM_REASONS[r.reason])
     isempty(r.at_bound) || println(io, "  on a bound: ", join(r.at_bound, ", "))
+    r.chi2_rv > 0 && @printf(io, "  χ² interferometry %.2f, radial velocities %.2f\n",
+                             r.chi2 - r.chi2_rv, r.chi2_rv)
     for (i, p) in enumerate(r.list_free_params)
         @printf(io, "  %-20s = %10.4f ± %.4f\n", p, r.x_opt[i], r.stderror[i])
     end
@@ -975,6 +988,38 @@ end
 
 # Run `_lm_bounded` and wrap it as LsqFit's result, with no weights: `vcov` and `stderror` then
 # scale by rss/(n − p) exactly as they did when `curve_fit` produced it.
+# The residual and Jacobian functions the Levenberg-Marquardt loop calls: the data's rows
+# written in place (`residuals_flat!`, `residuals_flat_jac!`), then the extra rows of each
+# `extra` function (radial velocities, constraints; `nothing` for none), into buffers allocated
+# once per fit. The residuals and the Jacobian have buffers of their own, since the loop
+# evaluates both before it copies either; it copies each into its own storage, so the next call
+# may overwrite them.
+function _lm_residual_fns(fm, data, weights, x0, ndata, extra, extra_jac, jkw)
+    nx = [e === nothing ? 0 : length(e(x0)) for e in extra]
+    n, np = ndata + sum(nx; init = 0), length(x0)
+    rf = Vector{Float64}(undef, n)
+    rj = Vector{Float64}(undef, ndata); J = Matrix{Float64}(undef, n, np)
+    function model_fn(p)
+        residuals_flat!(view(rf, 1:ndata), fm, p, data; weights)
+        k = ndata
+        for (e, m) in zip(extra, nx)
+            e === nothing && continue
+            copyto!(view(rf, (k + 1):(k + m)), e(p)); k += m
+        end
+        return rf
+    end
+    function jacobian_fn(p)
+        residuals_flat_jac!(rj, view(J, 1:ndata, :), fm, p, data; weights, jkw...)
+        k = ndata
+        for (e, m) in zip(extra_jac, nx)
+            e === nothing && continue
+            copyto!(view(J, (k + 1):(k + m), :), e(p)); k += m
+        end
+        return J
+    end
+    return model_fn, jacobian_fn
+end
+
 function _lm_fit(model_fn, jacobian_fn, x0, lb_vec, ub_vec, maxIter)
     lm = _lm_bounded(model_fn, jacobian_fn, Float64.(x0), lb_vec, ub_vec; maxIter)
     fit = LsqFit.LsqFitResult(lm.x, lm.resid, lm.jacobian, lm.converged, lm.trace, Float64[])
@@ -1011,6 +1056,9 @@ through the complex visibility Jacobian), so no finite-difference overhead.
   residual vector, which is exactly where Levenberg-Marquardt can act on them — and so also
   enter the Jacobian, meaning `covar` and `stderror` account for them. The reported `chi2`
   excludes them, so it stays comparable with what every other fitter reports
+- `rv` — radial velocities ([`read_rv`](@ref)) fitted with the interferometry, against the
+  orbit of the model's component on an orbit (`c,orb Ka`, `Kb`, `gamma`, or `M` and `q`). They
+  enter the residual vector after the data; `chi2` and `ndof` count them, `chi2_rv` is their part
 - `verb` — print per-evaluation chi2 breakdown
 """
 function fit_model_lsqfit(model_dict   ::Dict{String},
@@ -1020,6 +1068,7 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints  = [],
+    rv           ::Union{Nothing,RVData} = nothing,
     nB_workspace = nothing,
     maxIter      = 200,
     verb         = false,
@@ -1031,48 +1080,54 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     constraint_keys = augment_constraints!(augmented, cons)
     fm = parse_model(augmented, list_free_params; nB_workspace=nB)
     constraint_idx  = [findfirst(==(k), fm.all_names) for k in constraint_keys]
-    nparams = length(list_free_params)
+    rvix = rv === nothing ? nothing : _rv_index(fm, _orbit_component(model_dict))
 
-    # ── 2. The residuals and their Jacobian, the data captured in the closures ──
-    # Constraints append rows. Their count is fixed for a given model — one per constraint, or
-    # one per wavelength where the resolver broadcasts — so the residual vector keeps the length
-    # it has at the start.
-    function model_fn(p)
-        r = residuals_flat(fm, p, data; weights)
-        isempty(cons) ? r : vcat(r, constraint_residuals(p, cons, fm, constraint_idx))
-    end
-
-    jkw = _jac_cache_kw(data)
-    function jacobian_fn(p)
-        _, J = residuals_flat_jac(fm, p, data; weights, jkw...)
-        isempty(cons) ? J : vcat(J, constraint_jacobian(p, cons, fm, constraint_idx))
-    end
-
-    # ── 3. Initial parameter vector and bounds ───────────────────────────────
     x0 = Float64[model_dict[p] for p in list_free_params]
-    ndata = length(residuals_flat(fm, x0, data; weights))
-
-    # Build lower/upper bound vectors
     lb_vec = Float64[get(lb, p, -Inf) for p in list_free_params]
     ub_vec = Float64[get(ub, p,  Inf) for p in list_free_params]
+    return _lsqfit_compiled(fm, list_free_params, x0, data, lb_vec, ub_vec; weights, cons,
+                            constraint_idx, rv, rvix, maxIter, verb)
+end
 
-    # ── 4. Levenberg-Marquardt ───────────────────────────────────────────────
+# The Dict form's fit on a compiled model (`fm`, with the constraint expressions
+# `constraint_idx` already in it): what that form runs after compiling, and what a caller fitting
+# many starts of one model runs per start. `warn_cov = false` keeps a failed covariance silent
+# (its σ are NaN either way).
+function _lsqfit_compiled(fm, list_free_params, x0::Vector{Float64}, data, lb_vec, ub_vec;
+                          weights, cons, constraint_idx, rv, rvix, maxIter, verb,
+                          warn_cov::Bool = true)
+    nparams = length(list_free_params)
+    # ── 2. The residuals and their Jacobian, the data captured in the closures ──
+    # The data rows, the radial velocities', then the constraints'. Their count is fixed for a
+    # given model — one per constraint, or one per wavelength where the resolver broadcasts —
+    # so the residual vector keeps the length it has at the start.
+    ndata = length(residuals_flat(fm, x0, data; weights))
+    rv_fn  = rv === nothing ? nothing : p -> rv_residuals(fm, p, rv, rvix)
+    rv_jfn = rv === nothing ? nothing : p -> rv_jacobian(fm, p, rv, rvix)
+    c_fn   = isempty(cons) ? nothing : p -> constraint_residuals(p, cons, fm, constraint_idx)
+    c_jfn  = isempty(cons) ? nothing : p -> constraint_jacobian(p, cons, fm, constraint_idx)
+    model_fn, jacobian_fn = _lm_residual_fns(fm, data, weights, x0, ndata,
+                                             (rv_fn, c_fn), (rv_jfn, c_jfn), _jac_cache_kw(data))
+
+    # ── 3. Levenberg-Marquardt ───────────────────────────────────────────────
     fit, lm = _lm_fit(model_fn, jacobian_fn, x0, lb_vec, ub_vec, maxIter)
 
-    # ── 5. Extract results ───────────────────────────────────────────────────
+    # ── 4. Extract results ───────────────────────────────────────────────────
     minx = fit.param
-    # The data rows only: a chi2 carrying the constraint penalty would not be comparable with
-    # what any other fitter reports, nor with the chi2r read off a published table.
-    r_final = view(fit.resid, 1:ndata)
+    # The data rows (radial velocities included): a chi2 carrying the constraint penalty would
+    # not be comparable with what any other fitter reports, nor with a published chi2r.
+    nrv = rv === nothing ? 0 : length(rv)
+    r_final = view(fit.resid, 1:(ndata + nrv))
     chi2_val = dot(r_final, r_final)
-    ndof = _ndof(data, weights)
+    chi2_rv = nrv == 0 ? 0.0 : sum(abs2, view(fit.resid, (ndata + 1):(ndata + nrv)))
+    ndof = _ndof(data, weights) + nrv
 
     # Covariance matrix from LsqFit (may fail if Jacobian is singular,
     # e.g. when parameters hit bounds)
     cov, σ = try
         vcov(fit), stderror(fit)
     catch
-        @warn "Covariance estimation failed (singular Jacobian — parameters may be at bounds)"
+        warn_cov && @warn "Covariance estimation failed (singular Jacobian — parameters may be at bounds)"
         fill(NaN, nparams, nparams), fill(NaN, nparams)
     end
 
@@ -1082,14 +1137,15 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
 
     return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
                          cov, σ, fit.converged, fm, fit, lm.reason,
-                         list_free_params[lm.held])
+                         list_free_params[lm.held], chi2_rv)
 end
 
 """
     fit_model_lsqfit(model::FlatModel, x0, data; kwargs...) -> LsqFitResult
 
 Levenberg-Marquardt fit on a pre-compiled `FlatModel` starting from `x0`.
-Bounds `lb` and `ub` can be Dicts or Vectors.
+Bounds `lb` and `ub` can be Dicts or Vectors. Radial velocities `rv` need `rv_component`, the
+component on an orbit.
 """
 function fit_model_lsqfit(model        ::FlatModel,
                           x0           ::AbstractVector{<:Real},
@@ -1098,25 +1154,28 @@ function fit_model_lsqfit(model        ::FlatModel,
     ub           = Dict{String,Float64}(),
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints  = [],
+    rv           ::Union{Nothing,RVData} = nothing,
+    rv_component ::AbstractString = "",
     maxIter      = 200,
     verb         = false,
 )
     list_free_params = model.list_free_params
     fm = model
     nparams = length(list_free_params)
+    # The radial velocities' orbit: the component is named, the compiled model has no dict.
+    rvix = rv === nothing ? nothing : _rv_index(fm, rv_component)
 
     # A constraint is evaluated as an extra parameter of the compiled model, so it needs the
     # model dict to augment and recompile. Accepting it here and dropping it would return a fit
     # that ignores what the caller asked for.
     !isempty(constraints) && error("Constraints are only supported with the Dict form of fit_model_lsqfit; pass model_dict instead of FlatModel")
 
-    model_fn(p) = residuals_flat(fm, p, data; weights)
-
-    jkw = _jac_cache_kw(data)
-    function jacobian_fn(p)
-        _, J = residuals_flat_jac(fm, p, data; weights, jkw...)
-        return J
-    end
+    x0f = Float64.(x0)
+    ndata = length(residuals_flat(fm, x0f, data; weights))
+    rv_fn  = rv === nothing ? nothing : p -> rv_residuals(fm, p, rv, rvix)
+    rv_jfn = rv === nothing ? nothing : p -> rv_jacobian(fm, p, rv, rvix)
+    model_fn, jacobian_fn = _lm_residual_fns(fm, data, weights, x0f, ndata,
+                                             (rv_fn,), (rv_jfn,), _jac_cache_kw(data))
 
     lb_vec = _bounds_vec(lb, list_free_params, -Inf)
     ub_vec = _bounds_vec(ub, list_free_params,  Inf)
@@ -1126,7 +1185,9 @@ function fit_model_lsqfit(model        ::FlatModel,
     minx = fit.param
     r_final = fit.resid
     chi2_val = dot(r_final, r_final)
-    ndof = _ndof(data, weights)
+    nrv = rv === nothing ? 0 : length(rv)
+    chi2_rv = nrv == 0 ? 0.0 : sum(abs2, view(r_final, (length(r_final) - nrv + 1):length(r_final)))
+    ndof = _ndof(data, weights) + nrv
 
     cov, σ = try
         vcov(fit), stderror(fit)
@@ -1141,7 +1202,7 @@ function fit_model_lsqfit(model        ::FlatModel,
 
     return LsqFitResult(minx, list_free_params, chi2_val, chi2_val / ndof, ndof,
                          cov, σ, fit.converged, fm, fit, lm.reason,
-                         list_free_params[lm.held])
+                         list_free_params[lm.held], chi2_rv)
 end
 
 

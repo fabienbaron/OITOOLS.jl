@@ -176,6 +176,75 @@
             @test G.shell_sparco_fluxes("star", "disk", -4, 1.6) == "" && m.dict["fs"] == 0.42
         end
 
+        @testset "Modeling › orbit and radial velocities" begin
+            prevorb = G.ORBIT_CANVAS[]
+            ofig = Makie.Figure()
+            G.ORBIT_CANVAS[] = G.build_orbit_view(ofig, Makie.Axis(ofig[1, 1]), Makie.Axis(ofig[1, 2]))
+            # a binary on an orbit, observed through V1295 Aql's uv points, with velocities
+            truth = Dict{String,Any}("1,ud" => 0.3, "2,f" => 0.3, "2,x" => "orbit", "2,y" => "orbit",
+                                     "2,orb P" => 30.0, "2,orb MJD0" => 58640.0, "2,orb e" => 0.4,
+                                     "2,orb omega" => 60.0, "2,orb OMEGA" => 120.0, "2,orb incl" => 50.0,
+                                     "2,orb a" => 4.0, "2,orb Ka" => 40.0, "2,orb Kb" => 55.0,
+                                     "2,orb gamma" => -12.0)
+            oif = joinpath(dir, "binary.oifits")
+            simulate_from_oifits(joinpath(OIF, "V1295_Aql.oifits"), oif; mode = "copy_errors",
+                                 noise = false, flat_model = dict_to_model(truth, String[]), flat_params = Float64[])
+            rvf = joinpath(dir, "rv.csv")
+            open(rvf, "w") do io
+                println(io, "MJD,RV,sigma,star")
+                for t in 58600.0:9.0:58700.0, s in (:a, :b)
+                    println(io, t, ",", orbit_rv(t, s, 30.0, 58640.0, 0.4, 60.0, s === :a ? 40.0 : 55.0, -12.0),
+                            ",0.1,", s)
+                end
+            end
+            G.shell_open(oif)
+            mf = joinpath(dir, "binary.toml")
+            write(mf, """
+                [model]
+                "1,ud" = 0.3
+                "2,f" = 0.3
+                """)
+            G.shell_open_model(mf)
+            # Geometry › orbit: x = y = "orbit", the elements as rows, MJD0 at the data's mean date
+            @test G.shell_component_geometry("2") == "0\t0\t0"
+            @test G.shell_set_component_geometry("2", "orbit", true) == ""
+            md = G._model(sh).dict
+            @test md["2,x"] == "orbit" && haskey(md, "2,orb P") && 58600 < md["2,orb MJD0"] < 58700
+            @test G.shell_component_geometry("2") == "1\t0\t1" && G.shell_orbit_component() == "2"
+            for (k, v) in truth; startswith(k, "2,orb ") && k ∉ ("2,orb Ka", "2,orb Kb", "2,orb gamma") && (md[k] = v); end
+            # the RV table adds the velocity elements to the orbit's component
+            @test startswith(G.shell_rv_open(rvf), "rv.csv: 24 velocities (12 a, 12 b)")
+            @test md["2,orb Ka"] == 10.0 && md["2,orb gamma"] == 0.0
+            @test startswith(G.shell_rv_open(joinpath(dir, "nope.csv")), "!")
+            G.shell_rv_open(rvf)
+            # the fit, with the velocities
+            free = "2,orb Ka\t0\t100\n2,orb Kb\t0\t100\n2,orb gamma\t-50\t50"
+            flags = (true, true, true, false, false, false, false)
+            fitargs(opt) = (free, "", "", flags..., opt, 100, "", "", 60, 0, "jacobian", 200,
+                            "replacement", "config", 1, true, true)          # the last: fit RVs
+            @test startswith(G.shell_fit_model(fitargs("grid")...), "!")
+            @test G.shell_fit_model(fitargs("lsqfit")...) == "fitting…"
+            line = ""
+            for _ in 1:600
+                f = split(G.shell_job_poll(), "\t"; limit = 2)
+                f[1] == "done" && (line = f[2]; break)
+                sleep(0.1)
+            end
+            r = sh.fits[end].result
+            p = Dict(zip(r.list_free_params, r.x_opt))
+            @test isapprox(p["2,orb Ka"], 40.0; rtol = 1e-3) && isapprox(p["2,orb gamma"], -12.0; atol = 0.01)
+            @test any(l -> occursin("radial velocities", l), sh.console)
+            # the Orbit view: the track, the nights, both stars' velocities
+            @test startswith(G.shell_orbit_view(), "2: P 30 d, e 0.400")
+            ov = G.ORBIT_CANVAS[]
+            @test length(ov.track[]) == 400 && !isempty(ov.epochs[])
+            @test length(ov.dots[1][]) == 12 && length(ov.dots[2][]) == 12 && length(ov.curve[1][]) == 300
+            # off its orbit
+            @test G.shell_set_component_geometry("2", "orbit", false) == ""
+            @test !haskey(md, "2,orb P") && md["2,x"] == 0.0 && startswith(G.shell_orbit_view(), "!")
+            G.shell_rv_close(); G.ORBIT_CANVAS[] = prevorb
+        end
+
         @testset "Modeling › Fit each" begin
             G.shell_tools_split(joinpath(OIF, "V1295_Aql.oifits"), "gap", 0.5, "")
             parts = sess.datasets[end-1:end]

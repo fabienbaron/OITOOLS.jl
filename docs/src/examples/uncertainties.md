@@ -104,9 +104,8 @@ minutes apart would collapse onto one value and their blocks would silently merg
 
 `readoifits` therefore stores `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` as
 `Float64` regardless of `T`, so the block structure is identical whether you read
-with the default `T=Float32` or with `T=Float64`. (`uv_mjd` follows `T` — it is
-the array handed to the model evaluator as `$MJD`, where the extra precision buys
-nothing.) Nothing to do on your side; the numbers below are unaffected by the
+with the default `T=Float32` or with `T=Float64`, and so does `uv_mjd`, the time
+handed to the model evaluator as `$MJD`. Nothing to do on your side; the numbers below are unaffected by the
 precision you choose.
 
 ## Results

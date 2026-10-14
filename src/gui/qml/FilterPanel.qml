@@ -366,6 +366,7 @@ ColumnLayout {
         Label { text: "instrument" }
         ComboBox {
             id: insBox
+            objectName: "filterInstrument"
             Layout.fillWidth: true
             model: ["all"].concat(root.instruments)
             onActivated: root.edited()
@@ -545,7 +546,7 @@ ColumnLayout {
         Label { text: "average every" }
         RowLayout {
             SpinBox {
-                id: avgN; from: 1; to: 1000; value: 1; editable: true
+                id: avgN; objectName: "filterAvgN"; from: 1; to: 1000; value: 1; editable: true
                 onValueModified: root.edited()
                 ToolTip.visible: hovered
                 ToolTip.text: "Average N adjacent channels into one"
@@ -556,7 +557,7 @@ ColumnLayout {
         RowLayout {
             visible: avgN.value > 1
             ComboBox {
-                id: avgMode; model: ["block", "pmoired"]
+                id: avgMode; objectName: "filterAvgMode"; model: ["block", "pmoired"]
                 onActivated: root.edited()
                 ToolTip.visible: hovered
                 ToolTip.text: "block: weighted means · pmoired: PMOIRED's binning"

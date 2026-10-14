@@ -1259,6 +1259,212 @@ function residuals_flat_jac(model::FlatModel,
 end
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# residuals_flat! / residuals_flat_jac! — the same rows, written into the caller's buffers
+#
+# Element by element the arithmetic of `residuals_flat` / `residuals_flat_jac`, in the same
+# order, so the values are identical; without the copies of `V[idx]` and `dV[idx, :]`, the
+# temporaries and the final `vcat`. A smeared model takes the allocating path and is copied in.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The rows `residuals_flat` returns for `data` under the padded weights `w`: an observable
+# counts when weighted and measured at all, with one row per entry of its index, as
+# `residuals_flat` loops over them.
+_residual_nrows(data, w, need_flux) =
+    (w[1] > 0 && data.nv2 > 0 ? length(data.indx_v2) : 0) +
+    (w[2] > 0 && data.nt3amp > 0 ? length(data.indx_t3_1) : 0) +
+    (w[3] > 0 && data.nt3phi > 0 ? length(data.indx_t3_1) : 0) +
+    (w[4] > 0 && data.nvisamp > 0 ? length(data.indx_vis) : 0) +
+    (w[5] > 0 && data.nvisphi > 0 ? length(data.indx_vis) : 0) +
+    (need_flux ? data.nflux : 0)
+
+# One wrapped phase residual, as `_mod360` computes it for a vector.
+@inline function _mod360_1(x)
+    T = float(typeof(x))
+    return mod(mod(x + T(180), T(360)) + T(360), T(360)) - T(180)
+end
+
+"""
+    residuals_flat!(r, model, x, data; weights) -> r
+
+[`residuals_flat`](@ref) written into `r`, whose length is the number of rows it returns.
+"""
+function residuals_flat!(r::AbstractVector, model::FlatModel, x::AbstractVector, data::OIdata;
+                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+    w = _pad_weights(weights)
+    need_flux = w[6] > 0 && data.nflux > 0
+    _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
+    _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    n = _residual_nrows(data, w, need_flux)
+    length(r) == n || throw(DimensionMismatch("residuals_flat!: $n rows for a buffer of $(length(r))"))
+    if _smeared(model, data)
+        copyto!(r, _residuals_smeared(model, x, data, w, need_flux))
+        return r
+    end
+    V = eval_model(model, x, data.uv; wl=_wl, mjd=_mjd)
+    model_flux = need_flux ? _flux_at(model, x, _wl, _mjd) : NaN
+    return _residual_rows!(r, V, data, w, need_flux, model_flux)
+end
+
+# The rows of `residuals_flat!` from the model's visibilities: a function of its own, so the
+# loops are compiled for `V`'s concrete type.
+function _residual_rows!(r, V, data, w, need_flux, model_flux)
+    k = 0
+    @inbounds begin
+        if w[1] > 0 && data.nv2 > 0
+            s = sqrt(w[1]); idx = data.indx_v2
+            for i in eachindex(idx)
+                r[k += 1] = s * (abs2(V[idx[i]]) - data.v2[i]) / data.v2_err[i]
+            end
+        end
+        if w[2] > 0 && data.nt3amp > 0
+            s = sqrt(w[2]); i1, i2, i3 = data.indx_t3_1, data.indx_t3_2, data.indx_t3_3
+            for i in eachindex(i1)
+                t3 = V[i1[i]] * V[i2[i]] * V[i3[i]]
+                r[k += 1] = s * (abs(t3) - data.t3amp[i]) / data.t3amp_err[i]
+            end
+        end
+        if w[3] > 0 && data.nt3phi > 0
+            s = sqrt(w[3]); i1, i2, i3 = data.indx_t3_1, data.indx_t3_2, data.indx_t3_3
+            for i in eachindex(i1)
+                t3 = V[i1[i]] * V[i2[i]] * V[i3[i]]
+                r[k += 1] = s * _mod360_1(angle(t3) * (180.0 / π) - data.t3phi[i]) / data.t3phi_err[i]
+            end
+        end
+        if w[4] > 0 && data.nvisamp > 0
+            s = sqrt(w[4]); idx = data.indx_vis
+            for i in eachindex(idx)
+                r[k += 1] = s * (abs(V[idx[i]]) - data.visamp[i]) / data.visamp_err[i]
+            end
+        end
+        if w[5] > 0 && data.nvisphi > 0
+            s = sqrt(w[5]); idx = data.indx_vis
+            for i in eachindex(idx)
+                r[k += 1] = s * _mod360_1(angle(V[idx[i]]) * (180.0 / π) - data.visphi[i]) / data.visphi_err[i]
+            end
+        end
+    end
+    if need_flux
+        fl = _chi2_flux(model_flux, data)
+        s = sqrt(w[6]); fm = fl.C * model_flux
+        @inbounds for i in 1:data.nflux
+            r[k += 1] = s * (fm - data.flux[i]) / data.flux_err[i]
+        end
+    end
+    return r
+end
+
+"""
+    residuals_flat_jac!(r, J, model, x, data; weights, jac_cache = nothing) -> (r, J)
+
+[`residuals_flat_jac`](@ref) written into `r` and `J` (rows × parameters).
+"""
+function residuals_flat_jac!(r::AbstractVector, J::AbstractMatrix, model::FlatModel,
+                             x::AbstractVector, data::OIdata;
+                             weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                             jac_cache::Union{Nothing,ModelJacCache} = nothing)
+    w = _pad_weights(weights)
+    need_flux = w[6] > 0 && data.nflux > 0
+    np = length(x)
+    n = _residual_nrows(data, w, need_flux)
+    (length(r) == n && size(J) == (n, np)) ||
+        throw(DimensionMismatch("residuals_flat_jac!: $n rows × $np parameters for buffers " *
+                                "$(length(r)), $(size(J))"))
+    if _smeared(model, data)
+        r0, J0 = residuals_flat_jac(model, x, data; weights, jac_cache)
+        copyto!(r, r0); copyto!(J, J0)
+        return r, J
+    end
+    _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
+    _mjd = hasproperty(data, :uv_mjd) ? data.uv_mjd : nothing
+    V, dV = _model_jac(jac_cache, model, x, data.uv; wl=_wl, mjd=_mjd)
+    model_flux, dflux = need_flux ? _flux_grad_at(model, x, _wl, _mjd) : (NaN, nothing)
+    return _residual_jac_rows!(r, J, V, dV, data, w, need_flux, model_flux, dflux, np)
+end
+
+# The rows of `residuals_flat_jac!` from the model's visibilities and their Jacobian (`V`, `dV`
+# come out of an untyped cache): a function of its own, compiled for their concrete types.
+function _residual_jac_rows!(r, J, V, dV, data, w, need_flux, model_flux, dflux, np)
+    ε = eps(Float64)
+    k = 0
+    @inbounds begin
+        if w[1] > 0 && data.nv2 > 0
+            s = sqrt(w[1]); idx = data.indx_v2
+            for i in eachindex(idx)
+                k += 1; Vi = V[idx[i]]; e = data.v2_err[i]
+                r[k] = s * (abs2(Vi) - data.v2[i]) / e
+                for j in 1:np
+                    J[k, j] = s * 2.0 * real(conj(Vi) * dV[idx[i], j]) / e
+                end
+            end
+        end
+        if w[2] > 0 && data.nt3amp > 0
+            s = sqrt(w[2]); i1, i2, i3 = data.indx_t3_1, data.indx_t3_2, data.indx_t3_3
+            for i in eachindex(i1)
+                k += 1; V1 = V[i1[i]]; V2c = V[i2[i]]; V3 = V[i3[i]]; e = data.t3amp_err[i]
+                t3 = V1 * V2c * V3
+                a = abs(t3)
+                r[k] = s * (a - data.t3amp[i]) / e
+                pf = conj(t3) / max(a, ε)
+                c1, c2, c3 = V2c * V3, V1 * V3, V1 * V2c
+                for j in 1:np
+                    dT3 = c1 * dV[i1[i], j] + c2 * dV[i2[i], j] + c3 * dV[i3[i], j]
+                    J[k, j] = s * real(pf * dT3) / e
+                end
+            end
+        end
+        if w[3] > 0 && data.nt3phi > 0
+            s = sqrt(w[3]); i1, i2, i3 = data.indx_t3_1, data.indx_t3_2, data.indx_t3_3
+            for i in eachindex(i1)
+                k += 1; V1 = V[i1[i]]; V2c = V[i2[i]]; V3 = V[i3[i]]; e = data.t3phi_err[i]
+                t3 = V1 * V2c * V3
+                r[k] = s * _mod360_1(angle(t3) * (180.0 / π) - data.t3phi[i]) / e
+                pf = conj(t3) / max(abs2(t3), ε)
+                c1, c2, c3 = V2c * V3, V1 * V3, V1 * V2c
+                for j in 1:np
+                    dT3 = c1 * dV[i1[i], j] + c2 * dV[i2[i], j] + c3 * dV[i3[i], j]
+                    J[k, j] = s * (180.0 / π) * imag(pf * dT3) / e
+                end
+            end
+        end
+        if w[4] > 0 && data.nvisamp > 0
+            s = sqrt(w[4]); idx = data.indx_vis
+            for i in eachindex(idx)
+                k += 1; Vi = V[idx[i]]; e = data.visamp_err[i]
+                a = abs(Vi)
+                r[k] = s * (a - data.visamp[i]) / e
+                pf = conj(Vi) / max(a, ε)
+                for j in 1:np
+                    J[k, j] = s * real(pf * dV[idx[i], j]) / e
+                end
+            end
+        end
+        if w[5] > 0 && data.nvisphi > 0
+            s = sqrt(w[5]); idx = data.indx_vis
+            for i in eachindex(idx)
+                k += 1; Vi = V[idx[i]]; e = data.visphi_err[i]
+                r[k] = s * _mod360_1(angle(Vi) * (180.0 / π) - data.visphi[i]) / e
+                pf = conj(Vi) / max(abs2(Vi), ε)
+                for j in 1:np
+                    J[k, j] = s * (180.0 / π) * imag(pf * dV[idx[i], j]) / e
+                end
+            end
+        end
+    end
+    if need_flux
+        fl = _chi2_flux(model_flux, data)
+        s = sqrt(w[6]); fm = fl.C * model_flux
+        @inbounds for i in 1:data.nflux
+            k += 1; e = data.flux_err[i]
+            r[k] = s * (fm - data.flux[i]) / e
+            for j in 1:np
+                J[k, j] = s * fl.C * dflux[j] / e
+            end
+        end
+    end
+    return r, J
+end
+
 # The sub-wavelength points of a smeared evaluation, and the adjoint buffer that goes with them:
 # kept in the cache, since they depend only on the data and the number of samples.
 function _smeared_points(::Nothing, data, ns, mjd, ::Type{C}) where {C}

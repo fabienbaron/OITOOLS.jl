@@ -299,12 +299,8 @@ the resolver broadcasts *every* parameter into a per-uv-point vector. That is a 
 regime, and the inspector says when it has happened. It also says which wavelength the values
 in the table are shown at, since a broadcast parameter has no single value.
 
-!!! warning "`$MJD` is coarse at the default precision"
-    `$MJD` resolves from `data.uv_mjd`, which is stored in the dataset's element type. At the
-    default `Float32` that is ~5.6 minutes, so epochs closer together than that merge — on one
-    real dataset, 119 distinct epochs became 5. Fine for nights or years apart, useless for
-    within-night variability. Read the file with `T = Float64` when the time behaviour is the
-    point; `$WL` is unaffected.
+`$MJD` resolves from `data.uv_mjd`, which is `Float64` whatever the dataset's precision, so
+epochs minutes apart stay distinct.
 
 ## Radial profiles
 
@@ -388,6 +384,48 @@ one that is already running.
     `az projang` follows PMOIRED's convention — `cos(n·(ψ + φ − π/2))`, matching `_Vazvar` in
     its `oimodels.py` term for term — so an angle means the same thing in both packages and a
     model moves between them unchanged.
+
+## Orbits and radial velocities
+
+**Geometry › orbit** puts a component on an orbit around the origin (`c,x = c,y = "orbit"`): its
+position at each data point's date comes from the elements, added as rows of the parameter table
+(`c,orb P`, `MJD0`, `e`, `omega`, `OMEGA`, `incl`, `a`; PMOIRED's keys and definitions — see the
+API page, *Orbits and radial velocities*). A PMOIRED dict with `'2,x': 'orbit'` imports as it is;
+its `'additional residuals'` function is dropped, and a global named like `P-42.38` becomes
+`P_42_38`.
+
+**RV table…** (Model Optimization, beside the observables) opens radial velocities, a CSV
+`MJD,RV,sigma,star` (`a` primary, `b` secondary), and adds the velocity elements (`Ka`, `Kb`,
+`gamma`) to the component on an orbit. **RVs** then fits them with the interferometry
+(Levenberg-Marquardt, NLopt, and the bootstrap, which resamples them); the console gives χ² for
+the interferometry and for the velocities. `demos/data/HD210763/rv_gallenne2023.csv` (PMOIRED's
+EX6) and `demos/data/Spica/rv_spica.csv` are examples.
+
+**Orbit**, under the fits table, draws the relative orbit on the sky (East left) with the
+positions at the dataset's nights, and the radial velocities against phase with the model's
+curves.
+
+## Multi-start search
+
+**Multi-start…** (Model Optimization, beside **Companion search…**) fits the model from many
+starting points and lists the distinct minima they reach — PMOIRED's `gridFit`
+(`multistart_fit`). One row per free parameter says where its starts come from: **start** (its
+value in the table), **grid** (min, max, step: every node; several grids make every
+combination), **uniform** (min, max) or **normal** (mean, σ), drawn once per start. Without a
+grid, **Starts** sets how many; **Seed** fixes the draws. **Conditions**, one per line
+(`sqrt($B,x^2 + $B,y^2) <= 12`), drop starts before fitting; **Δχ²ᵣ ≤** keeps only minima that
+close to the best. A PMOIRED `expl` dict pasted under **PMOIRED expl** fills the rows (**Apply**).
+
+Every start is a Levenberg-Marquardt fit with the table's bounds, the constraints, the ticked
+observables and, when ticked, the radial velocities. The fits are sorted as PMOIRED sorts them:
+those that failed, have no uncertainties or barely moved are set aside, the rest grouped into
+minima; for a component on an orbit, minima whose MJD0 differ by whole periods are one. The
+global minimum becomes the fit's row; the console lists the first minima.
+
+The **χ² map** view then shows the search over two of its parameters (the boxes under the
+plot): each start (`+`) joined to the minimum it reached, the minima coloured by χ²ᵣ, set-aside
+starts as red crosses, the selected minimum ringed. The third box selects the minimum the fit's
+row, **Adopt** and the correlations report.
 
 ## Fitting each dataset
 

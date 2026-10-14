@@ -154,6 +154,13 @@ model_dict = pmoired_to_dict("{'star,ud': 3.2, 'ring,f': '1 - \\\$star,f'}")
 ```
 """
 function pmoired_to_dict(s::AbstractString)::Dict{String,Any}
+    # PMOIRED's hook for extra residuals names a Python function, which cannot come across:
+    # radial velocities are a table here (`read_rv`, fitted with `rv`).
+    if occursin(r"['\"]additional residuals['\"]", s)
+        s = replace(s, r"['\"]additional residuals['\"]\s*:\s*[^,}\n]+,?" => "")
+        @info "PMOIRED import: 'additional residuals' (a Python function) dropped; fit radial " *
+              "velocities from a table instead (read_rv, the fit's `rv`)."
+    end
     julia_str = pmoired_to_julia(s)
     return _adopt_pmoired_keys(eval(Meta.parse(julia_str)))
 end
@@ -168,7 +175,8 @@ Expressions are rewritten where the two languages differ: Python's `**` becomes 
 ring's `profile` given as one of PMOIRED's names (`uniform`, `doughnut`, `doughnut<p>`, defined
 in its `oimodels.py`) becomes the expression it stands for, over the ring's radii.
 
-Keys otherwise arrive verbatim -- which is right for almost all of them, since the two packages
+A global whose name is not an identifier (`P-42.38`) is renamed, `-` and `.` becoming `_`, in
+its key and in every expression. Keys otherwise arrive verbatim -- which is right for almost all of them, since the two packages
 share their vocabulary. The exception is the spatial kernel. PMOIRED writes it `"comp,spatial kernel"`, with a space, and applies it PER COMPONENT;
 OITOOLS spells it `spatial_kernel` and applies one kernel to the whole model. A single
 component converts exactly. More than one cannot: adopting one component's kernel would smooth
@@ -179,6 +187,19 @@ changing what the model means.
 function _adopt_pmoired_keys(d::AbstractDict)
     out = Dict{String,Any}(String(k) => (v isa AbstractString ? replace(String(v), "**" => "^") : v)
                            for (k, v) in d)
+    # A global whose name is not an identifier (PMOIRED's `P-42.38`, an offset from a known
+    # value) is renamed — non-alphanumerics to `_` — here and wherever an expression writes it.
+    bad = sort([k for k in keys(out) if !occursin(',', k) && !occursin(r"^[A-Za-z0-9_]+$", k)];
+               by = length, rev = true)
+    for k in bad
+        nk = replace(k, r"[^A-Za-z0-9_]" => "_")
+        haskey(out, nk) && (nk *= "_")
+        out[nk] = pop!(out, k)
+        for (kk, v) in out
+            v isa AbstractString && (out[kk] = replace(v, "\$" * k => "\$" * nk))
+        end
+        @info "PMOIRED import: global '$k' renamed '$nk'"
+    end
     for k in [k for k in keys(out) if endswith(k, ",profile")]
         out[k] isa AbstractString && (out[k] = _pmoired_profile(out[k]))
     end

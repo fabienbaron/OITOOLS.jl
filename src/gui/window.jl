@@ -38,6 +38,7 @@ function __init__()
                      shell_model_rows, shell_model_components, shell_model_inspection,
                      shell_model_chi2, shell_set_param, shell_model_warnings, shell_fit_output,
                      shell_component_kinds, shell_add_component, shell_remove_component, shell_sparco_fluxes,
+                     shell_rv_open, shell_rv_summary, shell_rv_close, shell_orbit_component, shell_orbit_view,
                      shell_add_image_component, shell_image_info, shell_set_image,
                      shell_remove_param, shell_add_param, shell_link_params, shell_param_name_problem,
                      shell_param_removable, shell_remove_unused,
@@ -61,6 +62,8 @@ function __init__()
                      shell_chi2_map_info, shell_free_names,
                      shell_companion_candidates, shell_companion_grid, shell_companion_search,
                      shell_companion_map_view, shell_companion_progress,
+                     shell_multistart, shell_multistart_minima, shell_multistart_select,
+                     shell_multistart_view, shell_multistart_names, shell_multistart_pmoired,
                      shell_companion_defaults,
                      shell_smearing, shell_set_smearing, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
@@ -411,6 +414,12 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(priax); style_axis!(prvax)
     profileplot = build_profile_plot(prfig, priax, prvax)
 
+    # And one for the Orbit view: the sky track beside the radial velocities.
+    orbfig = Makie.Figure(fonts = PLOT_FONTS)
+    orbsky = Makie.Axis(orbfig[1, 1]); orbrv = Makie.Axis(orbfig[1, 2])
+    style_axis!(orbsky); style_axis!(orbrv)
+    ORBIT_CANVAS[] = build_orbit_view(orbfig, orbsky, orbrv)
+
     # And one for the Tools cube viewer, drawn by `show_image!` as the reconstruction is.
     cfig = Makie.Figure(fonts = PLOT_FONTS)
     cax  = Makie.Axis(cfig[1, 1]; xlabel = "α (mas)", ylabel = "δ (mas)", title = "cube")
@@ -457,6 +466,7 @@ function OITOOLS.gui(session::Session = Session();
                 residPlot       = rfig,
                 sedPlot         = sfig,
                 cubePlot        = cfig,
+                orbitPlot       = orbfig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,

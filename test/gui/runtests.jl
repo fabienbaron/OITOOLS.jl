@@ -155,6 +155,13 @@ const POLY = joinpath(OIF, "Beauty_Contest_2026", "OBJECT1_N.oifits")
         @test startswith(r["channels"], "1 at ") && !occursin("VIS", r["points"])
         f = filter_dataset!(s, "data1"; baseline_range = [0.0, 60e6])
         @test Dict(G.dataset_summary(f))["filtered from"] == "data1"
+        # a file of two instruments read with one: the summary names that one
+        grav = joinpath(pkgdir(OITOOLS), "demos", "data", "o_Leo",
+                        "GRAVI.2022-02-28T042658.272_singlescivis_singlesciviscalibrated.fits")
+        g = load_dataset!(s, grav; insname = "GRAVITY_SC", warn = false, verbose = false)
+        @test Dict(G.dataset_summary(g))["instrument"] == "GRAVITY_SC"
+        g2 = load_dataset!(s, grav; warn = false, verbose = false)
+        @test Set(split(Dict(G.dataset_summary(g2))["instrument"], ", ")) == Set(["GRAVITY_SC", "GRAVITY_FT"])
     end
 
     # Explore's Filter section (GUI_Explore.md, Phase 4), through the shell calls the panel
@@ -1631,6 +1638,54 @@ end
             @test vals["companion,x"] == sr.best.x && vals["companion,y"] == sr.best.y
             @test occursin("companion,x = ", split(G.shell_fit_rows(), '\n')[1]) &&
                   occursin("±", split(G.shell_fit_rows(), '\n')[1])
+
+            # Multi-start (`multistart_fit`), as the dialog calls it: a grid on the companion's
+            # position around PMOIRED's answer, a condition dropping one node, the minima in the
+            # map panel, a minimum selected for Adopt.
+            mfree = "star,ud\t0\t3\ncompanion,f\t0\t0.5\ncompanion,x\t-60\t60\ncompanion,y\t-60\t60"
+            explore = "companion,x\tgrid\t0\t12\t4\ncompanion,y\tgrid\t-32\t-24\t4\nstar,ud\tstart\t\t\t"
+            margs(ex, conds) = (mfree, "", ex, conds, true, false, true, false, false, false, false,
+                                20, 1, NaN, 100, false)
+            @test startswith(G.shell_multistart(margs("star,ud\tstart\t\t\t", "")...), "! explore")
+            @test startswith(G.shell_multistart(margs("companion,x\tgrid\t0\t12\t", "")...), "! ")
+            @test startswith(G.shell_multistart(margs(explore, "\$companion,x >")...), "! ")
+            @test G.shell_multistart(margs(explore, "\$companion,x + \$companion,y < -13")...) == "searching…"
+            ml = ""
+            for _ in 1:1200
+                r = G.shell_job_poll()
+                startswith(r, "running") || (ml = r; break)
+                sleep(0.25)
+            end
+            @test startswith(ml, "done\t")
+            fm = last(sh.fits)
+            ms = fm.map
+            @test ms isa MultiStartResult && fm.optimiser == "multi-start"
+            @test size(ms.starts, 2) == 11 && ms.nrejected == 1          # (12, −24) breaks the condition
+            @test hypot(fm.result.x_opt[3] - 6.228, fm.result.x_opt[4] + 28.487) < 0.2
+            @test any(l -> occursin("minima; best χ²r", l), sh.console)
+            info = split(G.shell_chi2_map_info(), '\t')
+            @test length(info) == 6 && info[6] == "minima" && info[1] == "companion,x"
+            mins = split(G.shell_multistart_minima(), '\n')
+            @test length(mins) == length(ms.minima) && startswith(mins[1], GUI.Printf.@sprintf("%.4f", fm.result.chi2r))
+            @test split(G.shell_multistart_names(), '\n')[1:2] == ["companion,x", "companion,y"]
+            @test length(sh.chi2map.mmin[1][]) == length(ms.minima) && !sh.chi2map.axis.xreversed[]
+            @test isempty(sh.chi2map.mseg[]) == false && length(sh.chi2map.mseg[]) == 2 * count(==(:minimum), ms.status)
+            @test G.shell_multistart_view("star,ud", "companion,f") == "" && sh.chi2map.axis.xlabel[] == "star,ud"
+            if length(ms.minima) > 1
+                @test G.shell_multistart_select(2) == ""
+                @test last(sh.fits).result === ms.minima[2].fit
+                vals = Dict(split(l, '=')[1] => parse(Float64, split(l, '=')[2])
+                            for l in split(G.shell_fit_values(), '\n'))
+                @test vals["companion,x"] == ms.minima[2].fit.x_opt[3]
+            end
+            @test startswith(G.shell_multistart_select(999), "!")
+            # PMOIRED's expl dict as the dialog's rows; a global named as the model import names it
+            @test G.shell_multistart_pmoired("{'grid':{'c,x':(-40, 40, 4)}, 'rand':{'MJD0-59800':(-20, 20)}, 'randn':{'c,f':(0.1, 0.01)}}") ==
+                  "c,x\tgrid\t-40\t40\t4\nMJD0_59800\tuniform\t-20\t20\nc,f\tnormal\t0.1\t0.01"
+            @test startswith(G.shell_multistart_pmoired("not a dict"), "!")
+            # a companion search after it empties the minima
+            G.update_chi2_map!(sh.chi2map, sr)
+            @test isempty(sh.chi2map.mmin[1][]) && isempty(sh.chi2map.mseg[])
         finally
             G.SHELL[] = prev
         end

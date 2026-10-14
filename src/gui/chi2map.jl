@@ -44,9 +44,22 @@ function build_chi2_map(fig, ax)
     ct = Makie.contour!(ax, xs, ys, raw;
                         levels = collect(delta_chi2_levels), color = :black, linewidth = 1.2)
     # The minimum, as a ring rather than a dot: a filled marker hides the very cell it reports.
-    Makie.scatter!(ax, best; color = (:white, 0.0), strokecolor = CHI2_BEST_COLOR,
-                   strokewidth = 2, markersize = 14, marker = :circle)
-    Makie.scatter!(ax, best; color = CHI2_BEST_COLOR, markersize = 3)
+    ring = Makie.scatter!(ax, best; color = (:white, 0.0), strokecolor = CHI2_BEST_COLOR,
+                          strokewidth = 2, markersize = 14, marker = :circle)
+    dot  = Makie.scatter!(ax, best; color = CHI2_BEST_COLOR, markersize = 3)
+
+    # A multi-start search: each start joined to the minimum it reached, the starts as `+`
+    # (set aside ones as red `×`), the minima coloured by χ²ᵣ. Empty for the other maps.
+    mseg   = Makie.Observable(Makie.Point2f[])
+    mstart = Makie.Observable(Makie.Point2f[])
+    mbad   = Makie.Observable(Makie.Point2f[])
+    Makie.linesegments!(ax, mseg; color = (:gray40, 0.35), linewidth = 0.8)
+    Makie.scatter!(ax, mstart; marker = '+', markersize = 9, color = (:gray30, 0.6))
+    Makie.scatter!(ax, mbad; marker = :xcross, markersize = 7, color = (:firebrick, 0.6))
+    # positions and colours set together (`Makie.update!`), never one length ahead of the other
+    mmin = Makie.scatter!(ax, Makie.Point2f[]; color = Float32[], colormap = :viridis,
+                          colorrange = (0.0f0, 1.0f0), markersize = 9, strokecolor = :black,
+                          strokewidth = 0.5)
 
     cblim = Makie.Observable((0.0f0, 1.0f0))
     cbar  = Makie.Colorbar(fig[1, 2]; colormap = Makie.Reverse(:gist_heat), limits = cblim,
@@ -58,7 +71,7 @@ function build_chi2_map(fig, ax)
     ax.ylabel = ""
 
     return (; figure = fig, axis = ax, xs, ys, zs, raw, best, heatmap = hm, contour = ct,
-              cbarlimits = cblim, colorbar = cbar)
+              cbarlimits = cblim, colorbar = cbar, mseg, mstart, mbad, mmin, ring, dot)
 end
 
 """
@@ -70,6 +83,7 @@ The axes carry the parameter names, and the title the best point, because a χ²
 unlabelled axes is unreadable and a map without its minimum stated is unquotable.
 """
 function update_chi2_map!(c, m::Chi2Map)
+    _clear_minima!(c)
     lo = minimum(m.chi2)
     dchi2 = Float32.(m.chi2 .- lo)
 
@@ -146,6 +160,7 @@ end
 # The sky's conventions for a companion map: East to the LEFT, equal scales on the two axes,
 # blank (NaN) where no node was fitted.
 function _draw_companion_map!(c, x, y, z, best, title, label)
+    _clear_minima!(c)
     zz = Float32.(z)
     c.xs[]  = Float32.(x)
     c.ys[]  = Float32.(y)
@@ -171,3 +186,70 @@ function _draw_companion_map!(c, x, y, z, best, title, label)
     return c
 end
 
+
+# The multi-start plots emptied, for the maps that do not use them.
+function _clear_minima!(c)
+    for o in (c.mseg, c.mstart, c.mbad)
+        o[] = Makie.Point2f[]
+    end
+    Makie.update!(c.mmin, Makie.Point2f[]; color = Float32[])
+    c.ring.strokecolor = CHI2_BEST_COLOR; c.dot.color = CHI2_BEST_COLOR
+    return c
+end
+
+"""
+    update_chi2_map!(c, r::MultiStartResult; p1, p2, selected = 1)
+
+Draw a multi-start search over the parameters `p1` and `p2` (default the first two explored,
+or free): every start joined to the minimum its fit reached, the starts of fits set aside as
+red crosses, the minima coloured by log₁₀ χ²ᵣ, and minimum `selected` ringed. No surface: the
+search samples the parameter space at its starts, it does not map it.
+"""
+function update_chi2_map!(c, r::MultiStartResult; p1::AbstractString = "",
+                          p2::AbstractString = "", selected::Integer = 1)
+    names = r.list_free_params
+    pick = [r.explored; filter(n -> n ∉ r.explored, names)]
+    a = isempty(p1) || p1 ∉ names ? pick[1] : String(p1)
+    b = isempty(p2) || p2 ∉ names ? pick[min(2, length(pick))] : String(p2)
+    ia, ib = findfirst(==(a), names), findfirst(==(b), names)
+    pt(v) = Makie.Point2f(v[ia], v[ib])
+    owner = Dict{Int,Int}()
+    for (k, m) in enumerate(r.minima), s in m.starts
+        owner[s] = k
+    end
+    seg = Makie.Point2f[]; st = Makie.Point2f[]; bad = Makie.Point2f[]
+    for s in axes(r.starts, 2)
+        p0 = pt(view(r.starts, :, s))
+        if haskey(owner, s)
+            push!(st, p0)
+            f = r.fits[s]
+            push!(seg, p0, pt(f.x_opt))
+        else
+            push!(bad, p0)
+        end
+    end
+    mins = [pt(m.fit.x_opt) for m in r.minima]
+    col = Float32[log10(max(m.fit.chi2r, 1e-12)) for m in r.minima]
+    lo, hi = isempty(col) ? (0.0f0, 1.0f0) : extrema(col)
+    # nothing behind the points: the surface's plots get one blank cell
+    c.xs[] = Float32[0, 1]; c.ys[] = Float32[0, 1]
+    c.raw[] = zeros(Float32, 2, 2); c.zs[] = fill(NaN32, 2, 2)
+    crange = (lo, hi > lo ? hi : lo + 1)
+    c.mseg[] = seg; c.mstart[] = st; c.mbad[] = bad
+    Makie.update!(c.mmin, mins; color = col, colorrange = crange)
+    c.best[] = isempty(mins) ? Makie.Point2f[] : [mins[clamp(selected, 1, length(mins))]]
+    c.ring.strokecolor = :black; c.dot.color = :black    # white is for the maps' dark colours
+    c.cbarlimits[] = crange
+    c.colorbar.colormap = :viridis
+    c.colorbar.label = "log₁₀ χ²ᵣ of the minimum"
+    c.axis.aspect = nothing
+    c.axis.xreversed = false              # a companion map before this one leaves East left
+    c.axis.xlabel = a; c.axis.ylabel = b
+    k = clamp(selected, 1, max(length(r.minima), 1))
+    c.axis.title = isempty(r.minima) ? "no minimum" :
+        @sprintf("%d starts, %d minima; minimum %d: χ²ᵣ %.4g from %d start(s)",
+                 size(r.starts, 2), length(r.minima), k, r.minima[k].fit.chi2r,
+                 length(r.minima[k].starts))
+    Makie.autolimits!(c.axis)
+    return (a, b)
+end

@@ -223,6 +223,8 @@ function default_bounds(model_dict::Dict{String}, list_free_params::AbstractVect
                 (0.0, 1.0)
             elseif startswith(suffix, "az projang")
                 (-180.0, 180.0)
+            elseif startswith(suffix, "orb ")
+                get(_ORBIT_BOUNDS, suffix[5:end], (-Inf, Inf))
             else
                 (-Inf, Inf)
             end
@@ -717,6 +719,9 @@ function _preprocess_sugar(model_dict::Dict{String}, comp_names::Vector{String})
             # Keep diam and thick — they may be fit params referenced by the expressions
         end
 
+        # ── x = y = "orbit": the position from the orbit's elements (orbit.jl) ──
+        _expand_orbit!(d, cn)
+
         # ── spectrum → f  (wavelength-dependent flux via $WL) ─────────────
         spec_key = "$cn,spectrum"
         f_key    = "$cn,f"
@@ -755,7 +760,8 @@ reserved_suffix(suffix::AbstractString) =
     suffix in _UNIVERSAL_SUFFIXES || suffix in _SUGAR_SUFFIXES || suffix in _HANKEL_SUFFIXES ||
     suffix in _IMAGE_SUFFIXES || suffix in _GEOMETRY_KEYS ||
     any(s -> suffix in s, values(_ANALYTIC_PARAM_SUFFIXES)) ||
-    startswith(suffix, "az amp") || startswith(suffix, "az projang")
+    startswith(suffix, "az amp") || startswith(suffix, "az projang") ||
+    startswith(suffix, "orb ")
 
 """
 Warn about `component,key` pairs the parser never consumes.
@@ -794,6 +800,7 @@ function _warn_unrecognised_keys(pd::Dict{String})
             suffix in ok && continue
             startswith(suffix, "az amp") && continue
             startswith(suffix, "az projang") && continue
+            startswith(suffix, "orb ") && suffix[5:end] in _ORBIT_ELEMENTS && continue
             (suffix in referenced || k in referenced) && continue
             push!(unknown, k)
         end

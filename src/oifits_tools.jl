@@ -247,8 +247,7 @@ flux), so a closure phase measured between two V² epochs is kept.
 
 `parts` holds one `OIdata` per non-empty epoch, made by [`filter_data`](@ref); `mjd` is the mean
 time of each part's points. Points are assigned by their own Float64 MJDs (`v2_mjd`, …), so the
-split is exact whatever `T` is. Within a part, the model time `uv_mjd` is stored in `T`: at
-`Float32` it resolves ~5.6 min, which matters only for a `\$MJD` model over a short part.
+split is exact whatever `T` is; the model time `uv_mjd` is `Float64` too.
 """
 function split_by_time(data::OIdata; gap::Real = 0.5, binwidth = nothing, edges = nothing)
     t = sort!(vcat(data.v2_mjd, data.t3_mjd, data.vis_mjd, data.flux_mjd))
