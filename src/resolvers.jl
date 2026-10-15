@@ -160,7 +160,8 @@ using RuntimeGeneratedFunctions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
 using ..OITOOLS: extract_refs, topo_sort, partition_dict, broadcastify, IMPLICIT_VARS,
-                _REF_PATTERN, _mangle, _wl_expr, orbit_x, orbit_y, orbit_a, _fixed_type, _fixed_in
+                _REF_PATTERN, _mangle, _wl_expr, orbit_x, orbit_y, orbit_a, _fixed_type, _fixed_in,
+                line_lorentzian, line_gaussian, line_truncexp, line_trunclor
 
 const mangle = _mangle
 

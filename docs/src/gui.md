@@ -385,6 +385,17 @@ one that is already running.
     its `oimodels.py` term for term — so an angle means the same thing in both packages and a
     model moves between them unchanged.
 
+## Spectral lines
+
+**Model Creation › Spectral lines** (every component): **+ line** adds one — a name, a profile
+(Lorentzian, Gaussian, or PMOIRED's one-sided `truncexp` / `trunclor`), the centre λ₀ (µm), the
+peak (< 0 for absorption) and the width (nm) — as rows of the parameter table, PMOIRED's keys
+(`c,line_<name>_wl0`, `_f`, `_<profile>`), to fix, free or bound like any other. **by velocity,
+rest** writes the centre as the rest wavelength shifted by a velocity, a new global
+`v_<component>_<name>` in km/s starting at the centre's current shift; unticked, the centre is
+a value again. **−** removes the line and its velocity. The SED view shows the spectrum with its
+lines; a PMOIRED dict with `line_*` keys imports as it is.
+
 ## Orbits and radial velocities
 
 **Geometry › orbit** puts a component on an orbit around the origin (`c,x = c,y = "orbit"`): its

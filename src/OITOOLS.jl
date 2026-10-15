@@ -33,6 +33,7 @@ include("model_kernels.jl")          # component visibilities point by point, wi
 
 # ── Flat-dict model fitting stack ────────────────────────────────────────────
 include("orbit.jl")             # binary orbits (PMOIRED's definition): positions and RVs
+include("lines.jl")             # spectral lines on a component's flux (PMOIRED's line_<n>_*)
 include("resolvers.jl")          # SharedUtils, RGF, HandRolled, Symbolic
 include("hankel.jl")             # Hankel transform + chainrules + profile compiler
 include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
@@ -249,6 +250,7 @@ public vis_ud, vis_ldlin, vis_ldquad, vis_ldsqrt, vis_ldclaret4, vis_ldpow
 # ── Uncertainty estimation by resampling ─────────────────────────────────────
 export bootstrap_fit, bootstrap_driver, BootstrapResult
 export multistart_fit, MultiStartResult, MultiStartMinimum
+export line_lorentzian, line_gaussian, line_truncexp, line_trunclor
 export data_blocks, DataBlocks, resample_blocks
 export block_counts, apply_block_counts, block_weights, apply_block_weights
 export perturb_data

@@ -729,6 +729,9 @@ function _preprocess_sugar(model_dict::Dict{String}, comp_names::Vector{String})
             d[f_key] = d[spec_key]      # promote spectrum expression to f
             delete!(d, spec_key)
         end
+
+        # ── spectral lines: the flux is the continuum plus the lines (lines.jl) ──
+        _expand_lines!(d, cn)
     end
     return d
 end
@@ -761,7 +764,7 @@ reserved_suffix(suffix::AbstractString) =
     suffix in _IMAGE_SUFFIXES || suffix in _GEOMETRY_KEYS ||
     any(s -> suffix in s, values(_ANALYTIC_PARAM_SUFFIXES)) ||
     startswith(suffix, "az amp") || startswith(suffix, "az projang") ||
-    startswith(suffix, "orb ")
+    startswith(suffix, "orb ") || suffix == "ftotal" || occursin(_LINE_KEY, suffix)
 
 """
 Warn about `component,key` pairs the parser never consumes.
@@ -801,6 +804,7 @@ function _warn_unrecognised_keys(pd::Dict{String})
             startswith(suffix, "az amp") && continue
             startswith(suffix, "az projang") && continue
             startswith(suffix, "orb ") && suffix[5:end] in _ORBIT_ELEMENTS && continue
+            (suffix == "ftotal" || occursin(_LINE_KEY, suffix)) && continue
             (suffix in referenced || k in referenced) && continue
             push!(unknown, k)
         end
@@ -891,7 +895,8 @@ function dict_to_model(model_dict::Dict{String},
         kind = _identify_kind(cn, pd)
 
         # Flux fraction index (default to 1.0 if not in resolver)
-        f_key = "$cn,f"
+        # with spectral lines, the continuum plus the lines (`_expand_lines!`)
+        f_key = haskey(n2i, "$cn,ftotal") ? "$cn,ftotal" : "$cn,f"
         f_idx = get(n2i, f_key, 0)   # 0 means "use 1.0"
 
         # ── Geometry modifiers (shared by all component types) ───────────

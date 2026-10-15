@@ -76,6 +76,25 @@ companion_flux_map
 detection_sigma
 ```
 
+## Spectral lines
+
+A component's flux can carry spectral lines, with PMOIRED's keys and formulas: `c,line_<n>_wl0`
+(µm), `c,line_<n>_f` (the peak added to the continuum; < 0 for absorption) and one profile with
+its width in nm — `c,line_<n>_lorentzian` (FWHM), `c,line_<n>_gaussian` (FWHM, with an optional
+`c,line_<n>_power`), `c,line_<n>_truncexp` (with `c,line_<n>_pow`) or `c,line_<n>_trunclor`
+(one-sided: redward for a positive width, blueward for a negative one). The component's flux is
+then its continuum (`c,f`, or 1) plus its lines at each wavelength, which weights its
+visibility, so the lines show in V, the phases, the closure phases and the flux. Each key is a
+parameter like any other: EX5 writes a centre as a velocity,
+`"A,line_brg_wl0" => "2.16612 * (1 + \$vA / 2.998e5)"`.
+
+```@docs
+line_lorentzian
+line_gaussian
+line_truncexp
+line_trunclor
+```
+
 ## Many starts
 
 `multistart_fit` is PMOIRED's `gridFit`: Levenberg-Marquardt from every node of a grid

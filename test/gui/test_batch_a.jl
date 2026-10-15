@@ -245,6 +245,46 @@
             G.shell_rv_close(); G.ORBIT_CANVAS[] = prevorb
         end
 
+        @testset "Modeling › spectral lines" begin
+            mf = joinpath(dir, "lines.toml")
+            write(mf, """
+                [model]
+                "A,ud" = 1.2
+                "B,ud" = 0.6
+                "B,f" = 0.25
+                "B,x" = -0.9
+                "B,y" = 3.5
+                """)
+            G.shell_open_model(mf)
+            md = G._model(sh).dict
+            @test G.shell_lines("A") == ""
+            @test G.shell_add_line("A", "brg", "lorentzian", 2.166, -0.5, 1.0) == ""
+            @test (md["A,line_brg_wl0"], md["A,line_brg_f"], md["A,line_brg_lorentzian"]) == (2.166, -0.5, 1.0)
+            @test G.shell_lines("A") == "brg\tlorentzian\t\t2.166"
+            @test startswith(G.shell_add_line("A", "brg", "gaussian", 2.17, 0.1, 1.0), "! A already has")
+            @test startswith(G.shell_add_line("A", "b r", "gaussian", 2.17, 0.1, 1.0), "! a line's name")
+            @test startswith(G.shell_add_line("A", "x", "voigt", 2.17, 0.1, 1.0), "! unknown profile")
+            @test startswith(G.shell_add_line("Z", "x", "gaussian", 2.17, 0.1, 1.0), "! no component")
+            # the centre as a velocity: rest 2.16612, the shift of 2.166 as v_A_brg
+            @test G.shell_line_by_velocity("A", "brg", true, 2.16612) == ""
+            @test md["A,line_brg_wl0"] isa String && md["v_A_brg"] ≈ (2.166 / 2.16612 - 1) * 2.998e5
+            @test G.shell_lines("A") == "brg\tlorentzian\tv_A_brg\t2.16612"
+            fm = parse_model(md, String[])
+            i = findfirst(==("A,line_brg_wl0"), fm.all_names)
+            @test fm.resolver.fn(Float64[])[i] ≈ 2.166 rtol = 1e-12
+            # and back
+            @test G.shell_line_by_velocity("A", "brg", false, NaN) == ""
+            @test isapprox(md["A,line_brg_wl0"], 2.166; rtol = 1e-12) && !haskey(md, "v_A_brg")
+            # a component with lines evaluates, and its SED dips at the line
+            tot, comps = model_to_sed(parse_model(md, String[]), Float64[], [2.0e-6, 2.166e-6])
+            @test comps["A"] ≈ [1 + line_lorentzian(2.0, 2.166, -0.5, 1.0), 0.5] rtol = 1e-10
+            # removed with its velocity global
+            G.shell_line_by_velocity("A", "brg", true, 2.16612)
+            @test G.shell_remove_line("A", "brg") == ""
+            @test !any(startswith(k, "A,line_") for k in keys(md)) && !haskey(md, "v_A_brg")
+            @test startswith(G.shell_remove_line("A", "brg"), "! A has no line")
+        end
+
         @testset "Modeling › Fit each" begin
             G.shell_tools_split(joinpath(OIF, "V1295_Aql.oifits"), "gap", 0.5, "")
             parts = sess.datasets[end-1:end]

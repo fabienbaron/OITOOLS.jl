@@ -211,6 +211,25 @@ Item {
         refreshModel()
     }
 
+    // The selected component's spectral lines, read back from the model (`shell_lines`).
+    function refreshLines() {
+        lineModel.clear()
+        if (root.selectedComponent.length === 0) return
+        var r = Julia.shell_lines(root.selectedComponent)
+        if (r.length === 0) return
+        var lines = r.split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length === 4) lineModel.append({ name: f[0], profile: f[1], velocity: f[2], rest: f[3] })
+        }
+    }
+    function lineCall(e) {
+        root.consoleChanged()
+        if (e.length > 0 && e.charAt(0) === "!") { root.fitText = e; return }
+        root.modelDirty = true
+        refreshModel()
+    }
+
     // The selected component's azimuthal modes, read back from the model. The panel keeps no
     // list of its own: a mode is two keys in the dict, and anything the panel remembered
     // separately could disagree with what the parser will build.
@@ -2029,6 +2048,92 @@ Item {
                                         }
                                     }
 
+                                    // ── spectral lines (PMOIRED's line_<n>_*) ─────────
+                                    // A component's lines: beside the component, for every kind.
+                                    GroupBox {
+                                        id: lineBox
+                                        objectName: "lineBox"
+                                        Layout.preferredWidth: root.dp(420)
+                                        Layout.alignment: Qt.AlignTop
+                                        visible: root.selectedComponent.length > 0
+                                        title: "Spectral lines"
+
+                                        ColumnLayout {
+                                            spacing: root.dp(4)
+                                            Repeater {
+                                                model: lineModel
+                                                delegate: RowLayout {
+                                                    spacing: root.dp(6)
+                                                    readonly property string lname: model.name
+                                                    Label {
+                                                        text: model.name + "  ·  " + model.profile
+                                                        Layout.preferredWidth: root.dp(140)
+                                                        elide: Text.ElideRight
+                                                    }
+                                                    CheckBox {
+                                                        id: velBox
+                                                        objectName: "line:" + parent.lname + ":velocity"
+                                                        text: "by velocity, rest"
+                                                        checked: model.velocity.length > 0
+                                                        ToolTip.visible: hovered
+                                                        ToolTip.text: checked ? "centre from " + model.velocity
+                                                                              : "centre as rest λ and a velocity"
+                                                        onClicked: root.lineCall(Julia.shell_line_by_velocity(
+                                                            root.selectedComponent, parent.lname, checked,
+                                                            root.numOrNaN(restField.text)))
+                                                    }
+                                                    TextField {
+                                                        id: restField
+                                                        objectName: "line:" + parent.lname + ":rest"
+                                                        Layout.preferredWidth: root.dp(80)
+                                                        enabled: !velBox.checked
+                                                        text: model.rest
+                                                        ToolTip.visible: hovered
+                                                        ToolTip.text: "rest λ (µm)"
+                                                    }
+                                                    Item { Layout.fillWidth: true }
+                                                    Button {
+                                                        objectName: "line:" + parent.lname + ":remove"
+                                                        text: "−"
+                                                        implicitWidth: root.dp(26)
+                                                        implicitHeight: Math.max(root.dp(22), implicitContentHeight + topPadding + bottomPadding)
+                                                        onClicked: root.lineCall(Julia.shell_remove_line(root.selectedComponent, parent.lname))
+                                                    }
+                                                }
+                                            }
+                                            GridLayout {
+                                                columns: 3
+                                                columnSpacing: root.dp(4)
+                                                rowSpacing: root.dp(3)
+                                                TextField { id: lineName; objectName: "lineName"
+                                                            Layout.preferredWidth: root.dp(70); placeholderText: "name" }
+                                                ComboBox { id: lineProfile; objectName: "lineProfile"
+                                                           Layout.preferredWidth: root.dp(110)
+                                                           model: ["lorentzian", "gaussian", "truncexp", "trunclor"] }
+                                                TextField { id: lineWl0; objectName: "lineWl0"
+                                                            Layout.preferredWidth: root.dp(90); placeholderText: "λ₀ µm" }
+                                                TextField { id: lineF; objectName: "lineF"
+                                                            Layout.preferredWidth: root.dp(70); placeholderText: "peak" }
+                                                TextField { id: lineW; objectName: "lineWidth"
+                                                            Layout.preferredWidth: root.dp(110); placeholderText: "width nm" }
+                                                Button {
+                                                    objectName: "lineAdd"
+                                                    text: "+ line"
+                                                    enabled: lineName.text.length > 0 && lineWl0.text.length > 0 &&
+                                                             lineF.text.length > 0 && lineW.text.length > 0
+                                                    onClicked: {
+                                                        root.lineCall(Julia.shell_add_line(root.selectedComponent,
+                                                            lineName.text, lineProfile.currentText,
+                                                            root.numOrNaN(lineWl0.text), root.numOrNaN(lineF.text),
+                                                            root.numOrNaN(lineW.text)))
+                                                    }
+                                                }
+                                                InfoTip { tip: "PMOIRED's keys: line_<name>_wl0 (µm), _f (peak; < 0 absorption), _<profile> (width in nm). The values are rows of the parameter table." }
+                                            }
+                                        }
+                                    }
+
+
                                     // Each picture beside the editor it illustrates, rather than both in a column
                                     // of their own. The two columns were independent, so a preview lined up with
                                     // its section only by accident and drifted the moment the editor grew -- which
@@ -3723,6 +3828,10 @@ Item {
         id: azModel
         // roles: n, amp, projang — always both, never one
     }
+    ListModel {
+        id: lineModel
+        // roles: name, profile, velocity (the global its centre is written with, or ""), rest (µm)
+    }
 
     // Send one edited field to Julia and re-read what came back. Not a local assignment: the
     // resolver may change other rows -- a derived parameter referencing this one moves with it --
@@ -3820,6 +3929,7 @@ Item {
         refreshLdLaw()
         refreshGeometry()
         refreshAzModes()
+        refreshLines()
         refreshImage()
 
         refreshChi2()

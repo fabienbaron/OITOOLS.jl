@@ -4283,6 +4283,111 @@ function shell_remove_az_mode(component::AbstractString, order)
     return ""
 end
 
+# ── spectral lines (component card) ──────────────────────────────────────────────────
+
+const _LINE_PROFILES = ("lorentzian", "gaussian", "truncexp", "trunclor")
+const _C_KMS = 2.998e5          # PMOIRED's speed of light in km/s, as EX5 writes it
+
+"""
+    shell_lines(component) -> String
+
+The component's spectral lines, one per line: `name<TAB>profile<TAB>velocity<TAB>rest`,
+`velocity` the global its centre is written with (`""` when the centre is a value of its own),
+`rest` the rest wavelength (µm) of a centre written by velocity, else the centre itself.
+"""
+function shell_lines(component::AbstractString)
+    m = _model(); cn = String(component)
+    out = String[]
+    for n in OITOOLS._line_names(m.dict, cn)
+        prof = something(findfirst(p -> haskey(m.dict, "$cn,line_$(n)_$p"), _LINE_PROFILES), 0)
+        w0 = get(m.dict, "$cn,line_$(n)_wl0", nothing)
+        v = w0 isa AbstractString ? (r = match(r"\$(v_[A-Za-z0-9_]+)", w0); r === nothing ? "" : r[1]) : ""
+        rest = w0 isa Real ? string(w0) :
+               w0 isa AbstractString && (r = match(r"^\s*([0-9.eE+-]+)\s*\*", w0)) !== nothing ? String(r[1]) : ""
+        push!(out, join((n, prof == 0 ? "" : _LINE_PROFILES[prof], v, rest), '\t'))
+    end
+    return join(out, "\n")
+end
+
+"""
+    shell_add_line(component, name, profile, wl0, f, width) -> String
+
+Add a spectral line to a component: `c,line_<name>_wl0` (µm), `_f` (peak, < 0 absorption) and
+`_<profile>` (width in nm), PMOIRED's keys, as fixed rows of the parameter table.
+"""
+function shell_add_line(component::AbstractString, name::AbstractString, profile::AbstractString,
+                        wl0::Real, f::Real, width::Real)
+    sh = _shell(); m = _model(sh); cn = String(component); n = strip(String(name))
+    any(startswith(k, cn * ",") for k in keys(m.dict)) || return "! no component called " * cn
+    occursin(r"^[A-Za-z0-9]+$", n) || return "! a line's name is letters and digits"
+    n in OITOOLS._line_names(m.dict, cn) && return "! $cn already has a line $n"
+    p = String(profile)
+    p in _LINE_PROFILES || return "! unknown profile " * p
+    (isfinite(wl0) && wl0 > 0) || return "! the centre is a wavelength in µm"
+    (isfinite(width) && width != 0) || return "! the width is in nm, not 0"
+    m.dict["$cn,line_$(n)_wl0"] = Float64(wl0)
+    m.dict["$cn,line_$(n)_f"]   = Float64(f)
+    m.dict["$cn,line_$(n)_$p"]  = Float64(width)
+    console!(sh, "  $cn: line $n ($p) at $(wl0) µm, peak $(f), width $(width) nm")
+    return ""
+end
+
+"""
+    shell_remove_line(component, name) -> String
+
+Remove a spectral line, every key of it, with the velocity global it was written with.
+"""
+function shell_remove_line(component::AbstractString, name::AbstractString)
+    sh = _shell(); m = _model(sh); cn = String(component); n = String(name)
+    pre = "$cn,line_$(n)_"
+    ks = [k for k in keys(m.dict) if startswith(k, pre) &&
+          occursin(OITOOLS._LINE_KEY, k[(length(cn) + 2):end])]
+    isempty(ks) && return "! $cn has no line $n"
+    v = _line_velocity_global(m, cn, n)
+    for k in [ks; isempty(v) ? String[] : [v]]
+        delete!(m.dict, k); delete!(m.lb, k); delete!(m.ub, k); filter!(!=(k), m.free)
+    end
+    console!(sh, "  $cn: removed line $n")
+    return ""
+end
+
+_line_velocity_global(m, cn, n) =
+    (w0 = get(m.dict, "$cn,line_$(n)_wl0", nothing);
+     w0 isa AbstractString && (r = match(r"\$(v_[A-Za-z0-9_]+)", w0)) !== nothing ? String(r[1]) : "")
+
+"""
+    shell_line_by_velocity(component, name, on, rest) -> String
+
+Write a line's centre as a velocity (`rest·(1 + \$v_<c>_<name>/c)`, `rest` in µm, a new global
+`v_<c>_<name>` in km/s set to the centre's current shift — EX5's reparametrisation), or back as
+a value of its own (`on = false`, the centre the velocity gives).
+"""
+function shell_line_by_velocity(component::AbstractString, name::AbstractString, on::Bool, rest::Real)
+    sh = _shell(); m = _model(sh); cn = String(component); n = String(name)
+    k = "$cn,line_$(n)_wl0"
+    haskey(m.dict, k) || return "! $cn has no line $n"
+    v = "v_$(cn)_$(n)"
+    if on
+        w0 = m.dict[k]
+        w0 isa Real || return "! the centre is already an expression"
+        (isfinite(rest) && rest > 0) || return "! the rest wavelength is in µm"
+        haskey(m.dict, v) && return "! a parameter $v exists already"
+        m.dict[v] = (w0 / rest - 1) * _C_KMS
+        m.dict[k] = "$(rest) * (1 + \$$(v) / $(_C_KMS))"
+        console!(sh, "  $cn: line $n's centre written as $(rest) µm at velocity $v")
+    else
+        g = _line_velocity_global(m, cn, n)
+        isempty(g) && return "! the centre is not written with a velocity"
+        r = match(r"^\s*([0-9.eE+-]+)\s*\*", m.dict[k])
+        r === nothing && return "! the centre is not of the form rest * (1 + \$v/c)"
+        rest0 = parse(Float64, r[1])
+        m.dict[k] = rest0 * (1 + Float64(m.dict[g]) / _C_KMS)
+        for kk in (g,); delete!(m.dict, kk); delete!(m.lb, kk); delete!(m.ub, kk); filter!(!=(kk), m.free); end
+        console!(sh, "  $cn: line $n's centre back to a value, $(m.dict[k]) µm")
+    end
+    return ""
+end
+
 """
     shell_remove_component(name) -> String
 

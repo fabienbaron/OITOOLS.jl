@@ -188,7 +188,8 @@ function companion_search(model_dict::AbstractDict, data::OIdata;
     fallbacks = Threads.Atomic{Int}(0)
     on_grid === nothing || on_grid((; x = xs, y = ys, chi2r, params, nnodes = length(nodes)))
 
-    if free == [kf] && path === :auto
+    # The fast path needs the visibility linear in the companion's flux: not with spectral lines
+    if free == [kf] && path === :auto && isempty(_line_names(md, cn))
         path = :fast
         fp = _fast_problem(md, data, cn, w)
         work = () -> FastWork(fp)

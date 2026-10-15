@@ -64,6 +64,7 @@ function __init__()
                      shell_companion_map_view, shell_companion_progress,
                      shell_multistart, shell_multistart_minima, shell_multistart_select,
                      shell_multistart_view, shell_multistart_names, shell_multistart_pmoired,
+                     shell_lines, shell_add_line, shell_remove_line, shell_line_by_velocity,
                      shell_companion_defaults,
                      shell_smearing, shell_set_smearing, shell_nested_backend, shell_sim_band,
                      shell_open_model, shell_save_model,
