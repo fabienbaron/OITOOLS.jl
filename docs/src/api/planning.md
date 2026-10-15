@@ -72,6 +72,7 @@ index_runs
 
 ```@docs
 simulate
+FractionalNoise
 simulate_from_oifits
 wave_from_image
 observable_epochs

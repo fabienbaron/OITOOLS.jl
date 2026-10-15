@@ -166,6 +166,7 @@ Item {
             kwAxis3.currentIndex = kv["axis3"] === "time" ? 1 : 0
             kwWStart.text = kv["wstart"]; kwWStep.text = kv["wstep"]; kwWUnit.currentIndex = 1
             kwTStart.text = kv["tstart"]; kwTStep.text = kv["tstep"]; kwTUnit.currentIndex = 0
+            kwRefX.text = kv["refx"]; kwRefY.text = kv["refy"]
             problem = ""
             open()
         }
@@ -185,6 +186,18 @@ Item {
             CheckBox {
                 id: kwEast; objectName: "kwEast"; text: "East left"
                 ToolTip.visible: hovered; ToolTip.text: "The file stores East on the left"
+            }
+
+            Label { text: "ref. pixel"; color: "#666" }
+            TextField {
+                id: kwRefX; objectName: "kwRefX"; Layout.preferredWidth: root.dp(110)
+                placeholderText: "centre"
+                ToolTip.visible: hovered; ToolTip.text: "Origin, x (CRPIX1)"
+            }
+            TextField {
+                id: kwRefY; objectName: "kwRefY"; Layout.columnSpan: 3; Layout.preferredWidth: root.dp(90)
+                placeholderText: "centre"
+                ToolTip.visible: hovered; ToolTip.text: "Origin, y (CRPIX2)"
             }
 
             Label { text: "axis 3"; color: "#666"; visible: keywordsDialog.dims.length > 2 }
@@ -257,7 +270,8 @@ Item {
             var t = Julia.shell_fits_apply(path, kwPix.text, kwPixUnit.currentText, kwEast.checked,
                                            kwAxis3.currentIndex === 1 ? "time" : "wave",
                                            kwWStart.text, kwWStep.text, kwWUnit.currentText,
-                                           kwTStart.text, kwTStep.text, kwTUnit.currentText)
+                                           kwTStart.text, kwTStep.text, kwTUnit.currentText,
+                                           kwRefX.text, kwRefY.text)
             root.consoleChanged()
             if (root.failed(t)) { problem = t.substring(2); return }
             problem = ""
@@ -301,7 +315,8 @@ Item {
         defaultSuffix: "png"
         filters: [{ label: "PNG images (*.png)", patterns: "*.png" }, { label: "All files", patterns: "*" }]
         onAccepted: function (path) {
-            Julia.shell_save_figure("cube", path, cubeSavePicker.pxw, cubeSavePicker.pxh, false)
+            Julia.shell_save_figure(root.cubeTiles ? "cubetiles" : "cube", path, cubeSavePicker.pxw,
+                                    cubeSavePicker.pxh, false)
             root.consoleChanged()
         }
     }
@@ -314,6 +329,9 @@ Item {
     property var cubeMJ: []
     property int cubeW: 1
     property int cubeT: 1
+    // channels side by side instead of one; the list typed (channels or µm), the labels shown
+    property bool cubeTiles: false
+    property string cubeTileText: ""
     function openCube(path) {
         var t = Julia.shell_cube_open(path)
         root.consoleChanged()
@@ -334,6 +352,13 @@ Item {
         cubeW = Math.max(1, Math.min(cubeNW, w)); cubeT = Math.max(1, Math.min(cubeNT, t))
         cubeLabel.text = Julia.shell_cube_show_at(cubeW, cubeT)
         cubeArea.update()
+        if (cubeTiles) showTiles()
+    }
+    function showTiles() {
+        var t = Julia.shell_cube_tiles(tileList.text, cubeT)
+        if (failed(t)) { root.statusReported(t); return }
+        cubeTileText = t.split("\t").join("  ·  ")
+        tilesArea.update()
     }
 
     // One channel axis: ◀ slider ▶, the index and the channel's value (µm or MJD) when known.
@@ -609,6 +634,39 @@ Item {
                                 onStepped: function (k) { wave ? root.showAt(k, root.cubeT) : root.showAt(1, k) }
                             }
                         }
+                        // channels side by side, and the stretch of every plane shown
+                        RowLayout {
+                            visible: root.mode === "cube"
+                            CheckBox {
+                                id: tilesBox
+                                objectName: "toolsTiles"
+                                text: "Side by side"
+                                checked: root.cubeTiles
+                                onToggled: { root.cubeTiles = checked; if (checked) root.showTiles() }
+                                ToolTip.visible: hovered; ToolTip.text: "Several channels at once"
+                            }
+                            TextField {
+                                id: tileList
+                                objectName: "toolsTileList"
+                                visible: root.cubeTiles
+                                Layout.fillWidth: true
+                                placeholderText: "4 channels"
+                                onEditingFinished: root.showTiles()
+                                ToolTip.visible: hovered; ToolTip.text: "Channels, or λ in µm (up to 6)"
+                            }
+                            Label { text: "power"; color: "#666" }
+                            TextField {
+                                objectName: "toolsPower"
+                                Layout.preferredWidth: root.dp(60)
+                                text: "1"
+                                onEditingFinished: {
+                                    var t = Julia.shell_cube_power(text)
+                                    if (root.failed(t)) { root.statusReported(t); return }
+                                    root.showAt(root.cubeW, root.cubeT)
+                                }
+                                ToolTip.visible: hovered; ToolTip.text: "Brightness stretch, I^p"
+                            }
+                        }
                         AxisSlider {
                             objectName: "toolsEpoch"
                             Layout.fillWidth: true
@@ -658,7 +716,8 @@ Item {
                 text: root.mode === "headers" ? "Headers — " + root.headersPath.replace(/^.*\//, "")
                     : root.mode === "validate" ? "Validation — " + filePath.text.replace(/^.*\//, "")
                     : root.mode === "split" ? "Split preview"
-                    : root.mode === "cube" ? "Cube — " + cubeLabel.text : "Results"
+                    : root.mode === "cube" ? "Cube — " + (root.cubeTiles ? root.cubeTileText : cubeLabel.text)
+                    : "Results"
             }
             Label { id: cubeLabel; visible: false }
             // The HDU list over the selected HDU's cards (Headers), the split the user's to move;
@@ -695,7 +754,15 @@ Item {
                     id: cubeArea
                     objectName: "toolsCubeArea"
                     anchors.fill: parent
+                    visible: !root.cubeTiles
                     scene: cubePlot
+                }
+                MakieArea {
+                    id: tilesArea
+                    objectName: "toolsTilesArea"
+                    anchors.fill: parent
+                    visible: root.cubeTiles
+                    scene: cubeTilesPlot
                 }
                 Button {
                     anchors.right: parent.right

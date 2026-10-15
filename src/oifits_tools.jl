@@ -357,8 +357,20 @@ function fits_keyword_cube(path::AbstractString; east_left::Bool = false, axis3:
 end
 
 """
+    fits_refpix(path) -> Union{Nothing,NTuple{2,Float64}}
+
+The reference pixel `(CRPIX1, CRPIX2)` of a FITS file's primary header, or `nothing` when it does
+not give both.
+"""
+function fits_refpix(path::AbstractString)
+    h = first(_fits_header(String(path)))
+    r1, r2 = get(h, "CRPIX1", nothing), get(h, "CRPIX2", nothing)
+    return r1 isa Real && r2 isa Real ? (Float64(r1), Float64(r2)) : nothing
+end
+
+"""
     fits_set_keywords(path, out; pixsize, east_left = false, axis3 = :wave,
-                      wavelengths = Float64[], mjds = Float64[]) -> String
+                      wavelengths = Float64[], mjds = Float64[], refpix = :file) -> String
 
 Write the image or cube of `path` to `out` with the keywords [`read_model_image`](@ref) reads: the
 array East-first (`east_left` when the file stores East on the left), the pixel size `pixsize` in
@@ -368,10 +380,15 @@ file's axes 3 and 4 are then swapped). Every other card of the primary header (O
 …) is copied; other HDUs are not. `out` may be `path`, which is then overwritten.
 
 An axis with more than one plane needs its values, and their number must be the number of planes.
+
+`refpix` is the reference pixel `(x, y)` — the image's origin — in the file's own pixel numbering
+(as CRPIX1, CRPIX2): `:file` takes the file's CRPIX1/2, or the phase centre `nx÷2+1` when it has
+none; `nothing` the phase centre. A reference pixel off the phase centre is written as such, and
+`read_model_image` reads it back as the image's `offset`.
 """
 function fits_set_keywords(path::AbstractString, out::AbstractString; pixsize::Real,
                            east_left::Bool = false, axis3::Symbol = :wave,
-                           wavelengths = Float64[], mjds = Float64[])
+                           wavelengths = Float64[], mjds = Float64[], refpix = :file)
     pixsize > 0 || throw(ArgumentError("pixsize must be positive (mas), not $(pixsize)"))
     cube = fits_keyword_cube(path; east_left, axis3)
     nλ, nt = size(cube, 3), size(cube, 4)
@@ -392,7 +409,11 @@ function fits_set_keywords(path::AbstractString, out::AbstractString; pixsize::R
         end
         c
     end
+    nx = size(cube, 1)
+    r = refpix === :file ? fits_refpix(path) : refpix
+    # the East-first array's numbering: a flipped axis 1 maps pixel x to nx + 1 - x
+    r === nothing || (r = (east_left ? nx + 1 - r[1] : r[1], r[2]))
     data = nt > 1 ? cube : nλ > 1 ? cube[:, :, :, 1] : cube[:, :, 1, 1]
-    writefits(data, out; pixsize, wavelengths, mjds, header = cards)
+    writefits(data, out; pixsize, wavelengths, mjds, header = cards, refpix = r)
     return String(out)
 end

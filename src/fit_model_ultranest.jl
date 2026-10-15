@@ -8,6 +8,10 @@
 #
 # Needs the Python `ultranest` package, declared in CondaPkg.toml.
 
+# A seeded run's fixed batch of proposals: the size at which its wall time matches an unseeded,
+# adaptive run on a 6-parameter fit (8.9 s against 9.5 s; 40, UltraNest's fixed size, 21 s).
+const _SEEDED_NDRAW = 512
+
 function _ultranest_fit(model_dict         ::Dict{String},
                         list_free_params  ::Vector{String},
                         data              ::OIdata;
@@ -25,6 +29,7 @@ function _ultranest_fit(model_dict         ::Dict{String},
     log_interval             = 100,
     verb                     = true,
     cornerplot               = true,
+    seed                     = nothing,
 )
     # ── 1. Validate bounds ──────────────────────────────────────────────────
     for p in list_free_params
@@ -98,23 +103,35 @@ function _ultranest_fit(model_dict         ::Dict{String},
     _un_log   = _logging.getLogger("ultranest")
     _un_level = _un_log.level                      # restore after: the logger is global
 
-    smplr = ultranest.ReactiveNestedSampler(
-        param_names, loglikelihood_vectorized;
-        transform       = prior_transform_vectorized,
-        num_bootstraps  = num_bootstraps,
-        vectorized      = true,
-    )
-
-    if use_stepsampler
-        stepsampler_mod = pyimport("ultranest.stepsampler")
-        smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
-            nsteps         = nsteps,
-            adaptive_nsteps = "move-distance",
-        )
-    end
-
-    verb || _un_log.setLevel(_logging.WARNING)
+    # UltraNest draws from numpy's global generator, from its constructor on: `seed` sets it
+    # for the construction and the run, and its previous state is restored after, as the
+    # logger's level is.
+    _np_random = pyimport("numpy").random
+    _np_state  = seed === nothing ? nothing : _np_random.get_state()
+    seed === nothing || _np_random.seed(seed)
+    local smplr
     result = try
+        # UltraNest resizes its batches of proposals on a wall-clock timer, which makes a run
+        # depend on the machine's speed: a seeded run keeps them at a fixed size
+        smplr = ultranest.ReactiveNestedSampler(
+            param_names, loglikelihood_vectorized;
+            transform       = prior_transform_vectorized,
+            num_bootstraps  = num_bootstraps,
+            vectorized      = true,
+            ndraw_min       = seed === nothing ? 128 : _SEEDED_NDRAW,
+            ndraw_max       = seed === nothing ? 65536 : _SEEDED_NDRAW,
+        )
+
+        if use_stepsampler
+            stepsampler_mod = pyimport("ultranest.stepsampler")
+            smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
+                nsteps         = nsteps,
+                adaptive_nsteps = "move-distance",
+            )
+        end
+
+        # after the constructor, which sets the logger's level itself
+        verb || _un_log.setLevel(_logging.WARNING)
         smplr.run(;
             min_num_live_points     = min_num_live_points,
             cluster_num_live_points = cluster_num_live_points,
@@ -125,6 +142,7 @@ function _ultranest_fit(model_dict         ::Dict{String},
         )
     finally
         verb || _un_log.setLevel(_un_level)
+        _np_state === nothing || _np_random.set_state(_np_state)
     end
 
     # ── 6. Extract results ─────────────────────────────────────────────────
@@ -180,6 +198,7 @@ function _ultranest_fit(model             ::FlatModel,
     log_interval             = 100,
     verb                     = true,
     cornerplot               = true,
+    seed                     = nothing,
 )
     list_free_params = model.list_free_params
     fm = model
@@ -244,23 +263,35 @@ function _ultranest_fit(model             ::FlatModel,
     _un_log   = _logging.getLogger("ultranest")
     _un_level = _un_log.level                      # restore after: the logger is global
 
-    smplr = ultranest.ReactiveNestedSampler(
-        list_free_params, loglikelihood_vectorized;
-        transform       = prior_transform_vectorized,
-        num_bootstraps  = num_bootstraps,
-        vectorized      = true,
-    )
-
-    if use_stepsampler
-        stepsampler_mod = pyimport("ultranest.stepsampler")
-        smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
-            nsteps         = nsteps,
-            adaptive_nsteps = "move-distance",
-        )
-    end
-
-    verb || _un_log.setLevel(_logging.WARNING)
+    # UltraNest draws from numpy's global generator, from its constructor on: `seed` sets it
+    # for the construction and the run, and its previous state is restored after, as the
+    # logger's level is.
+    _np_random = pyimport("numpy").random
+    _np_state  = seed === nothing ? nothing : _np_random.get_state()
+    seed === nothing || _np_random.seed(seed)
+    local smplr
     result = try
+        # UltraNest resizes its batches of proposals on a wall-clock timer, which makes a run
+        # depend on the machine's speed: a seeded run keeps them at a fixed size
+        smplr = ultranest.ReactiveNestedSampler(
+            list_free_params, loglikelihood_vectorized;
+            transform       = prior_transform_vectorized,
+            num_bootstraps  = num_bootstraps,
+            vectorized      = true,
+            ndraw_min       = seed === nothing ? 128 : _SEEDED_NDRAW,
+            ndraw_max       = seed === nothing ? 65536 : _SEEDED_NDRAW,
+        )
+
+        if use_stepsampler
+            stepsampler_mod = pyimport("ultranest.stepsampler")
+            smplr.stepsampler = stepsampler_mod.RegionSliceSampler(
+                nsteps         = nsteps,
+                adaptive_nsteps = "move-distance",
+            )
+        end
+
+        # after the constructor, which sets the logger's level itself
+        verb || _un_log.setLevel(_logging.WARNING)
         smplr.run(;
             min_num_live_points     = min_num_live_points,
             cluster_num_live_points = cluster_num_live_points,
@@ -271,6 +302,7 @@ function _ultranest_fit(model             ::FlatModel,
         )
     finally
         verb || _un_log.setLevel(_un_level)
+        _np_state === nothing || _np_random.set_state(_np_state)
     end
 
     # ── Extract results ──────────────────────────────────────────────────────

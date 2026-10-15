@@ -112,7 +112,11 @@ Item {
 
     property real   simMag:      2.0
     property real   simMagAO:    2.0
-    property bool   simNoise:    true
+    // "photon" (the combiner's noise model), "fractional" (fixed relative errors) or "none"
+    property string simNoiseMode: "photon"
+    readonly property bool simNoise: simNoiseMode === "photon"
+    // fractional errors: V², |V|, T3 amplitude and flux in %, the phases in degrees
+    property var    simFrac: ({ v2: "1", visamp: "1", t3amp: "1", visphi: "0.5", t3phi: "1", flux: "1" })
     property bool   simDebias:   true
     // The calibration error drawn correlated per baseline per night. Untick it and the written
     // error bars still carry the calibration floor while the data does not, so a fit to a
@@ -313,7 +317,9 @@ Item {
         put("path", simSource === "model" ? simModelPath : simImagePath)
         if (simSource !== "model") put("pixsize", simPixsize)
         if (simImageChannels && !simCopyStructure) put("image_channels", 1)
-        put("noise", simNoise ? 1 : 0)
+        put("noise", simNoiseMode === "photon" ? 1 : simNoiseMode === "fractional" ? "fractional" : 0)
+        if (simNoiseMode === "fractional")
+            for (var k in simFrac) put("frac_" + k, simFrac[k])
         put("seed", simSeed)
         if (simCopyStructure) {
             put("copy", 1)
@@ -588,6 +594,7 @@ Item {
                                                     border.color: targetRow.cached ? "#59a14f" : "#bbb"
                                                 }
                                                 TextField {
+                                                    objectName: "obsTargetName:" + targetRow.index
                                                     Layout.fillWidth: true
                                                     text: targetRow.name
                                                     placeholderText: "target name"
@@ -614,6 +621,7 @@ Item {
                                                 // declination goes missing.
                                                 Label { text: "RA°"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                                 TextField {
+                                                    objectName: "obsTargetRA:" + targetRow.index
                                                     Layout.fillWidth: true
                                                     text: targetRow.ra.toFixed(6)
                                                     validator: DoubleValidator {
@@ -624,6 +632,7 @@ Item {
                                                 }
                                                 Label { text: "Dec°"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                                 TextField {
+                                                    objectName: "obsTargetDec:" + targetRow.index
                                                     Layout.fillWidth: true
                                                     text: targetRow.dec.toFixed(6)
                                                     validator: DoubleValidator {
@@ -724,6 +733,7 @@ Item {
                                     Label { text: "Combiner"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                     ComboBox {
                                         id: combinerBox
+                                        objectName: "obsCombiner"
                                         Layout.fillWidth: true
                                         model: root.combiners
                                         enabled: root.combiners.length > 0
@@ -1041,6 +1051,7 @@ Item {
                                     Label { text: "Date"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                     TextField {
                                         id: dateField
+                                        objectName: "obsDate"
                                         Layout.preferredWidth: dp(120)
                                         text: root.dateISO
                                         inputMask: "9999-99-99"
@@ -1129,6 +1140,7 @@ Item {
                                     Label { text: "HA min (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                     TextField {
                                         id: haMinField
+                                        objectName: "obsHaMin"
                                         Layout.fillWidth: true
                                         text: root.haMin.toFixed(2)
                                         validator: DoubleValidator {
@@ -1140,6 +1152,7 @@ Item {
                                     Label { text: "HA max (h)"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                     TextField {
                                         id: haMaxField
+                                        objectName: "obsHaMax"
                                         Layout.fillWidth: true
                                         text: root.haMax.toFixed(2)
                                         validator: DoubleValidator {
@@ -1720,16 +1733,17 @@ Item {
                         }
                         onEditingFinished: root.simMagAO = parseFloat(text)
                     }
-                    CheckBox {
+                    Label { text: "noise"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                    ComboBox {
                         id: noiseBox
-                        text: "noise"
-                        checked: root.simNoise
-                        onToggled: root.simNoise = checked
+                        objectName: "simNoiseMode"
+                        Layout.preferredWidth: dp(130)
+                        model: ["photon", "fractional", "none"]
+                        currentIndex: Math.max(0, model.indexOf(root.simNoiseMode))
+                        onActivated: root.simNoiseMode = model[currentIndex]
                         ToolTip.visible: hovered
-                        ToolTip.text: "Draw a noise realisation. Unticked, the observables are " +
-                                      "the model exactly and the error bars are still written, " +
-                                      "which is what a truth file is: something to score a " +
-                                      "reconstruction against."
+                        ToolTip.text: "photon: the combiner's noise model · fractional: fixed " +
+                                      "relative errors · none: the model, error bars written"
                     }
                     CheckBox {
                         id: debiasBox
@@ -1798,6 +1812,32 @@ Item {
                         // or not the target was up, which is the right default for a pure uv
                         // simulator and the wrong one for a night plan.
                         onToggled: root.simObservability = checked
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+
+                // fixed relative errors, PMOIRED's `oifake` noise
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: dp(8)
+                    visible: root.simNoiseMode === "fractional"
+                    Repeater {
+                        model: [["v2", "V² %"], ["visamp", "|V| %"], ["t3amp", "T3amp %"],
+                                ["visphi", "φ °"], ["t3phi", "T3φ °"], ["flux", "flux %"]]
+                        RowLayout {
+                            required property var modelData
+                            spacing: dp(4)
+                            Label { text: modelData[1]; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                            TextField {
+                                objectName: "simFrac:" + modelData[0]
+                                Layout.preferredWidth: dp(60)
+                                text: root.simFrac[modelData[0]]
+                                validator: DoubleValidator { bottom: 0.0 }
+                                onEditingFinished: {
+                                    var f = root.simFrac; f[modelData[0]] = text; root.simFrac = f
+                                }
+                            }
+                        }
                     }
                     Item { Layout.fillWidth: true }
                 }

@@ -14,6 +14,8 @@ const _NESTED_FILE = joinpath(@__DIR__, "..", "demos", "data", "AlphaCenA.oifits
 # same way test/gui/ reaches the GUI extension's internals. At file top level, because a
 # `const` inside a `@testset begin` block is a local declaration and a syntax error.
 const NSEXT = Base.get_extension(OITOOLS, :OITOOLSNautilusExt)
+# PythonCall as the UltraNest extension sees it (`nothing` without PythonCall), for numpy.
+const OITOOLS_PY = Base.get_extension(OITOOLS, :OITOOLSUltraNestExt)
 
 @testset "nested sampling" begin
 
@@ -61,7 +63,7 @@ if have(:nautilus) && have(:ultranest)
                               verb = false, cornerplot = false, seed = 42)
         ru = fit_model_nested(nested_md, nested_free, nested_data;
                               backend = :ultranest, lb = nested_lb, ub = nested_ub,
-                              min_num_live_points = 150, verb = false, cornerplot = false)
+                              min_num_live_points = 150, verb = false, cornerplot = false, seed = 42)
 
         @test rj.backend === :nautilus
         @test ru.backend === :ultranest
@@ -85,6 +87,16 @@ if have(:nautilus) && have(:ultranest)
         # The evidence, at 3σ of the two reported uncertainties combined. This is the check
         # that says the pure-Julia backend is usable at all.
         @test abs(rj.logz - ru.logz) <= 3 * sqrt(rj.logzerr^2 + ru.logzerr^2)
+
+        # UltraNest seeded: the same run again, and numpy's generator left as it was
+        np_random = OITOOLS_PY.pyimport("numpy").random
+        np_random.seed(5); before = OITOOLS_PY.pyconvert(Float64, np_random.uniform())
+        np_random.seed(5)
+        ru2 = fit_model_nested(nested_md, nested_free, nested_data;
+                               backend = :ultranest, lb = nested_lb, ub = nested_ub,
+                               min_num_live_points = 150, verb = false, cornerplot = false, seed = 42)
+        @test ru2.logz == ru.logz && ru2.posterior == ru.posterior
+        @test OITOOLS_PY.pyconvert(Float64, np_random.uniform()) == before
     end
 end
 

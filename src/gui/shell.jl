@@ -2793,7 +2793,12 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
     sky = _simulate_sky(sh, o)
     sky isa String && (console!(sh, sky; kind = :err); return sky)
 
-    noise = _optbool(o, "noise", true)
+    frac = get(o, "noise", "") == "fractional" ?
+           FractionalNoise(v2 = _optreal(o, "frac_v2", 1) / 100, visamp = _optreal(o, "frac_visamp", 1) / 100,
+                           t3amp = _optreal(o, "frac_t3amp", 1) / 100, visphi = _optreal(o, "frac_visphi", 0.5),
+                           t3phi = _optreal(o, "frac_t3phi", 1), flux = _optreal(o, "frac_flux", 1) / 100) :
+           nothing
+    noise = frac === nothing && _optbool(o, "noise", true)
     # `systematics` draws the calibration error correlated per baseline per night, and
     # `fringe_tracker` engages one on an instrument that declares it. Both default ON, matching
     # `simulate`; both reach only the observing path, since the copy path takes its error bars
@@ -2809,6 +2814,8 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
         length(e.files) > 1 &&
             return "! Copy existing OIFITS structure copies one file; $(e.name) is $(length(e.files)) files read as one"
         mode = get(o, "copy_mode", "copy_snr")
+        frac === nothing ||
+            return "! fractional noise needs a simulated observation; a copied structure keeps its own noise"
         try
             simulate_from_oifits(e.path, out; mode = mode, noise = noise, seed = seed, sky...)
         catch err
@@ -2848,8 +2855,8 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
             msg = "! " * _cause(err); console!(sh, msg; kind = :err); return msg
         end
         obs = _optbool(o, "observability", false) ?
-              (; alt_limit = _optreal(o, "alt_limit", DEFAULT_ALT_LIMIT),
-                 alt_max   = _optreal(o, "alt_max",   DEFAULT_ALT_MAX)) : nothing
+              (; min_elevation = _optreal(o, "alt_limit", DEFAULT_ALT_LIMIT),
+                 max_elevation = _optreal(o, "alt_max", DEFAULT_ALT_MAX)) : nothing
         # the image's own channels (an image, or a model holding a cube), else the setup
         imgch = _optbool(o, "image_channels", false)
         wave = try
@@ -2862,7 +2869,7 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
             simulate(f, tgt, read_comb_file(String(combiner)), wave,
                      dates, out;
                      mag = _optreal(o, "mag", 2.0), mag_ao = _optreal(o, "mag_ao", 2.0),
-                     noise = noise, debias = _optbool(o, "debias", true),
+                     noise = something(frac, noise), debias = _optbool(o, "debias", true),
                      systematics = systematics, fringe_tracker = ftrack,
                      n_samples = _optint(o, "n_samples", 100), seed = seed,
                      observability = obs, sky...)
@@ -2873,9 +2880,11 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
         # The command log has to be runnable, so every NON-DEFAULT switch has to appear in it.
         kw = String[]
         isempty(_sky_args(sky)) || push!(kw, _sky_args(sky)[3:end])
-        noise       || push!(kw, "noise = false")
+        frac === nothing || push!(kw, "noise = " * _frac_literal(frac))
+        frac === nothing && !noise && push!(kw, "noise = false")
         systematics || push!(kw, "systematics = false")
         ftrack      || push!(kw, "fringe_tracker = false")
+        obs === nothing || push!(kw, "observability = $(obs)")
         console!(sh, "simulate(facility, target, combiner, " * (imgch ? ":image" : "wavelength") *
                      ", dates, \"$(out)\"" *
                      (isempty(kw) ? "" : "; " * join(kw, ", ")) * ")   # $(length(dates)) epochs, " *
@@ -2890,6 +2899,13 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
     end
     console!(sh, @sprintf("  wrote %s — %s, %.1f s", out, summary, time() - t0))
     return "ok\t" * out * "\t" * summary
+end
+
+# A FractionalNoise as the code that rebuilds it: the fields away from their defaults.
+function _frac_literal(f::FractionalNoise)
+    d = FractionalNoise()
+    kw = ["$(k) = $(_g(getfield(f, k)))" for k in fieldnames(FractionalNoise) if getfield(f, k) != getfield(d, k)]
+    return "FractionalNoise(" * join(kw, ", ") * ")"
 end
 
 """

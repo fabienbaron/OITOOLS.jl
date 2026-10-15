@@ -1278,6 +1278,15 @@ _residual_nrows(data, w, need_flux) =
     (w[5] > 0 && data.nvisphi > 0 ? length(data.indx_vis) : 0) +
     (need_flux ? data.nflux : 0)
 
+# The rows of the VISPHI block among a dataset's residuals (empty when not weighted).
+function _visphi_rows(data, w)
+    k = (w[1] > 0 && data.nv2 > 0 ? length(data.indx_v2) : 0) +
+        (w[2] > 0 && data.nt3amp > 0 ? length(data.indx_t3_1) : 0) +
+        (w[3] > 0 && data.nt3phi > 0 ? length(data.indx_t3_1) : 0) +
+        (w[4] > 0 && data.nvisamp > 0 ? length(data.indx_vis) : 0)
+    return w[5] > 0 && data.nvisphi > 0 ? ((k + 1):(k + length(data.indx_vis))) : (1:0)
+end
+
 # One wrapped phase residual, as `_mod360` computes it for a vector.
 @inline function _mod360_1(x)
     T = float(typeof(x))
@@ -1290,7 +1299,29 @@ end
 [`residuals_flat`](@ref) written into `r`, whose length is the number of rows it returns.
 """
 function residuals_flat!(r::AbstractVector, model::FlatModel, x::AbstractVector, data::OIdata;
-                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+                         weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+                         ref = nothing)
+    if _smooths(ref)
+        _smoothed_rows!(r, nothing, model, x, data, _pad_weights(weights), ref, nothing)
+    else
+        _residuals_flat!(r, model, x, data, weights)
+    end
+    ref === nothing || _apply_reference!(r, nothing, ref, model, x, data, _pad_weights(weights))
+    return r
+end
+
+# The VISPHI rows of `r` (and `J`) referenced by the measurement model's context `ref`.
+function _apply_reference!(r, J, ref, model, x, data, w)
+    ref.mm.visphi === :continuum || return 0
+    rows = _visphi_rows(data, w)
+    isempty(rows) && return 0
+    vals = model.resolver.fn(_plain.(x))
+    return _reference_phases!(view(r, rows), J === nothing ? nothing : view(J, rows, :), ref, vals,
+                              data.visphi_err, sqrt(w[5]), data.visphi)
+end
+
+function _residuals_flat!(r::AbstractVector, model::FlatModel, x::AbstractVector, data::OIdata,
+                          weights::AbstractVector{<:Real})
     w = _pad_weights(weights)
     need_flux = w[6] > 0 && data.nflux > 0
     _wl  = hasproperty(data, :uv_lam) ? data.uv_lam : nothing
@@ -1362,7 +1393,18 @@ end
 function residuals_flat_jac!(r::AbstractVector, J::AbstractMatrix, model::FlatModel,
                              x::AbstractVector, data::OIdata;
                              weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                             jac_cache::Union{Nothing,ModelJacCache} = nothing)
+                             jac_cache::Union{Nothing,ModelJacCache} = nothing, ref = nothing)
+    if _smooths(ref)
+        _smoothed_rows!(r, J, model, x, data, _pad_weights(weights), ref, jac_cache)
+    else
+        _residuals_flat_jac!(r, J, model, x, data, weights, jac_cache)
+    end
+    ref === nothing || _apply_reference!(r, J, ref, model, x, data, _pad_weights(weights))
+    return r, J
+end
+
+function _residuals_flat_jac!(r::AbstractVector, J::AbstractMatrix, model::FlatModel,
+                              x::AbstractVector, data::OIdata, weights, jac_cache)
     w = _pad_weights(weights)
     need_flux = w[6] > 0 && data.nflux > 0
     np = length(x)

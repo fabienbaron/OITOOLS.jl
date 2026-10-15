@@ -89,7 +89,8 @@ function _live_panel(sh::ShellState, which::AbstractString)
         which == "sed"       ? sh.sedplot     :
         which == "gantt"     ? sh.gantt       :
         which == "delay"     ? sh.delayplot   :
-        which == "cube"      ? CUBE_CANVAS[]  : nothing
+        which == "cube"      ? CUBE_CANVAS[]  :
+        which == "cubetiles" ? CUBE_TILES[]   : nothing
     p === nothing && return nothing
     (hasproperty(p, :figure) && hasproperty(p, :axis)) || return nothing
     return (; figure = p.figure, axis = p.axis)
@@ -188,6 +189,12 @@ function _snapshot_figure(sh::ShellState, which::AbstractString, size, detailed:
                                      title = liveax === nothing ? "" : String(liveax.title[]))
         _match_view!(fig.content[findfirst(b -> b isa Makie.Axis, fig.content)], liveax)
         return fig
+
+    elseif which == "cubetiles"
+        (CUBE[] === nothing || CUBE_TILES_SHOWN[] === nothing) && return nothing
+        T = build_cube_tiles(Makie.Figure(; size, fonts = PLOT_FONTS))
+        _show_tiles!(T, CUBE[], CUBE_TILES_SHOWN[].ws, CUBE_TILES_SHOWN[].t)
+        return T.figure
 
     elseif which == "chi2map"
         m = _last_chi2_map(sh)

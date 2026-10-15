@@ -168,6 +168,30 @@ plane-to-plane totals are captured first and used to weight the photon count per
 fill `OI_FLUX`. A model may hold an image component as well (`"env,image" => path`): a SPARCO
 star plus image is simulated as a model, `flat_model`.
 
+### A model cube from elsewhere: AMHRA's Be star
+
+AMHRA's "Be model star + Keplerian disk" (Delaa et al. 2011) returns a cube whose header gives
+the pixel scale in radians and the wavelengths in metres (`CUNIT3 = 'm'`), but no `CTYPE3`. Its
+keywords are set once, keeping its reference pixel, and the cube is simulated on its own channels
+(`demos/example_simulate_amhra_cube.jl`, PMOIRED's example 4 observed with CHARA):
+
+```julia
+fits_set_keywords("output_Be.fits", "be_cube.fits"; pixsize = 2.65845e-10 * 180 / π * 3.6e6,
+                  wavelengths = [2.1661e-6 + (k - 25) * 2.7e-10 for k in 1:51])
+simulate(read_facility_file("CHARA"), TargetConfig(raep0 = 0.0, decep0 = -24.0),
+         read_comb_file("MYSTIC"), :image, dates, "be.oifits"; image = "be_cube.fits",
+         noise = FractionalNoise(v2 = 1e-4, visamp = 1e-4, t3amp = 1e-4, visphi = 0.01,
+                                 t3phi = 0.01, flux = 1e-4))
+```
+
+The cube has no `CTYPE1`, so it is read as stored, its first axis East. PMOIRED's `readCube` reads
+it the same way, and the two give the same visibilities (|V| to 4e-5, closure phases to 0.005°,
+the flux spectrum to 4e-5). That reading puts the continuum disc at PA 120° (≡ −60°); AMHRA's
+input says 60°, which is the cube read with East on the left (`east_left = true`).
+
+`FractionalNoise` sets the error bars as PMOIRED's `oifake` does: fixed fractions of V², |V|,
+T3 amplitude and flux, phases in degrees, each observable drawn on its own.
+
 ## Keyword arguments to `simulate`
 
 | keyword | default | meaning |
@@ -176,7 +200,7 @@ star plus image is simulated as a model, `flat_model`.
 | `flat_model` / `flat_params` | `nothing` | parametric model instead of an image |
 | `mag` | `2.0` | target magnitude: a number, a `Dict("H"=>1.8, …)` of band magnitudes, or one value per spectral channel |
 | `mag_ao` | from `mag` | guide-star magnitude in the AO wavefront-sensor band |
-| `noise` | `true` | add noise; `false` writes the model with its computed error bars |
+| `noise` | `true` | the photon-noise model; `false` writes the model with its computed error bars; a [`FractionalNoise`](@ref) fixed relative errors (PMOIRED's `oifake`) |
 | `debias` | `true` | subtract the `2σ²` bias from `V²`, as a real pipeline does |
 | `systematics` | `true` | draw the calibration error, correlated per baseline per night (see below) |
 | `fringe_tracker` | `true` | engage the instrument's fringe tracker, if it declares one |

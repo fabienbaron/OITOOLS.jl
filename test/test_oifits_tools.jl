@@ -133,6 +133,22 @@ import AstroFITS
         ts = joinpath(dir, "series.fits"); AstroFITS.writefits!(ts, ["OBJECT" => "x"], rand(8, 8, 3) .+ 0.1)
         fits_set_keywords(ts, ts; pixsize = 0.3, axis3 = :time, mjds = [1.0, 2.0, 3.0])
         @test read_model_image(ts).mjds == [1.0, 2.0, 3.0] && size(read_model_image(ts).image) == (8, 8, 1, 3)
+        # the file's reference pixel is kept, and read back as the image's offset
+        rp = joinpath(dir, "refpix.fits")
+        AstroFITS.writefits!(rp, ["CRPIX1" => 8.0, "CRPIX2" => 9.0, "CDELT1" => 1e-9], Float32.(cube[:, :, 1, 1]))
+        @test fits_refpix(rp) == (8.0, 9.0) && fits_refpix(bare) === nothing
+        k = joinpath(dir, "rp_keys.fits")
+        h(f) = first(OITOOLS._fits_header(f))
+        fits_set_keywords(rp, k; pixsize = 0.25)
+        @test (h(k)["CRPIX1"], h(k)["CRPIX2"]) == (8.0, 9.0)
+        @test all(read_model_image(k).offset .≈ (0.25, 0.0))       # one pixel West of the centre 9
+        fits_set_keywords(rp, k; pixsize = 0.25, refpix = nothing)
+        @test (h(k)["CRPIX1"], h(k)["CRPIX2"]) == (9.0, 9.0) && read_model_image(k).offset == (0.0, 0.0)
+        fits_set_keywords(rp, k; pixsize = 0.25, refpix = (5, 6))
+        @test (h(k)["CRPIX1"], h(k)["CRPIX2"]) == (5.0, 6.0)
+        # East on the left: the pixel numbered in the file, flipped with the array
+        fits_set_keywords(rp, k; pixsize = 0.25, east_left = true)
+        @test h(k)["CRPIX1"] == 9.0 && h(k)["CRPIX2"] == 9.0
         # refusals
         @test_throws ArgumentError fits_set_keywords(bare, joinpath(dir, "x.fits"); pixsize = 0.1, mjds = mj)
         @test_throws ArgumentError fits_set_keywords(bare, joinpath(dir, "x.fits"); pixsize = 0.1,

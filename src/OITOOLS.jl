@@ -43,6 +43,8 @@ include("chi2_flat.jl")          # chi2_flat, chi2_flat_fg
 include("constraints.jl")        # ModelConstraint: NLopt constraints, and penalties elsewhere
 include("model_file.jl")         # TOML model files: model + free + bounds + constraints + priors
 include("fit_lm.jl")             # Levenberg-Marquardt whose bounds are honoured, not clipped
+include("spectral.jl")           # spectral vectors: a row of an OIFITS table across the wavelengths
+include("measurement.jl")        # the measurement model: a differential VISPHI referenced per vector
 include("fit_model.jl")          # fit_model (NLopt), fit_model_nested, display_model
 include("chi2_map.jl")           # grid search over two free parameters, and its chi2 surface
 include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
@@ -194,7 +196,7 @@ export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_im
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
 export oifits_headers, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target,
-       fits_set_keywords, fits_keyword_cube
+       fits_set_keywords, fits_keyword_cube, fits_refpix
 
 # ── Plotting ─────────────────────────────────────────────────────────────────
 # ── The Makie plotting API (OITOOLSMakieExt) ─────────────────────────────────
@@ -251,6 +253,7 @@ public vis_ud, vis_ldlin, vis_ldquad, vis_ldsqrt, vis_ldclaret4, vis_ldpow
 export bootstrap_fit, bootstrap_driver, BootstrapResult
 export multistart_fit, MultiStartResult, MultiStartMinimum
 export line_lorentzian, line_gaussian, line_truncexp, line_trunclor
+export spectral_groups, SpectralGroups, measurement_model, MeasurementModel
 export data_blocks, DataBlocks, resample_blocks
 export block_counts, apply_block_counts, block_weights, apply_block_weights
 export perturb_data
@@ -295,7 +298,7 @@ export reconstruct_bsmem
 export auto_pixsize, gaussian_prior, gaussian_prior_cube
 
 # ── Simulation ───────────────────────────────────────────────────────────────
-export simulate, simulate_from_oifits, get_uv
+export simulate, simulate_from_oifits, get_uv, FractionalNoise
 export read_facility_file, read_obs_file, read_comb_file, read_wave_file, wave_from_image
 export list_configs
 export predict_errors

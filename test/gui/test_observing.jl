@@ -153,6 +153,19 @@
             @test isapprox(sort(unique(x.uv_lam)), λc; rtol = 1e-6)
         end
         @test occursin("simulate(facility, target, combiner, :image, dates", join(GUI._shell().console, "\n"))
+        # fractional noise: the error bars are the fractions asked, and the call is logged
+        o = joinpath(tmp, "frac.oifits")
+        r = GUI.shell_simulate(o, "CHARA", "", "MIRCX", "MIRCX_LOWH", "T", VEGA_RA, VEGA_DEC,
+                               "2026-06-21", -1.0, 1.0, 30.0,
+                               join(["source\timage", "path\t" * own, "pixsize\t0.1", "image_channels\t1",
+                                     "noise\tfractional", "frac_v2\t2", "frac_visamp\t1", "frac_t3amp\t1",
+                                     "frac_visphi\t0.5", "frac_t3phi\t0.3", "frac_flux\t1", "seed\t1",
+                                     "observability\t1", "alt_limit\t25", "alt_max\t85"], "\n"))
+        @test startswith(r, "ok\t")
+        x = readoifits(o; T = Float64, warn = false, verbose = false, filter_bad_data = false)[1, 1]
+        @test all(x.t3phi_err .≈ 0.3) && all(x.v2_err .≥ 0.02 * 0.01 - 1e-12)
+        @test occursin("noise = FractionalNoise(v2 = 0.02, t3phi = 0.3)", join(GUI._shell().console, "\n"))
+        @test occursin("observability = (min_elevation = 25.0, max_elevation = 85.0)", join(GUI._shell().console, "\n"))
         GUI.SHELL[] = prev
         rm(tmp; recursive = true, force = true)
     end

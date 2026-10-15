@@ -430,6 +430,42 @@ _ud(d) = dict_to_model(Dict{String,Any}("star,ud"=>d, "star,f"=>1.0), String[])
             @test isapprox(mean(abs.(n.v2 - a.v2) ./ a.v2_err), 0.798; atol=0.15)
         end
 
+        @testset "noise = FractionalNoise: fixed relative errors" begin
+            q = joinpath(_TMP, "frac_quiet.oifits"); r = joinpath(_TMP, "frac.oifits")
+            fn = FractionalNoise(v2 = 0.02, visphi = 0.5, t3phi = 1.0)
+            simulate(f, t, c, w, dates, q; flat_model=_ud(2.5), flat_params=Float64[], noise=false)
+            simulate(f, t, c, w, dates, r; flat_model=_ud(2.5), flat_params=Float64[], noise=fn, seed=5)
+            a = readoifits(q; T=Float64, filter_bad_data=false)[1,1]
+            n = readoifits(r; T=Float64, filter_bad_data=false)[1,1]
+            @test n.v2_err ≈ 0.02 .* max.(abs.(a.v2), 0.01)
+            @test all(n.t3phi_err .== 1.0) && all(n.visphi_err .== 0.5)
+            @test n.flux_err ≈ 0.01 .* max.(abs.(a.flux), 0.01)
+            @test isapprox(mean(abs.(n.v2 - a.v2) ./ n.v2_err), 0.798; atol=0.1)
+            @test isapprox(mean(abs.(mod.(n.t3phi - a.t3phi .+ 180, 360) .- 180)), 0.798; atol=0.1)
+            # reproducible with the seed
+            r2 = joinpath(_TMP, "frac2.oifits")
+            simulate(f, t, c, w, dates, r2; flat_model=_ud(2.5), flat_params=Float64[], noise=fn, seed=5)
+            @test readoifits(r2; T=Float64, filter_bad_data=false)[1,1].v2 == n.v2
+        end
+
+        @testset "a high-resolution cube: the same file as simulate" begin
+            # 41 channels at R ≈ 8000 and a source changing across them: simulate_from_oifits
+            # on simulate's own output, from the same cube, gives simulate's numbers
+            nx = 32
+            λs = [2.1661e-6 + (k - 21) * 2.7e-10 for k in 1:41]
+            g(σ, x0) = [exp(-((i - nx/2 - x0)^2 + (j - nx/2)^2) / (2σ^2)) for i in 1:nx, j in 1:nx]
+            hr = joinpath(_TMP, "hr_cube.fits")
+            writefits(cat([g(2 + 0.05k, 0.1k) for k in 1:41]...; dims = 3), hr; pixsize = 0.2, wavelengths = λs)
+            ff, tt, cc, _, dd = _setup(nep = 2)
+            a = joinpath(_TMP, "hr_a.oifits"); b = joinpath(_TMP, "hr_b.oifits")
+            simulate(ff, tt, cc, :image, dd, a; image = hr, noise = false)
+            simulate_from_oifits(a, b; mode = "copy_errors", image = hr, noise = false)
+            da = readoifits(a; T = Float64, filter_bad_data = false)[1, 1]
+            db = readoifits(b; T = Float64, filter_bad_data = false)[1, 1]
+            @test da.v2 ≈ db.v2 rtol = 1e-6
+            @test maximum(abs.(da.t3phi .- db.t3phi)) < 1e-4
+        end
+
         @testset "a cube, one plane per channel" begin
             nx = 32
             g(σ) = [exp(-((i-nx/2)^2 + (j-nx/2)^2)/(2σ^2)) for i in 1:nx, j in 1:nx]

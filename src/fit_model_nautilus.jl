@@ -39,9 +39,11 @@
 #     sampler is already near-optimal and the neural bounds have nothing to add. The advantage
 #     claimed in the paper is for higher dimensions and harder geometries; this fit does not
 #     test that.
-#   * UltraNest's mean sits ~0.11 above the other two, which agree with each other to 0.007.
-#     Against UltraNest's own scatter that is a ~3σ offset. Not conclusive from ten runs, but
-#     it is the kind of thing keeping three independent backends exists to surface.
+#   * UltraNest's mean sits ~0.11 above the other two in these ten runs, ~3σ against its own
+#     scatter. Ten seeded runs of each on Julia 1.13 do not repeat it: UltraNest −712.42
+#     (seeded) and −712.60 (unseeded) either side of nautilus's −712.53, within UltraNest's
+#     scatter of 0.12–0.20; on AX Cir's binary (4 parameters, 5 runs each) likewise:
+#     −561.02 / −561.08 against −561.01.
 #   * :nautilus returns the FEWEST posterior samples here (1264 against UltraNest's 7902),
 #     because equal-weight resampling at `equal_weight_boost = 1` cannot exceed the effective
 #     sample size. Raise `n_eff` for a thicker corner plot; raising `equal_weight_boost` alone

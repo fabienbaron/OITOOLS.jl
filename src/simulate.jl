@@ -1169,6 +1169,30 @@ function _sim_image_summary(mi::ModelImage)
 end
 
 """
+    FractionalNoise(; v2 = 0.01, visamp = 0.01, t3amp = 0.01, visphi = 0.5, t3phi = 1.0,
+                      flux = 0.01, floor_v2 = 0.01, floor_visamp = 0.02, floor_t3amp = 0.05,
+                      floor_flux = 0.01)
+
+Fixed error bars for [`simulate`](@ref)'s `noise`, as PMOIRED's `oifake` sets them: V², |V|,
+T3 amplitude and flux a fraction of the value, floored (`v2 · max(V², floor_v2)`, …), the phases
+(differential and closure) in degrees. Each observable gets an independent Gaussian draw with its
+error bar; no photon model, no calibration systematics. The defaults are PMOIRED's ("typical for
+GRAVITY, good SNR").
+"""
+Base.@kwdef struct FractionalNoise
+    v2           :: Float64 = 0.01
+    visamp       :: Float64 = 0.01
+    t3amp        :: Float64 = 0.01
+    visphi       :: Float64 = 0.5
+    t3phi        :: Float64 = 1.0
+    flux         :: Float64 = 0.01
+    floor_v2     :: Float64 = 0.01
+    floor_visamp :: Float64 = 0.02
+    floor_t3amp  :: Float64 = 0.05
+    floor_flux   :: Float64 = 0.01
+end
+
+"""
     simulate(facility, target, combiner, wavelength, dates, out_file; image | flat_model, ...)
 
 Simulate an observation of a sky with `facility` and `combiner` at the `wavelength` channels on
@@ -1187,12 +1211,15 @@ The sky is `image` or `flat_model` with `flat_params`:
   0.1 mas) is its scale. `dft = true` transforms an array by DFT instead of NFFT.
 - `flat_model`: a compiled model (image components included) at `flat_params`.
 
+`noise`: `true` the photon-noise model of the combiner (with `systematics`, `debias`), `false`
+none (the error bars still filled in), or a [`FractionalNoise`](@ref) for fixed relative errors.
+
 `wavelength` is a `WaveConfig` (see [`read_wave_file`](@ref)), or `:image` for the cube's own
 channels ([`wave_from_image`](@ref)): one per plane of the image, or of the model's image cube,
 so the two match plane for plane. The combiner still sets the throughput and the noise.
 """
 function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Union{Nothing,Real}=nothing, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,
-                  noise::Bool=true, nonoise::Union{Nothing,Bool}=nothing, debias::Bool=true,
+                  noise::Union{Bool,FractionalNoise}=true, nonoise::Union{Nothing,Bool}=nothing, debias::Bool=true,
                   systematics::Bool=true, fringe_tracker::Bool=true,
                   mag=2.0, mag_ao::Union{Nothing,Real}=nothing,
                   n_samples::Int=100, rng::Union{Nothing,AbstractRNG}=nothing, seed::Union{Nothing,Integer}=nothing,
@@ -1211,6 +1238,9 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         Base.depwarn("simulate(...; nonoise=$(nonoise)) is deprecated, use noise=$(!nonoise) instead", :simulate)
         noise = !nonoise
     end
+    # fixed relative errors: the noiseless observables, then the errors and the draws below
+    frac = noise isa FractionalNoise ? noise : nothing
+    noise = noise === true
     _rng = rng !== nothing ? rng : (seed !== nothing ? MersenneTwister(seed) : Random.default_rng())
 
     # Observability filtering is strictly opt-in: by default `simulate` is a pure uv-coverage
@@ -1527,7 +1557,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
     # The spread is taken about the noiseless truth rather than about the sample mean, so the
     # error bar covers T3AMP's bias as well as its scatter. That is what makes a chi2 against
     # the true model come out at 1.
-    if n_samples > 0
+    if n_samples > 0 && frac === nothing
         _, t3amp_tr, t3phi_tr = vis_to_t3_closure(cvis_model, t3_indx_1_w, t3_indx_2_w, t3_indx_3_w)
         t3amp_s2 = zeros(length(t3amp_model_err))
         t3phi_s2 = zeros(length(t3phi_model_err))
@@ -1542,6 +1572,21 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         t3phi_model_err = sqrt.(t3phi_s2 ./ n_samples)
         t3amp_model_err = _with_systematics.(t3amp_model_err, sqrt(3) * combiner.vis_cal_err .* abs.(t3amp_true))
         t3phi_model_err = _with_systematics.(min.(t3phi_model_err, 180.0), combiner.phase_cal_err)
+    end
+
+    if frac !== nothing
+        v2_model_err     = frac.v2     .* max.(abs.(v2_model), frac.floor_v2)
+        visamp_model_err = frac.visamp .* max.(visamp_model, frac.floor_visamp)
+        t3amp_model_err  = frac.t3amp  .* max.(abs.(t3amp_model), frac.floor_t3amp)
+        flux_model_err   = frac.flux   .* max.(abs.(flux_model), frac.floor_flux)
+        dphi_model_err   = fill(frac.visphi, length(dphi_model))
+        t3phi_model_err  = fill(frac.t3phi, length(t3phi_model))
+        v2_model     = v2_model     .+ v2_model_err     .* randn(_rng, length(v2_model))
+        visamp_model = visamp_model .+ visamp_model_err .* randn(_rng, length(visamp_model))
+        t3amp_model  = t3amp_model  .+ t3amp_model_err  .* randn(_rng, length(t3amp_model))
+        flux_model   = flux_model   .+ flux_model_err   .* randn(_rng, length(flux_model))
+        dphi_model   = _wrap180.(dphi_model  .+ dphi_model_err  .* randn(_rng, length(dphi_model)))
+        t3phi_model  = _wrap180.(t3phi_model .+ t3phi_model_err .* randn(_rng, length(t3phi_model)))
     end
 
     # Flag points whose error bars make them meaningless rather than writing garbage.
@@ -1788,7 +1833,7 @@ function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[]
     _rng = rng !== nothing ? rng : (seed !== nothing ? MersenneTwister(seed) : Random.default_rng())
 
     # Read input OIFITS data for UV coordinates and errors
-    data = readoifits(in_oifits, filter_bad_data=false)[1]
+    data = readoifits(in_oifits, filter_bad_data=false, T=Float64)[1]
 
     # Compute complex visibilities from truth image or model
     if image isa AbstractString && image != ""

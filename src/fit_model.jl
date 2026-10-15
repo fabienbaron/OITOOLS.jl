@@ -887,6 +887,7 @@ r.posterior              # equally weighted samples, (n_samples, n_params)
 | `nB_workspace` | from the data | Hankel workspace size |
 | `verb` | `true` | print progress |
 | `cornerplot` | `true` | draw the corner plot when a plotting backend is loaded |
+| `seed` | `nothing` | fix for a reproducible run (UltraNest: numpy's generator, restored after, and batches of 512 proposals instead of ones resized on a wall-clock timer) |
 
 # Keywords, `:nautilus`
 
@@ -897,7 +898,6 @@ r.posterior              # equally weighted samples, (n_samples, n_params)
 | `f_live` | `0.01` | fraction of evidence left in the live set at which exploration ends |
 | `n_networks` | `4` | networks in the bounding ensemble; more is more robust and slower |
 | `threaded` | `nthreads() > 1` | evaluate the likelihood across threads |
-| `seed` | `nothing` | fix for a reproducible run |
 
 # Keywords, `:ultranest`
 
@@ -994,13 +994,13 @@ end
 # once per fit. The residuals and the Jacobian have buffers of their own, since the loop
 # evaluates both before it copies either; it copies each into its own storage, so the next call
 # may overwrite them.
-function _lm_residual_fns(fm, data, weights, x0, ndata, extra, extra_jac, jkw)
+function _lm_residual_fns(fm, data, weights, x0, ndata, extra, extra_jac, jkw; ref = nothing)
     nx = [e === nothing ? 0 : length(e(x0)) for e in extra]
     n, np = ndata + sum(nx; init = 0), length(x0)
     rf = Vector{Float64}(undef, n)
     rj = Vector{Float64}(undef, ndata); J = Matrix{Float64}(undef, n, np)
     function model_fn(p)
-        residuals_flat!(view(rf, 1:ndata), fm, p, data; weights)
+        residuals_flat!(view(rf, 1:ndata), fm, p, data; weights, ref)
         k = ndata
         for (e, m) in zip(extra, nx)
             e === nothing && continue
@@ -1009,7 +1009,7 @@ function _lm_residual_fns(fm, data, weights, x0, ndata, extra, extra_jac, jkw)
         return rf
     end
     function jacobian_fn(p)
-        residuals_flat_jac!(rj, view(J, 1:ndata, :), fm, p, data; weights, jkw...)
+        residuals_flat_jac!(rj, view(J, 1:ndata, :), fm, p, data; weights, ref, jkw...)
         k = ndata
         for (e, m) in zip(extra_jac, nx)
             e === nothing && continue
@@ -1056,6 +1056,10 @@ through the complex visibility Jacobian), so no finite-difference overhead.
   residual vector, which is exactly where Levenberg-Marquardt can act on them — and so also
   enter the Jacobian, meaning `covar` and `stderror` account for them. The reported `chi2`
   excludes them, so it stays comparable with what every other fitter reports
+- `measurement` — the measurement model ([`measurement_model`](@ref)): with `visphi =
+  :continuum`, each spectral vector's VISPHI residuals referenced to a polynomial fitted over its
+  continuum channels (a differential phase as PMOIRED's DPHI, with the data's errors; ndof less
+  the coefficients)
 - `rv` — radial velocities ([`read_rv`](@ref)) fitted with the interferometry, against the
   orbit of the model's component on an orbit (`c,orb Ka`, `Kb`, `gamma`, or `M` and `q`). They
   enter the residual vector after the data; `chi2` and `ndof` count them, `chi2_rv` is their part
@@ -1069,6 +1073,7 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     weights      = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     constraints  = [],
     rv           ::Union{Nothing,RVData} = nothing,
+    measurement  ::Union{Nothing,MeasurementModel} = nothing,
     nB_workspace = nothing,
     maxIter      = 200,
     verb         = false,
@@ -1086,7 +1091,7 @@ function fit_model_lsqfit(model_dict   ::Dict{String},
     lb_vec = Float64[get(lb, p, -Inf) for p in list_free_params]
     ub_vec = Float64[get(ub, p,  Inf) for p in list_free_params]
     return _lsqfit_compiled(fm, list_free_params, x0, data, lb_vec, ub_vec; weights, cons,
-                            constraint_idx, rv, rvix, maxIter, verb)
+                            constraint_idx, rv, rvix, maxIter, verb, measurement)
 end
 
 # The Dict form's fit on a compiled model (`fm`, with the constraint expressions
@@ -1095,7 +1100,7 @@ end
 # (its σ are NaN either way).
 function _lsqfit_compiled(fm, list_free_params, x0::Vector{Float64}, data, lb_vec, ub_vec;
                           weights, cons, constraint_idx, rv, rvix, maxIter, verb,
-                          warn_cov::Bool = true)
+                          warn_cov::Bool = true, measurement = nothing)
     nparams = length(list_free_params)
     # ── 2. The residuals and their Jacobian, the data captured in the closures ──
     # The data rows, the radial velocities', then the constraints'. Their count is fixed for a
@@ -1106,8 +1111,9 @@ function _lsqfit_compiled(fm, list_free_params, x0::Vector{Float64}, data, lb_ve
     rv_jfn = rv === nothing ? nothing : p -> rv_jacobian(fm, p, rv, rvix)
     c_fn   = isempty(cons) ? nothing : p -> constraint_residuals(p, cons, fm, constraint_idx)
     c_jfn  = isempty(cons) ? nothing : p -> constraint_jacobian(p, cons, fm, constraint_idx)
+    ref = _references(measurement) ? _ref_context(measurement, fm, data) : nothing
     model_fn, jacobian_fn = _lm_residual_fns(fm, data, weights, x0, ndata,
-                                             (rv_fn, c_fn), (rv_jfn, c_jfn), _jac_cache_kw(data))
+                                             (rv_fn, c_fn), (rv_jfn, c_jfn), _jac_cache_kw(data); ref)
 
     # ── 3. Levenberg-Marquardt ───────────────────────────────────────────────
     fit, lm = _lm_fit(model_fn, jacobian_fn, x0, lb_vec, ub_vec, maxIter)
@@ -1120,7 +1126,10 @@ function _lsqfit_compiled(fm, list_free_params, x0::Vector{Float64}, data, lb_ve
     r_final = view(fit.resid, 1:(ndata + nrv))
     chi2_val = dot(r_final, r_final)
     chi2_rv = nrv == 0 ? 0.0 : sum(abs2, view(fit.resid, (ndata + 1):(ndata + nrv)))
-    ndof = _ndof(data, weights) + nrv
+    # each spectral vector's reference coefficients are fitted: out of the degrees of freedom
+    ncoef = ref === nothing ? 0 :
+            _apply_reference!(copy(fit.resid[1:ndata]), nothing, ref, fm, minx, data, _pad_weights(weights))
+    ndof = _ndof(data, weights) + nrv - ncoef
 
     # Covariance matrix from LsqFit (may fail if Jacobian is singular,
     # e.g. when parameters hit bounds)
@@ -1156,6 +1165,7 @@ function fit_model_lsqfit(model        ::FlatModel,
     constraints  = [],
     rv           ::Union{Nothing,RVData} = nothing,
     rv_component ::AbstractString = "",
+    measurement  ::Union{Nothing,MeasurementModel} = nothing,
     maxIter      = 200,
     verb         = false,
 )
@@ -1174,8 +1184,9 @@ function fit_model_lsqfit(model        ::FlatModel,
     ndata = length(residuals_flat(fm, x0f, data; weights))
     rv_fn  = rv === nothing ? nothing : p -> rv_residuals(fm, p, rv, rvix)
     rv_jfn = rv === nothing ? nothing : p -> rv_jacobian(fm, p, rv, rvix)
+    ref = _references(measurement) ? _ref_context(measurement, fm, data) : nothing
     model_fn, jacobian_fn = _lm_residual_fns(fm, data, weights, x0f, ndata,
-                                             (rv_fn,), (rv_jfn,), _jac_cache_kw(data))
+                                             (rv_fn,), (rv_jfn,), _jac_cache_kw(data); ref)
 
     lb_vec = _bounds_vec(lb, list_free_params, -Inf)
     ub_vec = _bounds_vec(ub, list_free_params,  Inf)
@@ -1187,7 +1198,9 @@ function fit_model_lsqfit(model        ::FlatModel,
     chi2_val = dot(r_final, r_final)
     nrv = rv === nothing ? 0 : length(rv)
     chi2_rv = nrv == 0 ? 0.0 : sum(abs2, view(r_final, (length(r_final) - nrv + 1):length(r_final)))
-    ndof = _ndof(data, weights) + nrv
+    ncoef = ref === nothing ? 0 :
+            _apply_reference!(copy(r_final[1:ndata]), nothing, ref, fm, minx, data, _pad_weights(weights))
+    ndof = _ndof(data, weights) + nrv - ncoef
 
     cov, σ = try
         vcov(fit), stderror(fit)

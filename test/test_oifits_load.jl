@@ -68,4 +68,15 @@ const p7zip_jll = OITOOLS.p7zip_jll
         bad = joinpath(dir, "bad.fits"); write(bad, UInt8['P', 'K', 3, 4, 0, 0, 0, 0])
         @test_throws ArgumentError OITOOLS.load_oifits(bad)
     end
+
+    @testset "redundant uv points: the same in Float32 and Float64" begin
+        # GRAVITY's medium resolution: adjacent channels of a baseline are distinct uv points,
+        # which a Float32 range search once merged
+        d64 = rd(hd)
+        d32 = readoifits(hd; T = Float32, warn = false, verbose = false)[1, 1]
+        # one pair sits at the tolerance (200.1 cycles/rad in Float64, 198.7 in Float32)
+        @test abs(size(d32.uv, 2) - size(d64.uv, 2)) <= 1
+        @test d32.uv[:, d32.indx_v2] ≈ d64.uv[:, d64.indx_v2] rtol = 1e-6
+        @test d32.uv_lam[d32.indx_v2] ≈ d64.v2_lam rtol = 1e-6
+    end
 end

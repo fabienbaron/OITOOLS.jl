@@ -72,7 +72,8 @@ as NaN. `filter_data(…; drop = [:t3amp])` makes the same of a half the file do
 | `split_by_time(data; gap, binwidth, edges)` | One `OIdata` per epoch, the epochs taken from every observable's times |
 | `split_by_instrument(data)` | One `OIdata` per instrument, from the table each point was read from |
 | `split_by_target(file; kwargs...)` | One dataset per target, each read with `targetname` |
-| `fits_set_keywords(file, out; pixsize, east_left, axis3, wavelengths, mjds)` | A FITS image or cube written with the keywords `read_model_image` reads; the file's other cards kept |
+| `fits_set_keywords(file, out; pixsize, east_left, axis3, wavelengths, mjds, refpix)` | A FITS image or cube written with the keywords `read_model_image` reads; the file's reference pixel and other cards kept |
+| `fits_refpix(file)` | Its reference pixel `(CRPIX1, CRPIX2)`, or `nothing` |
 | `fits_keyword_cube(file; east_left, axis3)` | Its array as an `(East, North, wavelength, epoch)` cube |
 
 ```@docs
@@ -84,6 +85,7 @@ split_by_instrument
 split_by_target
 fits_set_keywords
 fits_keyword_cube
+fits_refpix
 ```
 
 ## Writing

@@ -485,9 +485,136 @@ function shell_cube_show(k::Real)
     w, t = ps[k]
     lab = _cube_label(m, w, t)
     c = CUBE_CANVAS[]
-    c === nothing || show_image!(c, m.image[:, :, w, t], m.pixsize;
-                                 title = basename(m.path) * " — " * lab)
+    c === nothing || show_image!(c, _stretched(m.image[:, :, w, t]), m.pixsize;
+                                 label = _stretch_label(), title = basename(m.path) * " — " * lab)
     return lab
+end
+
+# The viewer's stretch: planes shown as max(I, 0)^p, p = 1 the plane as it is.
+const CUBE_POWER = Ref(1.0)
+_stretched(img) = CUBE_POWER[] == 1 ? img : max.(img, 0) .^ CUBE_POWER[]
+_stretch_label() = CUBE_POWER[] == 1 ? "flux / pixel" : "(flux / pixel)^" * _g(CUBE_POWER[])
+
+"""
+    shell_cube_power(p) -> String
+
+The viewer's stretch: planes shown as max(I, 0)^p (p > 0; 1 linear), for the single plane and
+the planes side by side.
+"""
+function shell_cube_power(p::AbstractString)
+    v = tryparse(Float64, strip(p))
+    (v === nothing || !(v > 0)) && return "! the power must be a positive number"
+    CUBE_POWER[] = v
+    return "ok"
+end
+
+# ── channels side by side ─────────────────────────────────────────────────────────────
+
+# The panels, built by `gui()` with the other canvases; what they show (channels, epoch).
+const CUBE_TILES = Ref{Any}(nothing)
+const CUBE_NTILES = 6
+const CUBE_TILES_SHOWN = Ref{Any}(nothing)
+
+"""
+    build_cube_tiles(fig) -> NamedTuple
+
+`CUBE_NTILES` image panels in a row over one shared colour bar, for the cube viewer's channels
+side by side: `figure`, `axis` (the first panel), `axes`, and each panel's `xs`, `ys` and `data`
+observables, the shared `crange`, `label`. Panels not in use are hidden and given no width.
+"""
+function build_cube_tiles(fig)
+    n = CUBE_NTILES
+    xs = [Makie.Observable(Float32[0, 1]) for _ in 1:n]
+    ys = [Makie.Observable(Float32[0, 1]) for _ in 1:n]
+    data = [Makie.Observable(zeros(Float32, 2, 2)) for _ in 1:n]
+    crange = Makie.Observable((0.0f0, 1.0f0))
+    label = Makie.Observable("(flux / pixel)^0.5")       # its glyphs met before the window exists
+    axs = map(1:n) do i
+        # the title seeded with a label's glyphs, as `build_canvas` seeds its colour bar's
+        ax = Makie.Axis(fig[1, i]; aspect = Makie.DataAspect(), title = "λ 2.1661 µm · MJD 0",
+                        xlabel = "α (mas)", ylabel = i == 1 ? "δ (mas)" : "")
+        style_axis!(ax)
+        Makie.heatmap!(ax, xs[i], ys[i], data[i]; colormap = LIVE_COLORMAP, colorrange = crange)
+        ax
+    end
+    Makie.Colorbar(fig[2, 1:n]; colormap = LIVE_COLORMAP, limits = crange, label,
+                   vertical = false, flipaxis = false)
+    for i in 2:n
+        Makie.colsize!(fig.layout, i, Makie.Fixed(0)); axs[i].blockscene.visible[] = false
+    end
+    return (; figure = fig, axis = axs[1], axes = axs, xs, ys, data, crange, label)
+end
+
+# The channels a list names: numbers with a decimal point or exponent are wavelengths in µm (the
+# nearest channel), plain integers channel numbers; empty, four channels evenly spread.
+function _tile_channels(m, spec::AbstractString)
+    nλ = size(m.image, 3)
+    toks = split(spec, r"[,;\s]+"; keepempty = false)
+    isempty(toks) && return unique(round.(Int, range(1, nλ; length = min(4, nλ))))
+    out = Int[]
+    for s in toks
+        v = tryparse(Float64, s)
+        v === nothing && return "! not a channel or a wavelength: $(s)"
+        if occursin(r"[.eE]", s)
+            all(isfinite, m.wavelengths) ||
+                return "! the cube's channels have no wavelengths; give channel numbers"
+            push!(out, argmin(abs.(m.wavelengths .* 1e6 .- v)))
+        else
+            1 <= v <= nλ || return "! channel $(s): the cube has $(nλ)"
+            push!(out, Int(v))
+        end
+    end
+    length(out) > CUBE_NTILES && return "! at most $(CUBE_NTILES) channels side by side"
+    return out
+end
+
+# Draw channels `ws` of epoch `t` on the panels `T`: one colour scale for all, the viewer's
+# stretch, East to the left.
+function _show_tiles!(T, m, ws, t)
+    sc = live_plot_scale()
+    imgs = [_stretched(m.image[:, :, w, t]) for w in ws]
+    for i in 1:CUBE_NTILES
+        ax = T.axes[i]
+        if i > length(ws)
+            Makie.colsize!(T.figure.layout, i, Makie.Fixed(0)); ax.blockscene.visible[] = false
+            continue
+        end
+        Makie.colsize!(T.figure.layout, i, Makie.Auto())
+        ax.blockscene.visible[] = true
+        style_axis!(ax; scale = sc)
+        # few ticks: six panels share the width
+        ax.xticks = Makie.WilkinsonTicks(3); ax.yticks = Makie.WilkinsonTicks(3)
+        img = imgs[i]
+        hx, hy = size(img, 1) * m.pixsize / 2, size(img, 2) * m.pixsize / 2
+        T.xs[i][] = Float32.(range(-hx, hx; length = size(img, 1)))
+        T.ys[i][] = Float32.(range(-hy, hy; length = size(img, 2)))
+        T.data[i][] = Float32.(img)
+        ax.title = _cube_label(m, ws[i], t)
+        Makie.limits!(ax, hx, -hx, -hy, hy)
+    end
+    mx = maximum(maximum, imgs)
+    T.crange[] = (0.0f0, Float32(mx > 0 ? mx : 1))
+    T.label[] = _stretch_label()
+    return nothing
+end
+
+"""
+    shell_cube_tiles(spec, t) -> String
+
+Show the open cube's channels side by side, of epoch `t`: `spec` lists channel numbers or
+wavelengths in µm (a decimal point), at most six; empty, four channels evenly spread. Returns
+the channels' labels, tab-separated.
+"""
+function shell_cube_tiles(spec::AbstractString, t::Real)
+    m = CUBE[]
+    m === nothing && return "! no cube open"
+    ws = _tile_channels(m, String(spec))
+    ws isa String && return ws
+    t = clamp(round(Int, t), 1, size(m.image, 4))
+    T = CUBE_TILES[]
+    T === nothing || _show_tiles!(T, m, ws, t)
+    CUBE_TILES_SHOWN[] = (; ws, t)
+    return join([_cube_label(m, w, t) for w in ws], "\t")
 end
 
 """
@@ -537,8 +664,8 @@ _g(x) = @sprintf("%.10g", x)
 What Set keywords starts from, as `key\tvalue` lines read from the file: `dims` (the array's
 sizes), `pixsize` (mas; blank when the header has no scale), `eastleft` (1 when its WCS stores
 East on the left), `axis3` (`wave` or `time`), `wstart`/`wstep` (µm) and `tstart`/`tstep` (MJD,
-days), blank where the file does not say — axis 3's wavelengths also from a CUNIT3/CRVAL3/CDELT3
-without CTYPE3; then one `card\tNAME\t1\tvalue` (present) or `card\tNAME\t0\t` (missing) line per
+days), `refx`/`refy` (the reference pixel, CRPIX1/2), blank where the file does not say — axis 3's
+wavelengths also from a CUNIT3/CRVAL3/CDELT3 without CTYPE3; then one `card\tNAME\t1\tvalue` (present) or `card\tNAME\t0\t` (missing) line per
 WCS card of each axis (CTYPE, CUNIT, CRVAL, CDELT or a CD entry, CRPIX).
 """
 function shell_fits_keywords(path::AbstractString)
@@ -564,6 +691,7 @@ function shell_fits_keywords(path::AbstractString)
         (_g(v[1] * scale), length(v) > 1 && isfinite(v[2]) ? _g((v[2] - v[1]) * scale) : "")
     ws, wd = first2(wl, 1e6)
     ts, td = first2(mj, 1.0)
+    rp = OITOOLS.fits_refpix(p)
     # the WCS cards of each axis: present (with its value) or missing; a CD matrix entry
     # stands for CDELT on axes 1 and 2
     cards = String[]
@@ -575,22 +703,27 @@ function shell_fits_keywords(path::AbstractString)
     end
     return join(["dims\t" * join(dims, " "), "pixsize\t" * (ps === nothing ? "" : _g(ps)),
                  "eastleft\t" * (eastleft ? "1" : "0"), "axis3\t" * axis3,
-                 "wstart\t" * ws, "wstep\t" * wd, "tstart\t" * ts, "tstep\t" * td, cards...], "\n")
+                 "wstart\t" * ws, "wstep\t" * wd, "tstart\t" * ts, "tstep\t" * td,
+                 "refx\t" * (rp === nothing ? "" : _g(rp[1])), "refy\t" * (rp === nothing ? "" : _g(rp[2])),
+                 cards...], "\n")
 end
 
 """
     shell_fits_apply(path, pixsize, pixunit, eastleft, axis3, wstart, wstep, wunit,
-                     tstart, tstep, tunit) -> String
+                     tstart, tstep, tunit, refx = "", refy = "") -> String
 
 Set keywords: check the values against the file's planes, keep them for Save FITS, and show the
 cube with them (nothing is written). Pixel size in `pixunit` (mas, µas, arcsec, deg, rad);
 wavelengths `wstart + k·wstep` in `wunit` (m, µm, nm, Å); epochs `tstart + k·tstep`, the start an
-MJD and the step in `tunit` (d, h, min, s). Returns the planes' labels, one per line.
+MJD and the step in `tunit` (d, h, min, s); the reference pixel `refx`, `refy` in the file's
+numbering (CRPIX1/2), both blank for the phase centre nx÷2+1. Returns the planes' labels, one per
+line.
 """
 function shell_fits_apply(path::AbstractString, pixsize::AbstractString, pixunit::AbstractString,
                           eastleft::Bool, axis3::AbstractString,
                           wstart::AbstractString, wstep::AbstractString, wunit::AbstractString,
-                          tstart::AbstractString, tstep::AbstractString, tunit::AbstractString)
+                          tstart::AbstractString, tstep::AbstractString, tunit::AbstractString,
+                          refx::AbstractString = "", refy::AbstractString = "")
     sh = _shell()
     p = strip_file_url(String(path))
     num(x) = isempty(strip(x)) ? nothing : tryparse(Float64, strip(x))
@@ -619,9 +752,13 @@ function shell_fits_apply(path::AbstractString, pixsize::AbstractString, pixunit
          nt > 1 && (dt === nothing || dt == 0) ? "! the epoch step must be a non-zero number" :
          [t0 + (k - 1) * something(dt, 0.0) * _STEP_D[tunit] for k in 1:nt]
     mj isa String && return mj
+    rx, ry = num(refx), num(refy)
+    isempty(strip(refx)) && isempty(strip(refy)) || (rx !== nothing && ry !== nothing) ||
+        return "! the reference pixel needs two numbers, or none for the centre"
+    rp = rx === nothing ? nothing : (rx, ry)
     mas = ps * _PIX_MAS[pixunit]
     FITSKW[] = (; path = p, pixsize = mas, east_left = eastleft, axis3 = ax,
-                  wavelengths = wl, mjds = mj)
+                  wavelengths = wl, mjds = mj, refpix = rp, nx = size(cube, 1))
     m = (; image = cube, pixsize = mas, wavelengths = wl, mjds = mj, path = p)
     CUBE[] = m
     console!(sh, "keywords set for $(basename(p)): $(_g(mas)) mas" *
@@ -654,16 +791,19 @@ function shell_fits_save(out::AbstractString)
     args = "pixsize = $(_g(k.pixsize))" * (k.east_left ? ", east_left = true" : "") *
            (k.axis3 === :time ? ", axis3 = :time" : "") *
            (isempty(k.wavelengths) ? "" : ", wavelengths = " * _range_literal(k.wavelengths)) *
-           (isempty(k.mjds) ? "" : ", mjds = " * _range_literal(k.mjds))
+           (isempty(k.mjds) ? "" : ", mjds = " * _range_literal(k.mjds)) *
+           ", refpix = " * (k.refpix === nothing ? "nothing" : "($(_g(k.refpix[1])), $(_g(k.refpix[2])))")
     console!(sh, "fits_set_keywords($(_literal(k.path)), $(_literal(o)); $(args))"; kind = :cmd)
     try
         OITOOLS.fits_set_keywords(k.path, o; pixsize = k.pixsize, east_left = k.east_left,
-                                  axis3 = k.axis3, wavelengths = k.wavelengths, mjds = k.mjds)
+                                  axis3 = k.axis3, wavelengths = k.wavelengths, mjds = k.mjds,
+                                  refpix = k.refpix)
     catch err
         return console!(sh, "! could not save $(basename(o)): " * _cause(err); kind = :err)
     end
     # an overwritten file is now East-first in the convention's axis order
-    o == k.path && (FITSKW[] = merge(k, (; east_left = false, axis3 = :wave)))
+    o == k.path && (FITSKW[] = merge(k, (; east_left = false, axis3 = :wave,
+        refpix = k.refpix === nothing || !k.east_left ? k.refpix : (k.nx + 1 - k.refpix[1], k.refpix[2]))))
     return console!(sh, "wrote " * basename(o))
 end
 

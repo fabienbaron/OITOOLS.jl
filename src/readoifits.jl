@@ -32,11 +32,16 @@ using NearestNeighbors
 # Low-level helpers
 # ---------------------------------------------------------------------------
 
+# Which uv points merge: those within `uvtol` (cycles/rad) of one another. The tree is built in
+# Float64 whatever the data's type: NearestNeighbors' Float32 range search, at the 1e7–1e8
+# cycles/rad of interferometric uv, returns points several times `uvtol` away (adjacent
+# channels of a high-resolution file).
 function rm_redundance_kdtree(uv, uvtol)
     indx_redundance = collect(1:size(uv,2))
-    kdtree = KDTree(uv)
+    uv64 = Float64.(uv)
+    kdtree = KDTree(uv64)
     for value in indx_redundance
-        redundance = inrange(kdtree, uv[:,value], uvtol)
+        redundance = inrange(kdtree, uv64[:,value], uvtol)
         @inbounds indx_redundance[redundance] .= minimum(redundance)
     end
     tokeep = unique(indx_redundance)
@@ -2292,7 +2297,7 @@ end
 
 """
     writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[], bandwidths = Float64[],
-              mjds = Float64[], header = Pair{String,Any}[])
+              mjds = Float64[], header = Pair{String,Any}[], refpix = nothing)
 
 Write an image or a cube to a FITS file, in the convention shared with ROTIR's
 `write_sky_cube` so that what is written here loads back as a model component
@@ -2310,7 +2315,7 @@ written at all. With it:
 | `CTYPE1`, `CTYPE2` | `'RA---SIN'`, `'DEC--SIN'` |
 | `CUNIT1`, `CUNIT2` | `'deg'` — the FITS default for a celestial axis, written anyway |
 | `CDELT1`, `CDELT2` | `+pixsize/3.6e6`: POSITIVE, because index increases East and North |
-| `CRPIX1`, `CRPIX2` | `nx÷2+1`, the NFFT's phase centre; `CRVAL1/2 = 0`, offsets from it |
+| `CRPIX1`, `CRPIX2` | `nx÷2+1`, the NFFT's phase centre, or `refpix = (x, y)`; `CRVAL1/2 = 0`, offsets from it |
 | `PIXSIZE` | the pixel size in mas, as a convenience |
 
 `wavelengths` (METRES, one per plane of axis 3) make axis 3 `WAVE`; `bandwidths` (metres)
@@ -2330,7 +2335,8 @@ convention — radians, a negative `CDELT1`, `CRPIX = nx/2` — still read: the 
 and `read_model_image` recognises the old pair and warns.
 """
 function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
-                   bandwidths = Float64[], mjds = Float64[], header = Pair{String,Any}[])
+                   bandwidths = Float64[], mjds = Float64[], header = Pair{String,Any}[],
+                   refpix = nothing)
     extra = Pair{String,Any}[c for c in header]
     AstroFITS.FitsFile(String(fitsfile), "w!") do f
         if pixsize == -1
@@ -2338,17 +2344,18 @@ function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
             return nothing
         end
         nx, ny = size(data, 1), size(data, 2)
+        rx, ry = refpix === nothing ? (nx ÷ 2 + 1, ny ÷ 2 + 1) : refpix
         deg = Float64(pixsize) / 3.6e6
         header = Pair{String,Any}[
             "CTYPE1" => ("RA---SIN", "axis 1 increases EAST"),
             "CUNIT1" => "deg",
             "CDELT1" => (deg, "positive: RA increases with pixel index"),
-            "CRPIX1" => (Float64(nx ÷ 2 + 1), "phase centre: NFFT zero offset, pixel nx/2+1"),
+            "CRPIX1" => (Float64(rx), "reference pixel; the phase centre is pixel nx/2+1"),
             "CRVAL1" => (0.0, "offset from the phase centre"),
             "CTYPE2" => ("DEC--SIN", "axis 2 increases NORTH"),
             "CUNIT2" => "deg",
             "CDELT2" => deg,
-            "CRPIX2" => (Float64(ny ÷ 2 + 1), "phase centre"),
+            "CRPIX2" => (Float64(ry), "reference pixel"),
             "CRVAL2" => 0.0,
             "PIXSIZE" => (Float64(pixsize), "pixel size in mas")]
         header = vcat(extra, header)

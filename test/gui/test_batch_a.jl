@@ -16,6 +16,8 @@
     prevcube = G.CUBE_CANVAS[]
     cfig = Makie.Figure(); cax = Makie.Axis(cfig[1, 1])
     G.CUBE_CANVAS[] = G.build_canvas(cfig, cax)
+    prevtiles = G.CUBE_TILES[]
+    G.CUBE_TILES[] = G.build_cube_tiles(Makie.Figure())
     dir = mktempdir()
     replay(m) = (mod = Module(m); Core.eval(mod, :(using OITOOLS));
                  Core.eval(mod, Meta.parseall(export_script(sess))); mod)
@@ -97,7 +99,7 @@
             OITOOLS.AstroFITS.writefits!(bare, ["OBJECT" => "disc"], cube)
             kv = Dict(split(l, "\t"; limit = 2) for l in split(G.shell_fits_keywords(bare), "\n"))
             @test kv["dims"] == "16 16 3 2" && kv["pixsize"] == "" && kv["eastleft"] == "0"
-            @test kv["axis3"] == "wave" && kv["wstart"] == ""
+            @test kv["axis3"] == "wave" && kv["wstart"] == "" && kv["refx"] == "" && kv["refy"] == ""
             cards = [split(l, "\t") for l in split(G.shell_fits_keywords(bare), "\n") if startswith(l, "card")]
             @test length(cards) == 20 && all(c -> c[3] == "0", cards)     # 4 axes × 5 cards, none there
             # no CTYPE3, but CUNIT3 / CRVAL3 / CDELT3 in microns: the wavelengths are prefilled
@@ -127,6 +129,24 @@
             @test G.shell_cube_show_at(2, 2) == "λ 1.6 µm · MJD 58002.5000"
             @test G.CUBE_CANVAS[].imagedata[] == Float32.(cube[:, :, 2, 2])
             @test G.shell_cube_show_at(9, 9) == "λ 1.7 µm · MJD 58002.5000"   # clamped
+            # side by side: four channels spread by default (three here), a list, wavelengths
+            @test length(split(G.shell_cube_tiles("", 1), "\t")) == 3
+            @test split(G.shell_cube_tiles("1 3", 2), "\t") == ["λ 1.5 µm · MJD 58002.5000", "λ 1.7 µm · MJD 58002.5000"]
+            @test G.CUBE_TILES[].data[2][] == Float32.(cube[:, :, 3, 2])
+            @test G.CUBE_TILES[].axes[3].blockscene.visible[] == false
+            @test G.shell_cube_tiles("1.61", 1) == "λ 1.6 µm · MJD 58000.5000"
+            @test startswith(G.shell_cube_tiles("9", 1), "! channel 9")
+            @test startswith(G.shell_cube_tiles("1 2 3 1 2 3 1", 1), "! at most 6")
+            # the stretch, for both views
+            @test startswith(G.shell_cube_power("0"), "!")
+            @test G.shell_cube_power("0.5") == "ok"
+            G.shell_cube_show_at(2, 1)
+            @test G.CUBE_CANVAS[].imagedata[] ≈ Float32.(cube[:, :, 2, 1] .^ 0.5)
+            G.shell_cube_tiles("2", 1)
+            @test G.CUBE_TILES[].data[1][] ≈ Float32.(cube[:, :, 2, 1] .^ 0.5)
+            @test G.CUBE_TILES[].label[] == "(flux / pixel)^0.5"
+            G.shell_cube_power("1")
+            @test !isnothing(G._snapshot_figure(G._shell(), "cubetiles", (800, 400), false))
             out = joinpath(dir, "keys.fits")
             @test G.shell_fits_save(out) == "wrote keys.fits"
             m = read_model_image(out)
@@ -143,6 +163,14 @@
             kv = Dict(split(l, "\t"; limit = 2) for l in split(G.shell_fits_keywords(out), "\n"))
             @test parse(Float64, kv["pixsize"]) ≈ 0.25 && parse(Float64, kv["wstart"]) ≈ 1.5
             @test parse(Float64, kv["tstep"]) ≈ 2.0
+            @test kv["refx"] == "9" && kv["refy"] == "9"                 # the centre, written
+            # a reference pixel: refused half-given; kept through Save; the logged line too
+            @test startswith(G.shell_fits_apply(bare, "0.25", "mas", false, "wave", "1.5", "0.1", "µm",
+                                                "58000.5", "2", "d", "8", ""), "! the reference pixel")
+            G.shell_fits_apply(bare, "0.25", "mas", false, "wave", "1.5", "0.1", "µm", "58000.5", "2", "d", "8", "9")
+            @test G.shell_fits_save(out) == "wrote keys.fits"
+            @test all(read_model_image(out).offset .≈ (0.25, 0.0))
+            @test occursin("refpix = (8, 9)", last(filter(l -> occursin("fits_set_keywords(", l), sh.console)))
         end
 
         @testset "Modeling › SPARCO fluxes" begin
@@ -321,5 +349,6 @@
     finally
         G.SHELL[] = prev
         G.CUBE_CANVAS[] = prevcube
+        G.CUBE_TILES[] = prevtiles
     end
 end
