@@ -27,6 +27,15 @@ simulation.
 > **Note:** Despite having the same name as [JMMC's oitools](https://github.com/JMMC-OpenDev/oitools),
 > the two packages are completely unrelated and were developed independently.
 
+## OK, I'm pressed for time, what do I do?
+
+If you just want to use OITOOLS or discover its main capabilities, download the single-file GUI for Linux:
+
+[Download the Linux AppImage GUI](https://www.astro.gsu.edu/~baron/OITOOLS-x86_64.AppImage)
+
+Just make it executable  (`chmod +x OITOOLS-x86_64.AppImage`) and it's ready to run.
+Of course using the library itself is more flexible, but this way you can get an idea of what is even possible to achieve.
+
 ## Installation
 
 ```julia
