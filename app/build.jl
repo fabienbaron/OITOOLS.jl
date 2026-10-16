@@ -113,6 +113,12 @@ end
 @info "Building the application" out = OUT source = APPSRC
 @info "This takes tens of minutes and several GB of scratch space."
 
+# The application's Manifest is not in git, so each machine keeps its own, and a dependency added
+# to app/Project.toml since it was last resolved makes `create_app`'s instantiate refuse it
+# ("… is a direct dependency, but does not appear in the manifest"). Resolved here first: it
+# adds what is missing and leaves the versions already recorded as they are.
+Pkg.activate(() -> Pkg.resolve(), APPSRC)
+
 t = @elapsed create_app(APPSRC, OUT;
                         force = true,
                         precompile_execution_file = TRACE,
