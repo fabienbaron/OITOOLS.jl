@@ -71,12 +71,14 @@ using GLMakie, QMLMakie, QML   # these three activate OITOOLSGUIExt, which defin
 #     julia --project=bin -e 'using PythonCall; include("bin/oitoolsgui.jl")'
 using Nautilus
 
-# The two optional ENGINES, on the same argument as Nautilus: an extension activates only when
-# its trigger package is LOADED, not when it is merely installed, and the Image tab greys
-# "Tempering" and "Variational inference" on exactly that check. Installed-but-invisible is the
-# worst of the three states, so they are loaded when present and skipped in silence when not —
-# this environment pins both, but the script has to run in environments that do not.
-for opt in (:Pigeons, :VarInf)
+# The optional packages, on the same argument as Nautilus: an extension activates only when its
+# trigger package is LOADED, not when it is merely installed, and the window greys an entry on
+# exactly that check — Pigeons for "Tempering" (Image) and "Parallel tempering" (Modeling),
+# VarInf for "Variational inference", PairPlots for the Modeling tab's "Corner" view.
+# Installed-but-invisible is the worst of the three states, so they are loaded when present and
+# skipped in silence when not — this environment pins them, but the script has to run in
+# environments that do not.
+for opt in (:Pigeons, :VarInf, :PairPlots)
     try
         @eval using $opt
     catch err

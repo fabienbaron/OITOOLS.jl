@@ -1011,7 +1011,8 @@ _collapse_cr(s::AbstractString) =
     shell_fit_model(free_lines, constraint_lines, prior_lines,
                     v2, t3amp, t3phi, visamp, visphi, flux, diffvis, optimiser, maxeval,
                     gridp1, gridp2, gridn, gridn2,
-                    uncertainty, nboot, bootmode, granularity, seed, threaded) -> String
+                    uncertainty, nboot, bootmode, granularity, seed, threaded, fit_rv,
+                    sampler_opts) -> String
 
 Fit the model the panel is editing (the session's live model) to the current dataset. Returns
 a one-line summary.
@@ -1028,7 +1029,13 @@ the console rather than left to be discovered.
 | `"none"` | none |
 | `"jacobian"` | Levenberg-Marquardt's `stderror` (none from the other optimisers) |
 | `"bootstrap"` | [`bootstrap_fit`](@ref) after the fit, started from its optimum, with `nboot`, `bootmode`, `granularity`, `seed` and `threaded`; the inner fitter is LM when the optimiser is, NLopt otherwise |
-| `"posterior"` | the standard deviation of the nested-sampling posterior |
+| `"posterior"` | the standard deviation of the posterior (nested sampling, the ensemble sampler, Pigeons) |
+
+The two samplers beside nested sampling: `"ensemble"` ([`fit_model_ensemble`](@ref)) and
+`"pigeons"` ([`fit_model_pigeons`](@ref), when Pigeons is loaded). `sampler_opts` gives their
+settings as `key\tvalue` lines: `sweeps` (the ensemble), `rounds`, `chains`, `explorer`
+(`slice` or `mala`) and `reference` (`fixed`, `variational`, or `stabilised`: a variational leg
+and a fixed one, as many chains each), Pigeons'; `seed` is the panel's.
 
 Bootstrap replicates are fitted without constraints or priors, so a bootstrap is refused when
 the panel has either, as it is after a grid search or nested sampling.
@@ -1043,7 +1050,8 @@ function shell_fit_model(free_lines::AbstractString,
                          uncertainty::AbstractString = "jacobian", nboot::Integer = 200,
                          bootmode::AbstractString = "replacement",
                          granularity::AbstractString = "config", seed::Integer = 1,
-                         threaded::Bool = true, fit_rv::Bool = false)
+                         threaded::Bool = true, fit_rv::Bool = false,
+                         sampler_opts::AbstractString = "")
     sh = _shell()
     e = current_dataset(sh)
     e === nothing && return "! no dataset loaded"
@@ -1065,10 +1073,14 @@ function shell_fit_model(free_lines::AbstractString,
 
     data = e.data[1, 1]
     opt  = String(optimiser)
+    so = _parse_options(sampler_opts)
+    samplers = ("nested", "ensemble", "pigeons")
+    opt == "pigeons" && Base.get_extension(OITOOLS, :OITOOLSPigeonsExt) === nothing &&
+        return "! parallel tempering needs Pigeons"
     rv = fit_rv ? RVSET[] : nothing
     if fit_rv
         rv === nothing && return "! no radial-velocity table open"
-        opt in ("grid", "nested") &&
+        (opt == "grid" || opt in samplers) &&
             return "! radial velocities are fitted with Levenberg-Marquardt or NLopt"
         isempty(_orbit_name(_model(sh))) &&
             return "! radial velocities need a component on an orbit (Geometry › orbit)"
@@ -1082,7 +1094,7 @@ function shell_fit_model(free_lines::AbstractString,
     bmode, bgran = Symbol(bootmode), Symbol(granularity)
     bfitter = opt == "lsqfit" ? :lsqfit : :nlopt
     if unc == "bootstrap"
-        opt in ("grid", "nested") &&
+        (opt == "grid" || opt in samplers) &&
             return "! bootstrap refits with Levenberg-Marquardt or NLopt; choose one of those"
         (isempty(cons) && isempty(priors)) ||
             return "! bootstrap replicates are fitted without constraints or priors; remove them or choose another uncertainty"
@@ -1111,6 +1123,17 @@ function shell_fit_model(free_lines::AbstractString,
         n2 = gridn2 > 1 ? Int(gridn2) : Int(gridn)
         console!(sh, "> chi2_map(model, $(free), data, $(repr(gp1)), $(repr(gp2)); " *
                      "n1 = $(Int(gridn)), n2 = $(n2), weights = $(weights))")
+    elseif opt == "ensemble"
+        console!(sh, "> fit_model_ensemble(model, $(free), data; weights = $(weights), " *
+                     "nsweep = $(_optint(so, "sweeps", 2000)), seed = $(Int(seed)))")
+    elseif opt == "pigeons"
+        console!(sh, "> fit_model_pigeons(model, $(free), data; weights = $(weights), " *
+                     "n_rounds = $(_optint(so, "rounds", 10)), n_chains = $(_optint(so, "chains", 10)), " *
+                     "explorer = :$(_optstr(so, "explorer", "slice"))" *
+                     (_optstr(so, "reference", "stabilised") == "variational" ? ", variational = true" :
+                      _optstr(so, "reference", "stabilised") == "stabilised" ?
+                      ", n_chains_variational = $(_optint(so, "chains", 10))" : "") *
+                     ", seed = $(Int(seed)))")
     else
         console!(sh, "> fit_model(model, $(free), data; " *
                      "weights = $(weights), method = :$(opt)" * (rv === nothing ? "" : ", rv") * ")")
@@ -1155,6 +1178,19 @@ function shell_fit_model(free_lines::AbstractString,
             # so a logz in the fit table can be attributed to the sampler that produced it.
             fit_model_nested(md, free, data; lb, ub, weights, constraints = cons,
                              verb = true, cornerplot = false)
+        elseif opt == "ensemble"
+            fit_model_ensemble(md, free, data; lb, ub, weights, constraints = cons,
+                               nsweep = _optint(so, "sweeps", 2000), seed = Int(seed),
+                               verb = true)
+        elseif opt == "pigeons"
+            fit_model_pigeons(md, free, data; lb, ub, weights, constraints = cons,
+                              n_rounds = _optint(so, "rounds", 10),
+                              n_chains = _optint(so, "chains", 10),
+                              explorer = Symbol(_optstr(so, "explorer", "slice")),
+                              variational = _optstr(so, "reference", "stabilised") == "variational",
+                              n_chains_variational = _optstr(so, "reference", "stabilised") == "stabilised" ?
+                                                     _optint(so, "chains", 10) : 0,
+                              seed = Int(seed), multithreaded = threaded, verb = true)
         else
             fit_model(md, free, data; lb, ub, weights, priors, constraints = cons, rv,
                       method = optsym, maxeval = Int(maxeval), verb = true)
@@ -1997,6 +2033,8 @@ function _fit_work(r)
         # LsqFit reports no count of its own; the trace is stored so that its length is one.
         tr = try length(r.lsqfit_result.trace) catch; 0 end
         return (tr, 0)
+    elseif r isa SamplerResult              # the ensemble counts its evaluations; Pigeons does not
+        return (0, get(r.diagnostics, :n_eval, 0))
     end
     return (0, 0)
 end

@@ -16,6 +16,8 @@
 | `fit_model_nested(model, data; lb, ub)` | Fit by nested sampling — posterior **and** log-evidence; needs finite bounds |
 | `fit_model_ultranest(model, data; lb, ub)` | `fit_model_nested` pinned to the UltraNest backend |
 | `nested_backend()`, `set_nested_backend!(b)` | Which nested sampler is in force: `:nautilus` or `:ultranest` |
+| `fit_model_ensemble(model, free, data; lb, ub)` | Posterior samples by Ensemble Slice Sampling — gradient-free, R̂ and τ reported |
+| `fit_model_pigeons(model, free, data; lb, ub)` | Posterior samples **and** log-evidence by parallel tempering, for a multimodal posterior; needs `using Pigeons` |
 
 Which package each fitter needs is tabulated under
 [What each optimiser needs](@ref) — `fit_model`, `fit_model_lsqfit`, `chi2_map` and
@@ -236,6 +238,24 @@ res = fit_model(m.model, m.free, data; m.lb, m.ub, m.constraints, m.priors)
 `free` is a top-level key rather than a member of `[model]` so that `[model]` mirrors the model
 dict exactly — a model may hold a bare global key, and one named `free` would otherwise be
 eaten by the free-parameter list.
+
+## Posterior samplers
+
+Beside nested sampling, two samplers return a posterior for a model's free parameters, both
+with the bounds as a uniform prior and −(χ² + constraint penalty)/2 as the log-likelihood:
+Ensemble Slice Sampling (the `zeus` algorithm; gradient-free, about two walkers per parameter)
+and non-reversible parallel tempering through Pigeons.jl (the one that moves between the basins
+of a multimodal posterior). Both return a [`SamplerResult`](@ref), whose `posterior` the
+Modeling tab's corner view and `plot_corner_makie` draw as they draw a nested sampler's.
+
+```@docs
+fit_model_ensemble
+fit_model_pigeons
+SamplerResult
+ensemble_slice
+OITOOLS.rhat
+OITOOLS.iat
+```
 
 ## Uncertainty estimation by resampling
 

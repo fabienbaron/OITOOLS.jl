@@ -22,6 +22,12 @@ PythonPlot.matplotlib          # force the import NOW, while conda's harfbuzz ca
 # GLMakie, QMLMakie and QML are what activate OITOOLSGUIExt, where the whole GUI lives.
 using OITOOLS, GLMakie, QMLMakie, QML, Test, Dates, TOML
 using PairPlots                # the Modeling tab's Corner view (OITOOLSPairPlotsExt)
+using Statistics
+# Pigeons, for parallel tempering in the Modeling tab (OITOOLSPigeonsExt), when installed
+try
+    @eval using Pigeons
+catch
+end
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
 GUI === nothing && error("OITOOLSGUIExt did not load; the GUI tests cannot run")
 using .GUI
@@ -1784,6 +1790,29 @@ end
             out = joinpath(mktempdir(), "corner")
             @test G.shell_save_corner(out) == "" && filesize(out * ".png") == filesize(p2)
             @test occursin("±", split(G.shell_fit_rows(), '\n')[1])
+
+            # The two samplers beside nested sampling: σ from the posterior, and its corner plot
+            sfit(opt, sopts) = G.shell_fit_model(free, "", "", true, false, true, false, false, false,
+                                                 false, opt, 200, "", "", 60, 0, "posterior", 12,
+                                                 "replacement", "config", 7, false, false, sopts)
+            @test sfit("ensemble", "sweeps\t300") == "fitting…" && startswith(wait_fit(), "done\tchi2r")
+            f = last(sh.fits)
+            @test f.result isa SamplerResult && f.result.sampler === :ensemble && f.optimiser == "ensemble"
+            @test f.sigma ≈ vec(std(f.result.posterior; dims = 1))
+            @test occursin("fit_model_ensemble(", join(sh.console, "\n"))
+            pe = G.shell_corner_plot(600, 600)
+            @test isfile(pe) && filesize(pe) > 10_000
+            if Base.get_extension(OITOOLS, :OITOOLSPigeonsExt) !== nothing
+                @test sfit("pigeons", "rounds\t6\nchains\t6\nexplorer\tslice") == "fitting…" &&
+                      startswith(wait_fit(), "done\tchi2r")
+                f = last(sh.fits)
+                @test f.result isa SamplerResult && f.result.sampler === :pigeons
+                @test f.sigma ≈ vec(std(f.result.posterior; dims = 1))
+                @test occursin("fit_model_pigeons(", join(sh.console, "\n"))
+                pp = G.shell_corner_plot(600, 600)
+                @test isfile(pp) && filesize(pp) > 10_000
+            end
+            @test startswith(fit("bootstrap"; opt = "ensemble"), "! bootstrap refits")
 
             @test startswith(fit("bootstrap"; opt = "grid"), "! bootstrap refits")
             @test startswith(fit("bootstrap"; cons = "star,ud\t>\t0.1"), "! bootstrap replicates")

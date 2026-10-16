@@ -24,13 +24,18 @@ configure_qt_platform!(; match_x11 = !prefer_native_wayland!().applied)
 
 using GLMakie, QMLMakie, QML
 using Nautilus
-# PairPlots is a dependency of `bin/` but not of `app/`: it draws corner plots from the REPL
-# and nothing in the GUI reaches it. Optional, so that one trace serves both builds -- it is
-# loaded here rather than exercised, since `create_sysimage` names it separately.
+# PairPlots draws the Modeling tab's corner plot; `bin/` and `app/` both have it. Loaded in a
+# `try`, so that the trace also runs in an environment without it.
 try
     @eval using PairPlots
 catch err
     @debug "PairPlots is not in this environment; not traced" err
+end
+# Pigeons, for the Modeling tab's parallel tempering (and the Image tab's), when present.
+try
+    @eval using Pigeons
+catch err
+    @debug "Pigeons is not in this environment; not traced" err
 end
 
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
@@ -132,16 +137,29 @@ end
 # a property of rejection sampling at tight settings, not of the batching: stock
 # `Proposals.Rejection` throws the same way. A trace is not the place to run a sampler at its
 # limit.
-# Two sections, not one, because they have different requirements. The sampler is present in
-# every build that traces this file; the corner plot needs PairPlots, which `bin/` has and the
-# application deliberately does not. Joined, a missing PairPlots cost the SAMPLER its
-# specialisations too — the whole section was skipped on a `MethodError` at the last line.
+# Two sections, not one, because they have different requirements: the corner plot needs
+# PairPlots, the sampler does not. Joined, a missing PairPlots would cost the SAMPLER its
+# specialisations too — the whole section skipped on a `MethodError` at the last line.
 r_nested = nothing
 traced("nested sampling") do
     global r_nested = fit_model_nested(md, free, data; backend = :nautilus,
                                        lb = Dict("s,ud" => 5.0), ub = Dict("s,ud" => 9.0),
                                        n_live = 200, seed = 1234,
                                        verb = false, cornerplot = false)
+end
+
+# The two posterior samplers beside nested sampling: a few sweeps, a few rounds — enough to
+# compile them, which is all a trace is for.
+traced("ensemble slice sampling") do
+    fit_model_ensemble(md, free, data; lb = Dict("s,ud" => 5.0), ub = Dict("s,ud" => 9.0),
+                       nsweep = 100, seed = 1, verb = false)
+end
+if Base.get_extension(OITOOLS, :OITOOLSPigeonsExt) !== nothing
+    traced("parallel tempering") do
+        fit_model_pigeons(md, free, data; lb = Dict("s,ud" => 5.0), ub = Dict("s,ud" => 9.0),
+                          n_rounds = 4, n_chains = 4, n_chains_variational = 4, seed = 1,
+                          multithreaded = false, verb = false)
+    end
 end
 
 # `plot_corner_makie` is declared in the core and given methods by OITOOLSPairPlotsExt, so

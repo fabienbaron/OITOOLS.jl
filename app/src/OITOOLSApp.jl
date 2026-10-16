@@ -31,6 +31,7 @@ using GLMakie, QMLMakie, QML
 using Nautilus                       # "Nested sampling" in the Model panel
 using Pigeons                        # "Tempering" in the Image panel
 using VarInf                         # "Variational inference" in the Image panel
+using PairPlots                      # the corner plot in the Model panel
 
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
 

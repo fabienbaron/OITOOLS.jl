@@ -49,6 +49,7 @@ include("fit_model.jl")          # fit_model (NLopt), fit_model_nested, display_
 include("chi2_map.jl")           # grid search over two free parameters, and its chi2 surface
 include("bootstrap.jl")          # block bootstrap + parametric Monte Carlo
 include("multistart.jl")         # many fits from grid / random starts, and their distinct minima (PMOIRED's gridFit)
+include("fit_model_samplers.jl") # posterior samplers: ensemble slice sampling; Pigeons (extension)
 include("companion_search.jl")    # grid search for a companion around any primary, and its significance
 
 
@@ -225,6 +226,7 @@ export companion_search, companion_grid, CompanionSearch, companion_flux_map, de
 export FlatModel, dict_to_model, parse_model, eval_model, model_flux, eval_model_grad, eval_model_grad_ad,
        eval_model_jac, eval_model_jac!, ModelJacWorkspace, ModelJacCache, eval_model_sub, smear_samples, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
 export fit_model, fit_model_lsqfit, fit_model_nested, fit_model_ultranest
+export fit_model_ensemble, fit_model_pigeons, SamplerResult, ensemble_slice
 export RVData, read_rv, orbit_x, orbit_y, orbit_rv, orbit_a, orbit_semiamplitudes, kepler_E
 export nested_backend, set_nested_backend!
 export ModelConstraint, parse_constraints, check_constraints, DEFAULT_CONSTRAINT_TOL

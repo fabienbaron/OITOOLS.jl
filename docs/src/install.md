@@ -60,6 +60,8 @@ entry point — an error listing what to load.
 | Bootstrap resampling | `bootstrap_fit` | `using OITOOLS` |
 | Nested sampling — pure Julia | `fit_model_nested` | `using Nautilus` |
 | Nested sampling — UltraNest | `fit_model_nested(...; backend = :ultranest)`, or `fit_model_ultranest` | `using PythonCall`, plus the Python `ultranest` package CondaPkg installs |
+| Ensemble slice sampling (posterior) | `fit_model_ensemble` | `using OITOOLS` |
+| Parallel tempering (posterior, evidence) | `fit_model_pigeons` | `using Pigeons` |
 
 `fit_model` takes any NLopt method symbol — there is no whitelist — and `use_grad` follows the
 `LD_` prefix. `bootstrap_fit` wraps an inner fitter (`:lsqfit` or `:nlopt`), so it needs nothing

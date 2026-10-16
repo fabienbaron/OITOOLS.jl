@@ -1,7 +1,8 @@
 """
     OITOOLSPigeonsExt
 
-Parallel tempering for SQUEEZE reconstructions, on Pigeons.jl.
+Parallel tempering on Pigeons.jl: for SQUEEZE reconstructions, and for model fitting
+(`fit_model_pigeons`, in src/fit_model_pigeons.jl).
 Install at ext/OITOOLSPigeonsExt.jl. Loaded automatically by `using OITOOLS, Pigeons`.
 
 Two facts about Pigeons shape the design:
@@ -386,5 +387,13 @@ function OITOOLS.reconstruct_squeeze_tempered(x_start, data::AbstractArray{<:OId
         "reconstruct_squeeze_tempered: polychromatic reconstruction is not implemented"))
     return OITOOLS.reconstruct_squeeze_tempered(x_start, first(data), ft; kwargs...)
 end
+
+# ── Model fitting ────────────────────────────────────────────────────────────
+using LinearAlgebra, ADTypes
+using OITOOLS: OIdata, _sampler_setup, _sampler_loglike, _sampler_loglike_grad,
+               _box_transform, _sampler_result
+import OITOOLS: _fit_model_pigeons
+
+include(joinpath(pkgdir(OITOOLS), "src", "fit_model_pigeons.jl"))
 
 end # module

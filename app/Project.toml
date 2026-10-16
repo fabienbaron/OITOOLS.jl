@@ -23,6 +23,7 @@ GLFW_jll = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 Nautilus = "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73"
 OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
+PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 Pigeons = "0eb8d820-af6a-4919-95ae-11206f830c31"
 QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
 QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
@@ -44,4 +45,5 @@ OITOOLS = {path = ".."}
 VarInf = {url = "https://github.com/fabienbaron/VarInf.jl.git"}
 
 [compat]
+PairPlots = "2, 3"
 julia = "1.13"

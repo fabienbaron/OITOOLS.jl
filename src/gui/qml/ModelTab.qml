@@ -459,6 +459,19 @@ Item {
     // loaded, which is what the entry is gated on.
     property string nestedBackend: ""
     property string nestedLabel: ""
+    // Pigeons loaded (set from `shell_optional_engines`), for parallel tempering; and the two
+    // samplers' settings
+    property bool   pigeonsAvailable: false
+    property int    samplerSweeps: 2000
+    property int    pigeonsRounds: 10
+    property int    pigeonsChains: 10
+    property string pigeonsExplorer: "slice"
+    property string pigeonsReference: "stabilised"   // fixed, variational or stabilised
+    function isSampler(k) { return k === "nested" || k === "ensemble" || k === "pigeons" }
+    function samplerOptions() {
+        return ["sweeps\t" + samplerSweeps, "rounds\t" + pigeonsRounds, "chains\t" + pigeonsChains,
+                "explorer\t" + pigeonsExplorer, "reference\t" + pigeonsReference].join("\n")
+    }
 
     Component.onCompleted: {
         var nb = Julia.shell_nested_backend().split("\t")
@@ -748,7 +761,7 @@ Item {
                       gridP1.currentText, gridP2.currentText, gridN.value, gridN2.value,
                       root.uncertainty, root.nboot, root.bootMode, root.bootGranularity,
                       root.bootSeed, root.bootThreaded, root.fitRV && root.rvSummary.length > 0 &&
-                      root.orbitComponent.length > 0)
+                      root.orbitComponent.length > 0, root.samplerOptions())
             root.fitOutput = ""
             if (root.fitText.length > 0 && root.fitText.charAt(0) === "!") {
                 root.running = false
@@ -3132,7 +3145,7 @@ Item {
                                         objectName: "fitEachButton"
                                         text: "Fit each…"
                                         enabled: !root.running && root.canRun &&
-                                                 root.optimiser !== "grid" && root.optimiser !== "nested"
+                                                 root.optimiser !== "grid" && !root.isSampler(root.optimiser)
                                         onClicked: eachDialog.openWith(Julia.shell_dataset_names())
                                         ToolTip.visible: hovered
                                         ToolTip.text: enabled ? "The same fit on several datasets"
@@ -3170,8 +3183,8 @@ Item {
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
                                     Label {
-                                        visible: root.uncertainty === "posterior" && root.optimiser !== "nested"
-                                        text: "a posterior needs nested sampling"
+                                        visible: root.uncertainty === "posterior" && !root.isSampler(root.optimiser)
+                                        text: "a posterior needs a sampler"
                                         color: root.cWarn
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
@@ -3184,6 +3197,70 @@ Item {
                                         color: root.cBad
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
+                                }
+
+                                // The ensemble sampler's and Pigeons' settings, shown when one is
+                                // the optimiser.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: root.optimiser === "ensemble" || root.optimiser === "pigeons"
+                                    spacing: root.dp(6)
+
+                                    Label { text: "sweeps"; color: "#666"; visible: root.optimiser === "ensemble" }
+                                    SpinBox {
+                                        objectName: "samplerSweeps"
+                                        visible: root.optimiser === "ensemble"
+                                        from: 200; to: 100000; stepSize: 500; value: root.samplerSweeps; editable: true
+                                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
+                                        onValueModified: root.samplerSweeps = value
+                                        ToolTip.visible: hovered; ToolTip.text: "kept after as many burn-in sweeps again"
+                                    }
+                                    Label { text: "rounds"; color: "#666"; visible: root.optimiser === "pigeons" }
+                                    SpinBox {
+                                        objectName: "pigeonsRounds"
+                                        visible: root.optimiser === "pigeons"
+                                        from: 4; to: 16; value: root.pigeonsRounds; editable: true
+                                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
+                                        onValueModified: root.pigeonsRounds = value
+                                        ToolTip.visible: hovered; ToolTip.text: "2^rounds scans in all"
+                                    }
+                                    Label { text: "chains"; color: "#666"; visible: root.optimiser === "pigeons" }
+                                    SpinBox {
+                                        objectName: "pigeonsChains"
+                                        visible: root.optimiser === "pigeons"
+                                        from: 2; to: 64; value: root.pigeonsChains; editable: true
+                                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
+                                        onValueModified: root.pigeonsChains = value
+                                        ToolTip.visible: hovered; ToolTip.text: "temperatures in the ladder"
+                                    }
+                                    ComboBox {
+                                        objectName: "pigeonsExplorer"
+                                        visible: root.optimiser === "pigeons"
+                                        Layout.preferredWidth: root.dp(100)
+                                        model: ["slice", "MALA"]
+                                        currentIndex: root.pigeonsExplorer === "mala" ? 1 : 0
+                                        onActivated: function (index) { root.pigeonsExplorer = index === 1 ? "mala" : "slice" }
+                                        ToolTip.visible: hovered; ToolTip.text: "slice: no gradient · MALA: the χ² gradient"
+                                    }
+                                    Label { text: "reference"; color: "#666"; visible: root.optimiser === "pigeons" }
+                                    ComboBox {
+                                        objectName: "pigeonsReference"
+                                        visible: root.optimiser === "pigeons"
+                                        Layout.preferredWidth: root.dp(120)
+                                        model: ["stabilised", "variational", "fixed"]
+                                        currentIndex: Math.max(0, model.indexOf(root.pigeonsReference))
+                                        onActivated: function (index) { root.pigeonsReference = model[index] }
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "variational: a Gaussian fitted during the run · stabilised: with a fixed leg beside it"
+                                    }
+                                    Label { text: "seed"; color: "#666" }
+                                    SpinBox {
+                                        objectName: "samplerSeed"
+                                        from: 0; to: 999999; value: root.bootSeed; editable: true
+                                        implicitHeight: Math.max(root.dp(26), implicitContentHeight + topPadding + bottomPadding)
+                                        onValueModified: root.bootSeed = value
+                                    }
+                                    Item { Layout.fillWidth: true }
                                 }
 
                                 // Bootstrap settings, shown only when bootstrap is the choice.
@@ -4198,6 +4275,9 @@ Item {
           name:   "Nested sampling  ·  " + (root.nestedBackend.length > 0
                                             ? root.nestedLabel : "no sampler loaded"),
           reason: root.nestedBackend.length > 0 ? "" : "needs Nautilus or UltraNest" },
+        { key: "ensemble",      name: "Ensemble slice sampler  ·  gradient-free posterior", reason: "" },
+        { key: "pigeons",       name: "Parallel tempering  ·  Pigeons, multimodal posterior",
+          reason: root.pigeonsAvailable ? "" : "needs Pigeons" },
         { key: "grid",          name: "Grid search  ·  two parameters, χ² map",        reason: "" },
         { key: "",              name: "──────────",                                    reason: "" },
         { key: "LD_LBFGS",      name: "L-BFGS  ·  gradient",                           reason: "" },
@@ -4221,7 +4301,7 @@ Item {
 
     // Whether the CURRENT fitter can hold a constraint or only lean on it.
     function constraintsAreHard() {
-        return !(root.optimiser === "lsqfit" || root.optimiser === "nested")
+        return !(root.optimiser === "lsqfit" || root.isSampler(root.optimiser))
     }
 
     // Selecting something unusable keeps whatever was chosen before rather than silently

@@ -372,7 +372,8 @@ ApplicationWindow {
         for (var i = 0; i < eng.length; ++i) {
             var kv = eng[i].split("=")
             if (kv[0] === "vi")        imageTab.oiviAvailable    = (kv[1] === "1")
-            if (kv[0] === "tempering") imageTab.pigeonsAvailable = (kv[1] === "1")
+            if (kv[0] === "tempering") { imageTab.pigeonsAvailable = (kv[1] === "1")
+                                         modelTab.pigeonsAvailable = (kv[1] === "1") }
             if (kv[0] === "corner")    modelTab.cornerAvailable  = (kv[1] === "1")
         }
         // Hand the scale to Julia before anything is drawn: Makie font and marker sizes are
