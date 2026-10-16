@@ -610,14 +610,8 @@ end
 Maximum Entropy image reconstruction using power spectra (V²) and closure
 phases (T3φ), with the same calling convention as `reconstruct`.
 
-The MaximENT solver itself always runs in `Float64` — it builds its own NFFT plan,
-and its entropy and trust-region steps are precision-sensitive — but the
-image is returned at the precision of `ft`, so it composes with the rest of the
-pipeline (`Float32` by default).
-
-This is the recommended high-level entry point.  Pixel size and image size
-are inferred from the OITOOLS NFFT plan `ft`; you do not need to call
-`maxent_setup` or `maxent_reconstruct!` directly.
+The MaximENT solver runs in `Float64` with its own NFFT plan; the image is returned at the
+precision of `ft`. The pixel size and image size come from `ft`.
 
 # Arguments
 

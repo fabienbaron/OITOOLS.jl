@@ -93,8 +93,8 @@ const FTCellLike{T} = Union{NFFTCell{T}, DFTCell{T}}
 
 Fourier transform plans for a `(nwav, nepoch)` grid of channels, as built by [`setup_ft`](@ref).
 
-Indexes like the matrix it wraps — `ft[w, t]` is one channel's [`NFFTCell`](@ref) or
-[`DFTCell`](@ref) — and additionally records what was built:
+Indexes like a matrix (`ft[w, t]` is one channel's [`NFFTCell`](@ref) or [`DFTCell`](@ref)),
+with the fields:
 
 | field | |
 |---|---|
@@ -102,8 +102,7 @@ Indexes like the matrix it wraps — `ft[w, t]` is one channel's [`NFFTCell`](@r
 | `nx` | image size in pixels |
 | `pixsize` | pixel size in mas |
 
-Deliberately does **not** hold the `OIdata` it was built from: that would double the data's
-lifetime and let the two drift apart once the data is filtered. Callers pass both.
+It does not hold the `OIdata`; functions take both.
 """
 struct OIft{T,C<:FTCellLike{T}} <: AbstractMatrix{C}
     cells   :: Matrix{C}
@@ -1922,10 +1921,8 @@ end
     crit_fg(x::AbstractArray{T,4}, g::AbstractArray{T,4},
             ft::AbstractMatrix, data::AbstractMatrix{<:OIdata}; ...)
 
-Unified criterion: `(χ² + regularization) / ndof`, with gradient.
-
-The flux-normalisation chain-rule correction is applied to the combined
-(χ² + regularization) gradient per cell, matching the original behaviour.
+The criterion `(χ² + regularization) / ndof`, with gradient. The flux-normalisation chain-rule
+correction is applied to the combined gradient per cell.
 
 Returns the criterion value.  `g` is modified in place.
 
@@ -2450,7 +2447,7 @@ using OptimPackNextGen
     reconstruct(x_start::AbstractArray{T,4}, data::AbstractMatrix{<:OIdata},
                 ft::AbstractMatrix; ...)
 
-Unified image reconstruction from optical interferometric data using VMLMB.
+Image reconstruction by VMLMB, monochromatic, polychromatic or time series.
 
 `x_start` is the initial image of shape `(nx, nx, nwav, nepoch)`.
 `data` is a `Matrix{OIdata}` of size `(nwav, nepoch)` (from `readoifits` or
@@ -2511,8 +2508,7 @@ end
 """
     reconstruct(x_start::AbstractMatrix, data::OIdata, ft; ...)
 
-Monochromatic convenience wrapper — delegates to the unified 4-D method.
-See the 4-D method for the full keyword list.
+Monochromatic form of the 4-D method, which lists the keywords.
 """
 function reconstruct(x_start::AbstractMatrix{<:AbstractFloat}, data::OIdata, ft;
                      weights = [1.0, 1.0, 1.0], printcolor = :normal,

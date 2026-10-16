@@ -482,12 +482,9 @@ Parameters, in C's order:
 | 5 | `f_bg`     | over-resolved background flux fraction at `lambda0` |
 | 6 | `bg_indx`  | flux power-law index of the background |
 
-`free` lists the parameters the sampler may vary, by name or index; everything
-else is held fixed.  `stepsize` is the two-point lattice half-width per parameter
-and is adapted toward a 0.3 acceptance rate during the run.
-
-The model is only meaningful on **polychromatic** data: with a single wavelength
-every `(λ/λ0)^x` is a constant and the three indices are exactly degenerate.
+`free` lists the parameters the sampler varies, by name or index; the others are fixed.
+`stepsize` is the step per parameter, adapted toward a 0.3 acceptance rate during the run. With
+a single wavelength the three indices are degenerate, so the model needs polychromatic data.
 """
 mutable struct SqueezeSparco
     params::Vector{Float64}
@@ -1323,67 +1320,49 @@ function reconstruct_squeeze_tempered end
 
 SQUEEZE-style MCMC image reconstruction.
 
-The image is represented as a bag of `nelements` discrete flux quanta on the
-pixel grid, sampled by Metropolis-Hastings with simulated annealing.  This gives
-positivity and fixed total flux for free, admits non-convex regularizers such as
-L0, and returns a posterior mean image rather than a MAP point.
+The image is `nelements` flux elements on the pixel grid, sampled by Metropolis-Hastings with
+simulated annealing: non-negative, with fixed total flux, non-convex regularizers such as L0
+available, and a mean image over samples as the result.
 
 `x_start` selects the starting configuration; omit it for SQUEEZE's own default.
 
 | value | meaning |
 |---|---|
-| `:point_source` (default) | all quanta on the centre pixel — a Dirac, as when C is run without `-i` |
-| `:random` | quanta scattered uniformly (an OITOOLS addition; gives multiple chains genuinely different starts) |
-| an `nx × nx` image | digitised into quanta — C's `-i` |
+| `:point_source` (default) | all elements on the centre pixel (SQUEEZE without `-i`) |
+| `:random` | elements placed uniformly at random (independent starts for several chains) |
+| an `nx × nx` image | the image digitised into elements (SQUEEZE's `-i`) |
 
-Strings work too (`"point_source"`, `"random"`).  Note the default is a point
-source, **not** a random or flat image: the annealing is expected to spread the
-flux out from it.
+Strings work too (`"point_source"`, `"random"`).
 
-`ft` follows the same convention as `reconstruct` / `reconstruct_bsmem`: the image
-geometry is taken *from the Fourier operator*, not from keywords.
-
-- Pass a **DFT matrix** (`setup_ft(data, nx, pixsize; mode="dft")` or `setup_dft`)
-  and it is used directly — this is what the sampler wants, and nothing is rebuilt.
-- Pass an **NFFT plan** and `nx`/`pixsize` are recovered from it exactly as
-  `reconstruct_bsmem` does, then a DFT matrix is built internally.  The sampler
-  cannot use an NFFT plan: it needs O(nuv) access to a *single column* per move
-  (the rank-1 update), which a transform-based operator cannot provide.
+The image size and pixel size come from `ft`, as in `reconstruct` / `reconstruct_bsmem`. A DFT
+matrix (`setup_ft(data, nx, pixsize; mode="dft")` or `setup_dft`) is used directly; from an
+NFFT plan a DFT matrix is built, since each move needs one column of the transform.
 
 # Keyword arguments
-- `nelements`: number of flux quanta (default [`default_nelements`](@ref)).
+- `nelements`: number of flux elements (default [`default_nelements`](@ref)).
 - `niter`: sweeps; each sweep is `nelements` proposals.
 - `nchains`: independent annealing restarts, run on separate threads.
 - `regularizers`: OITOOLS-style `[["l0", λ], ["tv", λ], ...]`.  Supported names
-  are `l0`, `tv`, `entropy`, `compactness`, `centering`, `priorimage`.  **These
-  are SQUEEZE's forms on the integer histogram, not OITOOLS' differentiable
-  versions.**
+  are `l0`, `tv`, `entropy`, `compactness`, `centering`, `priorimage`, in SQUEEZE's forms on
+  the integer histogram (not `reconstruct`'s).
 - `weights`: observable weights, default `[1.0,1.0,1.0]` = V², T3amp, T3phi, as in
   `reconstruct` (padded to 7 internally).
-- `prior_image`: an `nx × nx` map of per-pixel prior *probabilities* (C's `-p`).
-  It becomes an additive penalty `-log(p)` per quantum, with `p <= 0` mapped to
-  `1e12` — which is what makes it a **mask**: no quantum can ever sit on a
-  zero-prior pixel.  Its weight defaults to 1 and can be set explicitly with
-  `["priorimage", λ]` in `regularizers`.  Supplying one disables auto-centering,
-  since the prior already fixes the position (C warns about this combination).
+- `prior_image`: an `nx × nx` map of per-pixel prior probabilities (SQUEEZE's `-p`), adding
+  `-log(p)` per element; pixels with `p <= 0` cannot hold an element. Its weight is 1, or λ
+  with `["priorimage", λ]` in `regularizers`. A prior image turns auto-centering off.
 - `pixsize`: only needed to override the value recovered from `ft`, or to supply
   one when `ft` is a bare DFT matrix and `outfile` is set (the FITS WCS header).
 - `tmin`, `chi2_temp`, `chi2_target`: annealing schedule (C's `-tm`, `-ct`, `-fc`).
 - `f_anywhere`, `f_copycat`: fixed proposal fractions.
 - `model`: an optional [`SqueezeSparco`](@ref) chromatic star + background model.
-- `print_every`: C-format text diagnostic line every n sweeps.
-- `monitor`: if > 0, redraw a live image and trace display every `monitor`
-  sweeps (chain 1 only).  Off by default, and free when off — one integer
-  comparison per sweep.  Enabling it pins chain 1 to the calling thread, because
-  drawing must happen on the main thread; the other chains still run in parallel.
-  `monitor_colormap` selects the image colour map.
-- `seed`: per-chain streams are a pure function of `(seed, chain)`, so results
-  are reproducible regardless of thread scheduling.
+- `print_every`: SQUEEZE's text diagnostic line every n sweeps.
+- `monitor`: if > 0, draw the image and traces every `monitor` sweeps (chain 1, which then
+  runs on the calling thread; needs PythonPlot). `monitor_colormap` sets the colour map.
+- `seed`: each chain's random numbers depend only on `(seed, chain)`, whatever the number of
+  threads.
 
-# Notes
-`COPYCAT` proposals are asymmetric and irreversible; they are an effective
-optimizer heuristic for annealing but are not a valid sampler move.  Set
-`f_copycat=0` if you want the post-burn-in samples to be a defensible posterior.
+`COPYCAT` proposals are asymmetric, so with `f_copycat > 0` the samples are not from the
+posterior; `f_copycat = 0` makes the moves reversible.
 """
 function reconstruct_squeeze(x_start, data::OIdata{T}, ft;
         pixsize::Real = -1.0,
@@ -1577,9 +1556,8 @@ end
 """
     reconstruct_squeeze(data, ft; kwargs...)
 
-Start from SQUEEZE's default configuration — a point source at the centre of the
-grid, the equivalent of running the C code without `-i`.  Identical to passing
-`:point_source` as `x_start`.
+Start from a point source at the centre of the grid (SQUEEZE without `-i`); the same as
+`:point_source`.
 """
 reconstruct_squeeze(data::OIdata, ft; kwargs...) =
     reconstruct_squeeze(:point_source, data, ft; kwargs...)
@@ -1590,9 +1568,8 @@ reconstruct_squeeze(data::AbstractArray{<:OIdata}, ft; kwargs...) =
 """
     reconstruct_squeeze(x_start, data::AbstractArray{<:OIdata}, ft; kwargs...)
 
-Convenience dispatch matching the rest of the `reconstruct*` family, so the usual
-`data = readoifits(file); ft = setup_ft(data, nx, pixsize; mode="dft")` pattern
-works without indexing.  Only the monochromatic, single-epoch case is supported.
+Accepts the `Matrix{OIdata}` from `readoifits` and the plans from `setup_ft` directly, for
+monochromatic, single-epoch data.
 """
 function reconstruct_squeeze(x_start, data::AbstractArray{<:OIdata}, ft; kwargs...)
     length(data) == 1 || throw(ArgumentError(

@@ -103,6 +103,36 @@ import AstroFITS
         @test first.(t) == ["MWC 275", "HD163296"] && t[1][2][1, 1].nv2 > 0
     end
 
+    @testset "oifits_table: the contents, per channel and as stored" begin
+        f = joinpath(data, "AX_Cir.oifits")
+        h = oifits_headers(f)
+        iv = findfirst(x -> x.extname == "OI_VIS2", h); it = findfirst(x -> x.extname == "OI_T3", h)
+        t = oifits_table(f, iv)
+        @test t.per_channel && t.nwave == 3 && t.nlines == 3 * h[iv].nrows
+        @test t.names[1:4] == ["λ", "stations", "B", "B/λ"] && t.units[1] == "µm"
+        @test "VIS2DATA" in t.names && !("STA_INDEX" in t.names)
+        # the joined values are readoifits' for the same points
+        d = readoifits(f; T = Float64, filter_bad_data = false, redundance_remove = false, warn = false,
+                       verbose = false)[1, 1]
+        # (this table is the first of two, so its points are a subset of the dataset's)
+        @test issubset(round.(t.columns[4]; digits = 4), round.(d.v2_baseline ./ 1e6; digits = 4))
+        @test Set(round.(t.columns[1]; digits = 6)) == Set(round.(unique(d.v2_lam) .* 1e6; digits = 6))
+        @test all(s -> occursin("-", s), t.columns[2])
+        v = t.columns[findfirst(==("VIS2DATA"), t.names)]
+        raw = oifits_table(f, iv; per_channel = false)
+        @test !raw.per_channel && raw.nlines == h[iv].nrows
+        @test v[1:3] == raw.columns[findfirst(==("VIS2DATA"), raw.names)][1]
+        @test count(t.flagged) == sum(sum, raw.columns[findfirst(==("FLAG"), raw.names)])
+        t3 = oifits_table(f, it)
+        @test t3.nlines == 3 * h[it].nrows && count(==('-'), t3.columns[2][1]) == 2   # three stations
+        # a table that is not OI data: as stored
+        ia = findfirst(x -> x.extname == "OI_ARRAY", h)
+        a = oifits_table(f, ia)
+        @test !a.per_channel && a.names == ["TEL_NAME", "STA_NAME", "STA_INDEX", "DIAMETER", "STAXYZ"]
+        @test length(a.columns[5][1]) == 3
+        @test_throws ArgumentError oifits_table(f, 1)                    # the primary HDU
+    end
+
     @testset "fits_set_keywords" begin
         # a cube with no axis keywords: a disc brightening with wavelength, moving with time
         cube = Float32[hypot(x - 8 - t, y - 8) < 5 ? w + t : 0.01 for x in 1:16, y in 1:16, w in 1:3, t in 1:2]

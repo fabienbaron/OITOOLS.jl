@@ -33,8 +33,7 @@ Makie.save("corner.png", plot_corner_makie(r.posterior, r.list_free_params).figu
 
 `truth`, one value per column, marks those values (the best fit, say) on every panel.
 `kwargs` are passed to `PairPlots.pairplot`. A parameter whose samples are all identical is
-dropped with a warning rather than passed on: a zero-width column has no density to estimate,
-and PairPlots fails inside the KDE rather than at the call.
+dropped, with a warning.
 """
 function plot_corner_makie(posterior::AbstractMatrix{<:Real},
                        names::AbstractVector{<:AbstractString}; truth = nothing, kwargs...)

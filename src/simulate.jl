@@ -81,25 +81,22 @@ end
 """
     CombinerConfig
 
-Beam-combiner properties. The fields mirror ASPRO 2's `FocalInstrumentSetup` one for one, so
-that a combiner config can be transcribed directly from ASPRO's interferometer XML
-(`aspro-conf`, e.g. `CHARA.xml`) and reproduce its predictions.
+Beam-combiner properties. The fields correspond to ASPRO 2's `FocalInstrumentSetup`
+(`aspro-conf`, e.g. `CHARA.xml`).
 
-- `transmission`: **end-to-end** transmission, array *and* instrument, excluding quantum
-  efficiency, Strehl and atmosphere (ASPRO `transmission`). Because it already covers the
-  array, `FacilityConfig.throughput` is 1.0 for any facility whose combiners are specified
-  this way.
+- `transmission`: transmission of the array and instrument, excluding quantum efficiency,
+  Strehl and atmosphere (ASPRO `transmission`, divided by the band-mean atmospheric
+  transmission; see [Simulating observations](@ref)). `FacilityConfig.throughput` is then 1.0.
 - `instrument_visibility`: instrumental contrast (ASPRO `instrumentVisibility`).
-- `dit`: detector integration time in seconds — a **fixed** instrument property, shortened
-  only when the detector would saturate (ASPRO `dit`).
+- `dit`: detector integration time in seconds, shortened when the detector would saturate
+  (ASPRO `dit`).
 - `total_int_time`: total on-source time per uv point, seconds (ASPRO
   `defaultTotalIntegrationTime`).
 - `detector_saturation`: full-well in electrons per pixel (ASPRO `detectorSaturation`).
 - `flux_frac_fringes` / `flux_frac_photometry`: how the light splits between the
   interferometric and photometric channels (ASPRO `fracFluxIn…`).
-- `vis_cal_err`: systematic error on `|V|`, as a fraction. ASPRO stores this as
-  `instrumentVisibilityBias` in **percent**, so `instrumentVisibilityBias = 1` is
-  `vis_cal_err = 0.01`. The systematic on `V²` is twice this.
+- `vis_cal_err`: systematic error on `|V|`, as a fraction (ASPRO `instrumentVisibilityBias`, in
+  percent: `1` is `0.01`). The systematic on `V²` is twice this.
 - `phase_cal_err`: systematic error on phases and closure phases, in degrees (ASPRO
   `instrumentPhaseBias`).
 """
@@ -419,19 +416,11 @@ end
 """
     list_configs([dir]) -> (; facilities, combiners, wavelengths, targets, unknown, wave_combiner)
 
-Enumerate the configuration files that [`read_facility_file`](@ref), [`read_comb_file`](@ref),
-[`read_wave_file`](@ref) and [`read_obs_file`](@ref) can load, classified by what they
-actually contain. `dir` defaults to the configs shipped with OITOOLS.
-
-Nothing about a filename says what kind of config it is, so the classification reads each
-file: a **facility** has a site (`lat`), a **wavelength setup** has `lambda` and names its
-`combiner`, a **target** has `raep0`, and anything else carrying `transmission`/`read_noise`
-is a **combiner**. Files that parse but match nothing land in `unknown`, and so do files that
-fail to parse — enumerating a directory should never throw.
-
-`wave_combiner` maps each wavelength setup to the combiner it belongs to. That link exists
-only inside the file, so it is the only way to offer, say, MIRC-X's spectral modes without
-hard-coding them.
+The configuration files in `dir` (default: the configs shipped with OITOOLS), classified by
+content: a facility has `lat`, a wavelength setup has `lambda` and names its `combiner`, a
+target has `raep0`, and a file with `transmission`/`read_noise` is a combiner. Other files, and
+files that fail to parse, are listed in `unknown`. `wave_combiner` maps each wavelength setup to
+its combiner.
 
 ```jldoctest
 julia> c = list_configs();
@@ -503,12 +492,8 @@ end
     predict_errors(facility, combiner, wavelength; mag, visamp=1.0, elevation_deg=90.0,
                    mag_ao=nothing, fringe_tracker=true) -> NamedTuple
 
-Predicted per-channel uncertainties for one setup, **without running a simulation or writing
-a file**.
-
-`simulate` returns the result of writing an OIFITS and keeps nothing in memory, so the only
-way to ask "what SNR would I get?" used to be to simulate to disk and read it back. This
-runs the same noise model directly.
+Predicted per-channel uncertainties for one setup, from `simulate`'s noise model, without
+writing a file.
 
 Returns, one entry per spectral channel of `wavelength`:
 
@@ -516,7 +501,7 @@ Returns, one entry per spectral channel of `wavelength`:
 |---|---|
 | `λ`, `δλ` | channel centre and width, m |
 | `strehl` | coupling efficiency actually used |
-| `dit` | integration time per frame, s — shortened for saturation, or LENGTHENED to the fringe tracker's coherent limit when one is engaged |
+| `dit` | integration time per frame, s: shortened for saturation, or lengthened to the fringe tracker's limit when it is engaged |
 | `nframes` | frames coadded |
 | `nphot` | photons per telescope per DIT, fringe channel |
 | `sigma_v2` | σ(V²), including the `vis_cal_err` systematic |
@@ -525,17 +510,12 @@ Returns, one entry per spectral channel of `wavelength`:
 | `sigma_visphi` | σ(visibility phase), degrees |
 
 `mag` follows the same rules as `simulate`: a scalar, a `Dict` of band ⇒ magnitude, or one
-value per channel. `visamp` is the visibility amplitude at which to evaluate the errors —
-errors depend on it, so the default of 1.0 gives the unresolved (best) case.
+value per channel. `visamp` is the visibility amplitude the errors are evaluated at (default
+1.0, unresolved).
 
-`fringe_tracker` engages the combiner's tracker if it declares one, which is what ASPRO does
-for an instrument that requires one. The tracker guides in its OWN band, so `mag` has to carry
-that band for the limit to be testable: SPICA works at 0.6-0.9 µm and FT_SPICA guides in H, so
-a `Dict` with only an R magnitude leaves the tracker disengaged. See
-[`fringe_tracker_state`](@ref).
-
-Mirrors `simulate`'s internals exactly; see `demos/validate_noise_model.jl`, which checks
-this model against ASPRO 2's published curves.
+`fringe_tracker` uses the combiner's tracker if it has one. The tracker's magnitude limit is in
+its own band, so `mag` must include that band (H for SPICA's FT_SPICA) for the tracker to be
+used. See [`fringe_tracker_state`](@ref) and `demos/validate_noise_model.jl`.
 """
 function predict_errors(facility::FacilityConfig, combiner::CombinerConfig,
                         wavelength::WaveConfig;
@@ -814,20 +794,14 @@ end
 """
     fringe_tracker_state(combiner, ft_mag, max_dit; enabled=true) -> NamedTuple
 
-Whether `combiner`'s fringe tracker engages, and what it does when it does.
+Whether `combiner`'s fringe tracker is used, and its effect: `(; engaged, extends, vis_factor)`.
+`engaged`: the tracker exists, is enabled, the target is within its magnitude limit, and at
+least one frame fits before saturation (ASPRO 2's `NoiseService.prepareParameters`).
+`vis_factor` is the tracker's visibility loss. `extends`: the integration is lengthened
+(`"FringeTrack"`; `"GroupTrack"` only applies the visibility loss).
 
-Returns `(; engaged, extends, vis_factor)`. `engaged` means the tracker is present, permitted
-and within its magnitude limit, and it always costs `vis_factor` -- the tracker's own
-visibility loss. `extends` is the separate question of whether the integration lengthens, which
-only co-phasing ("FringeTrack") buys; "GroupTrack" pays the visibility loss without it.
-
-`ft_mag` is the target's magnitude in the TRACKER's band (`combiner.ft_band`), not the science
-band, and `nothing` means it was not supplied, in which case the tracker cannot be shown to be
-within its limit and does not engage.
-
-The three conditions are ASPRO 2's (`NoiseService.prepareParameters`): a valid tracker, a target
-brighter than its limit, and at least one frame before saturation -- a target that saturates
-inside one `dit` has nothing to gain from integrating longer.
+`ft_mag` is the target's magnitude in the tracker's band (`combiner.ft_band`); `nothing` means
+not supplied, and the tracker is not used.
 """
 function fringe_tracker_state(combiner::CombinerConfig, ft_mag, max_dit; enabled::Bool = true)
     none = (; engaged = false, extends = false, vis_factor = 1.0)
@@ -1793,16 +1767,13 @@ end
 Re-observe a sky through an existing file's uv coverage, and write the result as a copy of that
 file with new data in it.
 
-The alternative to `simulate`, and a different question: `simulate` computes an observation from
-an array, a combiner and a night, while this one asks "what would THIS dataset have looked like
-if the source were that instead?" — the uv points, the wavelengths, the flags and every header
-come from the input, so the answer is comparable to the original point by point.
+The observables of another source on the uv points, wavelengths, flags and headers of an input
+file, so the result compares point by point with the input.
 
 `mode` decides the error bars:
   * `"copy_errors"` — the input's, unchanged. The absolute noise level is preserved.
-  * `"copy_snr"`    — the input's SIGNAL-TO-NOISE, rescaled to the new observables. This is the
-    right one when the new source is much brighter or fainter than the original, where copied
-    absolute errors would claim a precision the geometry never had.
+  * `"copy_snr"`    — the input's signal-to-noise, applied to the new observables (for a source
+    much brighter or fainter than the original).
   * `"noise_model"` — `errors.v2_multit`/`v2_addit` and the T3 equivalents.
 
 The sky is `image` or `flat_model` with `flat_params`. A FITS path is read by
@@ -1810,12 +1781,10 @@ The sky is `image` or `flat_model` with `flat_params`. A FITS path is read by
 overrides it), and every uv point of the input with the plane of its wavelength and date — a
 2-D image, a wavelength cube, a time series or a 4-D cube alike. An array is 2-D grey, or 3-D
 with one plane per channel of the input in increasing wavelength, at `pixsize` (default 0.1
-mas). Each plane is normalised by its own flux, which is what V², T3amp and T3φ measure — the
-spectrum cannot be expressed in those observables and is not written.
+mas). Each plane is normalised by its own flux; no spectrum is written.
 
-`noise = false` writes the noiseless observables with the error bars still filled in. That is
-the honest form of a truth file: what the instrument would measure with no realisation of the
-noise, alongside the noise it would have had.
+`noise = false` writes the noiseless observables with the error bars filled in. `out_file`
+cannot be `in_oifits`.
 """
 function simulate_from_oifits(in_oifits, out_file; mode="copy_errors", errors=[],
         image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64,3}, Array{Float64,4}}="",

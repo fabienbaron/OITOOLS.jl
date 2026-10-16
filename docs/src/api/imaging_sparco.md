@@ -1,11 +1,11 @@
 # Imaging (SPARCO)
 
-SPARCO (SPectral Analysis of Resolved Compact Objects) decomposes the scene into
-a parametric model (stars, background) + a reconstructed image (environment).
+SPARCO models the scene as a parametric model (star, background) plus a reconstructed image
+(environment).
 
 | Function | Description |
 |----------|-------------|
-| `reconstruct_sparco(x0, data, ft; lambda_ref, ...)` | High-level SPARCO: set physical params, get image back |
+| `reconstruct_sparco(x0, data, ft; lambda_ref, ...)` | SPARCO with the standard star + background + image model |
 | `chi2_sparco_flat_f(x, params, model, ft, data)` | Flat-model SPARCO chi-squared (forward only) |
 | `optimize_sparco_flat_parameters(params, model, x, ft, data)` | Optimize flat-model SPARCO parameters (image fixed) |
 | `model_and_image_to_vis(model, params, x_img, ft, data)` | Combined visibility: `V_model + W(λ) · V_image` |

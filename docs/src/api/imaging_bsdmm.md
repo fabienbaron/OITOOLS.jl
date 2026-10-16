@@ -1,7 +1,7 @@
 # Imaging (BSDMM)
 
-BSDMM (Block-Sparse Direction Method of Multipliers) reconstruction with
-proximal regularizers.
+BSDMM (Block-Simultaneous Direction Method of Multipliers, Moolekamp & Melchior, arXiv:1708.09066)
+reconstruction with proximal regularizers.
 
 | Function | Description |
 |----------|-------------|

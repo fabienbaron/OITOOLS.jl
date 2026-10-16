@@ -299,8 +299,8 @@ end
 """
     uvplot_makie(data; color = :baseline, conjugate = true) -> PlotData
 
-uv coverage in a fresh figure. Draws **every** uv point — V² baselines and closure-triangle
-legs alike — which is what `uvplot` shows and what the coverage actually is.
+uv coverage in a new figure: every uv point, V² baselines and closure-triangle legs, as
+`uvplot`.
 """
 function uvplot_makie(d; color::Symbol = :baseline, conjugate::Bool = true, markersize::Real = 6)
     fig = Makie.Figure()
@@ -313,7 +313,7 @@ end
 """
     plot_observable_makie(data, which; color = nothing, logscale = false) -> PlotData
 
-An observable against its natural x axis, in a fresh figure. `which` is any key of
+An observable against its x axis (baseline, or wavelength for flux), in a new figure. `which` is any key of
 `OBS_SPECS`. `color = nothing` uses that observable's own oiplot default.
 """
 function plot_observable_makie(d, which::Symbol = :v2; color::Union{Nothing,Symbol} = nothing,
@@ -395,9 +395,7 @@ axes in pixels instead.
 | `beamsize` | `-1` | if positive, draw a beam circle of this diameter (mas) |
 | `beamlocation` | `(0.8, 0.8)` | fractional position of that circle |
 
-Normalising to the maximum is `imdisp`'s behaviour and is kept deliberately: it makes two
-reconstructions of the same target comparable by eye. An image whose maximum is below `1e-20`
-is drawn unnormalised, with a warning, rather than divided by roughly zero.
+An image whose maximum is below `1e-20` is drawn unnormalised, with a warning.
 """
 function imdisp_makie(image::AbstractArray; pixsize::Real = -1.0,
                       colormap = :gist_heat, title::AbstractString = "",
@@ -507,10 +505,8 @@ end
 
 A stack of images as a grid of panels, one per slice of an `(nx, ny, nslices)` array.
 
-Each panel is normalised to **its own** maximum, which is what `imdisp_multi` does and is
-worth knowing: it makes the faint channels readable and makes the panels non-comparable in
-brightness at the same time. Pass `shared_scale = true` for one normalisation across the cube
-when the comparison is the point.
+Each panel is normalised to its own maximum, as in `imdisp_multi`; `shared_scale = true` uses
+one normalisation for the whole cube.
 
 Keywords otherwise as [`imdisp_makie`](@ref); `labels` titles the panels and defaults to the
 slice number.
@@ -574,8 +570,7 @@ Data against model, with normalised residuals beneath, for every observable pres
 build it. Each observable gets a tall panel of data and model together and a short one of
 `(model − data) / σ` under it, sharing an x axis — the 3:1 split `plot_residuals` uses.
 
-A phase residual is wrapped through `mod360` BEFORE dividing by σ. Without that a model 359°
-from the data reads as a 359σ outlier rather than the 1° agreement it is.
+Phase differences are wrapped to ±180° before dividing by σ.
 
 `color` is `:baseline`, `:wav` or `:mjd`, as everywhere else.
 """
@@ -712,15 +707,9 @@ end
 """
     plot_obs_makie(data; kinds = nothing, color = :baseline, logscale = false) -> PlotData
 
-Several observables stacked in one figure on a shared x axis — the counterpart of `plot_obs`
-(and of `plot_multi`, which is an alias for it).
-
-`kinds` defaults to every observable the data actually contains, in the order `OBS_SPECS`
-lists them. Only the bottom panel carries the x label and its tick labels; repeating them
-five times is what makes a stacked figure unreadable.
-
-Each panel is drawn by `draw!` — the same implementation `plot_observable_makie` uses — so
-a panel here and a single-observable figure cannot disagree.
+Several observables stacked on a shared x axis, as `plot_obs`. `kinds` defaults to every
+observable present in the data, in the order of `OBS_SPECS`. Only the bottom panel has x
+labels.
 """
 function plot_obs_makie(d; kinds = nothing, color::Union{Nothing,Symbol} = :baseline,
                             logscale::Bool = false, scale::Real = 1.0)
@@ -754,15 +743,8 @@ end
 """
     plot_v2_multifile_makie(datasets; logscale = false) -> PlotData
 
-V² from several datasets on one axis — the counterpart of `plot_v2_multifile`.
-
-**One legend entry per baseline, not per file.** A baseline that appears in five nights is one
-colour and one entry; the alternative is a legend longer than the plot, which is what makes
-the matplotlib version hard to read with more than a couple of files.
-
-That also means the figure answers "does this baseline agree between nights", which is the
-question a multi-file V² plot is for. Colouring by file instead would answer a different one,
-and neither `plot_v2_multifile` nor this offers it.
+V² from several datasets on one axis, as `plot_v2_multifile`, with one colour and one legend
+entry per baseline across all datasets.
 """
 function plot_v2_multifile_makie(datasets::AbstractVector; logscale::Bool = false,
                              scale::Real = 1.0, markersize::Real = 6)
@@ -798,11 +780,7 @@ end
 """
     plot_facility_makie(facility) -> PlotData
 
-Telescope positions of a `FacilityConfig`, labelled and to scale — the counterpart of
-`plot_facility`.
-
-Equal aspect, because an interferometric array plotted on unequal axes misreports the very
-thing the figure is for: which baselines are long and in which direction.
+Telescope positions of a `FacilityConfig`, labelled, with equal axes, as `plot_facility`.
 """
 function plot_facility_makie(facility; scale::Real = 1.0)
     xyz = facility.sta_xyz'                 # (3, ntel)

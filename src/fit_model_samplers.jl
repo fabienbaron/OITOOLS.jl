@@ -114,15 +114,10 @@ Ensemble Slice Sampling of `logp` from walkers `x0`, `(nwalkers, ndim)`, an even
 `chain` is `(n_kept_sweeps, nwalkers, ndim)` and `logps` `(n_kept_sweeps, nwalkers)`, the
 walkers' log-densities.
 
-Red-blue split: each half is updated with directions drawn from the other half, which preserves
-detailed balance under simultaneous updates. **The halves are reshuffled every sweep** (zeus's
-`shuffle_ensemble=True`): with `nw = 2d` in low dimension a fixed complementary half can be one
-pair, confining every direction to one line (measured on 2-D Rosenbrock at 4 walkers: sd 1.75–
-1.99 against a true 3.16, with R̂ = 1.0001).
-
-`mu` is tuned during burn-in toward equal numbers of expansions and contractions and frozen once
-the balance has held `patience` times, as zeus does; left untuned, a longer burn-in makes it
-worse.
+Each half of the walkers is updated with directions drawn from the other half; the halves are
+reshuffled every sweep (zeus's `shuffle_ensemble=True`). `mu` is tuned during burn-in toward
+equal numbers of expansions and contractions, and frozen once the balance has held `patience`
+times, as in zeus.
 """
 function ensemble_slice(logp, x0::Matrix{Float64}; nsweep::Int = 5000, burn::Int = 2000,
                         thin::Int = 10, mu0::Float64 = 1.0, tune::Bool = true,
@@ -186,8 +181,8 @@ end
     rhat(chain) -> Vector
 
 Gelman-Rubin R̂ per parameter from a `(nsweep, nwalkers, ndim)` chain, each walker a chain.
-Above ~1.01: not converged. The walkers of an ensemble are coupled through the shared directions,
-so a walker-based R̂ under-reports non-convergence and does not see the ensemble drift as a block.
+Above about 1.01 the chain has not converged. The walkers of an ensemble are coupled, so this R̂
+can be low while the ensemble as a whole drifts.
 """
 function rhat(chain::AbstractArray{<:Real,3})
     m, nw, d = size(chain); out = zeros(float(eltype(chain)), d)
@@ -204,8 +199,8 @@ end
 
 Integrated autocorrelation time in sweeps, averaged over parameters, from a `(nsweep, nwalkers,
 ndim)` chain with Sokal's `t > 5τ` window. By default the walkers are concatenated into one
-series per parameter; `per_walker` is biased low (−24 % at τ = 99 against AR(1) with known τ).
-A τ comparable to `nsweep/50` is a lower bound rather than a measurement.
+series per parameter; `per_walker = true` is biased low (−24 % at τ = 99 on an AR(1) series).
+A τ above about `nsweep/50` is a lower bound.
 """
 function iat(chain::AbstractArray{<:Real,3}; per_walker::Bool = false)
     m, nw, d = size(chain); out = Float64[]
@@ -334,22 +329,19 @@ end
                        verb = true) -> SamplerResult
 
 Sample the posterior of a model's free parameters with Ensemble Slice Sampling
-([`ensemble_slice`](@ref); Karamanis & Beutler 2020): gradient-free and affine-invariant,
-suited to the few-parameter fits of interferometric models.
+([`ensemble_slice`](@ref); Karamanis & Beutler 2020), gradient-free and affine-invariant.
 
-The log-likelihood is −(χ² + constraint penalty)/2 and the bounds are the prior, uniform: a
-point outside them has zero density. Bounds may be infinite (an improper flat prior on that
-side).
+The log-likelihood is −(χ² + constraint penalty)/2; the prior is uniform within the bounds,
+which may be infinite (an improper prior).
 
-- `nwalkers`: `0` for 2d rounded up to an even number, at least 4 (affine-invariant ensembles
-  need about 2d walkers).
+- `nwalkers`: `0` for 2d (d free parameters), at least 4, rounded up to an even number.
 - `nsweep` sweeps kept after `burn` of burn-in, every `thin`-th (`0`: about 2000 kept sweeps at
   most). The walkers start in a small ball about the model's values, inside the bounds.
 - `seed` makes the run reproducible.
 
 `diagnostics` carries R̂ per parameter ([`rhat`](@ref); above 1.01, not converged) and τ, the
-integrated autocorrelation time in sweeps ([`iat`](@ref); comparable to `nsweep/50`, a lower
-bound), with the evaluation count. No evidence: `logz` is `NaN`.
+integrated autocorrelation time in sweeps ([`iat`](@ref); above about `nsweep/50`, a lower
+bound), and the number of evaluations. `logz` is `NaN`.
 """
 function fit_model_ensemble(model_dict::Dict{String}, list_free_params::Vector{String},
                             data::OIdata;
@@ -412,8 +404,7 @@ function _fit_model_pigeons end
                       multithreaded = Threads.nthreads() > 1, verb = true) -> SamplerResult
 
 Sample the posterior with non-reversible parallel tempering (Syed et al. 2021) through
-Pigeons.jl — the sampler for a MULTIMODAL posterior: the chains move between the basins along
-an annealed ladder from a reference to the posterior. Needs `using Pigeons`.
+Pigeons.jl, for multimodal posteriors. Needs `using Pigeons`.
 
 The free parameters are mapped to ℝ (a logistic for two finite bounds, `lo + exp(z)` for one,
 the identity for none) and the ladder anneals from N(0, `reference_sigma`²) on those
@@ -423,19 +414,15 @@ coordinates. The log-likelihood is −(χ² + constraint penalty)/2; the bounds 
   next. `n_chains` ≈ 2Λ (the global communication barrier) is the sizing rule.
 - `explorer`: `:slice` (no gradient) or `:mala` (AutoMALA, on the closed-form χ² gradient).
 - `variational = true` fits a Gaussian reference during the run; `n_chains_variational > 0`
-  keeps a fixed leg beside it (the stabilised variant, Surjanovic et al. 2022), which guards
-  against the variational fit collapsing onto one mode. An interferometric posterior is usually
-  far narrower than its bounds, and the fixed reference's ladder then never communicates: on AX
-  Cir's binary (4 parameters, bounds ±60 mas), 0–1 round trips at 8–10 rounds with the fixed
-  reference, 76–352 with the variational or stabilised one, the evidence settled to 0.03.
+  adds a leg with the fixed reference (the stabilised variant, Surjanovic et al. 2022). On AX
+  Cir's binary (4 parameters, bounds ±60 mas) the fixed reference gives 0–1 round trips at 8–10
+  rounds, the variational or stabilised reference 76–352.
 
 `logz` is the stepping-stone evidence on `fit_model_nested`'s scale (the log volume of the
-bounds subtracted), `NaN` when a bound is infinite; `logzerr` is 1/√(round trips), which does
-not include the estimator's bias in a short run: on α Cen A's power-law fit, against Nautilus's
-−712.528, it gives −711.71 at 8 rounds (1 round trip), −712.29 at 10 (18) and −712.536 at 12
-(103). Read an evidence from enough rounds for tens of round trips.
-`diagnostics` carries the round trips — fewer than 3 and the ladder was barely traversed, so
-the other modes may not have been visited.
+bounds subtracted), `NaN` when a bound is infinite. `logzerr` is 1/√(round trips) and does not
+include the bias of a short run: on α Cen A's power-law fit (Nautilus: −712.528), −711.71 at 8
+rounds (1 round trip), −712.29 at 10 (18), −712.536 at 12 (103). `diagnostics` holds the number
+of round trips; with fewer than 3, other modes may not have been visited.
 """
 function fit_model_pigeons(args...; kwargs...)
     isempty(methods(_fit_model_pigeons)) &&

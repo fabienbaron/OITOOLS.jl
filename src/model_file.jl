@@ -66,27 +66,21 @@ _wl_from_metres(v) = v
 """
     read_model_file(path) -> (; model, free, lb, ub, constraints, priors, name)
 
-Read a TOML model file into the arguments a fitter takes.
-
-The result destructures straight into any of the fitters:
+Read a TOML model file into the arguments of the fitters:
 
 ```julia
 m = read_model_file("binary.toml")
 res = fit_model(m.model, m.free, data; m.lb, m.ub, m.constraints, m.priors)
 ```
 
-Every section is optional. A file with only `[model]` reads back as a model with no free
-parameters, which is what `model_to_image` and `model_to_sed` want. Bounds absent from the file
-are **not** filled in from [`default_bounds`](@ref) — an absent bound means ±Inf, and silently
-substituting a guess would make two fits from the same file differ by which version of the
-defaults was in the package.
+Only `[model]` is required; without `free` the model has no free parameters. A bound absent
+from the file is ±Inf (not taken from [`default_bounds`](@ref)).
 
 An image component's `c,image` path, when relative, is taken relative to the model file and
 returned absolute.
 
-`\$WL` is in microns in an expression. A file written before that (it has no
-`wl_unit = "um"`) meant metres: its `\$WL` is read as `(\$WL*1e-6)`, which means what it
-meant, and a message says so. Saving it again writes the marker.
+`\$WL` is in microns. In a file without `wl_unit = "um"`, `\$WL` is in metres and is read as
+`(\$WL*1e-6)`, with a message; [`write_model_file`](@ref) writes the marker.
 
 See also [`write_model_file`](@ref), [`ModelConstraint`](@ref) and [`default_bounds`](@ref).
 """
@@ -158,12 +152,8 @@ write_model_file("binary.toml", model; free, lb, ub,
                  constraints = [ModelConstraint("disk,diamout", ">", "disk,diamin")])
 ```
 
-Keys are sorted, so the same model always produces the same bytes and two files can be
-diffed. Bounds that are infinite on both sides are omitted rather than written as `[-inf, +inf]`:
-they constrain nothing, and every fitter already treats a missing bound that way.
-
-A `FitResult` is not what gets written — the fitted values are, if the caller passes them in
-`model_dict`. Writing the result of a fit back out is therefore
+Keys are sorted. Bounds infinite on both sides are omitted. To write a fit result, merge the
+fitted values into the model:
 `write_model_file(path, merge(model, Dict(zip(res.list_free_params, res.x_opt))); free = res.list_free_params, ...)`.
 """
 function write_model_file(path::AbstractString, model_dict::AbstractDict;

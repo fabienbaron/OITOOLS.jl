@@ -47,8 +47,7 @@ end
 The photometric bands known to OITOOLS, from U to Q, as [`PhotometricBand`](@ref) entries.
 
 Zero points are derived from the Bessell et al. (1998) / Cohen et al. (2003) `f_lambda`
-values for a 0-magnitude star, converted to photon flux. The V entry is the textbook
-"a zeroth-magnitude star delivers ~1000 photons/s/cm²/Å".
+values for a 0-magnitude star, converted to photon flux (V: about 1000 photons/s/cm²/Å).
 """
 const PHOTOMETRIC_BANDS = [
     PhotometricBand("U",    0.360e-6, 0.066e-6, 7.576e10 * 1e6, 0.40),
@@ -131,11 +130,9 @@ end
 Fraction of light transmitted by the atmosphere at wavelength `λ` (metres). Defaults to 1.0
 at every wavelength.
 
-ASPRO convolves an ESO SkyCalc table (`skytable_mean_atm.fits`, computed for Paranal) over
-each spectral channel. That table is not redistributable and hand-rolling telluric bands
-would be worse than saying nothing, so this is a hook: pass a `transmission` column in a
-wavelength config, or redefine this, to model tellurics. Bands to care about at CHARA are
-O2 A at 760 nm and H2O at 820-950 nm (SPICA), and H2O at 1350-1420 nm (MIRC-X J).
+To model tellurics, give a `transmission` column in a wavelength config, or redefine this
+function. (ASPRO uses an ESO SkyCalc table computed for Paranal.) The telluric bands relevant
+at CHARA are O2 A at 760 nm and H2O at 820-950 nm (SPICA), and H2O at 1350-1420 nm (MIRC-X J).
 """
 atm_transmission(λ) = one(float(typeof(λ)))
 
@@ -211,13 +208,10 @@ diffraction-limited core and a seeing-limited halo:
 
     S = exp(-σ²) + (1 - exp(-σ²)) / (1 + (D/r0_λ)²)
 
-The halo is why the Strehl does not collapse to zero on faint guide stars: as σ² → ∞ the
-Strehl tends to `1/(1 + (D/r0_λ)²)`, the relative peak intensity of an uncorrected
-long-exposure PSF. Reproduces ASPRO's CHARA curves to a median 0.7% (worst case 3.1% in H/K).
-
-Two details that are easy to get wrong and are deliberate here: the servo term uses `t0`
-**unscaled** — neither shifted to the science wavelength nor corrected for airmass — and the
-subaperture pitch is `sqrt(π(D/2)²/n_actuators)`, not `D/sqrt(n_actuators)`.
+On faint guide stars (σ² → ∞) the Strehl tends to `1/(1 + (D/r0_λ)²)`. Reproduces ASPRO's
+CHARA curves to a median 0.7% (worst case 3.1% in H/K). The servo term uses `t0` unscaled (not
+shifted to the science wavelength nor corrected for airmass), and the subaperture pitch is
+`sqrt(π(D/2)²/n_actuators)`.
 """
 function strehl_ratio(λ, D, seeing, t0, mag_ao, ao::AOConfig; elevation_deg=90.0)
     n_act = ao.n_actuators > 0 ? ao.n_actuators : ao.n_subpupils
@@ -269,10 +263,8 @@ Fraction of the light collected by one telescope that reaches the combiner, i.e.
 ratio when an [`AOConfig`](@ref) is available and the seeing-limited estimate `min(1,(r0/D)²)`
 when `ao === nothing`.
 
-The fallback is what this package used unconditionally before the AO model existed. It is
-appropriate only for an uncorrected aperture and underestimates a modern AO-equipped array by
-roughly 5x in H and 20x in R at CHARA, so facilities that have AO should carry an `[ao]`
-block in their config.
+The seeing-limited estimate is about 5× lower than the AO value in H and 20× in R at CHARA; a
+facility with AO needs an `[ao]` table in its config.
 """
 function coupling_efficiency(λ, D, seeing, t0, mag_ao, ao::Union{AOConfig,Nothing}; elevation_deg=90.0)
     if ao === nothing

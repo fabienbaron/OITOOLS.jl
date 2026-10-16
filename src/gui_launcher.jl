@@ -193,25 +193,16 @@ end
 
 Open the GUI, loading everything it needs on the way.
 
-Intended for the REPL: `using OITOOLS; oitoolsgui()`, optionally with OIFITS files to open in
-the session. Equivalent to `bin/oitoolsgui.jl`, which stays the right entry point for a
-launcher, a desktop icon or a sysimage.
+From the REPL: `using OITOOLS; oitoolsgui()`, optionally with OIFITS files to open. It does
+what `bin/oitoolsgui.jl` does.
 
-GLMakie, QMLMakie and QML are weak dependencies, so they are not installed alongside OITOOLS —
-`Pkg.add` them once into whatever environment you work in, or use `--project=bin`, which pins
-known-good versions in its manifest.
+GLMakie, QMLMakie and QML must be installed in the active environment (or use
+`--project=bin`). `GLFW_jll` (native Wayland), `Nautilus` (nested sampling), `Pigeons`
+(tempering) and `PairPlots` (corner plots) are loaded when installed, and listed in one message
+when not; `optional = false` skips them. The Python extensions are not loaded.
 
-Four further packages are loaded when present and named in one message when not: `GLFW_jll`
-(native Wayland), `Nautilus` (nested sampling in the Model panel), `Pigeons` (tempering) and
-`PairPlots` (corner plots). None is needed for the window, and `optional = false` skips the
-check. The Python extensions are deliberately not among them: matplotlib figures and UltraNest
-need a Conda environment, which is a far larger install than any of these.
-
-!!! note "Call this before loading GLMakie yourself"
-    The Mesa, GLFW and Qt platform hints are only read once, when the first OpenGL context is
-    created and when Qt starts. This function sets them and then loads those packages, in that
-    order. If GLMakie is already loaded the hints have been missed, and it says so rather than
-    opening a window whose platform silently disagrees with Qt's.
+Call it before `using GLMakie`: it sets the Mesa, GLFW and Qt platform variables, then loads
+those packages. If GLMakie is already loaded it prints a warning.
 """
 function oitoolsgui(files::AbstractString...; optional::Bool = true, verbose::Bool = true)
     if _is_loaded("GLMakie", "e9467ef8-e4e7-5192-8a1a-b1aee30e663a")

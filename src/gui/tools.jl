@@ -155,6 +155,246 @@ function shell_tools_hdu(path::AbstractString, i::Real)     # QML sends numbers 
     return String(take!(io))
 end
 
+# ── a table's contents ────────────────────────────────────────────────────────────────
+
+# One cell of the Data view: its text, and whether its line is flagged (greyed).
+struct TableCell
+    text    :: String
+    flagged :: Bool
+end
+
+"""
+    OITableView <: AbstractMatrix{TableCell}
+
+The Data view's model contents: the table `oifits_table` read, and `perm`, the lines shown (the
+filter's survivors, in the sort's order). Cells are formatted when Qt asks for them, so a table
+of hundreds of thousands of lines costs its columns once and nothing per line. `channel` picks
+the channel an array column shows in the table as stored.
+"""
+mutable struct OITableView <: AbstractMatrix{TableCell}
+    t       :: Any
+    perm    :: Vector{Int}
+    channel :: Int
+    sortcol :: Int
+    rev     :: Bool
+    filter  :: String
+    hide    :: Bool
+end
+OITableView() = OITableView(nothing, Int[], 1, 0, false, "", false)
+Base.size(v::OITableView) = v.t === nothing ? (0, 1) : (length(v.perm), length(v.t.names))
+Base.IndexStyle(::Type{OITableView}) = IndexCartesian()
+function Base.getindex(v::OITableView, i::Int, j::Int)
+    v.t === nothing && return TableCell("", false)
+    r = v.perm[i]
+    return TableCell(_cell_text(v.t.columns[j][r], v), _line_flagged(v, r))
+end
+
+# A line's flag: per channel, its own; in a table as stored, the shown channel's (a row with any
+# channel flagged is not a flagged row).
+function _line_flagged(v::OITableView, r)
+    t = v.t
+    (t.per_channel || t.nwave == 0) && return t.flagged[r]
+    k = findfirst(==("FLAG"), t.names)
+    k === nothing && return t.flagged[r]
+    f = t.columns[k][r]
+    return f isa AbstractVector ? Bool(f[clamp(v.channel, 1, length(f))]) : Bool(f)
+end
+
+_num_text(x::AbstractFloat) = isnan(x) ? "NaN" : @sprintf("%.6g", x)
+_num_text(x::Bool) = x ? "T" : "F"
+_num_text(x::Integer) = string(x)
+_num_text(x) = strip(string(x))
+function _cell_text(x, v)
+    x isa AbstractVector || return String(_num_text(x))
+    # an array column of the table as stored: the chosen channel, else first … last
+    v.t.nwave > 0 && length(x) == v.t.nwave && return String(_num_text(x[clamp(v.channel, 1, length(x))]))
+    length(x) <= 4 && return join(_num_text.(x), ", ")
+    return string(_num_text(first(x)), " … ", _num_text(last(x)), " (", length(x), ")")
+end
+
+# The view, and the model QML shows it through; built by `gui()` before the window exists.
+const OITABLE = Ref{Any}(nothing)
+const OITABLE_MODEL = Ref{Any}(nothing)
+
+"""
+    build_oitable_model() -> JuliaItemModel
+
+The Data view's model, over an empty [`OITableView`](@ref): roles `text` and `flagged`, the
+column headers the names with their units below.
+"""
+function build_oitable_model()
+    v = OITableView()
+    m = QML.JuliaItemModel(v)
+    QML.setheadergetter!(m, function (data, i, orientation, role)
+        t = data.t
+        (t === nothing || orientation != QML.Horizontal || !(1 <= i <= length(t.names))) && return string(i)
+        isempty(t.units[i]) ? t.names[i] : t.names[i] * "\n" * t.units[i]
+    end)
+    OITABLE[] = v; OITABLE_MODEL[] = m
+    return m
+end
+
+_table_refresh!() = OITABLE_MODEL[] === nothing || QML.force_model_update(OITABLE_MODEL[])
+
+# The filter's terms: `key a–b` (λ, B, B/λ, MJD; an en dash, `..` or `-`) restricts a column to a
+# range, any other word must appear in the stations (or, without them, in any text column).
+function _filter_lines(t, text)
+    lines = collect(1:t.nlines)
+    toks = split(strip(text))
+    keys = Dict("λ" => "λ", "lambda" => "λ", "wl" => "λ", "b" => "B", "b/λ" => "B/λ",
+                "mjd" => "MJD")
+    i = 1
+    while i <= length(toks)
+        tok = lowercase(toks[i])
+        if haskey(keys, tok) && i < length(toks)
+            m = match(r"^([-+]?[0-9.eE]+)\s*(?:–|\.\.|-)\s*([-+]?[0-9.eE]+)$", toks[i+1])
+            k = findfirst(==(keys[tok]), t.names)
+            if m !== nothing
+                # a range on a column this table does not have (λ in a table as stored) applies
+                # to nothing rather than matching no line
+                if k !== nothing
+                    lo, hi = parse(Float64, m[1]), parse(Float64, m[2])
+                    c = t.columns[k]
+                    filter!(r -> c[r] isa Real && lo <= c[r] <= hi, lines)
+                end
+                i += 2; continue
+            end
+        end
+        word = toks[i]
+        k = findfirst(==("stations"), t.names)
+        cs = k === nothing ? [c for c in t.columns if eltype(c) <: AbstractString] : [t.columns[k]]
+        filter!(r -> any(occursin(word, c[r]) for c in cs), lines)
+        i += 1
+    end
+    return lines
+end
+
+function _table_apply!(v::OITableView)
+    t = v.t
+    t === nothing && (v.perm = Int[]; return v)
+    lines = _filter_lines(t, v.filter)
+    v.hide && filter!(r -> !_line_flagged(v, r), lines)
+    if v.sortcol > 0
+        c = t.columns[v.sortcol]
+        key(r) = (x = c[r]; x isa AbstractVector ? (isempty(x) ? NaN : x[clamp(v.channel, 1, length(x))]) : x)
+        if all(r -> key(r) isa Real, lines)
+            # NaN last whichever the direction
+            sort!(lines; by = r -> (isnan(Float64(key(r))), v.rev ? -Float64(key(r)) : Float64(key(r))))
+        else
+            sort!(lines; by = r -> string(key(r)), rev = v.rev)
+        end
+    end
+    v.perm = lines
+    return v
+end
+
+function _table_status(v)
+    v.t === nothing && return ""
+    nf = count(r -> _line_flagged(v, r), 1:v.t.nlines)
+    ch = !v.t.per_channel && v.t.nwave > 1 ?
+         @sprintf(" · channel %d at %.6g µm", v.channel, v.t.wl[clamp(v.channel, 1, v.t.nwave)]) : ""
+    return string(length(v.perm), " of ", v.t.nlines, " lines", v.t.per_channel ? " (per channel)" : "",
+                  nf > 0 ? ", $(nf) flagged" : "", ch)
+end
+
+"""
+    shell_table_show(path, hdu, per_channel) -> String
+
+Show table HDU `hdu` of `path` in the Data view ([`oifits_table`](@ref)): an OI data table per
+channel unless `per_channel` is false. Returns `ok\tstatus\tnwave\tper_channel` or a message
+beginning with `!`. The filter, the "hide flagged" choice and the channel carry over; the sort
+is reset.
+"""
+function shell_table_show(path::AbstractString, hdu::Real, per_channel::Bool)
+    v = OITABLE[]
+    v === nothing && return "! no table view"
+    p = strip_file_url(String(path))
+    t = try
+        OITOOLS.oifits_table(p, round(Int, hdu); per_channel)
+    catch err
+        return "! " * _cause(err)
+    end
+    v.t = t; v.sortcol = 0; v.rev = false
+    _table_apply!(v); _table_refresh!()
+    return join(("ok", _table_status(v), t.nwave, t.per_channel ? 1 : 0), "\t")
+end
+
+"""
+    shell_table_sort(column) -> String
+
+Sort the Data view by `column` (0-based, as QML numbers them); the same column again reverses
+it. Returns the status line.
+"""
+function shell_table_sort(column::Real)
+    v = OITABLE[]
+    (v === nothing || v.t === nothing) && return ""
+    c = round(Int, column) + 1
+    v.rev = v.sortcol == c ? !v.rev : false
+    v.sortcol = c
+    _table_apply!(v); _table_refresh!()
+    return _table_status(v)
+end
+
+"""
+    shell_table_filter(text, hide_flagged) -> String
+
+Filter the Data view: `text`'s words must appear in the stations, `λ 2.16–2.17`, `B 100–200`,
+`B/λ a–b` or `mjd a–b` restrict a column to a range; `hide_flagged` drops flagged lines. Returns
+the status line.
+"""
+function shell_table_filter(text::AbstractString, hide_flagged::Bool)
+    v = OITABLE[]
+    v === nothing && return ""
+    v.filter = String(text); v.hide = hide_flagged
+    _table_apply!(v); _table_refresh!()
+    return _table_status(v)
+end
+
+"""
+    shell_table_channel(k) -> String
+
+The channel (1-based) an array column, and the flag, show in a table as stored. Returns the
+status line.
+"""
+function shell_table_channel(k::Real)
+    v = OITABLE[]
+    (v === nothing || v.t === nothing) && return ""
+    v.channel = clamp(round(Int, k), 1, max(v.t.nwave, 1))
+    _table_apply!(v); _table_refresh!()
+    return _table_status(v)
+end
+
+"""
+    shell_table_widths() -> String
+
+Each column's width in characters, `header\tcells` per line: the longer of its name and unit,
+and the longest of its cells over up to 500 lines spread through the table (capped at 60), so a
+column is as wide as what it holds and a table of any size costs the same.
+"""
+function shell_table_widths()
+    v = OITABLE[]
+    (v === nothing || v.t === nothing) && return ""
+    t = v.t
+    n = length(v.perm)
+    sample = n <= 500 ? (1:n) : round.(Int, range(1, n; length = 500))
+    out = String[]
+    for j in eachindex(t.names)
+        hdr = max(length(t.names[j]), length(t.units[j]))
+        cells = isempty(sample) ? 0 : maximum(length(v[i, j].text) for i in sample)
+        push!(out, string(hdr, "\t", min(cells, 60)))
+    end
+    return join(out, "\n")
+end
+
+"The comment of column `column` (0-based) of the Data view, for its tooltip."
+function shell_table_comment(column::Real)
+    v = OITABLE[]
+    (v === nothing || v.t === nothing) && return ""
+    c = round(Int, column) + 1
+    1 <= c <= length(v.t.comments) || return ""
+    return v.t.comments[c]
+end
+
 """
     shell_tools_validate(path) -> String
 
@@ -850,8 +1090,8 @@ function shell_fit_each(names::AbstractString, free_lines::AbstractString,
     weights = fitting_weights(; v2, t3amp, t3phi, visamp, visphi, flux, diffvis)
     all(iszero, weights) && return "! no observables selected"
     opt = String(optimiser)
-    opt in ("grid", "nested") &&
-        return "! fit each dataset with Levenberg-Marquardt or an NLopt method, not $(opt == "grid" ? "a grid search" : "nested sampling")"
+    opt in ("grid", "nested", "ensemble", "pigeons") &&
+        return "! fit each dataset with Levenberg-Marquardt or an NLopt method, not $(opt == "grid" ? "a grid search" : "a sampler")"
     unc = String(uncertainty)
     unc in ("none", "jacobian") || return "! fit each dataset with a Jacobian uncertainty or none"
     for n in ns

@@ -162,37 +162,22 @@ end
 """
     model_warnings(model_dict, list_free_params; lb, ub) -> Vector{String}
 
-Everything wrong with a model that can be seen without fitting it, one sentence each.
+Problems in a model that can be found without fitting it, one sentence each:
 
-Four of the first five describe a setup that runs happily and answers the wrong question: a
-starting value outside its own bounds, bounds that exclude everything, and fluxes that cannot
-make a visibility. The visibilities are divided by the total flux, so the fluxes' scale is
-free: when every flux is free the fit has one direction that changes nothing (fix one, or
-write one as 1 − the others), and numeric fluxes summing to zero or less make V undefined.
+- a free parameter's starting value outside its bounds, or bounds with `lb ≥ ub`;
+- numeric fluxes summing to zero or less (the visibilities are divided by the total flux);
+- every flux free, so their common scale is undetermined (fix one, or write one as
+  1 − the others);
+- an expression referring to a parameter that is not in the model, or to an implicit variable
+  its kind of expression does not have (`\$WL` in a profile); evaluating the model then raises
+  an `UndefVarError` that does not name the key;
+- a key the parser ignores: a non-shape key no expression refers to (unused, or misspelt such
+  as `star,diamm`), or a shape key of another kind than the one that set the component's kind
+  (`ud` beside `diamin`, which make a ring);
+- `\$WL` (microns) compared with or divided by a constant below 1e-3, which looks like metres.
 
-The fifth, an expression referring to a parameter that is not in the model or to an implicit
-variable its kind of expression cannot see (`\$WL` inside a profile), does not run at all:
-the resolver raises `UndefVarError: \`fs\` not defined in \`OITOOLS.RGF\`` at EVALUATION time,
-naming its own internal module rather than the key or the expression at fault. Removing a
-component or a global leaves exactly that behind in anything that referred to it, so the model
-panel reports it here instead.
-
-The sixth is a key the parser ignores. A key that is not a shape key and that no expression
-refers to does nothing, whether it was added with "+ parameter" and is not used yet or is a
-misspelling (`star,diamm`); the warning says it is not used. A shape key of another kind beside
-the one that decided the component does nothing either: `ud` and `diamin` make a ring, whose
-`ud` is not read. Neither raises; in the second case the warning says what the component was
-read as and which key decided it.
-
-The seventh is a wavelength written in metres: `\$WL` is in microns, so `\$WL/1.6e-6` is
-off by 10⁶; a constant below 1e-3 set against `\$WL` is reported.
-
-[`display_model`](@ref) reports the first five. It calls this function for the reference check
-alone and keeps the bound warnings in its own per-parameter table, where each one reads beside
-the bounds it is about.
-
-Flux fractions given as expressions are not checked: their values depend on the resolver, so
-summing the literals would be summing the wrong things.
+Fluxes given as expressions are not checked. [`display_model`](@ref) prints the bound, flux and
+reference warnings.
 """
 function model_warnings(model_dict::Dict{String}, list_free_params::AbstractVector{<:AbstractString};
                         lb = Dict{String,Float64}(), ub = Dict{String,Float64}())
@@ -278,12 +263,9 @@ end
 """
     display_model(model_dict, list_free_params; lb, ub)
 
-Print a human-readable summary of the model setup, grouped by component.
-Shows each parameter's value (or expression), whether it is free or fixed,
-and its bounds.  Warns about common mistakes (value out of bounds, missing
-bounds, fluxes that cannot make a visibility).
-
-Call this *before* `fit_model` / `fit_model_ultranest` to verify your setup.
+Print the model by component: each parameter's value or expression, free or fixed, and its
+bounds, with warnings for values outside their bounds, empty bounds, fluxes, and references to
+missing parameters (see [`model_warnings`](@ref)).
 """
 function display_model(model_dict  ::Dict{String},
                        list_free_params  ::Vector{String};
@@ -526,9 +508,9 @@ Fit a parametric model to interferometric data using NLopt.
 - `weights` — observable weights [V2, T3amp, T3phi, visamp, visphi, flux, diffphase]
 - `priors` — Vector of `(expr_str, target, sigma)` tuples for Gaussian penalties
 - `constraints` — relations between parameters that bounds cannot express, as
-  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples. Handed to NLopt as real
-  nonlinear constraints, so they hold at the optimum; a `method` that cannot take them is
-  wrapped in `:AUGLAG` rather than replaced. The reported `chi2` is the data χ², unaffected
+  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples, passed to NLopt as nonlinear
+  constraints; a `method` that does not support them is wrapped in `:AUGLAG`. The reported
+  `chi2` is the data χ²
 - `rv` — radial velocities ([`read_rv`](@ref)) fitted with the interferometry, against the
   orbit of the model's component on an orbit; their χ² is added, and `ndof` counts them
 - `method` — NLopt algorithm (default `:LD_LBFGS`; use `:LN_NELDERMEAD` for gradient-free)
@@ -742,18 +724,11 @@ Result of [`fit_model_nested`](@ref), whichever sampler produced it.
 | `posterior` | `Matrix{Float64}` | `(n_samples, n_params)` equally weighted posterior samples |
 | `result` | `Any` | the sampler's own result object, passed through unconverted |
 | `model` | `FlatModel` | the compiled model that was fitted |
-| `backend` | `Symbol` | which sampler produced this — `:nautilus` or `:ultranest` |
+| `backend` | `Symbol` | the sampler: `:nautilus` or `:ultranest` |
 
-`backend` is not decoration. Two independent nested samplers agreeing on `logz` is evidence;
-one of them quoted without saying which is not, because the estimator, the bounding strategy
-and the stopping rule all differ between them.
-
-!!! note "`result` is backend-specific"
-
-    Under `:ultranest` it is a `PythonCall.Py` wrapping UltraNest's result dict — index it with
-    `result["key"]` and convert explicitly with `pyconvert(T, …)`. Under `:nautilus` it
-    is the sampler state Nautilus returned. Every other field is a concrete
-    Julia type and means the same thing either way; prefer those where they suffice.
+`result` is backend-specific: under `:ultranest` a `PythonCall.Py` wrapping UltraNest's result
+dict (index with `result["key"]`, convert with `pyconvert(T, …)`), under `:nautilus` the sampler
+state Nautilus returned.
 """
 struct NestedResult
     x_opt       ::Vector{Float64}   # maximum-likelihood parameter values
@@ -798,22 +773,17 @@ end
 # Two samplers implement the same fit, and neither is a dependency of the package:
 #
 #   :nautilus         Nautilus.jl       -- pure Julia, importance nested sampling; reuses every
-#                                          likelihood call, so it buys far more evidence
-#                                          precision per call (and, in higher dimensions,
-#                                          needs far fewer). See src/fit_model_nautilus.jl.
-#   :nautilus         Nautilus.jl       -- pure Julia, so it survives into a compiled build
+#                                          likelihood call. See src/fit_model_nautilus.jl.
 #   :ultranest        UltraNest         -- Python, reached through PythonCall
 #
 # `using` either one activates its extension, which registers the backend and adds a method to
-# `_fit_nested`. Keeping both is deliberate: an evidence estimate checked against a second,
-# independent implementation is the only cheap way to find out that one of them is wrong.
+# `_fit_nested`. Two independent implementations let an evidence estimate be cross-checked.
 
 """
 The nested sampler [`fit_model_nested`](@ref) uses when no `backend` keyword is given.
 
-`:none` until an extension registers one, after which the first loaded wins. Change it with
-[`set_nested_backend!`](@ref) rather than assigning to this directly, which checks that the
-backend is actually available.
+`:none` until an extension registers one; the first loaded is the default. Change it with
+[`set_nested_backend!`](@ref), which checks that the backend is loaded.
 """
 const NESTED_BACKEND = Ref(:none)
 
@@ -839,8 +809,7 @@ nested_backend() = NESTED_BACKEND[]
 
 Choose the nested sampler: `:nautilus` or `:ultranest`.
 
-The backend's package must already be loaded, and this says so immediately rather than letting
-a long run end in a `MethodError`.
+The backend's package must be loaded; otherwise this raises an error.
 """
 function set_nested_backend!(b::Symbol)
     if !(b in NESTED_BACKENDS_LOADED)
@@ -860,11 +829,9 @@ function _fit_nested end
     fit_model_nested(model_dict, list_free_params, data; kwargs...) -> NestedResult
     fit_model_nested(model::FlatModel, data; kwargs...)             -> NestedResult
 
-Fit a parametric model by Bayesian nested sampling, returning the posterior and the evidence
-as well as a best-fit point.
-
-Unlike the gradient fitters this needs no starting guess — it samples the whole prior volume —
-but it does need **finite bounds on every free parameter**, since those bounds are the prior.
+Fit a parametric model by nested sampling: posterior samples, log-evidence and the
+maximum-likelihood point. The starting values are not used. Every free parameter needs finite
+bounds, which define the uniform prior.
 
 ```julia
 using OITOOLS, Nautilus
@@ -881,13 +848,13 @@ r.posterior              # equally weighted samples, (n_samples, n_params)
 
 | keyword | default | meaning |
 |---|---|---|
-| `lb`, `ub` | — | `Dict{String,Float64}` bounds, **required** for every free parameter: they are the prior |
+| `lb`, `ub` | | `Dict{String,Float64}` bounds, required for every free parameter |
 | `weights` | `[1,1,1,0,0,0,0]` | observable weights `[V2, T3amp, T3phi, visamp, visphi, flux, diffphase]` |
-| `constraints` | `[]` | [`ModelConstraint`](@ref)s, or `(lhs, op, rhs[, tol])` tuples. They enter the log-likelihood as `-penalty/2`, so the posterior and `logz` are both the constrained ones |
+| `constraints` | `[]` | [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples, added to the log-likelihood as `-penalty/2` |
 | `nB_workspace` | from the data | Hankel workspace size |
 | `verb` | `true` | print progress |
 | `cornerplot` | `true` | draw the corner plot when a plotting backend is loaded |
-| `seed` | `nothing` | fix for a reproducible run (UltraNest: numpy's generator, restored after, and batches of 512 proposals instead of ones resized on a wall-clock timer) |
+| `seed` | `nothing` | reproducible run (UltraNest: seeds numpy's generator, restored afterwards, and uses fixed batches of 512 proposals) |
 
 # Keywords, `:nautilus`
 
@@ -896,7 +863,7 @@ r.posterior              # equally weighted samples, (n_samples, n_params)
 | `n_live` | `500` | live points in the exploration phase |
 | `n_eff` | `2000` | effective sample size to reach before stopping |
 | `f_live` | `0.01` | fraction of evidence left in the live set at which exploration ends |
-| `n_networks` | `4` | networks in the bounding ensemble; more is more robust and slower |
+| `n_networks` | `4` | networks in the bounding ensemble |
 | `threaded` | `nthreads() > 1` | evaluate the likelihood across threads |
 
 # Keywords, `:ultranest`
@@ -911,19 +878,9 @@ r.posterior              # equally weighted samples, (n_samples, n_params)
 | `frac_remain` | `0.001` | termination fraction |
 | `log_interval` | `100` | logging interval |
 
-Evidence from two different samplers is worth more than evidence from one: `logz` should agree
-within `logzerr`, and `NestedResult.backend` records which produced any given number.
-
-!!! note "Nautilus is importance nested sampling"
-
-    `:nautilus` draws from neural-network-boosted importance shells rather than by rejection
-    inside a bounding ellipsoid, which buys it far more effective samples per likelihood call.
-    Measured on the α Cen A and α Cen B power-law fits, its `logzerr` is **0.019** against
-    UltraNest's 0.18–0.31 on the same data, while `x_opt` agrees to four decimals — so the two
-    can be cross-checked against each other and the Julia one gives the tighter evidence.
-
-    `threaded` defaults to `Threads.nthreads() > 1`; `seed` makes a run reproducible.
-
+`:nautilus` is importance nested sampling with neural-network bounds. On the α Cen A and B
+power-law fits its `logzerr` is 0.019, against 0.18–0.31 for UltraNest, with `x_opt` equal to
+four decimals.
 """
 function fit_model_nested(args...; backend::Symbol = nested_backend(), kwargs...)
     if backend === :none
@@ -1029,17 +986,13 @@ end
 """
     fit_model_lsqfit(model_dict, list_free_params, data; kwargs...) -> LsqFitResult
 
-Fit a parametric model to interferometric data using Levenberg-Marquardt.
-Returns parameter covariance and 1σ uncertainties.
+Fit a parametric model by Levenberg-Marquardt. Returns the covariance and 1σ uncertainties,
+both scaled to χ²ᵣ = 1.
 
-The iteration is LsqFit's, with bounds honoured rather than clipped: a parameter the minimum
-pushes against a bound is held there and left out of the step, so the others converge instead
-of crawling to the iteration cap (see `src/fit_lm.jl`). Besides LsqFit's tests it stops when the
-Gauss-Newton step could no longer lower χ² by a thousandth of a data point's average share.
-`reason` says which test stopped it, and `at_bound` names the parameters held on a bound.
-
-Uses the analytic Jacobian from `residuals_flat_jac` (Wirtinger chain rule
-through the complex visibility Jacobian), so no finite-difference overhead.
+A parameter that reaches a bound is held there and left out of the step. Besides LsqFit's
+gradient and step tests, the iteration stops when the Gauss-Newton step would lower χ² by less
+than `0.001 · max(1, χ²/n)` (n data points). `reason` gives the test that stopped it, and `at_bound` the
+parameters held on a bound. The Jacobian is analytic (`residuals_flat_jac`).
 
 # Arguments
 - `model_dict::Dict{String}` — flat parameter dictionary
@@ -1052,14 +1005,12 @@ through the complex visibility Jacobian), so no finite-difference overhead.
 - `nB_workspace` — Hankel workspace size
 - `maxIter` — maximum iterations (default 200)
 - `constraints` — relations between parameters that bounds cannot express, as
-  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples. They enter as extra rows of the
-  residual vector, which is exactly where Levenberg-Marquardt can act on them — and so also
-  enter the Jacobian, meaning `covar` and `stderror` account for them. The reported `chi2`
-  excludes them, so it stays comparable with what every other fitter reports
-- `measurement` — the measurement model ([`measurement_model`](@ref)): with `visphi =
-  :continuum`, each spectral vector's VISPHI residuals referenced to a polynomial fitted over its
-  continuum channels (a differential phase as PMOIRED's DPHI, with the data's errors; ndof less
-  the coefficients)
+  [`ModelConstraint`](@ref)s or `(lhs, op, rhs[, tol])` tuples, added as extra rows of the
+  residual vector and the Jacobian, so `covar` and `stderror` include them. The reported `chi2`
+  excludes them
+- `measurement` — the measurement model ([`measurement_model`](@ref)); with `visphi =
+  :continuum`, each spectral vector's VISPHI residuals are referenced to a polynomial fitted over
+  its continuum channels, as PMOIRED's DPHI (ndof reduced by the coefficients)
 - `rv` — radial velocities ([`read_rv`](@ref)) fitted with the interferometry, against the
   orbit of the model's component on an orbit (`c,orb Ka`, `Kb`, `gamma`, or `M` and `q`). They
   enter the residual vector after the data; `chi2` and `ndof` count them, `chi2_rv` is their part
@@ -1226,10 +1177,7 @@ end
 """
     model_to_obs(model, x, data) -> (v2, t3amp, t3phi, visamp, visphi)
 
-Evaluate a `FlatModel` at parameter vector `x` and return the model
-observables matching the data structure.
-
-Returns a NamedTuple with fields `v2`, `t3amp`, `t3phi` (degrees),
+The model observables at parameter vector `x`, matching the data: a NamedTuple with fields `v2`, `t3amp`, `t3phi` (degrees),
 `visamp`, `visphi` (degrees).  Empty vectors are returned for
 observable types not present in `data`.
 """
@@ -1284,9 +1232,8 @@ end
 """
     model_to_residuals(model, x, data)
 
-Compute normalised residuals `(model - data) / error` for each observable type.
-Returns a NamedTuple with fields `v2`, `t3amp`, `t3phi`, `visamp`, `visphi`.
-Phase residuals (t3phi, visphi) are wrapped to [-180, 180] before dividing by error.
+Normalised residuals `(model - data) / error` as a NamedTuple with fields `v2`, `t3amp`,
+`t3phi`, `visamp`, `visphi`. Phase differences are wrapped to [-180, 180] before division.
 """
 function model_to_residuals(model::FlatModel, x::AbstractVector, data::OIdata)
     obs = model_to_obs(model, x, data)
@@ -1308,20 +1255,14 @@ end
 """
     model_to_sed(model, x, wl_grid) -> (total, components)
 
-Evaluate the spectral energy distribution of a `FlatModel` by computing
-`V(u=0, v=0)` at each wavelength — the zero-baseline visibility equals
-the total flux.
-
-Per-component fluxes are obtained by resolving the `f` / `spectrum`
-parameters at each wavelength.
+The spectral energy distribution of a `FlatModel`: the total flux and each component's flux
+(its `f` / `spectrum` resolved) at each wavelength.
 
 # Arguments
 - `model::FlatModel` — compiled model from `dict_to_model`
 - `x::AbstractVector` — current free-parameter values
-- `wl_grid` — wavelength array in METRES, the unit `uv_lam` carries in the data and every
-  `wl` argument takes; the expressions see it as `\$WL` in microns. A grid in microns
-  evaluates every `\$WL` expression at a wavelength a million times too small and returns
-  fluxes that are wrong without erroring.
+- `wl_grid` — wavelengths in metres, as `uv_lam` and every `wl` argument; expressions see
+  `\$WL` in microns.
 
 # Returns
 - `total::Vector{T}` — total flux at each wavelength, Σ f ([`model_flux`](@ref)), in the
@@ -1359,8 +1300,8 @@ end
 
 Total flux of the model at zero baseline: `real(V(0,0))`.
 
-For polychromatic models, pass `wl` as a scalar or 1-element vector.
-See also `model_to_sed` for the full spectral energy distribution.
+For a chromatic model, `wl` (metres) is a scalar or a 1-element vector. See also
+[`model_to_sed`](@ref).
 """
 function model_to_flux(model::FlatModel, x::AbstractVector; wl=nothing)
     wl_arg = isnothing(wl) ? nothing : (wl isa Number ? [wl] : wl)
@@ -1377,10 +1318,8 @@ const _MAS2RAD_IMG = 2.0626480624709636e8   # 1 rad in mas (same as _MAS2RAD_PM)
 
 Synthesise an image from a `FlatModel` at parameter vector `x`.
 
-The image is computed by evaluating the model visibility on the 2-D FFT
-frequency grid and applying an inverse real FFT (`irfft`), which exploits
-the Hermitian symmetry V(-u,-v) = conj(V(u,v)) to halve the number of
-visibility evaluations.
+The model visibility is evaluated on the FFT frequency grid (half of it, by Hermitian symmetry)
+and transformed by an inverse real FFT.
 
 # Arguments
 - `model::FlatModel` — compiled model from `dict_to_model`

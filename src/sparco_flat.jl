@@ -32,8 +32,14 @@ using Printf, LinearAlgebra, NLopt
 #   bg,f   = bg,f0   · (λ/λ0)^(-4)       / D       (Rayleigh-Jeans)
 #   W      = (1 - star,f0 - bg,f0) · (λ/λ0)^(d_env) / D
 # where D = sum of all numerators (total flux normalization).
+#
+# The background is fitted as `bg,frac`, its fraction of the flux the star leaves:
+# bg,f0 = (1 - star,f0) · bg,frac. With star,f0 and bg,frac in [0, 1] the three fluxes at λ0
+# are each in [0, 1] and sum to 1 for every point of the box, so the image weight is never
+# negative.
 
 const _SPARCO_EXPRS = Dict{String,Any}(
+    "bg,f0" => "(1 - \$star,f0) * \$bg,frac",
     "D" => "\$star,f0 * (\$WL/\$wl0)^(-\$star,di) + " *
            "\$bg,f0 * (\$WL/\$wl0)^(-4) + " *
            "(1 - \$star,f0 - \$bg,f0) * (\$WL/\$wl0)^(\$d_env)",
@@ -45,14 +51,14 @@ const _SPARCO_EXPRS = Dict{String,Any}(
 
 const _SPARCO_DEFAULTS = Dict{String,Any}(
     "wl0" => 1.6, "star,f0" => 0.5, "star,di" => 4.0,              # wl0 in microns, as `$WL`
-    "bg,f0" => 0.0, "d_env" => 0.0,
+    "bg,frac" => 0.0, "d_env" => 0.0,
 )
 
-const _SPARCO_FREE_PARAMS          = ["star,f0", "bg,f0", "d_env"]
-const _SPARCO_FREE_PARAMS_FREE_DI  = ["star,f0", "bg,f0", "d_env", "star,di"]
+const _SPARCO_FREE_PARAMS          = ["star,f0", "bg,frac", "d_env"]
+const _SPARCO_FREE_PARAMS_FREE_DI  = ["star,f0", "bg,frac", "d_env", "star,di"]
 
-const _SPARCO_LB = Dict("star,f0" => 0.0, "bg,f0" => 0.0, "d_env" => -20.0, "star,di" => -20.0)
-const _SPARCO_UB = Dict("star,f0" => 1.0, "bg,f0" => 1.0, "d_env" =>  20.0, "star,di" =>  20.0)
+const _SPARCO_LB = Dict("star,f0" => 0.0, "bg,frac" => 0.0, "d_env" => -20.0, "star,di" => -20.0)
+const _SPARCO_UB = Dict("star,f0" => 1.0, "bg,frac" => 1.0, "d_env" =>  20.0, "star,di" =>  20.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -512,9 +518,6 @@ Alternates between:
 2. **Parameter NelderMead**: optimize model parameters with the image fixed,
    using `optimize_sparco_flat_parameters`.
 
-This separation avoids the scale-mismatch problem of jointly optimizing
-parameters and image pixels in a single VMLMB run.
-
 Returns `(params_final, x_final)`.
 """
 function reconstruct_hybrid(x_start::AbstractMatrix{<:AbstractFloat},
@@ -635,7 +638,7 @@ end
                        lambda_ref, star_flux=0.5, bg_flux=0.0,
                        d_env=0.0, star_di=4.0,
                        star_spectral_index_fixed=true,
-                       fit_model_first=true,
+                       fit_model_first=false,
                        regularizers=[], weights=[1,1,1],
                        maxiter=200, rounds=3, verb=false, ...)
 
@@ -650,13 +653,22 @@ Builds the flat-model dict internally from the physical parameters, then calls
 - `ft`:       Fourier transform plans from `setup_nfft`
 - `lambda_ref`:  reference wavelength in metres (required)
 - `star_flux`:   initial stellar flux fraction at λ₀ (default 0.5)
-- `bg_flux`:     initial background flux fraction at λ₀ (default 0.0)
+- `bg_flux`:     initial background flux fraction at λ₀ (default 0.0); `star_flux + bg_flux ≤ 1`
 - `d_env`:       environment spectral index (default 0.0)
 - `star_di`:     stellar spectral index (default 4.0 = Rayleigh-Jeans)
 - `star_spectral_index_fixed`:  fix `star_di` during reconstruction (default `true`)
-- `fit_model_first`:  run a model-only fit before image reconstruction (default `true`)
+- `fit_model_first`:  fit the model parameters with the starting image as the environment
+  before the first image step (default `false`). With a centrally peaked starting image, `true`
+  can move part of the star's flux into the image
 
-Returns a named tuple `(params, image, model, free_params, chi2)`.
+The free parameters are `star,f0`, `bg,frac` (the background's fraction of the flux the star
+leaves, `bg,f0 = (1 − star,f0) · bg,frac`) and `d_env`, plus `star,di` when it is free. With
+`star,f0` and `bg,frac` in [0, 1], the star, background and image fluxes at λ₀ are each in
+[0, 1] and sum to 1.
+
+Returns a named tuple `(params, image, model, free_params, chi2, param_names)`: `params` are
+the values of `free_params` (for `model`), and `param_names` maps every fitted quantity,
+`bg,f0` included, to its value.
 """
 function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
         data::Union{OIdata, Vector{<:OIdata}},
@@ -667,7 +679,7 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
         d_env::Real = 0.0,
         star_di::Real = 4.0,
         star_spectral_index_fixed::Bool = true,
-        fit_model_first::Bool = true,
+        fit_model_first::Bool = false,
         weights = [1.0, 1.0, 1.0],
         regularizers = [],
         maxiter::Int = 200,
@@ -681,8 +693,11 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
     # Build model dict
     model_dict = merge(_SPARCO_DEFAULTS, _SPARCO_EXPRS)
     model_dict["wl0"]     = Float64(lambda_ref) * 1e6        # metres → microns, as `$WL`
+    (0 <= star_flux <= 1 && 0 <= bg_flux && star_flux + bg_flux <= 1) || throw(ArgumentError(
+        "star_flux and bg_flux are fractions of the flux at lambda_ref: each ≥ 0, summing to ≤ 1 " *
+        "(got $star_flux and $bg_flux)"))
     model_dict["star,f0"] = Float64(star_flux)
-    model_dict["bg,f0"]   = Float64(bg_flux)
+    model_dict["bg,frac"] = star_flux < 1 ? Float64(bg_flux) / (1 - Float64(star_flux)) : 0.0
     model_dict["d_env"]   = Float64(d_env)
     model_dict["star,di"] = Float64(star_di)
 
@@ -694,27 +709,19 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
     ub = Float64[_SPARCO_UB[k] for k in free_params]
     x_params = Float64[model_dict[k] for k in free_params]
 
-    # Optional model-only fit
+    data_single = data isa Vector ? data[1] : data
+    ft_vec = ft isa AbstractVector{<:NFFT.NFFTPlan} ? ft :
+             ft isa AbstractMatrix ? ft[1] : ft[1]
+
+    # Parameters fitted first with the starting image as the environment. The model alone has
+    # no environment component (W only weights the image), so a fit of the model dict by itself
+    # normalises the star by the background only and drives `star,f0 + bg,f0` above 1.
     if fit_model_first
-        data_single = data isa Vector ? data[1] : data
-        if verb
-            printstyled("SPARCO: fitting model parameters first...\n", color=:cyan)
-        end
-        result = fit_model(model_dict, free_params, data_single;
-            weights=[collect(Float64, weights); 0.0; 0.0; 0.0; 0.0],
-            method=:LD_LBFGS,
-            lb=Dict(k => _SPARCO_LB[k] for k in free_params),
-            ub=Dict(k => _SPARCO_UB[k] for k in free_params),
-            maxeval=5000)
-        x_params = result.x_opt
-        if verb
-            println(result)
-        end
-        # Rebuild model with fitted values
-        for (i, k) in enumerate(free_params)
-            model_dict[k] = x_params[i]
-        end
-        model = dict_to_model(model_dict, free_params)
+        verb && printstyled("SPARCO: fitting model parameters first...\n", color=:cyan)
+        _, x_params, ret = optimize_sparco_flat_parameters(x_params, model,
+            to_ft_precision(copy(x_start), ft_vec), ft_vec, data_single;
+            w_name="W", weights=collect(Float64, weights), lb, ub)
+        verb && println("  parameters ", x_params, " (", ret, ")")
     end
 
     # Reconstruct
@@ -725,12 +732,10 @@ function reconstruct_sparco(x_start::AbstractMatrix{<:AbstractFloat},
         ftol=ftol, xtol=xtol, gtol=gtol)
 
     # Final chi2
-    data_single = data isa Vector ? data[1] : data
-    ft_vec = ft isa AbstractVector{<:NFFT.NFFTPlan} ? ft :
-             ft isa AbstractMatrix ? ft[1] : ft[1]
     chi2 = chi2_sparco_flat_f(x_img, x_params, model, ft_vec, data_single;
         w_name="W", weights=weights, verb=verb)
 
-    return (; params=x_params, image=x_img, model, free_params, chi2,
-              param_names=Dict(free_params[i] => x_params[i] for i in eachindex(free_params)))
+    names = Dict(free_params[i] => x_params[i] for i in eachindex(free_params))
+    names["bg,f0"] = (1 - names["star,f0"]) * names["bg,frac"]
+    return (; params=x_params, image=x_img, model, free_params, chi2, param_names=names)
 end

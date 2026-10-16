@@ -92,6 +92,53 @@
             @test split(G.shell_cube_open(r), "\n") == ["plane 1", "plane 2", "plane 3"]
         end
 
+        @testset "Tools › a table's contents (Data)" begin
+            G.OITABLE[] === nothing && G.build_oitable_model()
+            v = G.OITABLE[]
+            f = joinpath(pkgdir(OITOOLS), "demos", "data", "AX_Cir.oifits")
+            iv = findfirst(x -> x.extname == "OI_VIS2", oifits_headers(f))
+            r = split(G.shell_table_show(f, iv, true), "\t")
+            @test r[1] == "ok" && r[2] == "180 of 180 lines (per channel)" && r[3] == "3" && r[4] == "1"
+            @test size(v) == (180, length(v.t.names)) && v[1, 2].text == "H0-I1"
+            @test v[1, 1].text == "1.61354"                               # λ in µm
+            # sort by B, then again: descending
+            jb = findfirst(==("B"), v.t.names)
+            G.shell_table_sort(jb - 1)
+            B = [parse(Float64, v[i, jb].text) for i in 1:size(v, 1)]
+            @test issorted(B)
+            G.shell_table_sort(jb - 1)
+            @test issorted([parse(Float64, v[i, jb].text) for i in 1:size(v, 1)]; rev = true)
+            # filter: a baseline, then a λ range
+            @test startswith(G.shell_table_filter("H0-I1", false), "30 of 180")
+            @test all(i -> v[i, 2].text == "H0-I1", 1:size(v, 1))
+            n = parse(Int, split(G.shell_table_filter("λ 1.6–1.65", false))[1])
+            @test n == 60 && all(i -> 1.6 <= parse(Float64, v[i, 1].text) <= 1.65, 1:n)
+            G.shell_table_filter("", true)
+            @test all(i -> !v[i, 1].flagged, 1:size(v, 1))
+            G.shell_table_filter("", false)
+            # as stored: one line per row, an array column showing the chosen channel
+            r = split(G.shell_table_show(f, iv, false), "\t")
+            @test startswith(r[2], "60 of 60 lines") && occursin("channel 1 at 1.61354 µm", r[2]) && r[4] == "0"
+            jv = findfirst(==("VIS2DATA"), v.t.names)
+            c1 = v[1, jv].text
+            G.shell_table_channel(2)
+            @test v[1, jv].text != c1 && v[1, jv].text == G._num_text(v.t.columns[jv][1][2])
+            # the flag follows the shown channel
+            jf = findfirst(==("FLAG"), v.t.names)
+            @test v[1, 1].flagged == v.t.columns[jf][1][2]
+            # the header: name and unit; the comment for the tooltip
+            m = G.OITABLE_MODEL[]
+            @test G.shell_table_comment(jv - 1) == v.t.comments[jv]
+            # widths from the content: STAXYZ (three numbers) wider than STA_INDEX
+            fi = joinpath(pkgdir(OITOOLS), "demos", "data", "Iota_Peg6T.oifits")   # stations not at 0
+            ia = findfirst(x -> x.extname == "OI_ARRAY", oifits_headers(fi))
+            G.shell_table_show(fi, ia, true)
+            wd = Dict(zip(v.t.names, [parse.(Int, split(l, "\t")) for l in split(G.shell_table_widths(), "\n")]))
+            @test wd["STAXYZ"][2] > 20 && wd["STAXYZ"][2] > wd["STA_INDEX"][2]
+            @test wd["DIAMETER"][1] == length("DIAMETER")
+            @test startswith(G.shell_table_show(f, 1, true), "!")           # the primary HDU
+        end
+
         @testset "Tools › Set keywords, Save FITS" begin
             # a cube with no axis keywords: 3 wavelength channels × 2 epochs
             cube = Float32[hypot(x - 8 - t, y - 8) < 5 ? w + t : 0.01 for x in 1:16, y in 1:16, w in 1:3, t in 1:2]

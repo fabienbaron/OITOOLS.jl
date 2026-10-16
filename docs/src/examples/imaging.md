@@ -1,8 +1,8 @@
 # Image reconstruction
 
-OITOOLS implements gradient-based image reconstruction using the VMLMB optimizer
-from [OptimPackNextGen.jl](https://github.com/emmt/OptimPackNextGen.jl). The
-forward model uses the NFFT for speed or the exact DFT for accuracy.
+`reconstruct` minimises χ² plus regularization with the VMLMB optimizer of
+[OptimPackNextGen.jl](https://github.com/emmt/OptimPackNextGen.jl). The Fourier transform is an
+NFFT (default) or a DFT (`setup_ft(…; mode = "dft")`).
 
 ## Basic monochromatic reconstruction
 
@@ -24,30 +24,29 @@ See `example_image_reconstruction_basic.jl`.
 
 ## Regularizations
 
-Several regularizations can be combined in the `regularizers` list:
+Regularizers are combined in the `regularizers` list:
 
 | Name | Syntax | Description |
 |------|--------|-------------|
 | `"centering"` | `["centering", μ]` | Soft centroid constraint |
 | `"l1l2"` | `["l1l2", μ, α]` | Edge-preserving smoothness (L1–L2 prior with threshold α) |
-| `"l1l2w"` | `["l1l2w", μ]` | Weighted L1–L2 smoothness |
-| `"l1hyp"` | `["l1hyp", μ]` | L1 hyperbolic smoothness |
-| `"tvsq"` | `["tvsq", μ]` | Total variation squared |
-| `"tv"` | `["tv", μ]` | Total variation |
-| `"l2sq"` | `["l2sq", μ]` | Quadratic smoothness |
+| `"l1l2w"` | `["l1l2w", μ]` | `Σ (x − log(1 + x))` on the pixels |
+| `"l1hyp"` | `["l1hyp", μ]` | Hyperbolic ℓ1 norm of the pixels (sparsity) |
+| `"tvsq"` | `["tvsq", μ]` | Squared gradient norm (quadratic smoothness) |
+| `"tv"` | `["tv", μ]` or `["tv", μ, ε]` | Total variation, with relaxation ε (default 1e-8) |
+| `"l2sq"` | `["l2sq", μ]` | `Σ x²` (Tikhonov) |
 | `"compactness"` | `["compactness", μ]` or `["compactness", μ, w]` | Compactness with optional weight map |
 | `"radialvar"` | `["radialvar", μ, H, G]` | Radial variance (requires precomputed H, G from `setup_radial_reg`) |
-| `"entropy"` | `["entropy", μ]` | Maximum entropy |
-| `"support"` | `["support", μ, mask]` | Support constraint (penalise flux outside mask) |
+| `"entropy"` | `["entropy", μ]` | `Σ (x log x − x)` |
+| `"support"` | `["support", μ, mask]` | `Σ x²` over the pixels where `mask ≤ 0` |
 
-Use `example_image_reconstruction_lcurve.jl` to find a good regularization weight
-via the L-curve method, and `example_image_reconstruction_regularization_types.jl`
-to compare regularization strategies side by side.
+`example_image_reconstruction_lcurve.jl` chooses a weight by the L-curve
+([`lcurve`](@ref)), and `example_image_reconstruction_regularization_types.jl` compares
+regularizers.
 
 ## Polychromatic reconstruction
 
-When the data span multiple spectral channels, pass `polychromatic=true` to
-`readoifits` to get one bin per channel:
+`readoifits(…; polychromatic=true)` gives one bin per spectral channel:
 
 ```julia
 data = readoifits("data/MWC480.oifits"; polychromatic=true)  # N×1 Matrix{OIdata}
@@ -62,8 +61,7 @@ See `example_image_reconstruction_polychromatic_MWC480.jl`.
 
 ## Time-variable reconstruction
 
-For a sequence of epochs loaded with `readoifits_multiepochs`, use temporal
-regularization to link successive frames:
+For epochs read with `readoifits_multiepochs`, temporal regularizers link successive frames:
 
 ```julia
 data = readoifits_multiepochs(files)   # 1×M Matrix{OIdata}
@@ -74,5 +72,4 @@ x    = reconstruct(x0, data, ft; regularizers, temporal_regularizers)
 imdisp_multi(x[:,:,1,:]; labels=["Epoch $i" for i in 1:nepochs], pixsize)
 ```
 
-See the [Imaging (Gradient Descent)](@ref) and [Imaging (Setup)](@ref) API
-references for full docstrings.
+The docstrings are in [Imaging (Gradient Descent)](@ref) and [Imaging (Setup)](@ref).

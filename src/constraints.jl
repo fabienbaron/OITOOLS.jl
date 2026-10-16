@@ -29,8 +29,8 @@
 # `fit_model` hands them to **NLopt as real nonlinear constraints**, so `diamout > diamin`
 # holds at the optimum. `constrained_opt` and `add_nlopt_constraints!` are that path.
 #
-# `fit_model_lsqfit` and `fit_model_ultranest` have no such machinery, and use a **one-sided
-# quadratic penalty** on the normalised violation:
+# `fit_model_lsqfit`, `fit_model_nested` and the samplers use a **one-sided quadratic penalty**
+# on the normalised violation:
 #
 #     r = d / |tol|
 #     penalty += (the part of r that violates the operator)^2
@@ -51,15 +51,9 @@
 using ForwardDiff, NLopt
 
 """
-Default tolerance for a constraint, in the units of the quantity being constrained.
-
-It means two related things, one per enforcement mechanism. To NLopt it is the feasibility
-tolerance: how far outside the constraint a point may sit and still count as satisfied. To the
-penalty used by the least-squares and nested-sampling fitters it is the stiffness: a violation
-of `tol` costs one unit of penalty.
-
-`1e-3` is a thousandth of a milliarcsecond on an angular size, and a tenth of a percent on a
-flux fraction — below anything interferometry resolves, in both readings.
+Default tolerance of a constraint, `1e-3`, in the units of the constrained quantity. For
+NLopt it is the feasibility tolerance; for the penalty (least-squares fit, nested sampling,
+samplers) a violation of `tol` costs one unit of penalty.
 """
 const DEFAULT_CONSTRAINT_TOL = 1e-3
 
@@ -74,26 +68,22 @@ const _CONSTRAINT_OPS = Dict(
 
 A relation between model parameters, enforced during fitting.
 
-`lhs` and `rhs` are parameter names (`"disk,diamout"`), expressions over parameter names
-(`"2 * star,ud"`), or — for `rhs` — a plain number. `op` is one of `"<"`, `"<="`, `">"`,
-`">="`, `"="`, given as a string or a symbol. `tol` is how much violation counts as none; see
-[`DEFAULT_CONSTRAINT_TOL`](@ref).
+`lhs` and `rhs` are parameter names (`"disk,diamout"`) or expressions over parameter names
+(`"2 * star,ud"`); `rhs` may be a number. `op` is one of `"<"`, `"<="`, `">"`, `">="`, `"="`,
+as a string or a symbol. `tol`: see [`DEFAULT_CONSTRAINT_TOL`](@ref).
 
-[`fit_model`](@ref) hands these to NLopt as real nonlinear constraints, so they hold at the
-optimum. [`fit_model_lsqfit`](@ref) and [`fit_model_ultranest`](@ref) have no such machinery
-and apply a one-sided quadratic penalty instead, which is soft: a steep enough χ² can overrule
-it, and `tol` then sets the stiffness rather than a feasibility tolerance.
+[`fit_model`](@ref) passes constraints to NLopt as nonlinear constraints.
+[`fit_model_lsqfit`](@ref), [`fit_model_nested`](@ref) and the samplers apply a one-sided
+quadratic penalty, which a steep χ² can outweigh; `tol` is then its stiffness.
 
 ```julia
-ModelConstraint("disk,diamout", ">", "disk,diamin")   # a ring must have an outside
-ModelConstraint("star,f", "+", 0.0)                   # ── invalid: `+` is not a relation
-ModelConstraint("star,f + disk,f", "=", 1.0)          # fluxes sum to one
-ModelConstraint("star,ud", "<", 4.0; tol = 0.01)      # deliberately loose
+ModelConstraint("disk,diamout", ">", "disk,diamin")
+ModelConstraint("star,f + disk,f", "=", 1.0)
+ModelConstraint("star,ud", "<", 4.0; tol = 0.01)
 ```
 
-Globals — model keys with no comma — must be written with a `\\\$`, as `"\\\$PA"`, exactly as in
-a model expression. A bare name with no comma and no arithmetic is taken to be one and gets
-its `\\\$` added.
+Global keys (no comma) are written with a `\\\$`, as `"\\\$PA"`, as in a model expression; a
+bare name with no comma and no arithmetic gets its `\\\$` added.
 
 See also [`fit_model`](@ref) and [`read_model_file`](@ref).
 """
@@ -129,12 +119,9 @@ end
 """
     parse_constraints(specs) -> Vector{ModelConstraint}
 
-Accept constraints in any of the forms a caller is likely to have them in.
-
-A `ModelConstraint` passes through. A tuple is read positionally as
-`(lhs, op, rhs)` or `(lhs, op, rhs, tol)` — the PMOIRED `prior` layout, so a converted PMOIRED
-model needs no reshaping. A `Dict` or `NamedTuple` is read by the keys `param`/`lhs`, `op`,
-`value`/`rhs` and `tol`, which is the shape a TOML file parses to.
+Constraints from `ModelConstraint`s, tuples `(lhs, op, rhs[, tol])` (PMOIRED's `prior`
+layout), or `Dict`s / `NamedTuple`s with keys `param`/`lhs`, `op`, `value`/`rhs` and `tol` (as
+read from a TOML file).
 """
 parse_constraints(specs) = ModelConstraint[_as_constraint(s) for s in specs]
 parse_constraints(::Nothing) = ModelConstraint[]
@@ -314,11 +301,8 @@ end
 """
     check_constraints(constraints, model_dict; verb = true) -> Vector{Bool}
 
-Report which constraints the model satisfies as it stands, without fitting anything.
-
-Useful before a long run: a starting model that violates a constraint is not an error — the
-penalty will push it back — but it is worth knowing about, because it may equally mean the
-constraint was written backwards.
+Which constraints the model satisfies at its current values. A violated constraint at the start
+is not an error.
 """
 function check_constraints(constraints, model_dict::AbstractDict; verb::Bool = true)
     cs = parse_constraints(constraints)

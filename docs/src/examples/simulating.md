@@ -1,13 +1,12 @@
 # Simulating observations
 
-OITOOLS can generate synthetic OIFITS datasets from a parametric model or
-image, either by copying the UV coverage of an existing file or by building
-observations from scratch using array geometry and observation times.
+OITOOLS writes synthetic OIFITS files from an image or a parametric model, either on the uv
+coverage of an existing file or from an array, a combiner and a list of observation times.
 
 ## From an existing OIFITS file
 
-The simplest approach reuses the UV coverage and noise properties of a real
-dataset:
+[`simulate_from_oifits`](@ref) keeps the uv points, wavelengths, flags and headers of an input
+file and replaces the observables:
 
 ```julia
 using OITOOLS
@@ -25,20 +24,27 @@ simulate_from_oifits("data/Beauty_Contest_2004/2004-data1.oifits", "data/sim.oif
                      flat_model=model, flat_params=Float64[])
 ```
 
-See `example_simulate_observations_from_OIFITS.jl`.
+`mode` sets the error bars:
+
+| `mode` | error bars |
+|---|---|
+| `"copy_errors"` (default) | the input's |
+| `"copy_snr"` | the input's signal-to-noise, applied to the new observables |
+| `"noise_model"` | from `errors` (`v2_multit`, `v2_addit` and the T3 equivalents) |
+
+`noise = false` writes the noiseless observables with the error bars filled in. The output path
+must differ from the input. See `demos/example_simulate_observations_from_OIFITS.jl`.
 
 ## From observation times and array geometry
 
-To simulate a full night of observations at a specific interferometer, you
-need four configuration objects: facility, target, combiner, and wavelength
-setup. These are read from TOML files shipped with OITOOLS in `src/configs/`.
+[`simulate`](@ref) takes four configurations: facility, target, combiner and wavelength setup.
+Built-in ones are TOML files in `src/configs/`.
 
 ### Configuration files
 
-The `.toml` extension is optional — OITOOLS resolves built-in config names
-automatically.
+Built-in configurations are read by name, without the `.toml` extension.
 
-**Facility** — array layout, telescope positions, atmospheric conditions:
+**Facility**: array layout, telescope positions, atmospheric conditions.
 
 ```julia
 facility = read_facility_file("CHARA")
@@ -48,25 +54,25 @@ facility = read_facility_file("CHARA")
 |---|---|---|
 | `CHARA` | CHARA array | 6×1 m |
 | `VLTI_UT` | VLTI Unit Telescopes | 4×8.2 m |
-| `VLTI_AT_small` | VLTI ATs — small config | 4×1.8 m |
-| `VLTI_AT_medium` | VLTI ATs — medium config | 4×1.8 m |
-| `VLTI_AT_large` | VLTI ATs — large config | 4×1.8 m |
+| `VLTI_AT_small` | VLTI ATs, small configuration | 4×1.8 m |
+| `VLTI_AT_medium` | VLTI ATs, medium configuration | 4×1.8 m |
+| `VLTI_AT_large` | VLTI ATs, large configuration | 4×1.8 m |
 
-**Target** — celestial coordinates and proper motion:
+**Target**: coordinates and proper motion.
 
 ```julia
 target = read_obs_file("default_obs")
 ```
 
-You can also query SIMBAD directly:
+From SIMBAD:
 
 ```julia
 ra, dec = ra_dec_from_simbad("Vega")   # decimal degrees, matching TargetConfig.raep0
 target = TargetConfig(target="Vega", raep0=ra, decep0=dec)
 ```
 
-[`simbad_target`](@ref) fills in the rest of `TargetConfig` from a single request, and
-carries the magnitudes `simulate` needs for its noise model:
+[`simbad_target`](@ref) returns the other `TargetConfig` fields and the magnitudes used by the
+noise model:
 
 ```julia
 t = simbad_target("Vega")
@@ -78,10 +84,9 @@ simulate(facility, target, combiner, wavelength, dates, "vega.oifits";
          mag = t.mags["H"], mag_ao = t.mags["V"])
 ```
 
-Bands SIMBAD has no measurement for come back as `NaN`, never `0.0`: zero is Vega-bright, and
-an unmeasured band written as zero would silently become the brightest in the row.
+Bands without a SIMBAD measurement are `NaN`.
 
-**Combiner** — beam combiner properties (throughput, read noise, calibration errors):
+**Combiner**: transmission, detector, calibration errors.
 
 ```julia
 combiner = read_comb_file("MIRCX")
@@ -96,7 +101,7 @@ combiner = read_comb_file("MIRCX")
 | `MYSTIC` | MYSTIC | CHARA | K |
 | `SPICA` | SPICA | CHARA | V |
 
-**Wavelength** — spectral setup for a given combiner mode:
+**Wavelength**: the spectral setup of a combiner mode.
 
 ```julia
 wave = read_wave_file("MIRCX_LOWH")
@@ -147,32 +152,30 @@ simulate(facility, target, combiner, wave, dates, "sim_model.oifits";
          flat_model=model, flat_params=Float64[])
 ```
 
-See `example_simulate_observations_from_model.jl` and
-`example_simulate_observations_from_image.jl`.
+See `demos/example_simulate_observations_from_model.jl` and
+`demos/example_simulate_observations_from_image.jl`.
 
 ### Polychromatic simulation
 
-`example_simulate_polychromatic_disk.jl` demonstrates simulating a chromatic,
-time-variable disk with an off-axis companion. The companion introduces
-wavelength-dependent differential phases, producing non-zero OI_VIS signals.
-The example writes OI_VIS2, OI_VIS (with differential phases), OI_T3, and
-OI_FLUX tables.
+`demos/example_simulate_polychromatic_disk.jl` simulates a chromatic, time-variable disc with
+an off-axis companion, and writes OI_VIS2, OI_VIS (differential phases), OI_T3 and OI_FLUX.
 
-A FITS file is read by its keywords: each uv point is observed with the plane of its channel and
-its date, so the cube's wavelengths (and epochs) must cover the spectral setup's channels (and the
-dates) — a channel with no plane is an error naming the cube's. A file whose axes the keywords do
-not give is refused; fix it once in the GUI's Tools › FITS Image Handling (Set keywords, Save
-FITS) or with [`fits_set_keywords`](@ref). For a **cube** the spectrum matters: each plane is
-normalised to unit total flux (as it must be, for the visibilities to be correct), but the
-plane-to-plane totals are captured first and used to weight the photon count per channel and to
-fill `OI_FLUX`. A model may hold an image component as well (`"env,image" => path`): a SPARCO
-star plus image is simulated as a model, `flat_model`.
+A FITS file is read by its keywords. Each uv point is observed with the plane of its channel and
+its date, so the cube's wavelengths and epochs must cover the spectral setup's channels and the
+dates; a channel with no plane is an error that lists the cube's wavelengths. A file whose
+keywords do not give its axes is refused; set them in the GUI (Tools › FITS Image Handling, Set
+keywords, Save FITS) or with [`fits_set_keywords`](@ref). Each plane of a cube is normalised to
+unit flux for the visibilities; the plane totals weight the photon count per channel and fill
+`OI_FLUX`. A model may contain an image component (`"env,image" => path`); a SPARCO star plus
+image is passed as `flat_model`.
+
+`wavelength = :image` takes the spectral setup from the cube's channels.
 
 ### A model cube from elsewhere: AMHRA's Be star
 
-AMHRA's "Be model star + Keplerian disk" (Delaa et al. 2011) returns a cube whose header gives
-the pixel scale in radians and the wavelengths in metres (`CUNIT3 = 'm'`), but no `CTYPE3`. Its
-keywords are set once, keeping its reference pixel, and the cube is simulated on its own channels
+AMHRA's "Be model star + Keplerian disk" (Delaa et al. 2011) returns a cube with the pixel scale
+in radians, the wavelengths in metres (`CUNIT3 = 'm'`) and no `CTYPE3`. Its keywords are set,
+keeping its reference pixel, and the cube is simulated on its own channels
 (`demos/example_simulate_amhra_cube.jl`, PMOIRED's example 4 observed with CHARA):
 
 ```julia
@@ -184,13 +187,12 @@ simulate(read_facility_file("CHARA"), TargetConfig(raep0 = 0.0, decep0 = -24.0),
                                  t3phi = 0.01, flux = 1e-4))
 ```
 
-The cube has no `CTYPE1`, so it is read as stored, its first axis East. PMOIRED's `readCube` reads
-it the same way, and the two give the same visibilities (|V| to 4e-5, closure phases to 0.005°,
-the flux spectrum to 4e-5). That reading puts the continuum disc at PA 120° (≡ −60°); AMHRA's
-input says 60°, which is the cube read with East on the left (`east_left = true`).
+Without `CTYPE1` the cube is read as stored, first axis East, as PMOIRED's `readCube` does; the
+two agree on |V| to 4e-5, closure phases to 0.005° and the flux spectrum to 4e-5. This puts the
+continuum disc at PA 120° (−60°). AMHRA's input PA of 60° corresponds to `east_left = true`.
 
-`FractionalNoise` sets the error bars as PMOIRED's `oifake` does: fixed fractions of V², |V|,
-T3 amplitude and flux, phases in degrees, each observable drawn on its own.
+[`FractionalNoise`](@ref) sets the error bars as PMOIRED's `oifake`: fractions of V², |V|, T3
+amplitude and flux, phase errors in degrees, each observable drawn independently.
 
 ## Keyword arguments to `simulate`
 
@@ -201,12 +203,13 @@ T3 amplitude and flux, phases in degrees, each observable drawn on its own.
 | `mag` | `2.0` | target magnitude: a number, a `Dict("H"=>1.8, …)` of band magnitudes, or one value per spectral channel |
 | `mag_ao` | from `mag` | guide-star magnitude in the AO wavefront-sensor band |
 | `noise` | `true` | the photon-noise model; `false` writes the model with its computed error bars; a [`FractionalNoise`](@ref) fixed relative errors (PMOIRED's `oifake`) |
-| `debias` | `true` | subtract the `2σ²` bias from `V²`, as a real pipeline does |
+| `debias` | `true` | subtract the `2σ²` bias from `V²` |
 | `systematics` | `true` | draw the calibration error, correlated per baseline per night (see below) |
-| `fringe_tracker` | `true` | engage the instrument's fringe tracker, if it declares one |
+| `fringe_tracker` | `true` | use the instrument's fringe tracker, if it has one |
 | `n_samples` | `100` | Monte-Carlo samples for the T3 error bars; `0` uses the analytic form |
-| `seed` / `rng` | `nothing` | make the realisation reproducible |
-| `observability` | `nothing` | opt-in observability filtering, see below |
+| `seed` / `rng` | `nothing` | reproducible noise realisation |
+| `dft` | `false` | DFT instead of NFFT for an array `image` |
+| `observability` | `nothing` | observability filter, see below |
 | `nonoise` | — | deprecated spelling of `noise=false` |
 
 Coordinates follow the OIFITS standard: `target.raep0` and `target.decep0` are in **degrees**.
@@ -219,22 +222,21 @@ Photons per telescope, per spectral channel, per frame:
 N = F0(λ) · 10^(-m(λ)/2.5) · A_tel · δλ · DIT
     · T_atm(λ)             atmospheric transmission (`atm_transmission`, 1.0 by default)
     · facility.throughput  telescopes and beam train only
-    · combiner.transmission   end-to-end: array + instrument, excluding QE/Strehl/atmosphere
-                              (note the atmosphere caveat under "Matching ASPRO")
+    · combiner.transmission   array + instrument, excluding QE, Strehl and atmosphere
     · flux_frac            split between interferometric and photometric channels
     · QE
-    · S(λ, elevation, m_ao)   Strehl ratio
+    · S(λ, elevation, m_ao)   Strehl ratio, or min(1,(r₀/D)²) without AO
 ```
 
 ### Matching ASPRO
 
-The CHARA combiner configs (`MIRCX.toml`, `MYSTIC.toml`, `SPICA.toml`) are transcribed field
-for field from ASPRO 2's `aspro-conf/…/CHARA.xml`, and `CombinerConfig` mirrors ASPRO's
-`FocalInstrumentSetup`, so numbers can be copied across directly:
+The CHARA combiner configs (`MIRCX.toml`, `MYSTIC.toml`, `SPICA.toml`) are transcribed from
+ASPRO 2's `aspro-conf/…/CHARA.xml`. `CombinerConfig` fields correspond to ASPRO's
+`FocalInstrumentSetup`:
 
 | ASPRO XML | `CombinerConfig` | note |
 |---|---|---|
-| `transmission` | `transmission` | array **and** instrument — but **not** the XML number, see below |
+| `transmission` | `transmission` | array and instrument; divided by the atmosphere, see below |
 | `instrumentVisibility` | `instrument_visibility` | |
 | `dit` | `dit` | fixed; shortened only to avoid saturation |
 | `defaultTotalIntegrationTime` | `total_int_time` | |
@@ -242,94 +244,73 @@ for field from ASPRO 2's `aspro-conf/…/CHARA.xml`, and `CombinerConfig` mirror
 | `ron`, `quantumEfficiency` | `read_noise`, `quantum_efficiency` | QE defaults to 1.0 in both |
 | `nbPixInterferometry` / `nbPixPhotometry` | `n_pix_fringe` / `n_pix_photometry` | |
 | `fracFluxInInterferometry` / `…Photometry` | `flux_frac_fringes` / `flux_frac_photometry` | |
-| `instrumentVisibilityBias` | `vis_cal_err` | ASPRO stores **percent**: `1` → `0.01`; the V² systematic is twice this |
+| `instrumentVisibilityBias` | `vis_cal_err` | ASPRO stores percent: `1` → `0.01`; the V² systematic is twice this |
 | `instrumentPhaseBias` | `phase_cal_err` | degrees |
 
-Because `transmission` is end-to-end, `FacilityConfig.throughput` is 1.0 for CHARA.
+`FacilityConfig.throughput` is 1.0 for CHARA, since `transmission` covers the array.
 
-!!! warning "aspro-conf's `<transmission>` is not the number ASPRO uses"
-    `ConfigurationManager` divides every instrument setup's transmission by the **band-mean
-    atmospheric transmission** before the noise model sees it, because the configured figure
-    already includes the atmosphere and ASPRO applies a per-channel atmosphere separately. The
-    flag controlling this, `includeAtmosphereCorrection`, **defaults to true** and no CHARA
-    setup overrides it. So MIRC-X's `<transmission>0.01</transmission>` becomes
-    `0.01 / 0.8219 = 0.0121671`, and that corrected value is what the configs here store. The
-    divisor is the mean over MIRCX-MYSTIC's whole J-to-K range, since ASPRO treats the two as
-    one instrument, so MYSTIC in K carries a divisor set partly by J; SPICA's is 0.9333.
+!!! note "Transmission values"
+    ASPRO's `ConfigurationManager` divides each setup's `<transmission>` by the band-mean
+    atmospheric transmission (`includeAtmosphereCorrection`, true by default, not overridden for
+    CHARA). The configs store the divided value: MIRC-X's `0.01` becomes
+    `0.01 / 0.8219 = 0.0121671`. The divisor is the mean over the MIRC-X/MYSTIC J-to-K range, so
+    MYSTIC uses the same one; SPICA's is 0.9333. The XML value without the division gives
+    σ(V²) 1.44× larger at H = 8.
 
-    Transcribing the literal XML value instead leaves the throughput ~20% low wherever the sky
-    is clean, which is invisible on a bright target and inflates σ(V²) by 1.44× at H = 8.
+Differences from ASPRO:
 
-Where the two still differ:
+- **SPICA's Strehl.** ASPRO's `NoiseService` uses fixed Strehl ratios for SPICA (0.25 / 0.15 /
+  0.10 by seeing), while its Strehl plots use the AO model. `SPICA.toml` sets
+  `strehl_model = "fixed_spica"` to match ASPRO's noise; `strehl_model = "ao"` uses the AO model
+  (about 0.28 at 1″).
+- **Telluric absorption.** `atm_transmission` returns 1.0 at all wavelengths; ASPRO uses an ESO
+  SkyCalc table (computed for Paranal). Per-channel σ is therefore smaller inside telluric bands:
+  at H = 8 MIRC-X agrees to 0.99 on the median and 0.44 in the H₂O channel at 1.4152 µm.
+- **Photometric zero point.** `zero_point_flux` interpolates between band centres; ASPRO uses
+  one zero point per band. Channel-by-channel ratios therefore differ from 1.00 above R ≈ 150.
 
-- **SPICA's Strehl.** ASPRO's `NoiseService` ignores the AO model for SPICA and hardcodes
-  0.25 / 0.15 / 0.10 by seeing, even though its own published Strehl plots use the AO model —
-  ASPRO is internally inconsistent here. `SPICA.toml` sets `strehl_model = "fixed_spica"` to
-  match ASPRO's noise; set `strehl_model = "ao"` for the physical model (~0.28 at 1″).
-- **Telluric absorption.** `atm_transmission` returns 1.0 at every wavelength where ASPRO
-  convolves an ESO SkyCalc table, so per-channel σ is optimistic inside a telluric window: at
-  H = 8 MIRC-X agrees to 0.99 on the median but reads 0.44 in the H₂O channel at 1.4152 µm.
-  The hook exists to be replaced; ASPRO's own table is computed for Paranal, not Mt Wilson.
-- **The photometric zero point.** `zero_point_flux` interpolates per wavelength between band
-  centres; ASPRO takes one zero point per photometric band and holds it flat across the band.
-  Ours is the more physical of the two — a star with Vega colours follows Vega's SED within a
-  band — so this is a recorded difference rather than something to fix. It means a
-  channel-by-channel comparison should not be driven to 1.00 above R ≈ 150.
-
-**Fringe trackers are modelled.** An instrument that declares one in its combiner config
-co-phases the array and integrates up to the tracker's coherent limit instead of `dit`, at the
-cost of the tracker's own visibility loss:
+**Fringe trackers.** A combiner config with a `[fringe_tracker]` table integrates up to the
+tracker's `max_integration` instead of `dit`, multiplied by the tracker's visibility loss:
 
 ```toml
-[fringe_tracker]      # SPICA.toml; must come LAST, a TOML table swallows every key after it
-band = "H"            # the band the TRACKER guides in, not the science band
+[fringe_tracker]      # SPICA.toml; last in the file, as a TOML table takes every key after it
+band = "H"            # the tracker's band
 mag_limit = 10.0
 max_integration = 0.2 # seconds, against SPICA's 20 ms `dit`
 instrument_visibility = 0.8
-mode = "FringeTrack"  # or "GroupTrack": the visibility loss, without the longer integration
+mode = "FringeTrack"  # "GroupTrack": visibility loss without the longer integration
 ```
 
-It engages on ASPRO's three conditions — a tracker exists, the target is within its magnitude
-limit **in the tracker's own band**, and at least one frame fits before saturation — and
-`fringe_tracker=false` turns it off. SPICA is the only shipped combiner with one, and ASPRO
-marks it *required*, so a SPICA prediction without a tracker describes a configuration no
-observer can select.
+As in ASPRO, the tracker is used when the target is within `mag_limit` in the tracker's band
+and at least one frame fits before saturation. `fringe_tracker = false` turns it off. SPICA is
+the only shipped combiner with a tracker; ASPRO marks it as required.
 
-`S` comes from [`strehl_ratio`](@ref), a port of JMMC's `Band.strehl`, and reproduces ASPRO 2's
-published CHARA Strehl curves to a median 0.7%. It needs an `[ao]` block in the facility
-config; without one the code falls back to the seeing-limited coupling `min(1,(r₀/D)²)`,
-which underestimates an AO-equipped array by roughly 5× in H and 20× in R.
+`S` comes from [`strehl_ratio`](@ref), a port of JMMC's `Band.strehl`, which reproduces ASPRO
+2's CHARA Strehl curves to a median 0.7%. It needs an `[ao]` table in the facility config;
+without one `S = min(1,(r₀/D)²)`, about 5× lower than the AO value in H and 20× in R.
 
-Noise is drawn **once**, on the complex visibility, and every observable is derived from that
-one perturbation, so `VISAMP² == VIS2` exactly — which is not true if each observable is noised
-independently.
+The photon noise is drawn on the complex visibility, and all observables are computed from it,
+so `VISAMP² == VIS2`.
 
-### The calibration error is drawn, and drawn correlated
+### Calibration errors
 
-`vis_cal_err` and `phase_cal_err` are systematics: they do not average down over a night and
-they are not independent point to point. Putting them only in the written error bar leaves the
-data without the scatter that error bar claims — on a bright target the calibration floor is
-100% of σ(V²) while the scatter is 27× smaller, so a χ² of the generating model against the
-data it generated reads 0.003 rather than 1. Drawing them per point is equally wrong the other
-way: a fit then beats them by averaging, which is precisely what a systematic does not allow.
+`systematics = true` draws `vis_cal_err` and `phase_cal_err` as correlated errors, in three
+terms:
 
-So `simulate` draws them, correlated, in three terms:
+| term | drawn once per |
+|---|---|
+| amplitude gain, on the complex visibility (V², VISAMP, T3AMP) | baseline × night |
+| closure-phase bias | triangle × night |
+| differential-phase bias | baseline × night × channel |
 
-| term | drawn once per | why that grouping |
-|---|---|---|
-| amplitude gain | **baseline × night** | what an amplitude transfer function from calibrator observations is; applied to the complex visibility, so V², VISAMP and T3AMP inherit it consistently |
-| closure-phase bias | **triangle × night** | a per-telescope phase cancels in a closure by construction, so the term `phase_cal_err` describes is the non-closing one |
-| differential-phase bias | **baseline × night × channel** | a differential phase subtracts the mean over the other channels, so a bias constant in wavelength cancels identically and only a chromatic one survives |
+A night runs from local noon to local noon. The closure phase includes its own bias, so it is
+not the sum of the three baseline phases. When the systematics dominate, χ²ᵣ of the true model
+scatters by `√(2/n_baselines)`. `systematics = false` puts the calibration errors in the error
+bars only, without drawing them.
 
-A night runs local noon to local noon, so epochs either side of midnight share a draw. Two
-consequences worth knowing: the closure phase is therefore **not** exactly the sum of the three
-baseline phases — that is what a non-closing bias means — and once systematics dominate, χ²ᵣ
-scatters by `√(2/n_baselines)` rather than `√(2/n_points)`, because the baselines are the
-independent draws. Pass `systematics=false` for uncorrelated behaviour.
-
-T3AMP and T3PHI error bars are estimated by sampling (`n_samples`, default 100). The analytic
-closure errors are a small-error expansion and are only adequate while every baseline is well
-detected; measured reduced chi² against the true model, on a resolved disc:
+T3AMP and T3PHI error bars are estimated from `n_samples` Monte-Carlo draws (default 100);
+`n_samples = 0` uses the first-order analytic form. Reduced χ² of the true model on a resolved
+disc:
 
 | median SNR(V²) | 6.3 | 1.0 | 0.09 | 0.02 |
 |---|---|---|---|---|
@@ -338,18 +319,15 @@ detected; measured reduced chi² against the true model, on a resolved disc:
 | T3PHI, analytic | 1.02 | 0.96 | 0.58 | 0.57 |
 | T3PHI, sampled  | 1.01 | 1.01 | 1.00 | 1.00 |
 
-Sampling costs no measurable time, so it is the default; set `n_samples=0` for the analytic
-form.
-
 ### Checking it
 
 Run `demos/validate_noise_model.jl` to print the Strehl comparison against ASPRO and the
 predicted σ(V²)/σ(CP) against magnitude for MIRC-X, MYSTIC and SPICA.
 
 `test/test_aspro_noise.jl` pins the model against ASPRO 2's own error bars, stored per channel
-in `test/references/aspro_noise.csv` and regenerated with `tools/AsproNoise.java` (which drives
-ASPRO headlessly under Xvfb) and `tools/compare_errors.jl`. Current agreement on σ(V²), at the
-best elevation of a night:
+in `test/references/aspro_noise.csv` and regenerated with `tools/AsproNoise.java` (ASPRO run
+under Xvfb) and `tools/compare_errors.jl`. Ratio of σ(V²) to ASPRO's, at the best elevation of
+the night:
 
 | photons/tel/DIT | MIRC-X Low_H | MYSTIC Low_K | SPICA LR |
 |---|---|---|---|
@@ -358,17 +336,12 @@ best elevation of a night:
 | ~1.5 (mag 8) | 0.99 | 1.02 | 1.06 |
 | ≲ 1 (mag 10) | — | 1.04 | 1.16 |
 
-Agreement on a **bright** target proves very little: there σ saturates at the calibration floor
-and the photon budget cancels out entirely. Only the faint rows exercise the model, which is
-also the only regime a noise model is needed for — deciding whether a target is reachable.
+On bright targets σ is set by the calibration floor; the faint rows test the photon budget.
 
-## Observability filtering (opt-in)
+## Observability filtering
 
-`simulate` is a pure uv-coverage simulator: by default every epoch you pass is used, whether
-or not the target was above the horizon or within the delay lines. That is usually what you
-want when generating data to test image reconstruction.
-
-To apply real constraints, either filter first:
+By default `simulate` uses every epoch passed to it, whatever the target's elevation or the
+delay lines. To filter the epochs, call [`observable_epochs`](@ref):
 
 ```julia
 dates_ok, mask, report = observable_epochs(facility, target, dates;
@@ -377,23 +350,18 @@ dates_ok, mask, report = observable_epochs(facility, target, dates;
 simulate(facility, target, combiner, wave, dates_ok, "sim.oifits"; flat_model=model)
 ```
 
-or pass the same options through:
+or pass the same options to `simulate`:
 
 ```julia
 simulate(facility, target, combiner, wave, dates, "sim.oifits";
          flat_model=model, observability=(min_elevation=30.0,))
 ```
 
-POP configurations are never chosen for you — omit `pops` and no delay-line check is done at
-all; run [`best_pop`](@ref) yourself if you want a recommendation.
+Without `pops` there is no delay-line check. [`best_pop`](@ref) proposes POP configurations.
 
 ## Observation planning
 
-OITOOLS provides tools for checking delay-line feasibility and producing
-Gantt charts for a given target and night:
-
-The high-level entry point is `obs_plan`, which computes the night and renders the
-Gantt chart in one call:
+`obs_plan` (needs PythonPlot) computes the night and draws the Gantt chart:
 
 ```julia
 facility = read_facility_file("CHARA")
@@ -405,7 +373,7 @@ obs_plan("Vega", facility, ra, dec, DateTime(2026, 6, 3), pop, config;
          alt_limit = 30.0, savefile = "vega.png")
 ```
 
-The pieces underneath, if you want them separately:
+The underlying functions:
 
 ```julia
 # Dark window, in decimal UT hours. `zenith` is in degrees: 102 is nautical twilight.
@@ -414,14 +382,13 @@ dusk_rise, dusk_set = sunrise_sunset(DateTime(2026, 6, 3), facility.lat, facilit
 # Everything for one night: LST, hour angle, altitude, azimuth, Moon separation
 obs = night_observability(facility, ra, dec, DateTime(2026, 6, 3); alt_limit = 30.0)
 
-# Altitude/azimuth directly — note the argument order (dec, lat, ha) and that `ha` is in hours
+# Altitude and azimuth in degrees; arguments (dec, lat, ha), `ha` in hours
 altitude, azimuth = alt_az(dec, facility.lat, obs.ha)
 
-# Delay-line feasibility. An arbitrary POP choice often yields no usable time at all --
-# that is what best_pop is for.
+# Delay-line feasibility for one POP choice, and the best POP choices
 d = in_delay(facility, dec, obs.ha, config, pop)
 results = best_pop(facility, dec, obs.ha, config; n_best = 5)
 print_pop_results(facility, config, results)
 ```
 
-See `example_chara_plan.jl`.
+See `demos/example_chara_plan.jl`.

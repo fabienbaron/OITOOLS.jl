@@ -1,25 +1,22 @@
 # Uncertainties
 
-How much can you trust a fitted parameter?  OITOOLS offers two answers, and
-they do not measure the same thing:
+| Method | Assumes | Accounts for |
+|--------|---------|--------------|
+| `fit_model_lsqfit` covariance | error bars correct and uncorrelated; model locally linear | the quoted errors, rescaled so that χ²ᵣ = 1 |
+| [`bootstrap_fit`](@ref) | many exchangeable blocks of data | correlated calibration errors, wrong error bars, a bad night or baseline |
 
-| Method | What it assumes | What it can see |
-|--------|-----------------|-----------------|
-| `fit_model_lsqfit` covariance | error bars correct and uncorrelated; model locally linear | nothing beyond the quoted errors, rescaled so that χ²ᵣ = 1 |
-| [`bootstrap_fit`](@ref) | blocks of data are numerous and exchangeable | correlated calibration errors, mis-stated error bars, a bad night or a bad baseline |
+The posterior samplers ([`fit_model_nested`](@ref), [`fit_model_ensemble`](@ref),
+[`fit_model_pigeons`](@ref)) use the error bars as given; they are not part of the study below.
 
-This page reports a simulation study that measures how well each of them
-actually performs, and compares them with
-[PMOIRED](https://github.com/amerand/PMOIRED) on identical data.  The code is
-in `demos/bootstrap_validation`; `RESULTS.md` there carries the same tables.
+This page reports a simulation study of the two methods, compared with
+[PMOIRED](https://github.com/amerand/PMOIRED) on the same data. The code is in
+`demos/bootstrap_validation`, where `RESULTS.md` has the same tables.
 
-## How the calibration is measured
+## Method
 
-An uncertainty is a claim about a distribution you never see: the spread of
-best-fit values you *would* get if you repeated the observation.  So the study
-repeats it.  120 independent noise realisations ("universes") of the same
-observation are generated, each is fitted, and what each method claims about a
-single universe is compared with what the ensemble actually does:
+120 independent noise realisations ("universes") of one observation are generated and fitted.
+The error bar each method gives on one universe is compared with the scatter of the best fits
+over all universes:
 
 ```
 sigma_true    = std over universes of the best-fit value      <- the truth
@@ -29,91 +26,69 @@ coverage      = fraction of universes with |best - truth| < sigma_report
                                                               <- 0.683 = calibrated
 ```
 
-A ratio below 1 means overconfident error bars.  `sigma_true` is itself
-estimated from 120 universes, so it carries about 6.5% noise — but that noise
-is *common* to every method within a regime, so the differences between methods
-in a column are far better determined than 6.5%.
+A ratio below 1 means the error bars are too small. `sigma_true` from 120 universes has about
+6.5% noise; it is the same for all methods in a regime, so differences between methods in a
+column are smaller than that.
 
 The model is a binary at CHARA/MIRC H-band resolution (a partially resolved
 primary plus an unresolved companion at 1.44 mas with 5% of the flux), fitted
-for four parameters against V² and T3PHI.  The uv coverage, MJDs, telescope
-configurations and error bars come from a real dataset; only the observable
-values are replaced.
+for four parameters to V² and T3PHI. The uv coverage, MJDs, telescope configurations and error
+bars come from a real dataset; the observables are replaced.
 
-Five regimes stress different assumptions:
-
-| Regime | What is simulated | What it tests |
-|--------|-------------------|---------------|
-| `ideal` | independent Gaussian noise at exactly the quoted error bars | control: everything should be calibrated |
-| `systematics` | same noise, plus a calibration offset per (epoch, baseline/triangle) shared by all wavelengths: 5% on V², 1.5° on T3PHI | the case block bootstrapping exists for |
-| `underestimated` | noise generated at 2× the quoted error bars | whether χ²ᵣ rescaling and resampling recover the true scatter |
-| `fewblocks` | ideal noise, but a single snapshot: 18 blocks instead of 180 | where a block bootstrap runs out of blocks |
-| `mismatch` | the truth contains a third component that nobody fits | no method can be right; how do they fail? |
+| Regime | Simulated noise |
+|--------|-----------------|
+| `ideal` | independent Gaussian noise at the quoted error bars |
+| `systematics` | as `ideal`, plus a calibration offset per (epoch, baseline or triangle), common to all wavelengths: 5% on V², 1.5° on T3PHI |
+| `underestimated` | noise at 2× the quoted error bars |
+| `fewblocks` | as `ideal`, one snapshot: 18 blocks instead of 180 |
+| `mismatch` | the truth has a third component that is not fitted |
 
 ## Choosing a resampling scheme
 
-`bootstrap_fit(...; mode=...)` selects how block multiplicities are drawn.
-Wall times are per replicate, single-threaded, on the benchmark dataset (1440
-data points, 180 blocks, 4 free parameters); reproduce with
-`demos/bootstrap_validation/benchmark.jl`.
+`bootstrap_fit(...; mode=...)` sets how the block multiplicities are drawn. Times are per
+replicate, single-threaded, on the benchmark dataset (1440 data points, 180 blocks, 4 free
+parameters; `demos/bootstrap_validation/benchmark.jl`).
 
 | Mode | Scheme | 180 blocks | 18 blocks | ms / replicate |
 |------|--------|-----------|-----------|----------------|
-| `:replacement` (default) | multinomial — the textbook bootstrap | 0.87–1.01 | **0.96–1.14** | 3.4 |
-| `:halfsample` | balanced repeated replication: one random half | **0.94–1.06** | 1.24–1.56 | **2.8** |
-| `:weights` | multiplier (Bayesian) bootstrap: continuous block weights applied by scaling the error bars | 0.78–0.99 | 0.71–0.85 | 3.1 |
+| `:replacement` (default) | multinomial | 0.87–1.01 | **0.96–1.14** | 3.4 |
+| `:halfsample` | balanced repeated replication: a random half | **0.94–1.06** | 1.24–1.56 | **2.8** |
+| `:weights` | multiplier (Bayesian) bootstrap: continuous block weights, applied to the error bars | 0.78–0.99 | 0.71–0.85 | 3.1 |
 | `:pmoired` | PMOIRED's two independent half-samples, fitted jointly | 0.62–0.74 ⚠ | 0.67–0.79 ⚠ | 3.2 |
 
-The block columns give the calibration ratio; bold marks the best in each.
+The block columns give the range of the ratio over the regimes and parameters with that number
+of blocks; bold is the best per column.
 
-!!! warning "`:pmoired` is biased low by √2 — comparison only"
-    `:pmoired` is not an alternative estimator, it is a reproduction of
-    PMOIRED's construction, kept so that a PMOIRED result can be cross-checked
-    inside OITOOLS.  Its block multiplicities have variance ½ instead of 1, so
-    it returns error bars that are about √2 too small: 0.62–0.79 of the true
-    scatter in every regime tested, with a 1σ coverage near 0.50 instead of
-    0.683.  Never quote an uncertainty obtained with it.  `bootstrap_fit` emits
-    a warning the first time it is used in a session.
+!!! warning "`:pmoired` gives error bars √2 too small"
+    `:pmoired` reproduces PMOIRED's scheme, for comparing with PMOIRED results. Its block
+    multiplicities have variance ½ instead of 1, so its error bars are 0.62–0.79 of the true
+    scatter in every regime, with 1σ coverage near 0.50. `bootstrap_fit` warns on its first use
+    in a session.
 
-- **`:halfsample`** is the best-calibrated scheme wherever blocks are numerous,
-  and the cheapest, because each replicate fits half the data.  Its failure mode
-  with few blocks is over-conservatism, which is the safe direction.
-- **`:replacement`** is the default: the textbook bootstrap, the most uniform
-  across regimes, never off by more than 14% including the single-snapshot case.
-- **`:weights`** is consistently the most optimistic of the three, and clearly
-  so when blocks are scarce.  It is included for completeness.
-- **`:pmoired`** exists only to reproduce PMOIRED results, and is biased low by
-  about √2 (see the warning above and the tables below).
+- `:halfsample` is the best calibrated with many blocks, and the fastest, since each replicate
+  fits half the data. With few blocks its error bars are too large.
+- `:replacement` is within 14% in all regimes, including the single snapshot.
+- `:weights` gives the smallest error bars of the three, most so with few blocks.
 
-A replicate costs about the same as the original fit: 3.4 ms against 3.8 ms for
-a single Levenberg-Marquardt fit, of which only 0.85 ms is the resampling —
-the rest is the fit itself, so the scheme you choose barely matters for
-runtime.  `bootstrap_fit` spreads replicates over all available Julia threads;
-500 replicates of this problem take about 0.6 s on 16 threads.
+A replicate takes 3.4 ms, against 3.8 ms for one Levenberg-Marquardt fit; 0.85 ms of it is the
+resampling. With `threaded = true` (default) replicates run on all Julia threads: 500
+replicates take about 0.6 s on 16 threads.
 
-Granularity matters as much as the scheme.  `:config` (the default, one block
-per MJD and telescope configuration) works from 18 blocks upward; `:epoch`
-becomes erratic when there are few epochs (0.92–1.83 on a single snapshot);
-`:point` destroys the correlation structure and underestimates by design.
+`granularity` sets the blocks. `:config` (default) is one block per MJD and telescope
+configuration, and is calibrated from 18 blocks up. `:epoch` (one block per MJD) gives
+0.92–1.83 on a single snapshot. `:point` (one block per data point) ignores correlations
+between points. `bootstrap_fit` warns when there are fewer than 10 blocks.
 
-## A note on MJD precision
+## MJD precision
 
-Blocking is keyed on the MJD, and `Float32` cannot resolve it: near MJD 55000 its
-representable values are 3.9 × 10⁻³ d apart — **5.6 minutes** — so exposures taken
-minutes apart would collapse onto one value and their blocks would silently merge.
-
-`readoifits` therefore stores `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` as
-`Float64` regardless of `T`, so the block structure is identical whether you read
-with the default `T=Float32` or with `T=Float64`, and so does `uv_mjd`, the time
-handed to the model evaluator as `$MJD`. Nothing to do on your side; the numbers below are unaffected by the
-precision you choose.
+Blocks are keyed on the MJD. `readoifits` stores `v2_mjd`, `t3_mjd`, `vis_mjd`, `flux_mjd` and
+`uv_mjd` as `Float64` for any `T` (Float32 values near MJD 55000 are 5.6 minutes apart), so the
+blocks are the same with `T = Float32` and `T = Float64`.
 
 ## Results
 
-`ratio = quoted sigma / true scatter`, one column per parameter; the last
-column is the coverage averaged over the four parameters (0.683 when
-calibrated).
-
+`ratio = quoted sigma / true scatter`, one column per parameter; the last column is the coverage
+averaged over the four parameters (0.683 when calibrated).
 
 ### Regime: `ideal`
 
@@ -190,40 +165,21 @@ calibrated).
 | PMOIRED  bootstrapFit | 6.76 | 4.10 | 3.62 | 4.60 | 0.22 |
 | PMOIRED  bootstrapFit (no start jitter) | 6.94 | 4.08 | 3.66 | 4.55 | 0.22 |
 
-## What the numbers say
+## Summary
 
-1. **The two packages' analytic errors are the same number.** `OITOOLS analytic
-   (LM)` and `PMOIRED analytic (dpfit)` agree to two decimals in every regime.
-   Both rescale the covariance to χ²ᵣ = 1, so the two implementations are
-   cross-validated against each other.
-
-2. **PMOIRED's bootstrap is overconfident by a factor 1/√2, in every regime.**
-   `PMOIRED bootstrapFit` lands at 0.64–0.74 everywhere, and OITOOLS' emulation
-   of the same scheme (`mode=:pmoired`) reproduces it to ±0.02 in all 20
-   (regime, parameter) cells.  The deficit is the *scheme* — two independent
-   half-samples give block multiplicities with variance ½ instead of 1 — not an
-   implementation detail.  Coverage is ~0.50 instead of 0.683.
-
-3. **Only resampling sees correlated systematics.** With a 5% per-(epoch,
-   baseline) calibration error the analytic covariance is 3–5× too small *even
-   after* its χ²ᵣ rescaling, which is itself a factor 3.8 here.
-
-4. **χ²ᵣ rescaling handles pure underestimation.** With noise at 2× the quoted
-   errors, both analytic estimates come back calibrated (0.95–1.01).
-
-5. **Adding noise to the data is not a bootstrap.** Refitting
-   [`perturb_data`](@ref) replicates ("parametric Monte Carlo") is dominated
-   everywhere: identical to the analytic covariance in the well-behaved regimes,
-   exactly half in `underestimated` — the factor it was lied to about — and
-   11–25× too small under systematics, because by construction it believes the
-   error bars.  This is why it is not offered as an uncertainty API.
-
-6. **No uncertainty is meaningful when the model is wrong.** With an unmodelled
-   third component the best fit is biased by 10–36 true σ; the bootstraps
-   inflate their error bars by 5–11× (they do sense the unmodelled structure)
-   and coverage still collapses to 0.22–0.25, the analytic errors to 0.05.
-   Resampling measures precision, never accuracy — a small error bar on a bad
-   model is still a bad answer.
+1. `OITOOLS analytic (LM)` and `PMOIRED analytic (dpfit)` agree to two decimals in every regime;
+   both rescale the covariance to χ²ᵣ = 1.
+2. `PMOIRED bootstrapFit` gives 0.64–0.74 in every regime, with coverage near 0.50.
+   `mode = :pmoired` reproduces it to ±0.02 in all 20 (regime, parameter) cells.
+3. With correlated calibration errors (`systematics`), the analytic covariance is 3–5× too small
+   after χ²ᵣ rescaling (a factor 3.8 here). The block bootstraps give 0.78–1.00.
+4. With noise at 2× the quoted errors, the analytic errors give 0.95–1.01.
+5. Refitting [`perturb_data`](@ref) replicates (parametric Monte Carlo) equals the analytic
+   covariance in `ideal` and `fewblocks`, gives half in `underestimated`, and is 11–25× too small
+   with systematics. It is not offered as an uncertainty method.
+6. With an unmodelled third component the best fit is off by 10–36 true σ. The bootstraps'
+   error bars grow 5–11×, and coverage is 0.22–0.25 for the bootstraps and 0.05 for the
+   analytic errors.
 
 ## Cross-package performance
 
@@ -234,9 +190,7 @@ Same file, same model, same number of replicates:
 | OITOOLS `bootstrap_fit` | 3.8 ms | 3.4 ms / replicate | 1.2 ms / replicate (16 threads) |
 | PMOIRED `bootstrapFit` | 44 ms | 78 ms / replicate | 30 ms / replicate (24 processes) |
 
-PMOIRED's replicate costs more than its own single fit because each replicate
-fits a dataset built from two copies; its multi-process scaling is limited by
-process start-up and by pickling the data to the workers.
+A PMOIRED replicate fits a dataset built from two copies of the data.
 
 ## Reproducing
 
@@ -244,13 +198,13 @@ process start-up and by pickling the data to the workers.
 cd demos/bootstrap_validation
 OUT=/tmp/bootstrap_validation
 
-julia --project=../.. make_universes.jl \$OUT 120   # simulate
-python3 sanitize.py \$OUT                           # make files readable by PMOIRED
-julia --project=../.. -t auto run_oitools.jl \$OUT 100
-PMOIRED_MAX_THREADS=12 python3 run_pmoired.py \$OUT 100
-python3 analyze.py \$OUT                            # the tables above
-julia --project=../.. benchmark.jl \$OUT            # the wall times above
+julia --project=../.. make_universes.jl $OUT 120   # simulate
+python3 sanitize.py $OUT                           # make files readable by PMOIRED
+julia --project=../.. -t auto run_oitools.jl $OUT 100
+PMOIRED_MAX_THREADS=12 python3 run_pmoired.py $OUT 100
+python3 analyze.py $OUT                            # the tables above
+julia --project=../.. benchmark.jl $OUT            # the wall times above
 ```
 
-See `demos/bootstrap_validation/README.md` for the details, including the two
-interoperability fixes needed to make PMOIRED read OITOOLS-written OIFITS files.
+`demos/bootstrap_validation/README.md` describes the steps, including what `sanitize.py`
+changes for PMOIRED to read the files.

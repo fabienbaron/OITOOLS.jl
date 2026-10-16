@@ -6110,9 +6110,7 @@ Requires the Qt stack, which is a weak dependency:
 
     using QML, QMLMakie, GLMakie      # enables this method
 
-Calls [`check_qt_conflict`](@ref) and [`configure_graphics!`](@ref) first: the one refuses to
-start beside a foreign Qt, the other gives Mesa the driver hint it needs on WSL. Both are
-no-ops on a healthy Linux desktop, and `bin/oitoolsgui.jl` already runs the second one early,
-which is where it belongs.
+Calls [`check_qt_conflict`](@ref) (refuses to start beside another Qt) and
+[`configure_graphics!`](@ref) first.
 """
 function gui end

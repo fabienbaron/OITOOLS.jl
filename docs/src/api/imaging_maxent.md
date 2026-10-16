@@ -2,10 +2,9 @@
 
 BSMEM (BiSpectrum Maximum Entropy Method) reconstruction.
 
-You can pass `data` and `ft` directly from `readoifits` / `setup_ft` —
-`reconstruct_bsmem` auto-dispatches based on the input dimensions.
-For explicit control, pass a single `OIdata` (mono) or a 3D starting image
-with `Vector{OIdata}` (polychromatic).
+`reconstruct_bsmem` takes `data` and `ft` from `readoifits` / `setup_ft` and chooses the mode
+from their dimensions; it also takes a single `OIdata` (monochromatic) or a 3-D starting image
+with a `Vector{OIdata}` (polychromatic).
 
 | Function | Description |
 |----------|-------------|

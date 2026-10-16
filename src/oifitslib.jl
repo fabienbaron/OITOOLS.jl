@@ -4,19 +4,11 @@
 """
     oifits_fix_tdim(file) -> Int
 
-Remove the redundant `TDIMn` cards that CFITSIO writes for one-dimensional
-columns, and return how many were removed.
-
-Files written through `OIFITS.write` (i.e. by `simulate`,
-`simulate_from_oifits`, ...) carry a `TDIMn = (1)` card for every scalar
-column.  The card is legal but redundant, and readers that honour it — astropy,
-and therefore PMOIRED — return such columns with shape `(nrow, 1)` instead of
-`(nrow,)`.  PMOIRED then fails to load the file with
-
-    TypeError: cannot use 'numpy.ndarray' as a set element
-
-Multi-element columns (`VIS2DATA`, `FLAG`, `STA_INDEX`, ...) keep their `TDIM`.
-The file is modified in place.
+Remove the one-dimensional `TDIMn` cards (`TDIMn = (1)`) that CFITSIO writes on scalar columns,
+in place, and return how many were removed. Files written through `OIFITS.write` (`simulate`,
+`simulate_from_oifits`, …) have them; astropy then reads those columns as `(nrow, 1)`, and
+PMOIRED fails with `TypeError: cannot use 'numpy.ndarray' as a set element`. Multi-element
+columns (`VIS2DATA`, `FLAG`, `STA_INDEX`, …) keep their `TDIM`.
 """
 function oifits_fix_tdim(file::AbstractString)
     isfile(file) || error("oifits_fix_tdim: no such file: $file")

@@ -67,13 +67,9 @@ _dparam(::AbstractVector, v) = v
 
 Visibility of a uniform disc of diameter `θ`, `V = 2J₁(t)/t` with `t = πθρ`.
 
-`θ` is in **mas** and `ρ = √(u²+v²)` in **cycles/rad**, which is the unit `OIdata.uv` is stored
-in -- so `ρ = sqrt.(uv[1,:].^2 .+ uv[2,:].^2)` and nothing needs converting. The result is real
-and normalised to 1 at `ρ = 0`; a component's phase comes from its offset, which belongs to the
-model geometry rather than here.
-
-Any parameter may be a vector as well as a scalar, so a diameter that varies with wavelength
-needs no loop.
+`θ` is in mas and `ρ = √(u²+v²)` in cycles/rad, the unit of `OIdata.uv`:
+`ρ = sqrt.(uv[1,:].^2 .+ uv[2,:].^2)`. The result is real, 1 at `ρ = 0`. Any parameter may be a
+vector (for example one value per wavelength).
 """
 function vis_ud(θ::VisParam, ρ::AbstractVector)
     t = @. π * θ * ρ / MAS2RAD
@@ -328,7 +324,8 @@ _b0(ν) = 1 / (2^ν * gamma(ν + 1))
 
 Square-root limb darkening, `I(μ) = 1 - c(1-μ) - d(1-√μ)`, for a disc of diameter `θ` in mas.
 
-`c` is the linear coefficient and `d` the square-root one, in the order Claret tabulates them.
+`c` is the linear coefficient and `d` the square-root one, in Claret's order. Units as
+[`vis_ud`](@ref).
 """
 function vis_ldsqrt(θ::VisParam, c::VisParam, d::VisParam, ρ::AbstractVector)
     return _ldsqrt_v.(π .* θ .* ρ ./ MAS2RAD, c, d)
@@ -370,7 +367,7 @@ end
 Claret's four-parameter limb darkening, `I(μ) = 1 - Σₖ cₖ (1 - μ^{k/2})`, for a disc of
 diameter `θ` in mas.
 
-The law most precise work uses, and the one Claret's tables are usually quoted in.
+Units as [`vis_ud`](@ref).
 """
 function vis_ldclaret4(θ::VisParam, c1::VisParam, c2::VisParam, c3::VisParam, c4::VisParam,
                        ρ::AbstractVector)

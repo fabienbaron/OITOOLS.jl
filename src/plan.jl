@@ -377,26 +377,17 @@ _ilen(v::Vector{Tuple{Float64,Float64}}) = isempty(v) ? 0.0 : sum(x -> x[2] - x[
 """
     delay_ha_intervals(facility, dec, config, pop; kwargs...) -> Vector{Tuple{Float64,Float64}}
 
-Hour-angle intervals, in HOURS, where every baseline is within its delay limits. Exact.
-
-Sampling cannot place a window edge better than its own step, which is why a one-minute grid
-reports a boundary up to a minute out and why finer steps cost linearly. This solves for the
-edges instead, so they are exact and the step size becomes a display choice.
-
-The delay of a baseline is a sinusoid in hour angle,
+Hour-angle intervals, in hours, where every baseline is within its delay limits, with the edges
+solved analytically. The delay of a baseline is a sinusoid in hour angle,
 
     w(h) = A cos h + B sin h + C,    A = cosδ (cos l b₃ − sin l b₁)
                                      B = −cosδ b₂
                                      C = sinδ (cos l b₁ + sin l b₃)
 
 so `w(h) = W` inverts in closed form: with `R = √(A²+B²)` and `φ = atan(B, A)` it is
-`R cos(h − φ) = W − C`, giving no root, one, or two. The extrema are `C ± R`, which settles the
-two cases that need no work at all — a window containing them means the baseline never leaves
-its limits, and one disjoint from them means it never enters.
-
-Each baseline contributes at most four critical hour angles; between consecutive ones `w` cannot
-cross a limit, so testing the MIDPOINT of each sub-interval decides it. The same method ASPRO 2
-uses in `DelayLineService.findHAIntervalsForBaseLine`, which is where this was read from.
+`R cos(h − φ) = W − C`, with zero, one or two roots. Each baseline gives at most four critical
+hour angles, and the midpoint of each sub-interval is tested, as in ASPRO 2's
+`DelayLineService.findHAIntervalsForBaseLine`.
 """
 function delay_ha_intervals(facility::FacilityConfig, dec::Float64,
                             config::Vector{Int}, pop::Vector{Int};
@@ -480,13 +471,8 @@ end
 """
     night_window(obsdate, lat, lon; zenith = 102.0) -> (t_set, t_rise)
 
-The dark window of the night that **begins** on `obsdate`, as UTC `DateTime`s.
-
-`sunrise_sunset` reports the events falling inside one UTC DAY, and which UTC day an evening
-event belongs to depends on the longitude: west of Greenwich a 19:40 local sunset is on the
-NEXT UTC date, east of it on the same one. So the pair is chosen by bracketing the local
-midnight that closes `obsdate`'s evening, which is right at either sign of longitude — adding
-a day is right only for the western half of the world.
+The dark window of the night that begins on `obsdate`, as UTC `DateTime`s: the sunset and
+sunrise bracketing the local midnight after `obsdate`'s evening, at any longitude.
 
 `zenith` is the Sun's zenith angle defining the boundary: 90°50′ for geometric sunrise/sunset,
 96 civil, 102 nautical, 108 astronomical.
@@ -518,14 +504,9 @@ end
 
 Minimum elevation, degrees, at azimuth `az`, for the telescopes `config` selects.
 
-A target has to clear the terrain in front of EVERY telescope in use, so this is the maximum
-over their profiles -- which means the limit depends on which telescopes are selected, and a
-single number for the array cannot express it. Returns `-Inf` when the facility declares no
-horizon, leaving a flat `alt_limit` as the only constraint.
-
-At Mount Wilson the profiles run from 18° over the south to 48° towards the north-west, so a
-flat 30° is both too permissive (it promises sky a telescope cannot see) and too restrictive
-(it discards 12° of clear southern sky).
+The maximum over the horizon profiles of the telescopes in use. `-Inf` when the facility has no
+horizon profiles. (At Mount Wilson the profiles range from 18° in the south to 48° in the
+north-west.)
 """
 function horizon_limit(facility::FacilityConfig, az::Real; config::AbstractVector{<:Integer} = Int[])
     isempty(facility.horizon_az) && return -Inf
@@ -572,22 +553,17 @@ end
     observable_epochs(facility, target, dates; min_elevation=nothing, max_elevation=nothing,
                       pops=nothing, config=Int[], delay_length=nothing)
 
-Select the epochs in `dates` at which `target` is actually observable from `facility`.
-
-This is **opt-in and composable**: `simulate()` does not call it unless you ask. A simulation
-made to test image reconstruction usually wants the full uv coverage regardless of whether a
-real night could deliver it, so every constraint here is off by default and only switches on
-when you pass the corresponding keyword.
+The epochs in `dates` at which `target` is observable from `facility`. Each constraint is off
+unless its keyword is given; `simulate` calls this only with `observability`.
 
 - `min_elevation`, `max_elevation`: degrees. `nothing` (default) applies no elevation cut.
-- `pops`: a POP configuration, one entry per telescope, values in `1:5`. `nothing` (default)
-  applies **no delay-line check at all**. POPs are never chosen for you — run [`best_pop`](@ref)
-  first if you want a recommendation, then pass the result here.
+- `pops`: a POP configuration, one entry per telescope, values in `1:5`. `nothing` (default):
+  no delay-line check. [`best_pop`](@ref) proposes configurations.
 - `config`: telescope-use flags for the delay check (`1` use, `0` skip, `2` reference cart);
   defaults to using every telescope, i.e. all `ntel*(ntel-1)/2` baselines must fit.
 - `delay_length`: override the per-telescope delay-line lengths with one uniform value (m).
 
-`target.raep0` / `target.decep0` are in degrees, as elsewhere in the OIFITS-facing API.
+`target.raep0` / `target.decep0` are in degrees.
 
 Returns `(dates, mask, report)`:
 - `dates`: the surviving epochs, in input order
@@ -673,9 +649,8 @@ Search over all POP combinations.
 
 Returns a vector of NamedTuples `(pop, score)` sorted by score (minutes observable),
 keeping up to `n_best` results with score ≥ `min_minutes`. The score is the length of the
-hour-angle interval over which every baseline is within its delay limits, intersected with the
-span of `ha` — it is solved for, not counted off a grid, so it does not depend on how finely
-the caller sampled the night.
+hour-angle intervals where every baseline is within its delay limits
+([`delay_ha_intervals`](@ref)), within the span of `ha`.
 
 Arguments:
 - `config`: telescope configuration (0/1/2); only telescopes with config>0 are used
@@ -871,12 +846,8 @@ end
 """
     index_runs(idx) -> Vector{Tuple{Int,Int}}
 
-Split a sorted index vector into maximal runs of consecutive integers.
-
-An observability window is not necessarily one block: a target can dip below the elevation
-limit and come back, and a baseline routinely leaves and re-enters the delay range, which is
-the normal shape of a POP configuration. Drawing such a set as a single bar from `idx[1]` to
-`idx[end]` -- which is what this file used to do -- paints the gaps as observable.
+Split an index vector into maximal runs of consecutive integers, as `(first, last)` pairs; used
+to draw observability windows with gaps.
 """
 function index_runs(idx::AbstractVector{<:Integer})
     runs = Tuple{Int,Int}[]

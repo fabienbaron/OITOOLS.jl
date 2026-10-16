@@ -104,13 +104,7 @@ const _ANALYTIC_PARAM_SUFFIXES = Dict{Symbol,Vector{String}}(
 # job is to give a fit somewhere sane to begin and to satisfy samplers that require finite
 # bounds (`fit_model_ultranest` errors without them), not to encode prior knowledge.
 """
-Default upper bound on an angular size, in mas, when no data is supplied.
-
-Long-baseline interferometry senses scales between roughly λ/2B_max and λ/B_min. Measured on
-three real datasets, that is 0.5–1.2 mas at the fine end and 18–41 mas at the coarse end: a
-source much larger than λ/B_min is fully resolved out and its size is not constrained at all.
-100 mas therefore leaves generous headroom over anything an array can measure, while staying a
-real bound. Pass `data` to `default_bounds` to size this from the actual uv coverage instead.
+Upper bound on an angular size, in mas, used by [`default_bounds`](@ref) without `data`: 100.
 """
 const DEFAULT_MAX_SIZE_MAS = 100.0
 
@@ -147,9 +141,8 @@ const _DEFAULT_PARAM_BOUNDS = Dict{String,Tuple{Float64,Float64}}(
 """
     max_angular_scale(data) -> Float64
 
-Largest angular scale the uv coverage is sensitive to, in mas: λ/B_min, from the shortest
-baseline present. A source larger than this is fully resolved and its size is unconstrained,
-which makes it the natural ceiling for a size bound.
+Largest angular scale of the uv coverage, in mas: 1/B_min with B_min the shortest baseline in
+wavelengths.
 """
 function max_angular_scale(data)
     B = Float64[]
@@ -165,35 +158,28 @@ end
 """
     default_bounds(model_dict, list_free_params; data = nothing, max_size = nothing) -> (lb, ub)
 
-Suggest lower and upper bounds for each free parameter, as two `Dict{String,Float64}` ready
-to pass to any fitter's `lb`/`ub` keyword.
+Suggested lower and upper bounds for each free parameter, as two `Dict{String,Float64}` for
+the fitters' `lb`/`ub`.
 
-Bounds are chosen from the parameter's suffix — the part after the first comma, so
-`"star,ud"` is looked up as `"ud"`. Azimuthal-mode keys (`"c,az amp1"`, `"c,az projang1"`)
-are recognised by prefix. Anything unrecognised, including bare global names, gets
-`(-Inf, Inf)`; callers that need finite bounds (nested sampling) should check for that.
+Bounds are chosen from the parameter's suffix, the part after the first comma (`"star,ud"` is
+looked up as `"ud"`). Azimuthal-mode keys (`"c,az amp1"`, `"c,az projang1"`) are recognised by
+prefix. Other parameters, including global ones, get `(-Inf, Inf)`.
 
-Angular sizes and offsets are the only bounds worth tuning, and they are the ones the data can
-tune. Pass `data` and the ceiling becomes `2 λ/B_min` from the actual uv coverage — the array
-cannot constrain a source larger than the scale its shortest baseline senses. Without `data`
-the ceiling is [`DEFAULT_MAX_SIZE_MAS`](@ref); `max_size` overrides both.
+Angular sizes and offsets are bounded by `2 λ/B_min` with `data` ([`max_angular_scale`](@ref)),
+by [`DEFAULT_MAX_SIZE_MAS`](@ref) without; `max_size` overrides both.
 
 ```julia
 lb, ub = default_bounds(model_dict, free)              # 100 mas ceiling
 lb, ub = default_bounds(model_dict, free; data = data) # sized to this uv coverage
 ```
 
-Everything else is physical rather than instrumental — fluxes in `[0,Inf)`, since a flux is a
-weight relative to the others, `thick` in `[0,1]`, inclination in `[0,90]`, position angles in
-`[-180,180]`, an azimuthal amplitude `az ampN` in `[0,1]` — and does not depend on the data.
-The amplitude multiplies the brightness by `1 + amp·cos(…)`, so 1 is the largest single
-amplitude that keeps it non-negative; several modes need `Σ amp ≤ 1`, which a box cannot say.
-PMOIRED leaves the amplitude unbounded, so a PMOIRED fit can report one above 1.
+Other bounds: fluxes `[0, Inf)`, `thick` and `croff` `[0, 1]`, inclination `[0, 90]`, position
+angles `[-180, 180]`, `u` and `w` `[-1, 1]`, `alpha` `[0, 3]`, Claret coefficients `[-3, 3]`,
+azimuthal amplitudes `az ampN` `[0, 1]` (PMOIRED leaves them unbounded), and orbit elements
+(`orb …`) their own ranges. Nested sampling needs finite bounds, so free fluxes need an upper
+bound set by hand.
 
-A nested sampler needs a finite upper bound on every free flux, since the bounds are its prior.
-
-See also [`display_model`](@ref), which validates values against whatever bounds you end up
-with, and [`max_angular_scale`](@ref).
+See also [`display_model`](@ref), which checks values against bounds.
 """
 function default_bounds(model_dict::Dict{String}, list_free_params::AbstractVector{<:AbstractString};
                         data = nothing, max_size = nothing)
@@ -834,8 +820,7 @@ nB_workspace : Pre-allocated baseline grid size for HankelWorkspace buffers.
 
 Returns
 -------
-A FlatModel whose eval_model / eval_model_grad methods can be called in a loop
-with zero Dict allocation.
+A FlatModel, evaluated by eval_model / eval_model_grad without Dict lookups.
 
 Example
 -------
@@ -1612,11 +1597,10 @@ sub-wavelength, and `\$WL` takes the sub-wavelength. An image component keeps th
 own plane at every sub-wavelength. A point with no width (`dlam` 0 or not finite) repeats its
 central value.
 
-The observables are averaged over the columns — V² as the mean of |V|², a triple product as
-the mean of the products — which is what a power-spectrum estimator measures across a channel
-and how PMOIRED and CANDID model bandwidth smearing. The χ² functions, `residuals_flat` and
-`model_to_obs` do that for a model with `"smear" => nsub` (2 or more) when the data carry
-channel widths.
+For a model with `"smear" => nsub` (2 or more, or `"auto"`) and data with channel widths, the
+χ² functions, `residuals_flat` and `model_to_obs` average the observables over the columns (V²
+as the mean of |V|², a triple product as the mean of the products), or with
+`"smear_mode" => "coherent"` average the visibilities first.
 """
 function eval_model_sub(model::FlatModel, x::AbstractVector, uv::AbstractMatrix;
                         wl, dlam, mjd = nothing, nsub::Integer = model.smear, n::Int = 0)

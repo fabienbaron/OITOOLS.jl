@@ -116,10 +116,7 @@ Corner plot of a posterior sample matrix, `(n_samples, n_params)`, with one labe
 `truth`, one value per column, is marked on every panel. `result` is a `BootstrapResult` (its
 kept replicates) or a `NestedResult` (its posterior).
 
-Backend-agnostic on purpose: [`plot_ultranest_corner`](@ref) takes UltraNest's own result
-object and so can only ever serve that sampler, while this takes the samples any of them
-produce. Implemented by `OITOOLSPairPlotsExt` — `using PairPlots` — since drawing a good one
-is a package's worth of work and PairPlots.jl is already Makie-native.
+Needs `using PairPlots` and a Makie backend.
 """
 function plot_corner_makie end
 
@@ -160,23 +157,14 @@ function plot_facility_makie end
     gui()
     gui(session)
 
-Open the OITOOLS window: four perspectives — Exploring, Observing, Modeling, Imaging — over one
-session, so a dataset moves between them without being written out and read back.
-
-Defined by `OITOOLSGUIExt`, so the GUI stack has to be loaded for it to have any methods:
+Open the OITOOLS window (Exploring, Observing, Modeling, Imaging and Tools over one session).
+It needs the GUI packages loaded:
 
     using OITOOLS, GLMakie, QMLMakie, QML
     gui()
 
-With no argument it builds its own session. Pass one to open on datasets already loaded, which
-is what `bin/oitoolsgui.jl` does with the files named on its command line.
-
-A function can be declared here and given methods by an extension; a TYPE cannot, which is why
-`Session`, `ShellState` and `LiveCanvas` stay inside the extension and are reached through
-`Base.get_extension(OITOOLS, :OITOOLSGUIExt)`.
-
-See also [`configure_graphics!`](@ref), which must run before the first OpenGL context exists
-and therefore before `using GLMakie` — not from inside the window.
+With no argument it builds its own session; `bin/oitoolsgui.jl` passes one holding the files
+named on its command line. [`oitoolsgui`](@ref) loads the packages and opens the window.
 """
 function gui end
 function uvplot end
@@ -196,7 +184,7 @@ export readoifits, readoifits_multiepochs, list_oifits_targets, write_oifits, me
 export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_image_plane, model_image_vis
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
-export oifits_headers, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target,
+export oifits_headers, oifits_table, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target,
        fits_set_keywords, fits_keyword_cube, fits_refpix
 
 # ── Plotting ─────────────────────────────────────────────────────────────────

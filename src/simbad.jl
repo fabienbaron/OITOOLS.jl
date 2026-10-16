@@ -28,18 +28,15 @@ using Downloads
 """
     SIMBAD_TAP_URL
 
-The TAP endpoint queries are sent to. Overridable per call through `simbad_tap`'s `url`
-keyword, which is what the mirror at `simbad.u-strasbg.fr` is for.
+The TAP endpoint queries are sent to; `simbad_tap`'s `url` keyword overrides it (for example
+for the mirror at `simbad.u-strasbg.fr`).
 """
 const SIMBAD_TAP_URL = "https://simbad.cds.unistra.fr/simbad/sim-tap/sync"
 
 """
     SIMBAD_BANDS
 
-Photometric bands `simbad_target` reports, in the order a panel should show them.
-
-B through N. The near-infrared ones are what an interferometric observation is actually made
-in, and V is what the adaptive optics guides on, so both matter and for different reasons.
+The ten photometric bands `simbad_target` reports, B through N.
 """
 const SIMBAD_BANDS = ["B", "V", "R", "I", "J", "H", "K", "L", "M", "N"]
 
@@ -141,13 +138,8 @@ Run one ADQL query against SIMBAD's TAP service and return its column names and 
 cols, rows = simbad_tap("SELECT TOP 5 main_id, ra, dec FROM basic WHERE plx_value > 500")
 ```
 
-This is the general escape hatch; [`simbad_target`](@ref) is the query OITOOLS actually needs.
-The full schema is at <https://simbad.cds.unistra.fr/simbad/tap/tapsearch.html>.
-
-Three failures are reported differently on purpose, because they call for different actions:
-the service being unreachable (network), the service refusing the query (ADQL), and the query
-succeeding with no rows (the target does not exist). Only the last is the caller's data
-problem.
+The schema is at <https://simbad.cds.unistra.fr/simbad/tap/tapsearch.html>. An unreachable
+service and a refused query raise errors with different messages.
 """
 function simbad_tap(adql::AbstractString; url::AbstractString = SIMBAD_TAP_URL,
                     timeout::Real = 30)
@@ -236,21 +228,14 @@ end
 """
     simbad_target(name; timeout = 30) -> NamedTuple
 
-Everything SIMBAD holds that an observation needs, in **one** request:
+A target's SIMBAD record in one request:
 `(; name, main_id, ra, dec, pmra, pmdec, plx, rv, sptype, otype, mags)`.
 
-`ra`/`dec` are DEGREES, proper motions mas/yr, parallax mas, radial velocity km/s. Missing
-values are `NaN` and a missing string is `""` — SIMBAD not knowing a target's parallax is a
-fact about the target, not a failure, and it has to be distinguishable from the query failing.
-`mags` always has all ten [`SIMBAD_BANDS`](@ref) as keys, `NaN` where there is no measurement.
+`ra`/`dec` in degrees, proper motions mas/yr, parallax mas, radial velocity km/s. Missing values
+are `NaN`, a missing string `""`. `mags` has all ten [`SIMBAD_BANDS`](@ref) as keys, `NaN` where
+there is no measurement.
 
-Beyond coordinates and magnitudes this returns what ASPRO also reads, and for the same reasons:
-proper motion places the target at the epoch actually being observed, parallax turns an angular
-diameter into a physical one, and the spectral type is what a surface-brightness relation needs
-to predict a diameter before anything is measured.
-
-`name` is matched against SIMBAD's identifier table, so anything SIMBAD lists works —
-`"Vega"`, `"alf Lyr"`, `"HD 172167"`.
+`name` is any SIMBAD identifier: `"Vega"`, `"alf Lyr"`, `"HD 172167"`.
 
 ```julia
 t = simbad_target("Vega")
@@ -258,9 +243,7 @@ t.ra, t.dec        # 279.2347, 38.7837 degrees
 t.mags["K"]        # 0.129
 ```
 
-This is the one to call when more than one field is wanted: [`ra_dec_from_simbad`](@ref) and
-[`magnitudes_from_simbad`](@ref) are thin wrappers around it, so asking for both costs two
-requests where this costs one.
+[`ra_dec_from_simbad`](@ref) and [`magnitudes_from_simbad`](@ref) each call it.
 """
 function simbad_target(name::AbstractString; timeout::Real = 30)
     n = strip(String(name))
@@ -275,11 +258,8 @@ end
 """
     ra_dec_from_simbad(name) -> (ra_deg, dec_deg)
 
-Resolve a target name through SIMBAD and return its J2000 right ascension and declination
-in **decimal degrees**.
-
-Call [`simbad_target`](@ref) instead if the magnitudes or the parallax are wanted too; this
-issues its own request.
+A target's J2000 right ascension and declination in decimal degrees, through
+[`simbad_target`](@ref).
 """
 function ra_dec_from_simbad(name::AbstractString)
     t = simbad_target(name)
@@ -289,11 +269,7 @@ end
 """
     magnitudes_from_simbad(name) -> Dict{String,Float64}
 
-Photometric magnitudes for a target, keyed by [`SIMBAD_BANDS`](@ref). Bands SIMBAD has no
-measurement for are `NaN`, never `0.0`.
-
-A network or query failure throws. That distinction is the point: a target with no K magnitude
-and a query that never ran are different answers, and reporting them the same way is how
-"this star has no K magnitude" comes to mean "SIMBAD was down".
+A target's magnitudes, keyed by [`SIMBAD_BANDS`](@ref), through [`simbad_target`](@ref). Bands
+without a measurement are `NaN`; a network or query failure raises an error.
 """
 magnitudes_from_simbad(name::AbstractString) = simbad_target(name).mags

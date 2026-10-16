@@ -2,26 +2,26 @@
 
 !!! note "PythonPlot is required"
 
-    These functions live in a package extension. Load PythonPlot alongside OITOOLS, or they
-    exist with no methods and every call raises a `MethodError`:
+    These functions are in a package extension; without PythonPlot loaded they raise a
+    `MethodError`:
 
     ```julia
     using Pkg; Pkg.add("PythonPlot")
     using OITOOLS, PythonPlot
     ```
 
-    See [Step 3: Plotting](@ref plotting-install).
+    See [Plotting](@ref plotting-install).
 
-All plot functions accept either a single `OIdata` or an array `AbstractArray{<:OIdata}`
-(e.g., the 2D output of `readoifits`, a polychromatic array, or a multi-epoch vector).
-Call `set_oiplot_defaults()` to apply consistent matplotlib style settings.
-Use `set_oiplot_defaults(compact=true)` for smaller plots suitable for stacking
-in a multi-panel figure (smaller fonts, markers, error bars, and no in-plot title).
+The plot functions take an `OIdata` or an array of them (the output of `readoifits`, a
+polychromatic array, a multi-epoch vector). `set_oiplot_defaults()` applies the OITOOLS
+matplotlib style; `set_oiplot_defaults(compact=true)` makes smaller fonts, markers and error bars
+and drops the in-plot title, for stacked panels. The same figures drawn with Makie, without
+Python, are the `_makie` functions (see [Makie plotting](@ref)).
 
 ## UV coverage
 
 ```julia
-uvplot(data)                       # colour by baseline length
+uvplot(data)                       # one colour per baseline
 uvplot(data; color="wav")          # colour by wavelength
 uvplot(data; color="mjd")          # colour by MJD
 uvplot(data; color="baseline", flipx=true, square=true, figsize=(10,10))
@@ -88,7 +88,7 @@ Key arguments: `figsize`, `color`, `markopt`, `legend_below`, `figtitle`.
 
 ## Residuals vs model
 
-Pass a precomputed model vector alongside the data:
+With model observables computed beforehand:
 
 ```julia
 plot_v2_residuals(data, v2_model)
@@ -115,7 +115,7 @@ imdisp_multi(image_cube; labels=["Epoch $i" for i in 1:n], pixsize=0.5) # multi-
 
 ## Multi-panel overview
 
-Stack several observables in a single figure with shared x-axis and legend:
+Several observables in one figure, with a shared x axis and legend:
 
 ```julia
 plot_obs(data)                                          # default: V², T3φ, T3amp
@@ -126,15 +126,15 @@ plot_obs(data)                                           # compact panels
 set_oiplot_defaults(compact=false)
 ```
 
-Empty panels are skipped automatically.
+Observables absent from the data are skipped.
 
 ## Facility / array layout
 
-Plot the telescope positions from a `FacilityConfig`:
+Telescope positions of a `FacilityConfig`:
 
 ```julia
 facility = read_facility_file("CHARA.toml")
 plot_facility(facility)
 ```
 
-See the [Plotting](@ref) API reference for full docstrings.
+The docstrings are in the [Plotting](@ref) API reference.

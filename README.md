@@ -36,52 +36,52 @@ If you just want to use OITOOLS or discover its main capabilities, download the 
 Just make it executable  (`chmod +x OITOOLS-x86_64.AppImage`) and it's ready to run.
 Of course using the library itself is more flexible, but this way you can get an idea of what is even possible to achieve.
 
+To run the GUI from the source instead (Julia 1.13 or later):
+
+```bash
+git clone https://github.com/fabienbaron/OITOOLS.jl.git
+cd OITOOLS.jl
+julia --project=bin -e 'using Pkg; Pkg.instantiate()'   # once
+julia --project=bin bin/oitoolsgui.jl [file.oifits]
+```
+
 ## Installation
+
+Julia 1.13 or later:
 
 ```julia
 using Pkg
 pkg"registry add General"
 pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.add(url="https://github.com/fabienbaron/OITOOLS.jl.git")
-Pkg.add("GLMakie")             # for plotting; see below
+Pkg.add("GLMakie")             # for the *_makie figures
 using OITOOLS
 ```
 
-**Plotting needs a backend.** Every figure lives in a package extension, so `using OITOOLS` on
-its own draws nothing — which is what keeps it free of Makie, of matplotlib and of Qt, and
-what makes it usable on a headless machine and beside other Qt applications. (Why they are
-not installed for you, and what a *weak dependency* is, is explained in the
-[GUI guide](https://fabienbaron.github.io/OITOOLS.jl/dev/gui/).)
+`using OITOOLS` loads no plotting package, no Python and no GUI. Figures need a plotting package:
 
-**Makie is the recommended one.** It is pure Julia, needs no Python, and is the same backend
-the GUI draws with, so a figure looks the same in a script and in the window. Load any Makie
-backend — `GLMakie` for interactive windows, `CairoMakie` for files — and the `*_makie`
-functions appear: `uvplot_makie`, `plot_v2_makie`, `plot_t3phi_makie`, `imdisp_makie` and the
-rest.
+- **Makie** (recommended): with any Makie backend loaded (`GLMakie` for windows, `CairoMakie`
+  for files), the `*_makie` functions draw: `uvplot_makie`, `plot_v2_makie`,
+  `plot_t3phi_makie`, `imdisp_makie`, …
+- **PythonPlot**: the functions without a suffix (`uvplot`, `plot_v2`, `imdisp`, …) draw with
+  matplotlib. The test suite checks that both draw the same values.
 
-**PythonPlot remains available** as an alternative, and is what the unsuffixed names
-(`uvplot`, `plot_v2`, `imdisp`) use. The two are kept in step: the test suite asserts the
-Makie ports draw the same values and the same orientation as their matplotlib originals. Reach
-for it if you want matplotlib's output specifically, or already have a workflow built on it.
-
-`using OITOOLS` needs no Python either way. The optional Python dependencies (matplotlib-base
-for the `PythonPlot` figures, ultranest for the `:ultranest` sampler) are provisioned
-automatically by [CondaPkg](https://github.com/JuliaPy/CondaPkg.jl) the first time something
-loads PythonCall. See the
-[installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) for details,
-including how to reuse an existing Python instead.
+Python is needed only for PythonPlot and for the UltraNest sampler; CondaPkg installs it the
+first time PythonCall is loaded. The
+[installation guide](https://fabienbaron.github.io/OITOOLS.jl/dev/install/) lists every optional
+package.
 
 ## Quick start
 
 ```julia
-using OITOOLS, GLMakie         # any Makie backend activates the plotting extension
+using OITOOLS, GLMakie
 data = readoifits("mydata.oifits")
 uvplot_makie(data)
 plot_v2_makie(data)
 plot_t3phi_makie(data)
 ```
 
-The matplotlib equivalents, if you prefer them:
+With matplotlib:
 
 ```julia
 using OITOOLS, PythonPlot
@@ -90,10 +90,10 @@ uvplot(data); plot_v2(data); plot_t3phi(data)
 
 ## Features
 
-Both image-based and parametric-model-based workflows follow the same pattern:
+Images and parametric models are used the same way:
 
-| Operation | Image domain | Model domain |
-|-----------|-------------|-------------|
+| Operation | Image | Model |
+|-----------|-------|-------|
 | → complex visibilities | `image_to_vis(x, ft)` | `model_to_vis(model, x, uv)` |
 | → observables | `image_to_obs(x, ft, data)` | `model_to_obs(model, x, data)` |
 | → residuals | `image_to_residuals(x, ft, data)` | `model_to_residuals(model, x, data)` |
@@ -102,27 +102,26 @@ Both image-based and parametric-model-based workflows follow the same pattern:
 
 ### Reading OIFITS data
 
-- OIFITS v1 and v2 with automatic quality filtering
-- Spectral and temporal binning, polychromatic (per-channel) mode
+- OIFITS v1 and v2, with quality filtering
+- Spectral and temporal binning; polychromatic (per-channel) datasets
 - OI\_CORR correlation matrices (e.g. GRAVITY)
-- `Float32` mode for large datasets (`readoifits(file; T=Float32)`)
+- `Float32` or `Float64` (`readoifits(file; T=Float64)`)
+- Tools: header and table viewer, validator, repair, splits and merges
 
 ### Plotting
 
-All plot functions accept `color="baseline"` (default), `color="wav"`, or
-`color="mjd"` to colour-code by baseline, wavelength, or timestamp.
+Plot functions take `color="baseline"` (default), `color="wav"` or `color="mjd"`.
 
 ```julia
-plot_v2(data; logplot=true, color="wav")        # single observable
-plot_obs(data)                                   # multi-panel: V², T3φ, T3amp
+plot_v2(data; logplot=true, color="wav")        # one observable
+plot_obs(data)                                   # V², T3φ, T3amp
 plot_obs(data; obs=["V2","T3PHI","VISAMP"], color="mjd")
 
-# After reconstruction or model fitting:
 obs = image_to_obs(x, ft, data)                 # or model_to_obs(model, x, data)
-plot_residuals(data, obs)                        # data vs model + residuals
-plot_residuals(x, ft, data)                      # convenience shortcut
+plot_residuals(data, obs)                        # data, model and residuals
+plot_residuals(x, ft, data)
 
-imdisp(image; pixsize=0.1)                       # display a reconstructed image
+imdisp(image; pixsize=0.1)                       # an image
 ```
 
 |    **UV coverage**                  | **V²**               |
@@ -131,108 +130,77 @@ imdisp(image; pixsize=0.1)                       # display a reconstructed image
 
 ### Model fitting
 
-Parametric model fitting with a flat-dictionary interface compatible with
-[PMOIRED](https://github.com/amerand/PMOIRED):
+Parametric models as flat dictionaries, compatible with [PMOIRED](https://github.com/amerand/PMOIRED)
+(`pmoired_to_julia()` converts PMOIRED dicts):
 
-- **Component types:** uniform disk, Gaussian, limb-darkened (linear,
-  quadratic, power-law), ring, Gaussian ring, crescent, point source,
-  resolved background, and arbitrary radial profiles via Hankel transform
-- **Chromatic and time-variable models** using expression strings with
-  `$WL`, `$MJD`, and inter-parameter `$`-references
-- **Azimuthal modulations** with harmonic coefficients for disk asymmetries
-- **Four fitting backends:**
-  - NLopt (gradient-based and gradient-free optimizers)
-  - LsqFit (Levenberg-Marquardt with covariance and 1-sigma errors)
-  - Nested sampling with log-evidence, through either Nautilus.jl (pure Julia)
-    or UltraNest (Python) — `fit_model_nested`
-  - Grid search over two parameters, returning the χ² surface — `chi2_map`
-- **Bootstrap error estimation** by baseline, time, or wavelength
-- **PMOIRED conversion:** `pmoired_to_julia()` converts Python dict
-  literals to Julia
+- **Components:** uniform disk, Gaussian, limb-darkened disks (linear, quadratic, square root,
+  power law, four-parameter), ring, Gaussian ring, crescent, point source, background, radial
+  profiles (Hankel transform) with azimuthal modes, FITS images and cubes
+- **Expressions:** `$WL`, `$MJD` and references between parameters, for chromatic and
+  time-variable models; spectral lines; binary orbits, with radial velocities
+- **Fitting:** Levenberg-Marquardt, NLopt, grid search (`chi2_map`), companion search,
+  multi-start search (`multistart_fit`)
+- **Uncertainties and posteriors:** bootstrap; nested sampling with evidence (Nautilus.jl or
+  UltraNest); ensemble slice sampling; parallel tempering (Pigeons.jl)
 
 ### Image reconstruction
 
-- Gradient-based reconstruction with VMLMB (OptimPackNextGen)
-- NFFT for speed or exact DFT
+- VMLMB (OptimPackNextGen) with NFFT or DFT
 - Polychromatic and time-variable imaging
-- SPARCO framework for chromatic environments
-- Maximum Entropy (BSMEM) reconstruction
-- Multiple regularizations: total variation, L1-L2, compactness,
-  entropy, support constraints, and more
+- SPARCO for chromatic environments
+- Maximum entropy (BSMEM), ADMM (BSDMM), SQUEEZE
+- Regularizers: total variation, L1-L2, compactness, entropy, support, and more
 
 ![2004bc1](docs/src/assets/types-tvsq.png)
 ![2004bc2](docs/src/assets/types-compactness.png)
 ![2004bc3](docs/src/assets/types-l1l2.png)
 
-The [ROTIR](https://github.com/fabienbaron/ROTIR.jl/) package uses OITOOLS
-for stellar surface imaging (light curve inversion, Doppler imaging,
-interferometric imaging):
+[ROTIR](https://github.com/fabienbaron/ROTIR.jl/) uses OITOOLS for stellar surface imaging
+(light curve inversion, Doppler imaging, interferometric imaging):
 
 ![rotir](docs/src/assets/rotir.png)
 
 ### Observation simulation
 
-- Simulate synthetic OIFITS from images or parametric models
-- Build observations from TOML-based array/combiner/wavelength configs
-- Pre-built configs for CHARA, VLTI (UT and AT), and their combiners
-  (MIRC-X, MYSTIC, GRAVITY, MATISSE, SPICA)
-- Observation planning with Gantt charts, delay-line feasibility,
-  and SIMBAD target queries
+- Synthetic OIFITS from images, cubes or parametric models
+- Arrays, combiners and spectral setups from TOML configurations: CHARA and VLTI (UT, AT), with
+  MIRC-X, MYSTIC, SPICA, GRAVITY and MATISSE
+- Observation planning: Gantt charts, delay lines, SIMBAD queries
 
-## Graphical interface (work in progress)
+## Graphical interface
 
-A single window with four perspectives over one session, so a dataset moves from planning to
-exploration to fitting to imaging without being exported and read back. It is under active
-development: the panels below work, but not every control behind them is wired yet.
+One window with five perspectives over one session: Exploring, Observing, Modeling, Imaging and
+Tools.
 
 ```julia
 using OITOOLS
 oitoolsgui()                  # or oitoolsgui("mydata.oifits")
 ```
 
-`oitoolsgui` loads GLMakie, QMLMakie and QML for you, in the order the graphics hints require —
-Mesa, GLFW and Qt each read their configuration once, when the first OpenGL context is created
-and when Qt starts, so the loading has to happen after the hints are set. Call it before
-loading GLMakie yourself; it warns rather than opening a window whose platform silently
-disagrees with Qt's. It also names any optional package you do not have (`GLFW_jll` for native
-Wayland, `Nautilus` for nested sampling, `Pigeons`, `PairPlots`) instead of failing on them.
+`oitoolsgui()` loads GLMakie, QMLMakie and QML (install them once with
+`Pkg.add(["GLMakie", "QMLMakie", "QML"])`); call it before `using GLMakie`. From a clone, use
+`julia --project=bin bin/oitoolsgui.jl` (above).
 
-Those three are weak dependencies, so `using OITOOLS` still costs no Makie and no Qt — add
-them once with `Pkg.add(["GLMakie", "QMLMakie", "QML"])`. From a clone there is a pinned
-launcher environment, which is the right entry point for a desktop icon or a sysimage:
-
-```
-julia --project=bin bin/oitoolsgui.jl [file.oifits]
-```
-
-| **Exploring** — uv coverage and observables, click to identify | **Observing** — Gantt, delay lines, POP search |
+| **Exploring** — uv coverage and observables | **Observing** — Gantt, delay lines, POP search |
 |:---:|:---:|
 | ![exploring](docs/src/assets/gui/exploring.png) | ![observing](docs/src/assets/gui/observing.png) |
-| **Modeling** — parameters free/fixed/derived, and what the parser understood | **Imaging** — reconstruction with per-observable reduced χ² |
+| **Modeling** — parameters and what the parser understood | **Imaging** — reconstruction with per-observable reduced χ² |
 | ![modeling](docs/src/assets/gui/modeling.png) | ![imaging](docs/src/assets/gui/imaging.png) |
 
-The [Graphical Interface guide](https://fabienbaron.github.io/OITOOLS.jl/dev/gui/) covers
-building a model in the window: the three parameter states, how to make fluxes behave as flux
-ratios, the `$R`/`$MU`/`$WL`/`$MJD` keywords and where each is valid, and radial profiles.
-
-The console at the bottom echoes the equivalent OITOOLS call for every action, so the window
-doubles as a way to learn the scripting API. "Export script" turns the session into a runnable
-`.jl`; it currently covers loading and filtering, and the remaining perspectives are being
-wired into it as they are finished.
+The console shows the OITOOLS call for each action, and **Export script** writes the session as a
+Julia script. See the [Graphical interface guide](https://fabienbaron.github.io/OITOOLS.jl/dev/gui/).
 
 ## Documentation
 
-Full documentation is available at
-[fabienbaron.github.io/OITOOLS.jl](https://fabienbaron.github.io/OITOOLS.jl/dev),
-including:
+[fabienbaron.github.io/OITOOLS.jl](https://fabienbaron.github.io/OITOOLS.jl/dev):
 
 - [Reading OIFITS files](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/reading/)
-- [Model fitting guide](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/modeling/)
+- [Model fitting](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/modeling/)
 - [Image reconstruction](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/imaging/)
 - [Simulation and planning](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/simulating/)
 - [Demo scripts](https://fabienbaron.github.io/OITOOLS.jl/dev/examples/intro/)
 - [Graphical interface](https://fabienbaron.github.io/OITOOLS.jl/dev/gui/)
-- API reference: [OIFITS](https://fabienbaron.github.io/OITOOLS.jl/dev/api/oifits/), [Plotting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/plotting/), [Model Fitting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/modeling/), [Imaging](https://fabienbaron.github.io/OITOOLS.jl/dev/api/imaging/), [Observation Planning](https://fabienbaron.github.io/OITOOLS.jl/dev/api/planning/)
+- API reference: [OIFITS](https://fabienbaron.github.io/OITOOLS.jl/dev/api/oifits/), [Plotting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/plotting/), [Model Setup](https://fabienbaron.github.io/OITOOLS.jl/dev/api/model_setup/), [Model Fitting](https://fabienbaron.github.io/OITOOLS.jl/dev/api/modeling/), [Companions and Orbits](https://fabienbaron.github.io/OITOOLS.jl/dev/api/companions_orbits/), [Imaging](https://fabienbaron.github.io/OITOOLS.jl/dev/api/imaging_setup/), [Observation Planning](https://fabienbaron.github.io/OITOOLS.jl/dev/api/planning/)
 
 ## Development install
 
@@ -242,8 +210,3 @@ pkg"registry add General"
 pkg"registry add https://github.com/emmt/EmmtRegistry"
 Pkg.develop(url="https://github.com/fabienbaron/OITOOLS.jl.git")
 ```
-
-The optional Python dependencies (matplotlib-base, ultranest) are declared in `CondaPkg.toml`
-and installed automatically the first time something loads PythonCall — there is nothing to set
-up by hand, and `using OITOOLS` on its own loads no Python at all. Add `PythonPlot` for the
-plotting functions, and `Nautilus` for nested sampling without Python.

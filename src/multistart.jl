@@ -240,20 +240,20 @@ The parameters explored, each in one of
 as a Dict (taken by name) or a vector of pairs (in order). With a grid the number of starts is
 its node count (draws added to each node); without one, `nstarts`. The other free parameters
 start from `model_dict`. An explored parameter that is not free (a fixed number in
-`model_dict`) is held at the start's value in that fit — a grid over held parameters is a χ²
-profile, every node's fit of the rest. A start outside `lb`/`ub` is moved onto the bound.
+`model_dict`) is held at the start's value in that fit, so a grid over held parameters gives a
+χ² profile. A start outside `lb`/`ub` is moved onto the bound.
 
-`constrain` drops starts before fitting: conditions in the form of `constraints`
-(`("sqrt(\$B,x^2 + \$B,y^2)", "<=", 12)`, [`ModelConstraint`](@ref)), held when not violated.
+`constrain` drops the starts that violate its conditions, written as `constraints`
+(`("sqrt(\$B,x^2 + \$B,y^2)", "<=", 12)`, [`ModelConstraint`](@ref)).
 `constraints`, `lb`, `ub`, `weights`, `rv` and `maxIter` apply to every fit, as in
 [`fit_model_lsqfit`](@ref).
 
-The fits are then sorted as PMOIRED's `analyseGrid` does: set aside when they failed, have no
-uncertainties, moved their explored parameters by less than 1σ in all, or end above the best
-χ²ᵣ + `deltachi2` (when given); the rest grouped — two fits are one minimum when the mean over
-the free parameters of (bᵢ − bⱼ)²/(σᵢσⱼ), divided by their number, is below 1 (a gridded held
-parameter counts, with σ half its step) — each minimum kept as its lowest χ²ᵣ. For a component on an orbit, MJD0 values whole periods apart count as
-the same.
+The fits are sorted as in PMOIRED's `analyseGrid`. Fits that failed, have no uncertainties,
+moved their explored parameters by less than 1σ in all, or end above the best χ²ᵣ +
+`deltachi2` (when given) are set aside. Two of the remaining fits are one minimum when the mean
+over the free parameters of (bᵢ − bⱼ)²/(σᵢσⱼ), divided again by their number, is below 1 (a
+gridded held parameter counts, with σ half its step); each minimum is represented by its lowest
+χ²ᵣ. For a component on an orbit, MJD0 values whole periods apart are the same.
 
 Threads (`threaded = true`): one compiled model per thread; start i draws its values from
 `Xoshiro(seed + i)`, so the starts and results do not depend on the thread count.

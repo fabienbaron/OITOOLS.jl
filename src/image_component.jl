@@ -46,36 +46,33 @@ Read a FITS image or cube for use as a model component, in the convention shared
 
 **Dimensions.** 2-D, 3-D and 4-D are accepted, a missing axis being length 1. A 3-D file is a
 wavelength cube or a time series according to `CTYPE3` (`WAVE` or `TIME`); a 3-D file with
-more than one plane and no `CTYPE3` is an error naming the keyword, because guessing would
-fit the wrong planes to the data.
+more than one plane and no `CTYPE3` is an error.
 
-**Orientation.** The returned array always has dimension 1 East and dimension 2 North, which is
-what the NFFT and every model component assume (`test/test_image_orientation.jl`):
+**Orientation.** The returned array has dimension 1 East and dimension 2 North:
 
-- a file whose `CTYPE1` names RA is read by its WCS: `CDELT1 > 0` is already East-first;
-  `CDELT1 < 0` — the usual astronomical image, East to the left — is flipped. `CDELT2 < 0` is
-  flipped likewise;
+- a file whose `CTYPE1` names RA is read by its WCS: `CDELT1 > 0` is East-first; `CDELT1 < 0`
+  (East to the left) is flipped. `CDELT2 < 0` is flipped likewise;
 - a file without `CTYPE1` is read as stored, East-first, whatever the sign of its `CDELT1`.
 
-**Pixel scale** from `fits_pixsize` (CDELT or CD, with its `CUNIT`), or `pixsize` in mas,
-which wins. Neither is an error: an image with no scale cannot be a model.
+**Pixel scale** from `fits_pixsize` (CDELT or CD, with its `CUNIT`), or `pixsize` in mas, which
+takes precedence. Without either, an error is raised.
 
-**Reference pixel.** The convention puts it at `nx÷2+1`, the NFFT's phase centre. A file that
-puts it elsewhere is honoured: the difference becomes `offset`, applied as a shift when the
-component is evaluated, so positions are always relative to the file's reference pixel.
+**Reference pixel.** The convention puts it at `nx÷2+1`, the NFFT's phase centre. Elsewhere,
+the difference is stored in `offset` and applied as a shift, so positions are relative to the
+file's reference pixel.
 
 **Wavelengths and epochs** come from the `CHANNELS` (`EFF_WAVE`, optional `EFF_BAND`) and
-`EPOCHS` (`MJD`) tables when present, which are the authority. Otherwise from a linear WCS on
+`EPOCHS` (`MJD`) tables when present. Otherwise from a linear WCS on
 axes 3 and 4 (`CRVAL`, `CDELT`, `CRPIX`, `CUNIT`, `MJDREF`); `WAVEIRR`/`TIMEIRR = T` without
 the table is an error.
 
-**Normalisation** from `NORMALIZ`, or `normalization` (`:plane` or `:relative`), which wins:
+**Normalisation** from `NORMALIZ`, or `normalization` (`:plane` or `:relative`), which takes
+precedence:
 
-- `:plane` (`PLANE`, and a file without the key): each plane divided by its own sum, so each
-  sums to 1. The sum, never `sum(abs)` or the peak: a band-limited rendering rings slightly
-  negative at a limb, and `sum(plane)` is its flux.
-- `:relative` (`RELATIVE`): the cube's own SED and light curve kept, the whole cube divided by
-  its brightest plane's sum so that plane sums to 1.
+- `:plane` (`PLANE`, and a file without the key): each plane divided by its sum (not by
+  `sum(abs)` or the peak).
+- `:relative` (`RELATIVE`): the whole cube divided by its brightest plane's sum, keeping its SED
+  and light curve.
 
 A plane summing to zero or less is an error.
 """
@@ -219,11 +216,10 @@ interpolation between planes.
 
 - **Wavelength.** A single plane, or planes with no wavelength, serve every λ — a grey image.
   Otherwise the nearest plane, which must lie within half its `EFF_BAND` when the file gives
-  one, else within a quarter of the gap to its neighbouring plane. That accepts the drift of a
-  channel between nights — MIRC-X's channel 1 is 1.515382 µm one night and 1.515206 µm five
-  nights later, 1.2e-4 apart — and refuses a different channel: a cube holding channels 1 and 4
-  serves neither 2 nor 3. Further away is an error naming the cube's channels, never a silent
-  substitution of a neighbouring channel's image. `wave_tol` (relative) overrides both.
+  one, else within a quarter of the gap to its neighbouring plane: a channel's drift between
+  nights is accepted (MIRC-X's channel 1: 1.515382 and 1.515206 µm five nights apart), a
+  different channel is not (a cube of channels 1 and 4 serves neither 2 nor 3). Further away is
+  an error listing the cube's channels. `wave_tol` (relative) overrides both.
 - **Epoch.** A single epoch, or epochs with no MJD, serve every time. Otherwise the nearest,
   within `mjd_tol` days (default 0.5: one night's points share an epoch).
 """
@@ -300,9 +296,8 @@ gives V(0) = 1, a `:relative` plane gives its own flux. `mi.offset` is applied a
 A cube needs `wl` (and an epoch series `mjd`) to choose planes, and a point outside the cube's
 channels or epochs is an error from `model_image_plane`.
 
-A uv point beyond the image's Nyquist frequency, 1/(2 pixsize), is outside what the pixel grid
-can describe: its visibility is set to 0, and the first time it happens for a given `cache` a
-warning names the component (`name`) and the baseline. Fitting data there needs a finer image.
+At a uv point beyond the image's Nyquist frequency, 1/(2 pixsize), the visibility is set to 0,
+with a warning (once per `cache`) naming the component (`name`) and the baseline.
 
 With `cache`, a uv set seen before is returned without a transform.
 """

@@ -20,9 +20,9 @@ _plain(x::Real) = x
 """
     kepler_E(M, e) -> E
 
-The eccentric anomaly solving E − e sin E = M (radians, 0 ≤ e < 1), by Newton's method on the
-values (in Float64), then one more Newton step in the arguments' own type: on dual numbers it
-carries the derivatives exactly, with the same value as on plain numbers.
+The eccentric anomaly solving E − e sin E = M (radians, 0 ≤ e < 1): Newton's method in
+Float64, then one Newton step in the arguments' type, which gives the derivatives of dual
+numbers.
 """
 function kepler_E(M::Real, e::Real)
     m, ε = Float64(_plain(M)), Float64(_plain(e))
@@ -73,8 +73,8 @@ end
 
 The secondary's offset from the primary (mas, x East, y North) at time `t` (MJD), for a period
 `P` (days), periastron `MJD0`, eccentricity `e`, `omega`, `OMEGA`, `incl` (degrees) and
-semi-major axis `a` (mas) — PMOIRED's `_orbit`. What a component on an orbit (`c,x = c,y =
-"orbit"`) has as its position.
+semi-major axis `a` (mas), as PMOIRED's `_orbit`. A component with `c,x = c,y = "orbit"` is
+placed there.
 """
 orbit_x(t, P, MJD0, e, omega, OMEGA, incl, a) = _orbit_xy(t, P, MJD0, e, omega, OMEGA, incl, a)[1]
 "The northward offset of [`orbit_x`](@ref)'s orbit (mas)."

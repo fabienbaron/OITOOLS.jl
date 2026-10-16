@@ -71,7 +71,7 @@ function __init__()
                      shell_tools_source, shell_tools_headers, shell_tools_hdu, shell_tools_validate,
                      shell_tools_bin, shell_tools_targets, shell_tools_export,
                      shell_tools_split_preview, shell_tools_split, shell_tools_merge,
-                     shell_cube_open, shell_cube_show, shell_cube_axes, shell_cube_show_at, shell_cube_tiles, shell_cube_power, shell_tools_group,
+                     shell_cube_open, shell_cube_show, shell_cube_axes, shell_cube_show_at, shell_cube_tiles, shell_cube_power, shell_table_show, shell_table_sort, shell_table_filter, shell_table_channel, shell_table_comment, shell_table_widths, shell_tools_group,
                      shell_fits_keywords, shell_fits_apply, shell_fits_keyword_source, shell_fits_save,
                      shell_fit_each, shell_epochs_table, shell_save_epochs,
                      shell_import_pmoired, shell_import_pmoired_text, shell_export_pmoired,
@@ -429,6 +429,8 @@ function OITOOLS.gui(session::Session = Session();
     # And the cube viewer's channels side by side.
     tfig = Makie.Figure(fonts = PLOT_FONTS)
     CUBE_TILES[] = build_cube_tiles(tfig)
+    # And the Tools tab's Data view of a table.
+    oitable = build_oitable_model()
 
     sh  = ShellState(session, fig, ax, nothing, String[], Any[], 0, :uv, :baseline, false,
                      :none, :none, false,
@@ -471,6 +473,7 @@ function OITOOLS.gui(session::Session = Session();
                 sedPlot         = sfig,
                 cubePlot        = cfig,
                 cubeTilesPlot   = tfig,
+                oitableModel    = oitable,
                 orbitPlot       = orbfig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),

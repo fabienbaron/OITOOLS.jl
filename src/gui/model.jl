@@ -178,9 +178,8 @@ end
 
 Report what the parser understood, including the keys it ignored.
 
-`broadcasting` is true when any expression references `\$WL` or `\$MJD`. That is a behavioural
-switch, not a detail: if *any* derived expression is chromatic the resolver broadcasts *all* of
-them, so every parameter silently becomes a per-uv-point vector. The user should see it flip.
+`broadcasting` is true when any expression references `\$WL` or `\$MJD`: those parameters,
+and the ones that refer to them, have one value per data point.
 """
 function model_inspection(model_dict::AbstractDict)
     md = Dict{String,Any}(String(k) => v for (k, v) in model_dict)

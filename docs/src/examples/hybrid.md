@@ -1,26 +1,22 @@
 # Hybrid reconstruction
 
-Hybrid reconstruction combines a parametric model (handling compact/unresolved
-components) with an image (capturing extended emission). The optimizer
-alternates between VMLMB for image pixels and NelderMead for model parameters.
+A parametric model for the compact components plus an image for the extended emission. The
+image (VMLMB) and the model parameters (Nelder-Mead) are optimised in alternation.
 
 ## Custom model + image
 
-Use `reconstruct_hybrid` with a flat model dict for arbitrary parametric
-model + image combinations:
+`reconstruct_hybrid` takes any model dict:
 
 ```julia
 using OITOOLS
-data = readoifits("data/V1295_Aql.oifits";
-                  polychromatic=true, filter_bad_data=true)
+data    = readoifits("data/V1295_Aql.oifits"; filter_bad_data=true)[1,1]
 nx      = 64
-pixsize = 0.25
-ft      = setup_ft(data, nx, pixsize)
+pixsize = 0.125
+ft      = setup_nfft(data, nx, pixsize)
 x0      = gaussian2d(nx, nx, nx / 6)
 
-# Define a custom model dict
 model_dict = Dict{String,Any}(
-    "wl0"     => 1.6e-6,
+    "wl0"     => 1.6,                # µm, as $WL
     "star,f0" => 0.5,
     "star,di" => 4.0,
     "bg,f0"   => 0.0,
@@ -36,7 +32,7 @@ free_params = ["star,f0", "bg,f0", "d_env"]
 model   = parse_model(model_dict, free_params)
 params0 = Float64[model_dict[p] for p in free_params]
 
-params, x_img = reconstruct_hybrid(x0, params0, model, data[1,1], ft;
+params, x_img = reconstruct_hybrid(x0, params0, model, data, ft;
     w_name       = "W",
     regularizers = [["tv", 1e2]],
     rounds       = 3,
@@ -44,33 +40,11 @@ params, x_img = reconstruct_hybrid(x0, params0, model, data[1,1], ft;
     verb         = true)
 ```
 
-The `w_name="W"` keyword tells the optimizer which model output gives the
-image weight function W(λ). This is used to compute the chromatic flux
-normalisation for the image gradient.
+`w_name = "W"` names the model output that gives the image's weight W(λ), so that
+`V = V_model + W(λ) · V_image`.
 
-## When to use hybrid vs SPARCO
+`reconstruct_sparco` builds the standard star + background + environment dict and calls
+`reconstruct_hybrid`. `reconstruct_sparco_flat` (joint VMLMB over pixels and parameters) is
+deprecated.
 
-`reconstruct_sparco` is a convenience wrapper around `reconstruct_hybrid` that
-builds the standard SPARCO model dict internally. Use `reconstruct_hybrid`
-directly when:
-
-- You need a non-standard chromatic model (e.g. multiple point sources with
-  different spectral indices, or a custom flux decomposition)
-- You want full control over the model dict and free parameters
-- Your model does not fit the star + background + environment template
-
-## Legacy joint optimisation
-
-`reconstruct_sparco_flat` performs joint VMLMB optimisation over both image
-pixels and model parameters simultaneously. This is the older approach --
-`reconstruct_hybrid` (alternating VMLMB + NelderMead) is generally more
-robust because it avoids scale mismatch between pixel and parameter gradients.
-
-```julia
-params, x_img = reconstruct_sparco_flat(x0, params0, model, data[1,1], ft;
-    w_name       = "W",
-    regularizers = [["tv", 1e2]],
-    maxiter      = 500)
-```
-
-See the [Imaging (+ Modeling)](@ref) API reference for full docstrings.
+The docstrings are in [Imaging (+ Modeling)](@ref).

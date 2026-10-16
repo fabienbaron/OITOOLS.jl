@@ -52,6 +52,7 @@ BLAS.set_num_threads(1)
     include("test_squeeze.jl")           # SQUEEZE MCMC sampler
     include("test_squeeze_tempering.jl") # SQUEEZE + Pigeons (skipped if absent)
     include("test_bsdmm.jl")             # ADMM: one image and a wavelength cube
+    include("test_sparco.jl")            # reconstruct_sparco: star + background + grey image
     include("vi/runtests.jl")            # variational inference (skipped if VarInf absent)
     include("test_ft_plans.jl")          # OIft/NFFTCell/DFTCell, and the plan naming
     include("test_component_widths.jl") # absolute scale: fwhm/diameter mean what they say

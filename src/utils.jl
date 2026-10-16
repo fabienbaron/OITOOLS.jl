@@ -57,10 +57,8 @@ end
 Parse a sexagesimal coordinate string into a single decimal value. Fields may be separated
 by whitespace or colons, and one, two or three of them may be given.
 
-The sign applies to the **whole** quantity, not just the leading field: `"-00 30 00"` is
-`-0.5`, and `"-46 28 00.57"` is `-46.4668`. Reducing the parsed fields with a dot product
-against `[1, 1/60, 1/3600]` — which is what callers used to do — gets both of those wrong,
-because it negates only the degrees term.
+The sign applies to the whole quantity: `"-00 30 00"` is `-0.5`, and `"-46 28 00.57"` is
+`-46.4668`.
 
 ```jldoctest
 julia> sexagesimal_to_degrees("-46 28 00.5731825")

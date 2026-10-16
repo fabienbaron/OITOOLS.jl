@@ -33,18 +33,9 @@ const _LEGEND_GAP_IN = 0.75
 
 Draw UltraNest's corner plot for a completed nested-sampling `result`.
 
-`result` is the raw Python object UltraNest returns, which is what `fit_model_ultranest` has
-while it still holds one: the plot needs the sampler's own structure -- weights and cluster
-membership -- not just the posterior matrix the `UltraNestResult` keeps.
-
-This was inline in `fit_model.jl` until plotting moved out of the core package. It belongs
-here because it *is* matplotlib -- it sets an rcParam and calls `ultranest.plot` -- and
-leaving it in core would drag the whole plotting stack into every fit, including the ones
-that never draw anything. `fit_model_ultranest(...; cornerplot = true)` calls this when
-PythonPlot is loaded, and warns instead of failing when it is not.
-
-The default contour colours are the Okabe-Ito palette, which stays legible in greyscale and
-to colour-blind readers.
+`result` is UltraNest's Python result object (`NestedResult.result` under `:ultranest`). The
+UltraNest backend of `fit_model_nested(…; cornerplot = true)` calls this when PythonPlot is
+loaded. The default contour colours are the Okabe-Ito palette.
 """
 function plot_ultranest_corner(result;
                                font_size::Integer = 8,
@@ -1304,7 +1295,7 @@ end
     imdisp(image; kwargs...)
 
 Display a 2-D reconstructed image. The image is normalised to its maximum and
-oriented with East left / North up (Monnier convention). Accepts a flat vector
+oriented with East left and North up. Accepts a flat vector
 (square image assumed) or a 2-D matrix.
 
 # Keyword arguments

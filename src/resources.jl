@@ -33,18 +33,11 @@ const RESOURCE_DIR_VAR = "OITOOLS_RESOURCE_DIR"
 
 The directory holding the shipped resources, or `nothing` if there is none.
 
-Three candidates, in this order, first existing one wins:
+The first existing one of:
 
- 1. `\$OITOOLS_RESOURCE_DIR`. This is what lets the relocation test drive the whole mechanism
-    without building an application.
- 2. `<Sys.BINDIR>/../share/oitools`, where an application bundle keeps them. `create_app`
-    copies the executable into `<app>/bin`, so this anchor holds wherever the bundle is
-    unpacked, needs nothing writable, and costs no precompile-time capture.
- 3. `pkgdir(OITOOLS)`, which is a development checkout.
-
-The bundle is tried BEFORE the checkout so that a bundle cannot be shadowed. In practice the
-two are mutually exclusive: in a bundle the checkout path does not exist, and in a checkout
-Julia's own `share/` has no `oitools` directory.
+ 1. `\$OITOOLS_RESOURCE_DIR`;
+ 2. `<Sys.BINDIR>/../share/oitools`, in an application bundle;
+ 3. `pkgdir(OITOOLS)`, a development checkout.
 """
 function resource_dir()
     for r in _resource_roots()

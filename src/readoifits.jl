@@ -263,7 +263,7 @@ vectors of length `nobs`; UV coordinates are stored in a `2×nuv` matrix.
   multiply by λ to recover the projected baseline in metres.
 - `uv_lam`, `uv_dlam`, `uv_mjd`, `uv_baseline`. `uv_mjd` is the array `\$MJD` resolves from;
   like the per-table `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` it is `Float64` whatever `T`
-  is (Float32 would resolve an MJD only to ~5.6 min).
+  is.
 - `indx_v2`, `indx_vis` — index of each V²/vis point into the UV array
 - `indx_t3_1`, `indx_t3_2`, `indx_t3_3` — UV indices for the three legs of each triangle
 
@@ -435,8 +435,8 @@ Pass the result to `filter_data` to obtain a filtered copy.
 - `mjd_range` — MJD window(s), same format. Default: keep all.
 - `baseline_range` — `[min, max]` spatial frequency B/λ in cycles/rad (the same units as
   `uv_baseline`, so e.g. `[5e6, 300e6]` is 5–300 Mλ). Default: keep all.
-- `baseline_length_range` — `[min, max]` projected baseline length in metres (B/λ × λ), the
-  same cut in the telescopes' units rather than the spatial frequency's. Default: keep all.
+- `baseline_length_range` — `[min, max]` projected baseline length in metres (B/λ × λ).
+  Default: keep all.
 - `filter_bad_data` — apply quality cuts (flags, NaN, SNR, amplitude range). Default: `false`.
 - `ignore_flags` — the quality cuts disregard the FLAG columns. Default: `false`.
 - `filter_vis`, `filter_v2`, `filter_t3amp`, `filter_t3phi`, `filter_flux` — enable cuts per observable type.
@@ -460,8 +460,8 @@ Pass the result to `filter_data` to obtain a filtered copy.
   `max_visphi_err` (degrees), `max_flux_err` — remove points whose error bar is above this.
   `max_v2_err_rel`, `max_t3amp_err_rel`, `max_visamp_err_rel`, `max_flux_err_rel` — above this
   fraction of the value's magnitude. Default `Inf`: no cap. A T3 or VIS point holds its
-  amplitude and phase together, so a cap on either removes the point. (Floors and multipliers,
-  which inflate rather than remove, are `oifits_prep`'s.)
+  amplitude and phase together, so a cap on either removes the point. To inflate error bars,
+  see `oifits_prep`.
 
 Returns `[uv_bad, vis_bad, v2_bad, t3_bad, flux_bad]` — five `Vector{Int64}` of indices to discard.
 """
@@ -635,8 +635,8 @@ pruned automatically and all index arrays are remapped.
 `drop` removes whole observables, any of `:v2, :t3amp, :t3phi, :visamp, :visphi, :flux`. A T3
 amplitude and its closure phase are one point, as are a VIS amplitude and its phase: dropping
 one half keeps the point for the other, the dropped half held as "not measured" (`0 ± Inf`,
-uncounted, ignored by χ², written back as NaN) -- and a point whose other half holds no
-measurement either goes. Dropping both halves, `:v2` or `:flux` removes the points.
+uncounted, ignored by χ², written back as NaN); a point whose other half is not
+measured either is removed. Dropping both halves, `:v2` or `:flux` removes the points.
 
 # Example
 ```julia
@@ -644,9 +644,7 @@ idx = set_data_filter(data[1,1]; filter_bad_data=true, baseline_range=[5e6, 300e
 clean = filter_data(data[1,1], idx)
 ```
 
-The default discards nothing. (Before 0.11 the default was `Int64[]`, which raised a
-`BoundsError` on `indexes_to_discard[2]` for any dataset containing observables, so it could
-never actually be used.)
+The default `indexes_to_discard` discards nothing.
 """
 function filter_data(data_in::OIdata{T},
                      indexes_to_discard = [Int64[], Int64[], Int64[], Int64[], Int64[]];
@@ -787,10 +785,9 @@ end
 """
     merge_oidata(datas) -> OIdata
 
-One dataset holding every point of `datas` -- typically the same bin of several files, read
-separately. Merging after reading rather than merging the files: OIFITS.jl refuses two
-OI_TARGET entries that share a name and differ in a coordinate, which files from different
-nights do routinely.
+One dataset holding every point of `datas`, typically the same bin of several files read
+separately. (OIFITS.jl refuses to merge files whose OI_TARGET entries share a name and differ
+in a coordinate, as files from different nights often do.)
 
 - Stations are matched by NAME: each file's indices are renumbered into one table, so `A0` in
   every file is one station; a blank name is never matched. Flux index 0 (a calibrated
@@ -799,11 +796,8 @@ nights do routinely.
 - OI_CORR matrices are combined block-diagonally: no correlation is assumed across files.
 - `filename` is the first file's; the target is whatever the first file's is.
 
-Refused with an `ArgumentError`, rather than resolved by a guess:
-- files whose VIS points disagree on AMPTYP or PHITYP -- one label governs every VIS point, so
-  absolute and differential phases would be fitted as one kind;
-- files whose flux disagrees on calibration -- an uncalibrated spectrum is rescaled to the model
-  as a whole, which cannot mean anything across a calibrated one.
+An `ArgumentError` is raised for files whose VIS points differ in AMPTYP or PHITYP, and for
+files whose fluxes differ in calibration.
 """
 function merge_oidata(datas::AbstractVector{<:OIdata{T}}) where T
     isempty(datas) && throw(ArgumentError("nothing to merge"))
@@ -890,10 +884,9 @@ end
     readoifits(files::AbstractVector{<:AbstractString}; kwargs...) -> Array{OIdata{T}, 2}
 
 Several files as one dataset: each is read with the same keywords, then bin `[i, j]` of every
-file is merged by [`merge_oidata`](@ref). The files must give the same bin layout -- the same
-`spectralbin` / `temporalbin`, or `polychromatic` on files with the same channels -- and a
-`polychromatic` read of files with different channels is refused rather than paired up by
-position.
+file is merged by [`merge_oidata`](@ref). The files must give the same bin layout (the same
+`spectralbin` / `temporalbin`, or `polychromatic` on files with the same channels); otherwise
+an error is raised.
 """
 function readoifits(files::AbstractVector{<:AbstractString}; kwargs...)
     isempty(files) && throw(ArgumentError("no file to read"))
@@ -1868,9 +1861,7 @@ data in a single bin.
 - `uvtol` — merge radius in cycles/rad (i.e. B/λ). Default: `200.0`.
 
 ## Numeric precision
-- `T` — element type for all numeric arrays. Default: `Float32` (half the memory of
-  `Float64`, and enough precision for interferometric observables). Pass `T=Float64`
-  if a downstream computation needs it.
+- `T` — element type of the numeric arrays. Default: `Float32`. MJDs are `Float64` for any `T`.
 
 ## Output
 - `warn` — print warnings about non-standard files. Default: `true`.
@@ -2245,19 +2236,12 @@ end
 """
     fits_pixsize(fitsfile) -> Float64 or nothing
 
-The pixel size of an image FITS, in **milliarcseconds**, or `nothing` when the header does not
-say.
+The pixel size of an image FITS in milliarcseconds, or `nothing` when the header does not
+give it.
 
-Reads `CDELT2` (then `CDELT1`, then the `CD2_2`/`CD1_1` matrix form) and converts with the
-axis's own `CUNIT` when it has one — `deg` is what the FITS standard says and what other tools
-write.
-
-Without a `CUNIT` the number is ambiguous, and the ambiguity is real: older files of this
-package carry RADIANS per pixel with the unit only in the `CDELT` comment ("Radians per
-Pixel"), while a file from elsewhere is usually degrees, and both are tiny numbers for an
-interferometric image. A comment naming radians is taken at its word; otherwise degrees, the
-FITS default, but only when that lands in a plausible range (1e-4 to 1e4 mas) — if not,
-`nothing`, because a wrong pixel size is worse than an absent one.
+Reads `CDELT2` (then `CDELT1`, then `CD2_2`/`CD1_1`), converted with the axis's `CUNIT`. Without
+`CUNIT`: radians when the `CDELT` comment says radians, otherwise degrees (the FITS default) if
+the result is between 1e-4 and 1e4 mas, otherwise `nothing`.
 """
 function fits_pixsize(fitsfile)
     hdr, com = try
@@ -2300,39 +2284,35 @@ end
               mjds = Float64[], header = Pair{String,Any}[], refpix = nothing)
 
 Write an image or a cube to a FITS file, in the convention shared with ROTIR's
-`write_sky_cube` so that what is written here loads back as a model component
-([`read_model_image`](@ref)) and in any WCS-aware viewer.
+`write_sky_cube`, readable by [`read_model_image`](@ref) and WCS-aware viewers.
 
 `data` keeps its own dimensionality: a matrix is written 2-D, a reconstruction
 `(nx, nx, nwav, nepoch)` 4-D. Dimension 1 is East and dimension 2 North, as everywhere in this
 package.
 
-`pixsize` is in MILLIARCSECONDS and is what turns the array into an image: without it no WCS is
-written at all. With it:
+`pixsize` is in milliarcseconds; without it no WCS is written. With it:
 
 | key | value |
 |---|---|
 | `CTYPE1`, `CTYPE2` | `'RA---SIN'`, `'DEC--SIN'` |
-| `CUNIT1`, `CUNIT2` | `'deg'` — the FITS default for a celestial axis, written anyway |
-| `CDELT1`, `CDELT2` | `+pixsize/3.6e6`: POSITIVE, because index increases East and North |
+| `CUNIT1`, `CUNIT2` | `'deg'` |
+| `CDELT1`, `CDELT2` | `+pixsize/3.6e6`, positive: the index increases East and North |
 | `CRPIX1`, `CRPIX2` | `nx÷2+1`, the NFFT's phase centre, or `refpix = (x, y)`; `CRVAL1/2 = 0`, offsets from it |
 | `PIXSIZE` | the pixel size in mas, as a convenience |
 
-`wavelengths` (METRES, one per plane of axis 3) make axis 3 `WAVE`; `bandwidths` (metres)
-are optional. `mjds` (one per plane of axis 4) make axis 4 `TIME`, in days, UTC. Each axis
-gets `CRPIX`/`CRVAL`/`CDELT` only when its values are evenly spaced to 1%; otherwise
-`WAVEIRR = T` / `TIMEIRR = T` and no linear WCS, which would misplace the planes. The exact
-values always go into a `CHANNELS` (`EFF_WAVE`, `EFF_BAND`) or `EPOCHS` (`MJD`) table, which is
-the authority.
+`wavelengths` (metres, one per plane of axis 3) make axis 3 `WAVE`; `bandwidths` (metres) are
+optional. `mjds` (one per plane of axis 4) make axis 4 `TIME`, in days, UTC. An axis gets
+`CRPIX`/`CRVAL`/`CDELT` when its values are evenly spaced to 1%, otherwise `WAVEIRR = T` /
+`TIMEIRR = T`. The exact values are written to a `CHANNELS` (`EFF_WAVE`, `EFF_BAND`) or `EPOCHS`
+(`MJD`) table, which readers take first.
 
-`NORMALIZ = 'PLANE'` is written when every plane sums to 1, which is what a reconstruction is.
+`NORMALIZ = 'PLANE'` is written when every plane sums to 1.
 
 `header` holds further cards (`name => value` or `name => (value, comment)`), written ahead of
 the ones above.
 
-See also [`fits_pixsize`](@ref), which reads the pixel scale back. Files written before this
-convention — radians, a negative `CDELT1`, `CRPIX = nx/2` — still read: the unit is honoured,
-and `read_model_image` recognises the old pair and warns.
+See also [`fits_pixsize`](@ref). Files in radians, with a negative `CDELT1` and `CRPIX = nx/2`
+are read; `read_model_image` warns about them.
 """
 function writefits(data, fitsfile; pixsize = -1, wavelengths = Float64[],
                    bandwidths = Float64[], mjds = Float64[], header = Pair{String,Any}[],
@@ -2460,8 +2440,8 @@ relative floor; their absolute floor is in degrees.
 | VISφ | `min_visphi_err_add` | — | `visphi_err_mult` |
 | flux | `min_flux_err_add` | `min_flux_err_rel` | `flux_err_mult` |
 
-The defaults change nothing. Error bars ABOVE a cap are a removal rather than an inflation, so
-they are `set_data_filter`'s `max_*_err` keywords.
+The defaults change nothing. To remove points with large error bars, see `set_data_filter`'s
+`max_*_err` keywords.
 """
 function oifits_prep(data::OIdata{T};
         min_v2_err_add=0, min_v2_err_rel=0, v2_err_mult=1,

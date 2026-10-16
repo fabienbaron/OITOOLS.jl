@@ -11,16 +11,14 @@ data = readoifits("mystar.oifits")        # returns Array{OIdata{Float32}, 2}
 data[1]                                   # the single OIdata bin
 ```
 
-The observables are `Float32` by default, which halves memory and speeds up fitting and
-imaging. Use `T=Float64` for double precision:
+The observables are `Float32` by default; `T=Float64` gives double precision:
 
 ```julia
 data = readoifits("mystar.oifits"; T=Float64)
 ```
 
 MJDs (`v2_mjd`, `t3_mjd`, `vis_mjd`, `flux_mjd`, `mean_mjd`, and `uv_mjd`, the time a `$MJD`
-model is evaluated at) are `Float64` whatever `T` is; `Float32` would resolve them only to
-~5.6 min.
+model is evaluated at) are `Float64` for any `T`.
 
 ## Keyword reference
 
@@ -88,8 +86,7 @@ Call `display(data)` or `display(data[1])` to print a compact summary.
 
 ## Correlated data (OI_CORR)
 
-OITOOLS reads OIFITSv2 `OI_CORR` tables and stores the correlation matrix
-and per-point indices in the `OIdata` struct:
+`OI_CORR` tables are stored in the `OIdata` as correlation matrices and per-point indices:
 
 | Field | Description |
 |-------|-------------|
@@ -102,12 +99,9 @@ and per-point indices in the `OIdata` struct:
 
 `*_corr_idx[i] == 0` means point `i` has no associated correlation row.
 
-Multi-baseline correlation blocks (e.g. GRAVITY, where `NDATA > nwave`) are
-automatically detected and expanded so that each baseline within a timestamp
-maps to the correct slice of the correlation matrix.
-
-See `example_chi2_correlated.jl` for a worked example computing whitened
-(correlated) chi-squared from GRAVITY data.
+Correlation blocks covering several baselines (GRAVITY, where `NDATA > nwave`) are mapped to
+each baseline's slice of the matrix. `example_chi2_correlated.jl` computes a whitened χ² from
+GRAVITY data.
 
 ## Selecting a target
 
@@ -135,9 +129,8 @@ channels, so a written file reads back by instrument as the original does.
 
 ## Polychromatic (per-channel) mode
 
-To keep each spectral channel as a separate bin, pass `polychromatic=true`. The
-bin boundaries are derived automatically from midpoints between adjacent channel
-centres, so each stored λ value falls in exactly one bin:
+`polychromatic=true` makes one bin per spectral channel, with boundaries at the midpoints
+between adjacent channels:
 
 ```julia
 data = readoifits("my_spectrum.oifits"; polychromatic=true)
@@ -183,8 +176,7 @@ correlated. OI\_CORR describes the file's own channels and is not used when aver
 
 ## Quality filtering
 
-`filter_bad_data=true` (the default) removes flagged points and applies sanity
-cuts. Key thresholds can be adjusted:
+`filter_bad_data=true` (the default) removes flagged points and applies range and SNR cuts:
 
 ```julia
 data = readoifits("mystar.oifits";
@@ -196,21 +188,19 @@ data = readoifits("mystar.oifits";
     filter_v2_snr_threshold = 1.0)   # require SNR > 1 for V²
 ```
 
-To selectively disable loading of specific observable types:
+To skip observable types:
 
 ```julia
 data = readoifits("mystar.oifits"; use_flux=false, use_vis=false)
 ```
 
-### Verbose output
+### Output
 
-By default `readoifits` prints a data summary. Pass `verb=false` to suppress
-all output, or `verbose=true` to additionally print OI_VIS amplitude/phase
-type information (AMPTYP/PHITYP):
+`readoifits` prints a summary of the tables (including OI_VIS's AMPTYP/PHITYP) and warns about
+non-standard files. `verbose=false` and `warn=false` turn these off:
 
 ```julia
-data = readoifits("mystar.oifits"; verbose=true)   # print table summary
-data = readoifits("mystar.oifits"; warn=false)      # suppress warnings
+data = readoifits("mystar.oifits"; verbose=false, warn=false)
 ```
 
 ## UV deduplication
@@ -225,8 +215,7 @@ Disable with `redundance_remove=false`.
 
 ## Post-load filtering
 
-After loading, use `set_data_filter` + `filter_data` to apply additional cuts
-without re-reading the file:
+`set_data_filter` and `filter_data` apply further cuts to data already read:
 
 ```julia
 idx = set_data_filter(data[1];
@@ -254,20 +243,20 @@ parts, mjd = split_by_time(data[1]; binwidth = 1/24)   # hourly windows
 
 ## Reading multiple files
 
-**Several files as one dataset** — stations matched by name, every point kept:
+Several files as one dataset, stations matched by name:
 
 ```julia
 data = readoifits(["night1.oifits", "night2.oifits"])
 ```
 
-**Multi-epoch** — each file is one epoch; returns a `Matrix{OIdata}`:
+One file per epoch, as a `Matrix{OIdata}`:
 
 ```julia
 files = ["epoch1.oifits", "epoch2.oifits", "epoch3.oifits"]
 data = readoifits_multiepochs(files)   # 1×3 Matrix{OIdata}
 ```
 
-**Multi-colour** — each file is a different waveband; use `readoifits_multiepochs` with one file per band:
+One file per band, also with `readoifits_multiepochs`:
 
 ```julia
 files = ["H_band.oifits", "K_band.oifits"]
@@ -276,8 +265,7 @@ data = readoifits_multiepochs(files)   # 1×2 Matrix — one column per file
 
 ## Error inflation
 
-`oifits_prep` inflates error bars in-place, which is useful for preventing
-underestimated uncertainties from dominating the fit:
+`oifits_prep` inflates error bars in place:
 
 ```julia
 oifits_prep(data[1];
@@ -289,13 +277,13 @@ oifits_prep(data[1];
     quad             = false)   # true = combine in quadrature
 ```
 
-By default errors are replaced when the floor exceeds the original; set
-`quad=true` to add floors in quadrature instead.
+By default each error bar becomes the larger of the scaled error and the floor; `quad=true`
+adds them in quadrature.
 
 ## ASPRO-compatible FITS headers
 
-`updatefits_aspro` adds WCS metadata (pixel scale, reference pixel) to a FITS
-image so that ASPRO can read it:
+`updatefits_aspro` adds the WCS keywords (pixel scale, reference pixel) ASPRO reads to a FITS
+image:
 
 ```julia
 updatefits_aspro("input.fits", "output.fits", 0.1)   # pixsize in mas
@@ -303,12 +291,11 @@ updatefits_aspro("input.fits", "output.fits", 0.1)   # pixsize in mas
 
 ## Non-standard files
 
-Files are read table by table (`load_oifits`). A table that does not follow the standard is read
-the closest way that keeps its data — a declared revision without the columns it requires, or a
-revision that does not exist, is read at the revision that fits; GRAVITY's `FLUX` column is read
-as `FLUXDATA`; an OI\_VIS with amplitudes only has its phases "not measured"; rows whose
-TARGET\_ID is not in OI\_TARGET are left out — and a ZIP archive holding one FITS file is read
-through it. `readoifits` lists what it did in one warning per file:
+Files are read table by table (`load_oifits`). A table declaring a revision whose columns it
+lacks, or a revision that does not exist, is read at the revision that fits; GRAVITY's `FLUX`
+column is read as `FLUXDATA`; an OI\_VIS with amplitudes only has its phases "not measured";
+rows whose TARGET\_ID is not in OI\_TARGET are left out; a ZIP archive holding one FITS file is
+read through that file. `readoifits` lists these in one warning per file:
 
 ```julia
 data = readoifits("2022-08-03-calibrated_cleaned.fits")   # a ZIP archive
@@ -320,6 +307,5 @@ and values with unusable errors; `repair_oifits(file, out)` writes a standard OI
 
 ## OIFITSv1 compatibility
 
-Files following the older OIFITS v1 standard (0-based station indices) are loaded
-automatically. A warning is printed indicating that station indices have been
-reindexed from 1 internally.
+OIFITS v1 files with 0-based station indices are read with the stations renumbered from 1, and
+a warning.

@@ -33,21 +33,12 @@ using Random, Statistics, Printf
 """
     perturb_data(data::OIdata; rng=Random.default_rng()) -> OIdata
 
-Return a copy of `data` with independent Gaussian noise added to every
-observable, each draw scaled by that point's error bar.  uv coordinates,
-flags and the number of data points are unchanged.
+A copy of `data` with independent Gaussian noise added to every observable, scaled by each
+point's error bar. uv coordinates, flags and the number of points are unchanged.
 
-Useful for building noisy realisations of a dataset — simulation, end-to-end
-tests, sensitivity checks.
-
-!!! warning "Not an uncertainty estimator"
-    Refitting `perturb_data` replicates is a parametric Monte Carlo, not a
-    bootstrap: it assumes the quoted error bars are correct and uncorrelated,
-    so it can only ever reproduce the analytic covariance of the fit.  In the
-    validation study under `demos/bootstrap_validation` it was never better
-    than `fit_model_lsqfit`'s covariance and, when calibration systematics were
-    present, it understated the true scatter by a factor 11 to 25.  Use
-    [`bootstrap_fit`](@ref) for uncertainties.
+Refitting such replicates (parametric Monte Carlo) reproduces the analytic covariance of the
+fit; with correlated calibration errors it gave 11–25× too small an uncertainty in
+`demos/bootstrap_validation`. [`bootstrap_fit`](@ref) estimates uncertainties.
 """
 function perturb_data(data::OIdata; rng::AbstractRNG=Random.default_rng())
     d = deepcopy(data)
@@ -65,12 +56,8 @@ end
 """
     resample_data(data::OIdata)
 
-Deprecated alias for [`perturb_data`](@ref).
-
-Despite the name, this function never resampled anything: it adds Gaussian
-noise drawn from the error bars.  For a genuine bootstrap (resampling which
-observations are used) see [`bootstrap_fit`](@ref) and
-[`resample_blocks`](@ref).
+Deprecated alias for [`perturb_data`](@ref), which adds Gaussian noise. For a bootstrap, see
+[`bootstrap_fit`](@ref) and [`resample_blocks`](@ref).
 """
 function resample_data(data::OIdata; kwargs...)
     @warn("`resample_data` adds Gaussian noise from the error bars — it is a " *
@@ -123,29 +110,18 @@ _mjd_str(mjd, digits) = string(round(Float64(mjd), digits=digits))
 Partition `data` into resampling blocks.
 
 # Granularity
-- `:config` (default) — one block per (MJD, telescope configuration), where
-  the configuration is the baseline for V²/VIS, the triangle for T3 and the
-  telescope for FLUX.  All wavelength channels of a block stay together, and
-  observables sharing a configuration at the same MJD (e.g. `|V|` and `V²` on
-  the same baseline) stay together too.  This is PMOIRED's "spectral vector".
-- `:epoch` — one block per MJD: an entire observation, all baselines and all
-  observables, is kept or dropped as a unit.  Coarser, more conservative;
-  needs many epochs to be usable.
-- `:point` — one block per data point.  The classical i.i.d. bootstrap; it
-  destroys the spectral and per-configuration correlation structure and will
-  therefore *underestimate* uncertainties on real data.  Provided for
-  comparison studies.
+- `:config` (default) — one block per (MJD, telescope configuration): the baseline for V² and
+  VIS, the triangle for T3, the telescope for FLUX. A block holds all wavelength channels and
+  all observables of that configuration at that MJD (PMOIRED's spectral vector).
+- `:epoch` — one block per MJD, all baselines and observables.
+- `:point` — one block per data point (i.i.d. bootstrap). It ignores correlations between
+  channels and observables, so it underestimates uncertainties on real data.
 
 `mjd_digits` sets the rounding used to group MJDs into a common epoch
 (default 5 decimals ≈ 0.86 s, matching PMOIRED).
 
-!!! note "MJD precision"
-    Blocking needs the MJDs at full precision: near MJD 55000 the representable
-    `Float32` values are 3.9e-3 d = 5.6 minutes apart, so exposures closer than
-    that would collapse onto one value and their blocks would merge.  `readoifits`
-    therefore stores `v2_mjd`, `t3_mjd`, `vis_mjd` and `flux_mjd` as `Float64`
-    whatever `T` is — the block structure is identical at `T=Float32` and
-    `T=Float64`.  (`uv_mjd`, the model's time, is `Float64` too.)
+`readoifits` stores the MJDs (`v2_mjd`, `t3_mjd`, `vis_mjd`, `flux_mjd`, `uv_mjd`) as `Float64`
+for any `T`, so the blocks are the same with `T = Float32` and `T = Float64`.
 """
 function data_blocks(data::OIdata; granularity::Symbol=:config, mjd_digits::Int=5)
     granularity in (:config, :epoch, :point) ||
@@ -226,37 +202,24 @@ end
 """
     block_counts(nblocks, mode; rng) -> Vector{Int}
 
-Multiplicity drawn for each block under the given resampling `mode`.  Exposed
-mainly for testing and for the calibration study of the different schemes.
+Multiplicity of each block under the resampling `mode`.
 
 # Modes
-- `:replacement` (default) — draw `nblocks` blocks with replacement.  This is
-  the textbook nonparametric bootstrap; multiplicities are ≈ Poisson(1), i.e.
+- `:replacement` (default) — `nblocks` blocks drawn with replacement; multiplicities have
   mean 1 and variance 1.
-- `:halfsample` — keep a random half of the blocks, each once.  Balanced
-  repeated replication: correctly calibrated (the finite-population correction
-  cancels the factor 2 from halving the data), and cheaper since each replicate
-  fit uses half the data.  In the validation study under
-  `demos/bootstrap_validation` this was the best-calibrated scheme whenever
-  blocks were numerous (ratio 0.94-1.06); with very few blocks it turns
-  conservative (1.24-1.56), since each replicate then fits very little data.
-- `:pmoired` — PMOIRED's scheme: build two independent copies of the dataset,
-  drop a random half of the blocks in each, and fit the union.  Multiplicities
-  are 0/1/2 with probabilities 1/4, 1/2, 1/4, so their variance is 1/2 rather
-  than 1.
+- `:halfsample` — a random half of the blocks, each once (balanced repeated replication). Each
+  replicate fits half the data. In `demos/bootstrap_validation`: ratio 0.94–1.06 with 180
+  blocks, 1.24–1.56 with 18.
+- `:pmoired` — PMOIRED's scheme: two copies of the dataset, a random half of the blocks dropped
+  in each, the union fitted. Multiplicities are 0/1/2 with probabilities 1/4, 1/2, 1/4
+  (variance 1/2).
 
-!!! warning "`:pmoired` is biased low by √2 — for comparison only"
-    Because its block multiplicities have variance 1/2 instead of 1, this
-    scheme returns uncertainties that are too small by roughly a factor √2.
-    Measured against simulated truth (`demos/bootstrap_validation`) it gives
-    0.62–0.79 of the true parameter scatter in every regime tested, with a 1σ
-    coverage of ~0.50 instead of 0.683.  Use it to reproduce or cross-check a
-    PMOIRED result, never to quote an error bar: use `:replacement` (default)
-    or `:halfsample` for that.
+!!! warning "`:pmoired` gives uncertainties √2 too small"
+    In `demos/bootstrap_validation` it gives 0.62–0.79 of the true scatter, with 1σ coverage
+    near 0.50. It is for comparison with PMOIRED results.
 
-`resample_blocks` additionally accepts `mode=:weights`, the multiplier
-(Bayesian) bootstrap, which draws continuous weights rather than integer
-multiplicities — see [`block_weights`](@ref).
+`resample_blocks` also accepts `mode = :weights`, the multiplier (Bayesian) bootstrap with
+continuous weights ([`block_weights`](@ref)).
 """
 function block_counts(nblocks::Int, mode::Symbol; rng::AbstractRNG=Random.default_rng())
     nblocks > 0 || error("block_counts: no blocks to resample")
@@ -287,13 +250,9 @@ end
 """
     block_weights(nblocks; rng) -> Vector{Float64}
 
-Random weights for the multiplier ("Bayesian") bootstrap: `nblocks` draws from
-Dirichlet(1, …, 1) rescaled to mean 1, i.e. mean 1 and variance 1 − 1/nblocks,
-the same first two moments as the multiplicity of a draw with replacement.
-
-Unlike `block_counts`, these are continuous: no block is ever dropped entirely
-and none is duplicated, so a replicate costs exactly one dataset instead of
-one-and-a-bit.  See [`apply_block_weights`](@ref).
+Weights for the multiplier (Bayesian) bootstrap: a Dirichlet(1, …, 1) draw rescaled to mean 1
+(variance 1 − 1/nblocks, as the multiplicities of a draw with replacement). See
+[`apply_block_weights`](@ref).
 """
 function block_weights(nblocks::Int; rng::AbstractRNG=Random.default_rng())
     nblocks > 0 || error("block_weights: no blocks to resample")
@@ -304,15 +263,8 @@ end
 """
     apply_block_weights(data, blocks, w) -> OIdata
 
-Multiplier bootstrap replicate: instead of duplicating and dropping blocks, give
-block `i` the weight `w[i]` in the χ² by dividing its error bars by `sqrt(w[i])`.
-
-For a weighted least-squares fit this is the standard multiplier (or Bayesian)
-bootstrap: with `mean(w) = 1` and `var(w) = 1` it has the same asymptotic
-behaviour as resampling blocks with replacement, at the cost of one dataset per
-replicate and with no discrete jumps as blocks enter and leave.
-
-The reduced χ² of such a replicate is not meaningful; the parameter scatter is.
+Multiplier bootstrap replicate: block `i` gets the weight `w[i]` in the χ², its error bars
+divided by `sqrt(w[i])`. The reduced χ² of the replicate is not meaningful.
 """
 function apply_block_weights(data::OIdata, blocks::DataBlocks, w::AbstractVector{<:Real})
     length(w) == length(blocks) ||
@@ -344,13 +296,9 @@ end
     resample_blocks(data, blocks; mode=:replacement, rng=Random.default_rng()) -> OIdata
     resample_blocks(data; granularity=:config, mode=:replacement, ...) -> OIdata
 
-Bootstrap replicate of `data`: the observable *values* and their error bars are
-left untouched, and the blocks of `blocks` are drawn according to `mode` (see
-[`block_counts`](@ref)).  A block drawn twice contributes its data twice; a
-block not drawn is absent.
-
-The uv table is carried over unchanged — duplicated data points simply share
-the same uv row — so the model evaluation cost per replicate is unchanged.
+Bootstrap replicate of `data`: the blocks are drawn according to `mode`
+([`block_counts`](@ref)); a block drawn twice appears twice, a block not drawn is absent. Values
+and error bars are unchanged. The uv table is unchanged; duplicated points share their uv row.
 """
 function resample_blocks(data::OIdata, blocks::DataBlocks;
                          mode::Symbol=:replacement,
@@ -513,36 +461,26 @@ end
 """
     bootstrap_driver(fitfun, x_opt, list_free_params; kwargs...) -> BootstrapResult
 
-Run `nboot` bootstrap replicates of an arbitrary fit and summarise the scatter
-of the resulting parameters.
-
-This is the model-agnostic half of [`bootstrap_fit`](@ref): it owns the
-replicate loop, the seeding, the threading, the failure handling, the clipping
-and the statistics, and knows nothing about what is being fitted or how the
-data are resampled.  Packages with their own estimators (or their own notion of
-a resampling unit) can reuse the statistics by calling this directly.
+Run `nboot` bootstrap replicates of any fit and summarise the parameters' scatter: the
+replicate loop, seeding, threading, failure handling, clipping and statistics of
+[`bootstrap_fit`](@ref), without the model or the resampling.
 
 # Arguments
-- `fitfun(state, rng) -> (x, chi2r)` — performs **one replicate**: it resamples
-  the data and fits them, returning the best-fit parameters and the reduced χ².
-  The driver never resamples; that is deliberate, so that callers are free to
-  resample structures OITOOLS knows nothing about.  A third element may be
-  returned, `(x, chi2r, extra)`, which is stored in `info` (see below).
+- `fitfun(state, rng) -> (x, chi2r)` — one replicate: resample the data, fit, and return the
+  best-fit parameters and the reduced χ². A third element, `(x, chi2r, extra)`, is stored in
+  `info`.
 - `x_opt` — best fit to the unresampled data, recorded in the result.
 - `list_free_params` — parameter names; `length` sets the expected width of `x`.
 
 # Keywords
 - `nboot` — number of replicates (default 200)
-- `worker_init(w::Int) -> state` — build per-worker state, called **once per
-  worker and serially, before any task is spawned** (compiling or allocating
-  concurrently is exactly what this exists to avoid).  `state` is `nothing`
-  when `worker_init` is not given.
+- `worker_init(w::Int) -> state` — per-worker state, built once per worker, serially, before
+  the tasks start. `state` is `nothing` without `worker_init`.
 - `nworkers` — number of replicate-level workers; `0` (default) means
   `min(nthreads(), nboot)`.  Set it to 1 when `fitfun` threads internally, so
   the two levels do not oversubscribe.
-- `info` — optional `AbstractVector` of length `nboot`; when given and `fitfun`
-  returns a third element, `info[i]` receives it.  Written at the replicate's
-  own index, never in completion order.
+- `info` — optional `AbstractVector` of length `nboot`; `info[i]` receives replicate `i`'s
+  third element.
 - `sigma_clipping`, `chi2r_max` — reject replicates beyond this many σ from the
   median, or above this reduced χ²
 - `seed` — replicate `i` uses `Xoshiro(seed + i)`, so results do not depend on
@@ -700,17 +638,11 @@ end
 """
     bootstrap_fit(model_dict, list_free_params, data; kwargs...) -> BootstrapResult
 
-Estimate parameter uncertainties by nonparametric block bootstrap: refit the
-model to `nboot` replicates in which the blocks of data (by default one per
-MJD and telescope configuration) are resampled, and summarise the scatter of
-the best-fit parameters.
-
-Unlike the analytic covariance of `fit_model_lsqfit`, this does not assume the
-quoted error bars are correct or uncorrelated: correlated calibration errors
-and mis-stated error bars show up as extra scatter between replicates.  It
-does assume the blocks are numerous and exchangeable — with a single snapshot
-(a handful of blocks) the estimate is unreliable, and `perturb_data` based
-Monte Carlo or the analytic errors are the better tool.
+Parameter uncertainties by block bootstrap: the model is refitted to `nboot` replicates in
+which the blocks of data (by default one per MJD and telescope configuration) are resampled.
+Correlated calibration errors and wrong error bars appear as scatter between replicates. The
+blocks must be numerous and exchangeable; with fewer than 10 a warning is printed. See
+[Uncertainties](@ref).
 
 # Arguments
 - `model_dict::Dict{String}` — flat parameter dictionary
@@ -720,8 +652,8 @@ Monte Carlo or the analytic errors are the better tool.
 # Keywords
 - `nboot` — number of replicates (default 200; use ≥1000 for stable percentiles)
 - `mode` — `:replacement` (default), `:halfsample` or `:weights`; see
-  [`block_counts`](@ref) and [`block_weights`](@ref).  `:pmoired` reproduces
-  PMOIRED's scheme and is biased low by about √2 — comparison only
+  [`block_counts`](@ref) and [`block_weights`](@ref). `:pmoired` is PMOIRED's scheme, with
+  uncertainties about √2 too small
 - `granularity` — `:config` (default), `:epoch` or `:point`; see [`data_blocks`](@ref)
 - `fitter` — `:lsqfit` (default, Levenberg-Marquardt with analytic Jacobian) or `:nlopt`
 - `rv` — radial velocities ([`read_rv`](@ref)) fitted with the interferometry (`:lsqfit`); each
@@ -729,15 +661,13 @@ Monte Carlo or the analytic errors are the better tool.
 - `lb`, `ub`, `weights`, `nB_workspace` — passed through to the fitter
 - `method`, `maxeval` — NLopt settings (`fitter=:nlopt`)
 - `maxIter` — LsqFit iterations (`fitter=:lsqfit`)
-- `start_scatter` — perturb each replicate's starting point by this many σ of
-  the full-data fit (default 0; PMOIRED uses the equivalent of 1). Non-zero
-  values mix optimiser scatter into the uncertainty and are meant for
-  comparison studies only.
+- `start_scatter` — perturb each replicate's starting point by this many σ of the full-data fit
+  (default 0; PMOIRED uses the equivalent of 1). Non-zero values add optimiser scatter to the
+  uncertainty.
 - `sigma_clipping` — reject replicates beyond this many σ from the median
   (default `nothing`; PMOIRED's plots default to 4.5)
 - `chi2r_max` — reject replicates whose reduced χ² exceeds this value
-- `seed` — RNG seed; replicate `i` uses `Xoshiro(seed + i)` so results are
-  reproducible regardless of thread scheduling
+- `seed` — replicate `i` uses `Xoshiro(seed + i)`, independent of thread scheduling
 - `threaded` — run replicates on all available Julia threads (default `true`)
 - `verb` — progress reporting (default `true`)
 

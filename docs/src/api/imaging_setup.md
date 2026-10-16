@@ -7,10 +7,9 @@
 | `setup_ft(data, nx, pixsize; mode="nfft")` | Set up Fourier transform plans (NFFT or DFT) for any `Matrix{OIdata}` |
 | `ft_info(ft)` | Print a plan set's mode, image size, channel count and uv counts |
 
-The plans themselves are typed. `setup_ft` returns an [`OIft`](@ref) — a matrix of channel
-transforms that also records the mode, image size and pixel size — and each channel is an
-[`NFFTCell`](@ref) (six named plans, one per observable index set) or a [`DFTCell`](@ref) (one
-dense kernel). Typing `ft` at the REPL summarises it.
+`setup_ft` returns an [`OIft`](@ref), a matrix of channel transforms with the mode, image size
+and pixel size. Each channel is an [`NFFTCell`](@ref) (six plans, one per observable index set)
+or a [`DFTCell`](@ref) (one dense kernel). Displaying `ft` summarises it.
 
 | Type | |
 |---|---|
@@ -52,7 +51,7 @@ gaussian2d
 |----------|-------------|
 | `image_to_chi2(x, ft, data)` | Image chi-squared (value only). Accepts 2D or 4D images, `OIdata` or `Matrix{OIdata}` |
 | `image_to_chi2_fg(x, g, ft, data)` | Image chi-squared with gradient. Same dispatch flexibility |
-| `crit_f(x, ft, data)` / `image_to_crit(x, ft, data)` | Criterion (χ² + regularization)/ndof (forward only, no gradient) |
+| `crit_f(x, ft, data)` / `image_to_crit(x, ft, data)` | Criterion (χ² + regularization)/ndof, without gradient |
 | `crit_fg(x, g, ft, data)` | Criterion (χ² + regularization)/ndof + gradient |
 
 ```@docs
@@ -83,7 +82,7 @@ scale_tv_epsilon
 
 ## Deprecated
 
-These functions still work but emit deprecation warnings. Use the unified API instead.
+These functions print a deprecation warning.
 
 | Deprecated | Replacement |
 |------------|-------------|

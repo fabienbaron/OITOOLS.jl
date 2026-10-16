@@ -1,186 +1,121 @@
 # Graphical interface
 
-One window with five perspectives over a single session — Exploring, Observing, Modeling,
-Imaging and Tools — so a dataset moves from planning to exploration to fitting to imaging without
-being exported and read back.
+One window with five perspectives over one session: Exploring, Observing, Modeling, Imaging and
+Tools.
 
 ```julia
 using OITOOLS
 oitoolsgui()                  # or oitoolsgui("mydata.oifits")
 ```
 
-Left of the Dataset box, **?** opens About (the OITOOLS and Julia versions, the licence, author
-and acknowledgements) and **⚙** the appearance settings.
+[`oitoolsgui`](@ref) loads GLMakie, QMLMakie and QML and opens the window. Call it before
+`using GLMakie`: it sets graphics options that have no effect once GLMakie is loaded, and warns
+if it is. Missing optional packages are listed once: `GLFW_jll` (native Wayland), `Nautilus`
+(nested sampling), `Pigeons` (parallel tempering), `PairPlots` (corner plots). `optional = false`
+skips the check.
 
-[`oitoolsgui`](@ref) is the whole launch: it loads GLMakie, QMLMakie and QML itself, in the
-order the graphics hints require, then opens the window. Call it *before* loading GLMakie
-yourself — Mesa, GLFW and Qt each read their configuration exactly once, when the first OpenGL
-context is created and when Qt starts, so a `using GLMakie` that has already run cannot be
-taken back. It warns in that case rather than opening a window whose platform silently
-disagrees with Qt's.
-
-Any optional package you do not have is named once, not treated as a failure: `GLFW_jll`
-(native Wayland rather than XWayland), `Nautilus` (enables "Nested sampling" in the Model
-panel), `Pigeons` and `PairPlots`. Pass `optional = false` to skip that check.
-
-### Why these are not installed for you
-
-GLMakie, QMLMakie and QML are **weak dependencies**. A weak dependency is declared in
-`Project.toml` under `[weakdeps]` rather than `[deps]`: it is not installed with the package
-and not loaded by `using OITOOLS`, but when *you* load it, the matching entry under
-`[extensions]` fires and the code that needs it becomes available. That is what keeps
-`using OITOOLS` free of Makie, of Qt and of Python — which matters on a headless machine, in a
-script that only reads OIFITS files, and alongside any other application that maps its own Qt.
-
-The cost is that you install them once yourself:
+GLMakie, QMLMakie and QML are weak dependencies of OITOOLS and are installed separately:
 
 ```julia
 using Pkg; Pkg.add(["GLMakie", "QMLMakie", "QML"])
 ```
 
-Weak dependencies also cannot be loaded from the package's own environment, so `--project=.`
-either fails to find them or picks them up from your default environment at whatever versions
-happen to be there. From a clone, `bin/` is an ordinary environment where all three are real
-dependencies with a pinned manifest, and it is the right entry point for a desktop icon or a
-sysimage:
+From a clone, `bin/` is an environment with these and the optional packages pinned:
 
 ```
 julia --project=bin bin/oitoolsgui.jl [file.oifits]
 ```
 
-The console at the bottom echoes the equivalent OITOOLS call for every action, so anything below
-can be read off the window and pasted into a script.
+**?** (left of the Dataset box) shows the versions, licence and acknowledgements; **⚙** the
+appearance settings. The console at the bottom shows the OITOOLS call for each action.
 
 ## Choosing observables
 
-Two levels, for two questions.
-
-**What the dataset holds** — Exploring › Filter › **Tables** › *observables*: V², T3amp, T3φ,
-VISamp, VISφ, flux. A box the data hold nothing of is disabled, and says so when hovered.
-Applying the filter makes a new dataset without the unticked observables, which every other
-perspective, an export and the script then see.
-
-A T3 amplitude and its closure phase are one point, as are a VIS amplitude and its phase.
-Unticking one half keeps the points for the other, with the unticked half "not measured": it is
-not counted, not fitted, not drawn, and is written as NaN on export. Unticking both halves leaves
-the table out when the file is read. The script line is
-`filter_data(d, set_data_filter(d; …); drop = [:t3amp])`.
-
-Exploring › Filter › **Spectral** › *average every N channels* averages channels when the file is
-read (`binning`, *block* or *pmoired*, *c*), as Tools' spectral binning does.
-
-**What a run uses** — the Observables boxes of Modeling (v2, t3amp, t3phi, visamp, visφ, diffvis,
-flux) and of Imaging (v2, t3amp, t3phi, diffvis). They choose among what the dataset holds, for one
-fit or one reconstruction, and leave the dataset as it is: fitting V² and closure phases only is
-a tick, not a new dataset. The header χ²ᵣ is over the ticked observables, as the fit is.
-
-A box is enabled when the dataset holds that observable, so a dataset filtered without T3amp
-shows Modeling's and Imaging's t3amp boxes disabled.
+- **Exploring › Filter › Tables › observables** (V², T3amp, T3φ, VISamp, VISφ, flux) removes
+  observables from the dataset: applying the filter creates a new dataset without them. Boxes
+  for observables the data do not hold are disabled. Removing one half of a T3 or VIS pair (an
+  amplitude or its phase) keeps the other; the removed half is not counted, fitted or drawn,
+  and is written as NaN on export (`filter_data(…; drop = [:t3amp])`).
+- **Exploring › Filter › Spectral › average every N channels** averages channels on reading
+  (`binning`; *block* or *pmoired*, *c*).
+- The **Observables** boxes of Modeling (v2, t3amp, t3phi, visamp, visφ, diffvis, flux) and
+  Imaging (v2, t3amp, t3phi, diffvis) choose which of the dataset's observables a fit or a
+  reconstruction uses; the dataset is unchanged. The χ²ᵣ in the Modeling header uses the same
+  selection.
 
 ## Tools
 
-Operations on files and datasets that belong to none of the other perspectives, in two frames.
+Two frames; the results are shown on the right.
 
-**OIFITS Handling** — every operation works from the file in the frame's field (**…** to choose
-one, **Current** for the selected dataset's file); no dataset needs to be open. A file chosen
-with **…** (or typed and Enter) shows its headers.
+**OIFITS Handling** works on the file in its field: **…** to choose one, **Current** for the
+selected dataset's file, or type a path and press Enter. No dataset needs to be open.
 
-- **Headers**: every HDU of the file, as in FITS Image Handling below.
-- **Validate**: errors (the file cannot be read, or breaks the standard where nothing can be read
-  around — a revision-2 table numbering targets or stations from 0, for one), warnings (what was
-  read around, stations with no entry in OI_ARRAY, values with unusable errors, OI_VIS tables
-  disagreeing on AMPTYP / PHITYP, 0-based numbering in revision-1 tables) and notes (flagged
-  fractions, HDUs and targets an export does not keep). [`validate_oifits`](@ref).
-- **Spectral binning**: every *N* channels, *average* or *group*, into a new dataset. *average*
-  makes one channel of N (`binning = N`): *block* takes 1/σ²-weighted means, circular means for
-  phases, errors multiplied by √c for a correlation *c* between adjacent channels, and reports a
-  scatter check (χ²/dof about a straight line in λ within each group); *pmoired* reproduces
-  PMOIRED's `binning`. *group* puts N consecutive channels in each spectral bin and keeps every
-  channel (`spectralbin`): a polychromatic dataset, as Imaging reconstructs one image per bin.
-- **Temporal binning**: one dataset per epoch, a new epoch after a gap longer than the given
-  days, or fixed windows of the given days (`temporalbin`). **Preview** lists the epochs with
-  their point counts; **also write each epoch to** a folder writes `<file>_<epoch>.oifits` for
-  each, never over the source or an existing file.
+- **Headers**: choosing a file lists its HDUs. **Header** shows the selected HDU's cards;
+  **Data** its contents ([`oifits_table`](@ref)):
+  - OI_VIS2, OI_VIS, OI_T3 and OI_FLUX are shown **per channel** by default: one line per row
+    and channel, preceded by λ, the station names, the baseline B (for T3 the longest of the
+    three) and B/λ. Unticked, one line per row; array columns show the chosen **channel**.
+  - Click a column header to sort (again for descending). The filter takes station names
+    (`S1-E1`) and ranges (`λ 2.16–2.17`, `B 100–200`, `B/λ a–b`, `mjd a–b`). Flagged lines are
+    grey; **hide flagged** removes them.
+- **Validate** ([`validate_oifits`](@ref)): errors (unreadable file, standard violations such as
+  0-based indices in a revision-2 table), warnings (what was read around, stations missing from
+  OI_ARRAY, unusable errors, OI_VIS tables with different AMPTYP/PHITYP) and notes (flagged
+  fractions, HDUs and targets an export drops).
+- **Spectral binning**, into a new dataset: *average* N channels into one (`binning = N`;
+  *block*: 1/σ²-weighted means, circular means for phases, errors × √c for an inter-channel
+  correlation c, with a χ²/dof scatter check per group; *pmoired*: PMOIRED's `binning`), or
+  *group* N channels per spectral bin, keeping all channels (`spectralbin`, a polychromatic
+  dataset for Imaging).
+- **Temporal binning** (`temporalbin`): one dataset per epoch, split at gaps longer than the
+  given days or in fixed windows. **Preview** lists the epochs and their point counts; **also
+  write each epoch to** writes `<file>_<epoch>.oifits` files to a folder, never overwriting.
 - **Split**: one dataset per instrument (`insname`) or per target (`targetname`).
-- **Merge files…**: several OIFITS files (Ctrl- or Shift-click) read as one dataset, stations
-  matched by name, every point kept.
-- **Export OIFITS…**: the file written as clean OIFITS v2 — every point it does not flag, each
-  instrument under its own name, one target at a time (a **target** box appears for a file with
-  several). [`repair_oifits`](@ref). Exploring's **Export** writes the current dataset instead,
-  as it stands: filtered, binned, split or merged.
+- **Merge files…**: several files (Ctrl- or Shift-click) read as one dataset, stations matched
+  by name.
+- **Export OIFITS…** ([`repair_oifits`](@ref)): the file as OIFITS v2, unflagged points only,
+  one target at a time (a **target** box appears when there are several). Exploring's
+  **Export** writes the current dataset as filtered.
 
-Each new dataset is the file read with one more `readoifits` keyword: it appears in the Dataset
-box, the Filter works on it, and the exported script rebuilds it.
+New datasets appear in the Dataset box and are rebuilt by the exported script.
 
-**FITS Image Handling** works on the file in its own field (**…** lists `*.fits` files); a file
-chosen with **…** (or typed and Enter) is shown at once, as **View** does.
+**FITS Image Handling** works on the file in its own field; choosing a file shows it.
 
-- **Headers** of any FITS file (images, cubes and the HDUs OITOOLS does not read included): the
-  HDUs above, the selected one's columns (format, unit, dimensions) and every header card below,
-  in order; the split between the two is movable. A file inside a ZIP archive is read through the
-  archive. [`oifits_headers`](@ref).
-- **View** shows the file's image or cube one channel at a time, East left, North up. Beside it,
-  **Channel** steps through the wavelength channels (◀ ▶ or the slider), with each channel's
-  wavelength (λ= … µm) when the file gives it; a cube with epochs as well gets an **Epoch** slider
-  below, with each epoch's MJD (a time series alone steps its epochs on Channel). **Save PNG**
-  writes the plane on screen.
-- **Set keywords…** says what the file's axes are: the pixel size (mas, µas, arcsec, deg, rad),
-  whether the file stores East on the left, whether axis 3 is wavelength or time (axis 4 being
-  the other), and each axis as a start and a step (wavelength in m, µm, nm or Å; time as an MJD
-  and a step in d, h, min or s). It opens with what the file's header says, and lists the
-  file's WCS cards axis by axis (CTYPE, CUNIT, CRVAL, CDELT, CRPIX), ✓ present (the value on
-  hover) or ✗ missing; Apply shows the cube
-  with those values. **Save FITS…** then writes the file, to a new name or over itself, with the
-  keywords [`read_model_image`](@ref) reads and the file's other header cards
-  ([`fits_set_keywords`](@ref)).
-
-The frame on the left and the results on the right are separated by a movable split.
+- **Headers** of any FITS file, images included: the HDUs, the selected one's columns (format,
+  unit, dimensions) and its cards. ZIP archives are read through. [`oifits_headers`](@ref).
+- **View** shows the image or cube one plane at a time, East left: **Channel** steps through
+  wavelengths (with λ when the file gives it), **Epoch** through epochs. **Side by side** shows up
+  to six channels (numbers or λ in µm) on one colour scale; **power** sets a brightness stretch
+  I^p. **Save PNG** writes the view.
+- **Set keywords…** sets the pixel size (mas, µas, arcsec, deg, rad), whether East is on the
+  left, the reference pixel, whether axis 3 is wavelength or time, and each axis's start and step.
+  It opens with the file's values and lists its WCS cards (present ✓ / missing ✗). **Apply**
+  shows the cube with those values; **Save FITS…** writes the file with the keywords
+  [`read_model_image`](@ref) reads, keeping its other cards ([`fits_set_keywords`](@ref)).
 
 ## Building a model
 
-A model is a dictionary of `"component,parameter"` keys. The Model perspective edits that
-dictionary directly, and every rule below is the parser's, not the panel's — the same model
-written by hand in a script behaves identically.
+The Modeling perspective edits the model dictionary (`"component,parameter"` keys); a model
+written in a script behaves the same.
 
-Each parameter is in exactly one of three states, chosen by the mode selector on its row:
+Each parameter is in one of three modes, set in the **mode** column of its row:
 
-| mode | what the row holds | in the fit vector? |
+| mode | the row holds | fitted |
 |:--|:--|:--|
 | **fixed** | a number | no |
-| **free** | a number (the initial guess), plus lower and upper bounds and its index `i` | yes |
-| **expr** | an expression over other parameters | no — a free parameter must be numeric |
+| **free** | a starting value, lower and upper bounds, and its index `i` in the fit vector | yes |
+| **derived** | an expression over other parameters | no |
 
-The index matters: `x[i]` and `list_free_params[i]` are the same parameter throughout OITOOLS,
-so the free rows *in order* are the vector every optimiser sees and every `x_opt` reports
-against.
+Free rows, in order, are the fit vector: `x[i]` is `list_free_params[i]`.
 
-### Setting a parameter derived
+Choosing **derived** opens the expression editor; the row then shows the expression and its
+computed value, read-only. Going from free to derived reduces the number of free parameters,
+and the editor shows the new count. Going from derived to free starts from the computed value.
 
-The mode selector is the small dropdown in the **mode** column of the parameter's own row —
-the same control that makes a parameter free. Choose **derived** on it and the expression
-editor opens; type the expression and press OK. The row then shows the expression, and its
-value becomes a read-only display of what the resolver computes, because editing a derived
-value would mean nothing.
+## Limb-darkened disks
 
-The conversions are not symmetric, and the editor says so as it makes them:
-
-- **fixed → derived** and **free → derived** both open the editor. Going derived also drops the
-  parameter from the fit vector, and the dialog states how many free parameters will remain,
-  so the count never changes behind you.
-- **derived → free** needs a number to start from. The resolver has already evaluated the
-  expression, so the current value is offered as the seed rather than asking you to retype a
-  number you can see.
-
-A parameter cannot be free and derived at once: the resolver raises on a string in
-`list_free_params`, so the selector makes the combination unreachable rather than reporting it
-after a fit.
-
-## Limb-darkened disks: choosing the law
-
-The kind list offers one **limb-darkened disk**, not one entry per law, because every one of
-them is a disc of some diameter — which law it wears is a question about the atmosphere, not
-about the geometry. The law is chosen beside the kind when the component is created, and can be
-changed afterwards from the **Limb darkening** group on the selected component.
+The component kind **limb-darkened disk** takes a law, chosen when the component is created or
+later under **Limb darkening**:
 
 | law | profile | coefficients |
 |:--|:--|:--|
@@ -190,293 +125,213 @@ changed afterwards from the **Limb darkening** group on the selected component.
 | power law | `μ^α` (Hestroffer) | `alpha` |
 | four-parameter | `1 - Σₖ cₖ(1 - μ^{k/2})` (Claret) | `c1`…`c4` |
 
-Changing the law **keeps the diameter and reseeds the coefficients**. That asymmetry is
-deliberate: the diameter is the same physical quantity under every law, and carries over along
-with its bounds and whether it is being fitted. The coefficients are not. `u` is the linear
-coefficient in both the quadratic and the square-root law, but the two laws are different
-profiles, so a value fitted under one is not a value under the other — carrying it across would
-make it look like a measurement that survived the change.
+Changing the law keeps the diameter (value, bounds, free or fixed) and resets the coefficients
+to the new law's defaults. Coefficients are not comparable between laws: `u` of the quadratic and
+of the square-root law differ, and tabulated coefficients (e.g. Claret's) are per law.
 
-The same caution applies to published tables. Claret tabulates linear, quadratic, square-root,
-logarithmic and four-parameter coefficients separately, and a power-law α is a different
-quantity again — typically well below the linear `u` for the same star. Fit the law you intend
-to quote.
+## Flux fractions
 
-## Making the fluxes behave as flux ratios
+Component fluxes `f` are fractions of the total and should sum to 1.
 
-Component fluxes (`f`) are fractions of the total, and a fit only means what you think it means
-if they sum to 1. There are three ways to arrange that, and they are not equally good.
-
-### Two components: derive one from the other
+**Two components**: derive one from the other.
 
 ```julia
 "star,f" => 0.7,                 # free
-"disk,f" => "1 - $star,f"        # expr
+"disk,f" => "1 - $star,f"        # derived
 ```
 
-Set `disk,f` to **expr** and type `1 - $star,f`. The sum is exactly 1 for any value the fitter
-tries, and the redundant degree of freedom is gone — two free fluxes plus a normalisation is one
-parameter more than the model has information for.
-
-### Three or more, or anything chromatic: normalise by a global
+**Three or more, or chromatic fluxes**: normalise by a global (a key without a component).
 
 ```julia
-"star,f0" => 3.0,                       # free, unnormalised weights
+"star,f0" => 3.0,                       # free weights
 "disk,f0" => 1.0,
-"F"       => "$star,f0 + $disk,f0",     # a global: a bare key, no component
+"F"       => "$star,f0 + $disk,f0",     # global
 "star,f"  => "$star,f0 / $F",
 "disk,f"  => "$disk,f0 / $F",
 ```
 
-The fluxes are ratios by construction, stay positive, and no component is singled out to absorb
-the remainder. Weights of 3:1 give 0.75 and 0.25; 1:1 gives 0.5 and 0.5. This is the form the
-SPARCO models in `demos/` use, and the one that extends to wavelength: put the spectral
-dependence in each numerator and the same terms in `F`, and the ratios stay normalised at every
-wavelength.
+With chromatic weights in the numerators and in `F`, the fractions sum to 1 at every
+wavelength. Globals are listed above the components.
 
-Globals live in their own section above the components, because the parser groups bare keys
-under `__global__`.
-
-### SPARCO: a star and an environment with their own spectral slopes
-
-**SPARCO fluxes…** (Model Creation, beside **Fluxes sum to 1**) writes this form for two
-components: the star's flux a power law of fixed index (−4, Rayleigh–Jeans), the environment's
-of a free slope `env,slope`, and the global `fs`, the star's share at λ0 (1.6 µm by default):
+**SPARCO fluxes…** (Model Creation) writes this form for a star with a fixed power-law index (−4,
+Rayleigh–Jeans) and an environment with a free slope `env,slope`, `fs` being the star's fraction
+at λ0 (1.6 µm by default):
 
 ```julia
 "star,f" => "$fs * ($WL/1.6)^(-4) / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$env,slope)"
 "env,f"  => "(1 - $fs) * ($WL/1.6)^$env,slope / ($fs * ($WL/1.6)^(-4) + (1 - $fs) * ($WL/1.6)^$env,slope)"
 ```
 
-`fs` and the slope are freed with bounds [0, 1] and [−4, 4]; other components keep their own
-fluxes. The environment can be any component — a Gaussian, a ring, or an image
-(`demos/models/SPARCO_Star_Image.toml` pairs a star with `SPARCO_env.fits`, an inclined ring;
-`SPARCO_Star_Disk.toml` with a Gaussian disc). Such a model is simulated as any model, in
-Observing › Source › Model.
+`fs` and the slope are freed with bounds [0, 1] and [−4, 4]. The environment can be any
+component, an image included (`demos/models/SPARCO_Star_Image.toml`, `SPARCO_Star_Disk.toml`).
 
-### A constraint, only if you want the sum to be soft
-
-In the Constraints panel: **+ constraint**, then lhs `$star,f + $disk,f`, op `==`, rhs `1`,
-tol `0.001`.
-
-Prefer one of the two forms above for an exact identity like this one. A constraint is a *hard*
-nonlinear constraint only under the NLopt optimisers; under Levenberg-Marquardt and nested
-sampling it becomes a one-sided quadratic penalty, and a penalty stiff enough to win against a
-strong χ² gradient will wreck the conditioning while one that is not simply loses — the fit then
-settles where the two gradients balance, which is neither the constrained answer nor the
-unconstrained one. Constraints earn their keep on relations a box cannot express, such as
-`$ring,diamout > $ring,diamin`.
+**A constraint** (**Fluxes sum to 1** adds `$star,f + $disk,f + … == 1` to the Constraints panel)
+also works, but is enforced exactly only by the NLopt optimisers; Levenberg-Marquardt and the
+samplers apply it as a quadratic penalty, which a steep χ² can overrule. Use constraints for
+relations bounds cannot express, such as `$ring,diamout > $ring,diamin`.
 
 ## Keywords: `$R`, `$MU`, `$WL`, `$MJD`
 
-Four names are reserved and mean something without being parameters. They are **scoped**, and
-the expression editor lists all four with the out-of-scope pair greyed out and the reason
-given.
-
-| keyword | meaning | valid |
+| keyword | meaning | where |
 |:--|:--|:--|
-| `$R` | radius over the profile grid, mas | only inside a `profile` string |
-| `$MU` | `sqrt(1 - (r/r_max)^2)`, for limb darkening | only inside a `profile` string |
-| `$WL` | wavelength in **microns**, one value per uv point | only outside a profile |
-| `$MJD` | Modified Julian Date, one value per uv point | only outside a profile |
+| `$R` | radius on the profile grid, mas | in a `profile` expression |
+| `$MU` | `sqrt(1 - (r/r_max)^2)` | in a `profile` expression |
+| `$WL` | wavelength, µm | outside profiles |
+| `$MJD` | Modified Julian Date | outside profiles |
 
-Crossing the boundary is not reported when it is typed. It surfaces later as
-`UndefVarError: WL not defined in OITOOLS`, which names neither the rule nor the expression
-that broke it — and a plain misspelling produces the same shape of error. The editor checks
-each `$` reference as you type and distinguishes the three cases, which is the only place they
-are told apart.
+The expression editor checks each `$` reference while typing and says when a keyword is used
+out of place or a name is unknown. Outside the editor, both errors appear as
+`UndefVarError: WL not defined in OITOOLS`.
 
-### Wavelength and time
-
-Any ordinary expression may use them:
+A parameter whose expression uses `$WL` or `$MJD`, or refers to one that does, has one value per
+data point; the others have one value. A parameter of `$MJD` alone is computed once per epoch.
+The parameter table shows such parameters at the dataset's first wavelength. `$MJD` comes from
+`data.uv_mjd`, which is `Float64` in every dataset.
 
 ```julia
 "disk,ud" => "3.0 * ($WL / 1.6)^1.2"
 ```
 
-One consequence is worth knowing: if **any** expression in the model mentions `$WL` or `$MJD`,
-the resolver broadcasts *every* parameter into a per-uv-point vector. That is a real change of
-regime, and the inspector says when it has happened. It also says which wavelength the values
-in the table are shown at, since a broadcast parameter has no single value.
-
-`$MJD` resolves from `data.uv_mjd`, which is `Float64` whatever the dataset's precision, so
-epochs minutes apart stay distinct.
-
 ## Radial profiles
 
-A component whose geometry key is `profile` is a freeform I(r), compiled to an AD-transparent
-closure and Hankel-transformed. Add one with **+ component → radial profile**.
+A component with a `profile` key is a free-form I(r), Hankel-transformed (**+ component → radial
+profile**).
 
 ```julia
 "disk,profile" => "exp(-($R / $scale)^2 / 2)",
-"disk,scale"   => 1.5,      # discovered from the expression
+"disk,scale"   => 1.5,      # a parameter of the expression
 "disk,udout"   => 8.0,      # sets the r grid
-"disk,nr"      => 64,       # optional: fixes the number of quadrature nodes
+"disk,nr"      => 64,       # optional: number of quadrature nodes
 "disk,f"       => 1.0,
 ```
 
-Two things about profiles differ from every other component.
+Names in the expression other than `$R` and `$MU` are parameters, looked up in the component and
+then among the globals; the editor lists missing ones and offers to create them.
 
-**Parameters are discovered, not declared.** Every name in the expression that is not `$R` or
-`$MU` is a parameter, resolved against this component first and then against the globals. Typing
-`$scale` creates the *need* for a parameter rather than referring to one, so the editor lists
-what is missing and offers to create it. A typo therefore shows up as a spurious extra
-parameter instead of a crash.
+The grid's outer radius comes from the first of these keys present: `udout`, `diamout`, `diam`
+(diameters, halved) or `r_max` (a radius). Without any of them the model does not build. The
+panel shows the grid used and the key it came from.
 
-**The grid comes from a key you may not have meant.** Four keys can set `r_max`, tried in this
-order:
+`demos/models/YSO_*.toml` are the six models of Ibrahim et al. (2023, ApJ 947, 68) for HD 190073
+(`demos/data/V1295_Aql.oifits`, epoch A): a star with a Rayleigh–Jeans spectrum, a disc and an
+over-resolved halo, the disc being
 
-| key | interpretation |
-|:--|:--|
-| `udout` | a **diameter** — halved |
-| `diamout` | a **diameter** — halved |
-| `diam` | a **diameter** — halved |
-| `r_max` | already a **radius** — used as is |
-
-If none is present the model will not build, and the error names all four. The panel prints the
-grid it actually got — "r ∈ [0.0, 4.0] mas from `udout`/2, 100 points" — naming the key that
-won, because a grid twice the size you expected is otherwise a silent puzzle.
-
-**Templates.** `demos/models/YSO_*.toml` are the six models of Ibrahim et al. (2023, ApJ 947, 68)
-for HD 190073 (V1295 Aql, `demos/data/V1295_Aql.oifits`), at the paper's epoch-A values: a star
-with a Rayleigh–Jeans spectrum, a disc and an over-resolved halo with their own spectral slopes,
-the disc's profile being
-
-| template | disc |
+| template | disc profile |
 |:--|:--|
 | `YSO_Doughnut` | PMOIRED's doughnut, `1 - (2*($R - ($RMIN + $RMAX)/2)/($RMAX - $RMIN))^2` on an annulus |
 | `YSO_DoubleSigmoid` | `1/(1 + exp(-($R - $rin)/$sigin)) * 1/(1 + exp(($R - $rout)/$sigout))` |
 | `YSO_AlphaDoubleSigmoid` | the same with a floor `$ain` inside the inner edge |
 | `YSO_SkewedRing` | the double sigmoid with a first azimuthal mode (`az amp1`, `az projang1`) |
 | `YSO_SkewedRing2` | and a second (`az amp2`, `az projang2`) |
-| `YSO_OffCenterStar` | the skewed ring, the star free to move (`star,x`, `star,y`) |
+| `YSO_OffCenterStar` | the skewed ring with a moving star (`star,x`, `star,y`) |
 
-Beside the profile the panel draws **I(r) and V(B) together**. The brightness distribution is
-what you write; the visibility is what the data constrains, and two profiles that look alike in
-I(r) can be obviously different in V(B).
+The panel plots I(r) and V(B) side by side.
 
-## What the parser understood
+### Azimuthal modes
 
-The inspector reports what `dict_to_model` made of the model, rather than what was typed. It
-exists for one failure in particular: a key the parser does not recognise is **ignored**, so a
-misspelt geometry key silently fits a different model. Those keys are listed in red.
-
-Validation sits at the top: values outside their bounds, `lb >= ub`, and numeric flux fractions
-that do not sum to 1 — which is the check the first section of this page is about.
-
-## Azimuthal modes
-
-A radial-profile component can carry azimuthal brightness modes, added in the panel below the
-profile editor. Each is a **pair** of keys, and the parser errors if one is present without the
-other, so the panel adds and removes them together:
+A profile component can carry azimuthal modes, added below the profile editor as key pairs:
 
 ```julia
 "disk,az amp1"     => 0.15,
 "disk,az projang1" => 40.0,
 ```
 
-Both also appear as ordinary rows in the parameter table, so a mode can be freed and fitted
-like any other parameter. New modes are seeded at zero amplitude, which leaves the component
-exactly as it was — adding the structure makes the asymmetry available to a fit without moving
-one that is already running.
+Both keys are ordinary parameters. A new mode starts at zero amplitude. `az projang` follows
+PMOIRED's convention, `cos(n·(ψ + φ − π/2))` (`_Vazvar` in its `oimodels.py`).
 
-!!! note "Angle convention"
-    `az projang` follows PMOIRED's convention — `cos(n·(ψ + φ − π/2))`, matching `_Vazvar` in
-    its `oimodels.py` term for term — so an angle means the same thing in both packages and a
-    model moves between them unchanged.
+## What the parser understood
+
+The inspector shows the model as `dict_to_model` reads it. Keys the parser does not recognise
+are ignored by the fit and listed in red. Its validation lists values outside their bounds,
+`lb >= ub`, and numeric flux fractions that do not sum to 1.
 
 ## Spectral lines
 
-**Model Creation › Spectral lines** (every component): **+ line** adds one — a name, a profile
-(Lorentzian, Gaussian, or PMOIRED's one-sided `truncexp` / `trunclor`), the centre λ₀ (µm), the
-peak (< 0 for absorption) and the width (nm) — as rows of the parameter table, PMOIRED's keys
-(`c,line_<name>_wl0`, `_f`, `_<profile>`), to fix, free or bound like any other. **by velocity,
-rest** writes the centre as the rest wavelength shifted by a velocity, a new global
-`v_<component>_<name>` in km/s starting at the centre's current shift; unticked, the centre is
-a value again. **−** removes the line and its velocity. The SED view shows the spectrum with its
-lines; a PMOIRED dict with `line_*` keys imports as it is.
+**Model Creation › Spectral lines**, for any component: **+ line** adds a line with a name, a
+profile (Lorentzian, Gaussian, or PMOIRED's one-sided `truncexp` / `trunclor`), centre λ₀ (µm),
+peak (negative for absorption) and width (nm), as parameters with PMOIRED's keys
+(`c,line_<name>_wl0`, `_f`, `_<profile>`). **by velocity, rest** writes the centre as a rest
+wavelength shifted by a global velocity `v_<component>_<name>` (km/s). **−** removes the line.
+The SED view shows the lines. PMOIRED dicts with `line_*` keys import as they are.
 
 ## Orbits and radial velocities
 
-**Geometry › orbit** puts a component on an orbit around the origin (`c,x = c,y = "orbit"`): its
-position at each data point's date comes from the elements, added as rows of the parameter table
-(`c,orb P`, `MJD0`, `e`, `omega`, `OMEGA`, `incl`, `a`; PMOIRED's keys and definitions — see the
-API page, *Orbits and radial velocities*). A PMOIRED dict with `'2,x': 'orbit'` imports as it is;
-its `'additional residuals'` function is dropped, and a global named like `P-42.38` becomes
+**Geometry › orbit** puts a component on an orbit around the origin (`c,x = c,y = "orbit"`),
+adding the elements as parameters (`c,orb P`, `MJD0`, `e`, `omega`, `OMEGA`, `incl`, `a`;
+PMOIRED's keys and definitions, see the API page). PMOIRED dicts with `'x': 'orbit'` import as
+they are; `'additional residuals'` is dropped, and a global such as `P-42.38` is renamed
 `P_42_38`.
 
-**RV table…** (Model Optimization, beside the observables) opens radial velocities, a CSV
-`MJD,RV,sigma,star` (`a` primary, `b` secondary), and adds the velocity elements (`Ka`, `Kb`,
-`gamma`) to the component on an orbit. **RVs** then fits them with the interferometry
-(Levenberg-Marquardt, NLopt, and the bootstrap, which resamples them); the console gives χ² for
-the interferometry and for the velocities. `demos/data/HD210763/rv_gallenne2023.csv` (PMOIRED's
-EX6) and `demos/data/Spica/rv_spica.csv` are examples.
+**RV table…** (Model Optimization) reads radial velocities from a CSV `MJD,RV,sigma,star` (`a`
+primary, `b` secondary) and adds `Ka`, `Kb` and `gamma`. With **RVs** ticked, Levenberg-Marquardt,
+NLopt and the bootstrap fit them with the interferometry; the console gives the χ² of each.
+Examples: `demos/data/HD210763/rv_gallenne2023.csv`, `demos/data/Spica/rv_spica.csv`.
 
-**Orbit**, under the fits table, draws the relative orbit on the sky (East left) with the
-positions at the dataset's nights, and the radial velocities against phase with the model's
-curves.
+## Fitting
+
+**Optimiser** (Model Optimization):
+
+| entry | function | notes |
+|:--|:--|:--|
+| Levenberg-Marquardt | `fit_model_lsqfit` | |
+| Nelder-Mead, L-BFGS, MMA, SLSQP, COBYLA | `fit_model` (NLopt) | MMA, SLSQP and COBYLA enforce constraints |
+| Nested sampling | `fit_model_nested` | Nautilus or UltraNest; needs finite bounds |
+| Ensemble slice sampler | `fit_model_ensemble` | settings: sweeps, seed |
+| Parallel tempering | `fit_model_pigeons` | needs Pigeons; settings: rounds, chains, explorer (slice or MALA), reference (stabilised, variational or fixed), seed |
+| Grid search | `chi2_map` | two parameters |
+
+**Uncertainty**: *skip*, *Jacobian* (Levenberg-Marquardt's covariance), *bootstrap*
+(`bootstrap_fit` from the fitted values, with nboot, mode, granularity and seed; not with
+constraints, priors or samplers) or *posterior* (the spread of a sampler's posterior).
+
+**Companion search…** searches for a point-source companion on a grid (`companion_search`);
+**Multi-start…** fits from many starting points (below). **Fit each…** fits each ticked dataset
+in turn (below).
+
+Views under the fits table:
+
+- **χ² map**: the grid search's map, or a companion or multi-start search.
+- **Correlations**: the latest fit's parameter correlations.
+- **Corner**: the latest fit's bootstrap replicates or posterior samples, the best fit marked
+  (needs PairPlots).
+- **Model image**: the model in Model visualization.
+- **SED**: total and per-component flux against the dataset's wavelengths, for models that use
+  `$WL`.
+- **Orbit**: the relative orbit on the sky with the dataset's epochs, and the radial velocities
+  against phase.
+- **Adopt** writes the selected fit's values into the table.
+
+Residuals are shown in Exploring (Compare › residuals). Each view has **Save PNG**.
+
+!!! warning "`model_to_sed` takes metres"
+    `wl_grid` is in metres, as `uv_lam` and every `wl` argument; only expressions see the
+    wavelength in µm, as `$WL`.
 
 ## Multi-start search
 
-**Multi-start…** (Model Optimization, beside **Companion search…**) fits the model from many
-starting points and lists the distinct minima they reach — PMOIRED's `gridFit`
-(`multistart_fit`). One row per parameter says where its starts come from — the free ones, then
-the fixed ones (greyed), which an explored row holds at each start's value, so a grid over them
-is a χ² profile: **start** (its
-value in the table), **grid** (min, max, step: every node; several grids make every
-combination), **uniform** (min, max) or **normal** (mean, σ), drawn once per start. Without a
-grid, **Starts** sets how many; **Seed** fixes the draws. **Conditions**, one per line
-(`sqrt($B,x^2 + $B,y^2) <= 12`), drop starts before fitting; **Δχ²ᵣ ≤** keeps only minima that
-close to the best. A PMOIRED `expl` dict pasted under **PMOIRED expl** fills the rows (**Apply**).
+**Multi-start…** (`multistart_fit`, PMOIRED's `gridFit`) fits the model from many starting
+points and lists the distinct minima. One row per parameter, free ones first, then fixed ones
+(greyed; a fixed parameter explored is held at each start's value, which gives a χ² profile).
+Each row's starts are **start** (the table value), **grid** (min, max, step; several grids give
+all combinations), **uniform** (min, max) or **normal** (mean, σ). Without a grid, **Starts** sets
+their number; **Seed** fixes the draws. **Conditions** (one per line, e.g.
+`sqrt($B,x^2 + $B,y^2) <= 12`) drop starts before fitting; **Δχ²ᵣ ≤** keeps minima within that
+of the best. **PMOIRED expl** takes a PMOIRED `expl` dict (**Apply**).
 
-Every start is a Levenberg-Marquardt fit with the table's bounds, the constraints, the ticked
-observables and, when ticked, the radial velocities. The fits are sorted as PMOIRED sorts them:
-those that failed, have no uncertainties or barely moved are set aside, the rest grouped into
-minima; for a component on an orbit, minima whose MJD0 differ by whole periods are one. The
-global minimum becomes the fit's row; the console lists the first minima.
+Each start is a Levenberg-Marquardt fit with the table's bounds, the constraints, the ticked
+observables and, if ticked, the radial velocities. As in PMOIRED, failed fits, fits without
+uncertainties and fits that did not move are set aside and the rest grouped into minima; on an
+orbit, minima whose MJD0 differ by whole periods are merged. The best minimum becomes the fit's
+row.
 
-The **χ² map** view then shows the search over two of its parameters (the boxes under the
-plot): each start (`+`) joined to the minimum it reached, the minima coloured by χ²ᵣ, set-aside
-starts as red crosses, the selected minimum ringed. The third box selects the minimum the fit's
-row, **Adopt** and the correlations report.
+The **χ² map** view shows the starts (`+`) joined to their minima, coloured by χ²ᵣ, set-aside
+starts as red crosses. The boxes below the plot choose the two parameters and the minimum shown in
+the fit's row.
 
 ## Fitting each dataset
 
-**Fit each…**, beside **Fit**, runs the same fit — model, free parameters and bounds,
-constraints, priors, observables and optimiser — on each ticked dataset, one after another, each
-from the values in the table. Datasets made by Tools' temporal binning are the usual input: one
-fit per night. Levenberg-Marquardt or an NLopt method; uncertainty from the Jacobian or none. The
-result is the **Epochs** table, one row per dataset: its mean MJD, χ²ᵣ, ndof and each free
-parameter with its σ, with **Copy** (tab-separated) and **Save…** (`.tsv`).
-
-## Diagnostics: residuals, χ² map and SED
-
-Under the fits table on the **Model Optimization** tab, one plot area shows whichever of three
-diagnostics you ask for.
-
-**Residuals** draws `(model − data)/σ` against baseline, one colour per observable, with the
-±1 and ±3 lines marked. It is the residuals only — not the ten-panel data-and-model stack that
-[`plot_residuals`](@ref) draws for a figure — because the question here is whether they are
-centred on zero, whether one observable is systematically worse, and whether there is structure
-against baseline that a reduced χ² of 3.2 does not show.
-
-It is the model **as it stands in the table**, so it works before a fit as well as after one:
-whether a starting point is anywhere near the data is worth knowing before spending an
-optimiser on it. After a fit, **Adopt** writes the fitted values into the table and the
-residuals redraw with them. While the panel is showing, it follows every edit.
-
-**χ² map** shows the surface a grid search produced. It does not run one — running a grid
-search *is* the Grid search optimiser, and a button that quietly ran another would be a
-different fit under the same name.
-
-**SED** draws total flux and per-component flux against wavelength, over the loaded dataset's
-own wavelengths. It is available only for a model that references `$WL`: a model that does not
-is the same model at every wavelength, and its SED is a set of flat lines.
-
-!!! warning "`model_to_sed` takes metres"
-    `wl_grid` is in metres, as `uv_lam` in the data and every `wl` argument; only the
-    expressions see the wavelength in microns, as `$WL`. A grid in microns evaluates every
-    `$WL` expression a million times too close in and returns fluxes that are wrong without
-    raising anything.
-
-Each panel has its own **Save PNG**, which writes the plot as it is framed on screen.
+**Fit each…** runs the current fit (model, bounds, constraints, priors, observables, optimiser)
+on each ticked dataset, each from the table's values, typically the epochs made by Tools'
+temporal binning. Levenberg-Marquardt or NLopt; Jacobian uncertainty or none. The **Epochs**
+table lists each dataset's mean MJD, χ²ᵣ, ndof and fitted parameters with σ; **Copy**
+(tab-separated) and **Save…** (`.tsv`).

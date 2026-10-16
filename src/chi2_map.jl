@@ -27,22 +27,20 @@
 """
     Chi2Map
 
-A χ² surface over two free parameters, with everything needed to draw it and to report the
-best point on it.
+A χ² surface over two free parameters.
 
 | field | meaning |
 |---|---|
 | `p1`, `p2` | the two parameter names, as they appear in `list_free_params` |
 | `v1`, `v2` | the grid values along each axis |
 | `chi2` | `(length(v1), length(v2))` matrix of raw weighted χ² |
-| `ndof` | data points, so `chi2 ./ ndof` is the reduced map |
-| `x_opt` | the FULL free-parameter vector at the grid minimum |
+| `ndof` | number of data points with non-zero weight; `chi2 ./ ndof` is the reduced map |
+| `x_opt` | the full free-parameter vector at the grid minimum |
 | `list_free_params` | names for `x_opt`, in fit-vector order |
 | `model` | the compiled model the map was computed with |
 
-Parameters not on the two axes are held at their starting values throughout: a map is a slice
-through the χ² surface, not a profile likelihood, and reading it as one overstates how well the
-two plotted parameters are determined.
+The other free parameters are held at their starting values: the map is a slice through the χ²
+surface, not a profile.
 
 See also [`chi2_map`](@ref) and [`delta_chi2_levels`](@ref).
 """
@@ -64,9 +62,7 @@ end
 Δχ² for the 68.3, 95.4 and 99.7% confidence regions of **two** jointly estimated parameters:
 `2.30`, `6.17`, `11.8`.
 
-These are the two-parameter values, not the one-parameter `1, 4, 9`. Contouring a
-two-parameter map at 1σ = 1 draws a region about a third too small, which is the usual way a
-χ² map is misread.
+The one-parameter values are `1, 4, 9`.
 """
 const delta_chi2_levels = (2.30, 6.17, 11.83)
 
@@ -85,12 +81,7 @@ end
 """
     FitResult(m::Chi2Map)
 
-The best grid point, in the same shape every other fitter returns.
-
-`n_evals` is the grid size, because that is exactly how many χ² evaluations were spent, and
-`ret` is `:GRID` — the search cannot fail to converge, so a convergence code would be a
-fiction. The value is only ever as good as the grid is fine: the true minimum lies within half
-a cell of the point reported.
+The best grid point as a `FitResult`. `n_evals` is the grid size and `ret` is `:GRID`.
 """
 FitResult(m::Chi2Map) = FitResult(copy(m.x_opt), copy(m.list_free_params),
                                   minimum(m.chi2), minimum(m.chi2) / m.ndof, m.ndof,
@@ -105,7 +96,7 @@ parameter at its starting value.
 ```julia
 m = read_model_file("LD_power.toml")
 map = chi2_map(m.model, m.free, data, "star,ldpow", "star,alpha"; m.lb, m.ub, weights = [1.0,0,0])
-res = FitResult(map)          # the best grid point, as any other fitter would report it
+res = FitResult(map)          # the best grid point
 ```
 
 | keyword | default | meaning |
@@ -113,15 +104,10 @@ res = FitResult(map)          # the best grid point, as any other fitter would r
 | `n1`, `n2` | `60` | grid points along each axis |
 | `range1`, `range2` | from `lb`/`ub` | `(lo, hi)` for each axis, overriding the bounds |
 | `lb`, `ub` | `Dict()` | bounds; used as the default axis extent |
-| `weights` | `[1,1,1,0,0,0,0]` | as everywhere else in model fitting — seven long |
+| `weights` | `[1,1,1,0,0,0,0]` | observable weights `[V2, T3amp, T3phi, visamp, visphi, flux, diffphase]` |
 | `nB_workspace` | `100` | passed through to `parse_model` |
 
-An axis with no finite bound and no explicit range is an error rather than a guess: a grid
-needs an extent, and inventing one would quietly decide the answer.
-
-`p1` and `p2` must both be free. Mapping a fixed parameter would be a perfectly reasonable
-thing to want, but `x[i] ↔ list_free_params[i]` is what makes the result a `FitResult` at all,
-so free it first.
+Each axis needs finite bounds or an explicit range. `p1` and `p2` must both be free.
 """
 function chi2_map(model_dict::Dict{String}, list_free_params::AbstractVector{<:AbstractString},
                   data::Union{OIdata, Vector{<:OIdata}},

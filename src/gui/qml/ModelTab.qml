@@ -563,10 +563,6 @@ Item {
     // would change nothing. Julia decides, by looking for $WL and $MJD in the expressions.
     property bool dependsWl: false
     property bool dependsMjd: false
-    // The wavelength a chromatic value in the table is shown at. Named in the banner: a
-    // number with no wavelength beside it is one arbitrary entry of a vector presented as
-    // though it were the parameter.
-    property real displayWl: NaN
 
     function renderModel() {
         renderText = Julia.shell_model_image(imgNx, imgPixsize,
@@ -1084,43 +1080,6 @@ Item {
                 text: root.nFree + " free"
                 color: "#666"
                 font.pointSize: root.pt(root.baseFontPt - 1)
-            }
-        }
-
-        // ── broadcasting banner ─────────────────────────────────────────────
-        //
-        // Silent in the library, and it changes what every parameter is, so it is a banner
-        // rather than something to find in a panel. Keys the parser ignores are reported under
-        // Validation, with the rest of the model's problems.
-        Rectangle {
-            Layout.fillWidth: true
-            visible: root.broadcasting
-            color: "#fff6e0"
-            border.color: root.cWarn
-            radius: dp(3)
-            implicitHeight: bcRow.implicitHeight + dp(10)
-            RowLayout {
-            id: bcRow
-            anchors.fill: parent
-            anchors.margins: dp(5)
-            Label {
-                id: bcLabel
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: root.cWarn
-                font.pointSize: root.pt(root.baseFontPt - 1)
-                // If ANY derived expression references $WL or $MJD the resolver broadcasts
-                // ALL of them, so every parameter becomes a per-uv-point vector. That is a
-                // behavioural switch and the user should see it flip.
-                // The table has to show a single number per row, so it shows the value at one
-                // wavelength; naming it here is what stops that number being read as the
-                // parameter itself.
-                text: isNaN(root.displayWl)
-                      ? "$WL/$MJD in use: values vary per data point"
-                      : "$WL/$MJD in use: values shown at λ = " +
-                        (root.displayWl * 1e6).toFixed(3) + " µm"
-            }
-            InfoTip { tip: "An expression uses $WL or $MJD, so every parameter is worked out at each data point rather than once. The table shows one number per row: each parameter at the dataset's first wavelength." }
             }
         }
 
@@ -1734,7 +1693,7 @@ Item {
                                     }
                                     InfoTip {
                                         visible: root.nDerived > 0 && root.broadcasting
-                                        tip: "One expression uses $WL or $MJD, so the resolver broadcasts every parameter: each is a vector over the uv points, not a number."
+                                        tip: "Parameters that use $WL or $MJD have one value per data point; the table shows them at the dataset's first wavelength."
                                     }
                                     Repeater {
                                         model: paramModel
@@ -4029,7 +3988,6 @@ Item {
         var dep = Julia.shell_model_depends().split("\t")
         root.dependsWl  = dep.length > 0 && dep[0] === "1"
         root.dependsMjd = dep.length > 1 && dep[1] === "1"
-        root.displayWl  = dep.length > 2 && dep[2].length > 0 ? parseFloat(dep[2]) : NaN
     }
 
     // Which diagnostic the surface under the fits table is showing. One rectangle, two

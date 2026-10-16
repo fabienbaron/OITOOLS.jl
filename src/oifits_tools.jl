@@ -16,8 +16,7 @@ dims, columns, cards)`:
 - `cards` — every header card in order, COMMENT and HISTORY included, as `(name, value,
   comment)`; a commentary card's text is its `value`, and its `comment` is `""`.
 
-Works on any FITS file, images included, whether or not OIFITS.jl reads it. A ZIP archive holding
-one FITS file (some pipelines deliver their `.fits` files zipped) shows that file.
+Works on any FITS file, images included. A ZIP archive holding one FITS file shows that file.
 """
 function oifits_headers(path::AbstractString)
     isfile(path) || throw(ArgumentError("$(path): no such file"))
@@ -60,6 +59,127 @@ function _card_value(c)
     c.type == AstroFITS.FITS_COMMENT && return String(c.comment)
     v = c.value()
     v isa AbstractString ? String(v) : v === nothing ? "" : v
+end
+
+"""
+    oifits_table(path, hdu; per_channel = true) -> NamedTuple
+
+The contents of table HDU `hdu` (its index, as [`oifits_headers`](@ref) numbers them) of a FITS
+file, as `(extname, names, units, comments, columns, nlines, flagged, per_channel, nwave, wl)`:
+`columns[j]` holds column `names[j]`, one entry per line, with its unit (`TUNIT`) and its comment
+(the `TTYPE` card's), `flagged` a line's FLAG.
+
+- An OI data table (OI_VIS2, OI_VIS, OI_T3, OI_FLUX) with `per_channel` (the default): one line
+  per row and channel, its array columns (VIS2DATA, VIS2ERR, FLAG, …) as one value each, and
+  joined in front `λ` (µm, from the OI_WAVELENGTH with the row's INSNAME), `stations` (names from
+  OI_ARRAY, through STA_INDEX), `B` (m, from UCOORD/VCOORD — the longest of a triangle's three)
+  and `B/λ` (Mλ).
+- Otherwise the table as stored, one line per row; an array column's entries are vectors
+  (`nwave`, the channel count of an OI data table, for picking one channel of them; `wl` the
+  channels' wavelengths in µm).
+
+A ZIP archive holding one FITS file shows that file.
+"""
+function oifits_table(path::AbstractString, hdu::Integer; per_channel::Bool = true)
+    isfile(path) || throw(ArgumentError("$(path): no such file"))
+    _is_zip(path) || return _table(path, hdu, per_channel)
+    tmp, _ = _unzip_fits(path)
+    try
+        return _table(tmp, hdu, per_channel)
+    finally
+        rm(tmp; force = true)
+    end
+end
+
+const _OI_DATA_TABLES = ("OI_VIS2", "OI_VIS", "OI_T3", "OI_FLUX")
+
+# A header card's value, "" when absent.
+_kw(h, k) = haskey(h, k) ? (v = h[k].value(); v isa AbstractString ? strip(v) : v) : ""
+
+function _table(path, index, per_channel)
+    AstroFITS.FitsFile(path) do ff
+        hdu = ff[index]
+        hdu isa AstroFITS.FitsTableHDU ||
+            throw(ArgumentError("HDU $(index) is not a table"))
+        h = AstroFITS.FitsHeader(hdu)
+        ext = String(something(hdu.extname, ""))
+        names = String.(collect(hdu.column_names))
+        units = [String(string(_kw(h, "TUNIT$k"))) for k in eachindex(names)]
+        comments = [haskey(h, "TTYPE$k") ? String(h["TTYPE$k"].comment) : "" for k in eachindex(names)]
+        cols = [read(hdu, c) for c in names]
+        nrows = Int(hdu.nrows)
+        flagcol = findfirst(==("FLAG"), names)
+        # the channel count, from the OI_WAVELENGTH of this table's INSNAME
+        ins = string(_kw(h, "INSNAME"))
+        wl = Float64[]
+        if ext in _OI_DATA_TABLES && !isempty(ins)
+            for o in ff
+                o isa AstroFITS.FitsTableHDU || continue
+                something(o.extname, "") == "OI_WAVELENGTH" || continue
+                string(_kw(AstroFITS.FitsHeader(o), "INSNAME")) == ins || continue
+                wl = Float64.(read(o, "EFF_WAVE")); break
+            end
+        end
+        nwave = length(wl)
+        isarr(c) = c isa AbstractMatrix && size(c, 1) == nwave && size(c, 2) == nrows
+        if !(per_channel && nwave > 0 && ext in _OI_DATA_TABLES)
+            # as stored: an array column's entry per row is its vector
+            out = Any[c isa AbstractMatrix ? [c[:, r] for r in 1:nrows] :
+                      c isa AbstractVector ? collect(c) : [c for _ in 1:nrows] for c in cols]
+            flagged = flagcol === nothing ? falses(nrows) :
+                      BitVector([any(cols[flagcol][:, r]) for r in 1:nrows])
+            return (extname = ext, names, units, comments, columns = out, nlines = nrows,
+                    flagged, per_channel = false, nwave, wl = wl .* 1e6)
+        end
+
+        # stations by index, from this table's OI_ARRAY (or the only one)
+        arr = string(_kw(h, "ARRNAME"))
+        sta = Dict{Int,String}()
+        for o in ff
+            o isa AstroFITS.FitsTableHDU || continue
+            something(o.extname, "") == "OI_ARRAY" || continue
+            a = string(_kw(AstroFITS.FitsHeader(o), "ARRNAME"))
+            isempty(arr) || a == arr || continue
+            for (i, n) in zip(read(o, "STA_INDEX"), read(o, "STA_NAME"))
+                sta[Int(i)] = String(strip(n))
+            end
+            break
+        end
+        col(n) = (k = findfirst(==(n), names); k === nothing ? nothing : cols[k])
+        si = col("STA_INDEX")
+        stations = si === nothing ? fill("", nrows) :
+            [join((get(sta, Int(i), string(i)) for i in (si isa AbstractMatrix ? si[:, r] : si[r:r])), "-")
+             for r in 1:nrows]
+        B = if ext == "OI_T3"
+            u1, v1, u2, v2 = col("U1COORD"), col("V1COORD"), col("U2COORD"), col("V2COORD")
+            [maximum((hypot(u1[r], v1[r]), hypot(u2[r], v2[r]), hypot(u1[r] + u2[r], v1[r] + v2[r])))
+             for r in 1:nrows]
+        elseif col("UCOORD") !== nothing
+            [hypot(col("UCOORD")[r], col("VCOORD")[r]) for r in 1:nrows]
+        else
+            fill(NaN, nrows)
+        end
+        n = nrows * nwave
+        line_r = [r for r in 1:nrows for _ in 1:nwave]
+        line_c = [c for _ in 1:nrows for c in 1:nwave]
+        onames = ["λ", "stations", "B", "B/λ"]
+        ounits = ["µm", "", "m", "Mλ"]
+        ocomments = ["EFF_WAVE of the channel", "STA_NAME through STA_INDEX",
+                     ext == "OI_T3" ? "the longest of the triangle's baselines" : "from UCOORD, VCOORD",
+                     "baseline over wavelength"]
+        ocols = Any[wl[line_c] .* 1e6, stations[line_r], B[line_r], B[line_r] ./ wl[line_c] ./ 1e6]
+        for (k, c) in enumerate(cols)
+            names[k] == "STA_INDEX" && continue
+            push!(onames, names[k]); push!(ounits, units[k]); push!(ocomments, comments[k])
+            push!(ocols, isarr(c) ? [c[line_c[i], line_r[i]] for i in 1:n] :
+                         c isa AbstractVector ? c[line_r] :
+                         [c[:, line_r[i]] for i in 1:n])
+        end
+        flagged = flagcol === nothing ? falses(n) :
+                  BitVector([cols[flagcol][line_c[i], line_r[i]] for i in 1:n])
+        return (extname = ext, names = onames, units = ounits, comments = ocomments,
+                columns = ocols, nlines = n, flagged, per_channel = true, nwave, wl = wl .* 1e6)
+    end
 end
 
 """
@@ -209,14 +329,14 @@ end
     repair_oifits(path, out; targetname = "", overwrite = false) -> out
 
 Write a repaired copy of an OIFITS file: read by `readoifits` (every point kept, uv points not
-merged) and written by [`write_oifits`](@ref), which rebuilds every table as OIFITS v2 — the
-missing columns filled (e.g. FOV in OI_ARRAY), each instrument under its own name, OI_TARGET at
-revision 2. Never over `path` itself.
+merged) and written by [`write_oifits`](@ref) as OIFITS v2: missing columns filled (e.g. FOV in
+OI_ARRAY), each instrument under its own name, OI_TARGET at revision 2. `out` cannot be `path`.
 
 What the copy does not keep: HDUs other than the OIFITS tables, columns OITOOLS does not read,
 flagged points, OI_CORR, and whatever [`load_oifits`](@ref) had to leave out (rows whose
-TARGET_ID is not in OI_TARGET). A ZIP archive's FITS file is repaired into a plain FITS file. A file with several targets is repaired one target at a time
-(`targetname`). [`validate_oifits`](@ref) reports these before one repairs.
+TARGET_ID is not in OI_TARGET). A ZIP archive's FITS file is written as a plain FITS file. A
+file with several targets is repaired one target at a time (`targetname`).
+[`validate_oifits`](@ref) lists what would be lost.
 """
 function repair_oifits(path::AbstractString, out::AbstractString; targetname::AbstractString = "",
                        overwrite::Bool = false)
@@ -237,8 +357,7 @@ end
 """
     split_by_time(data; gap = 0.5, binwidth = nothing, edges = nothing) -> (parts, mjd)
 
-Split an `OIdata` into epochs. The epochs come from the times of EVERY observable (V², T3, VIS,
-flux), so a closure phase measured between two V² epochs is kept.
+Split an `OIdata` into epochs, from the times of all observables (V², T3, VIS, flux).
 
 - `gap` (days, default): a new epoch wherever consecutive times are more than `gap` apart;
 - `binwidth` (days): fixed windows from the first time, `[t₀ + kw, t₀ + (k+1)w)`;
@@ -246,8 +365,7 @@ flux), so a closure phase measured between two V² epochs is kept.
   windows goes to both).
 
 `parts` holds one `OIdata` per non-empty epoch, made by [`filter_data`](@ref); `mjd` is the mean
-time of each part's points. Points are assigned by their own Float64 MJDs (`v2_mjd`, …), so the
-split is exact whatever `T` is; the model time `uv_mjd` is `Float64` too.
+time of each part's points. Points are assigned by their `Float64` MJDs (`v2_mjd`, …).
 """
 function split_by_time(data::OIdata; gap::Real = 0.5, binwidth = nothing, edges = nothing)
     t = sort!(vcat(data.v2_mjd, data.t3_mjd, data.vis_mjd, data.flux_mjd))

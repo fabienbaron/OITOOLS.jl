@@ -73,32 +73,11 @@ has_wsl_nvidia() = isfile("/usr/lib/wsl/lib/libnvidia-ml.so.1")
 
 Keep Qt on the same windowing system as GLMakie.
 
-The rule is simply that the session decides: on Wayland both halves use Wayland, on X11 both
-use X11, and this function does nothing in either case — Qt already follows the session on its
-own. It acts only when GLMakie could **not**, and pins `QT_QPA_PLATFORM=xcb` so that Qt comes
-back to X11 to match.
-
-That happens in two situations, and `bin/oitoolsgui.jl` reports both by passing
-`match_x11 = !prefer_native_wayland!().applied`:
-
-  * `\$FORCE_X11` is set, asking for XWayland deliberately;
-  * GLFW is already initialised, which is what a PackageCompiler sysimage does — GLFW.jl
-    initialises from its own `__init__`, before any user code, and `glfwInit` cannot be undone.
-
-Why it matters that they agree: one half on Wayland and one on X11 means two EGL display
-connections and two surface lifetimes in one process. An explicit `QT_QPA_PLATFORM` is always
-left alone.
-
-!!! note "This used to pin xcb unconditionally"
-
-    Qt's Wayland plugin does not release the windows it opens, and a
-    `QtQuick.Dialogs.FileDialog` stayed on screen after closing — measured in
-    `test/gui/filepicker_min.jl`, where `open()`, `DontUseNativeDialog` and `destroy()` all
-    failed and only `QT_QPA_PLATFORM=xcb` worked. The GUI draws its own picker now
-    (`src/gui/qml/FilePicker.qml`) and no QML imports `QtQuick.Dialogs`, so the failure is
-    unreachable and the pin is gone. Measured on WSL, the two backends are equivalent on the
-    GPU — `GL_RENDERER` is the same D3D12/NVIDIA adapter either way — and XWayland's only real
-    cost is that the compositor does fractional scaling instead of the application.
+Qt follows the session (Wayland or X11) on its own. With `match_x11 = true`, set when GLMakie
+could not use Wayland, this sets `QT_QPA_PLATFORM=xcb` so that Qt uses X11 too.
+`bin/oitoolsgui.jl` passes `match_x11 = !prefer_native_wayland!().applied`, which is true when
+`\$FORCE_X11` is set or GLFW was already initialised (as in a PackageCompiler sysimage). An
+explicit `QT_QPA_PLATFORM` is left alone.
 """
 function configure_qt_platform!(; match_x11::Bool = false, verbose::Bool = true)
     vars = Dict{String,String}()
@@ -120,24 +99,19 @@ end
 """
     configure_graphics!(; verbose = true) -> NamedTuple
 
-Give Mesa the one hint it cannot work out for itself on WSL, and do nothing anywhere else.
+Set the Mesa driver variables needed on WSL; elsewhere, do nothing.
 
-Returns `(applied, reason, vars)`: whether anything was set, the one-line explanation of why
-or why not, and the variables set. Call it **before** the first OpenGL context exists —
-`bin/oitoolsgui.jl` calls it above `using GLMakie`, and [`gui`](@ref) calls it again as a
-backstop for sessions started by hand. The second call is a no-op, since by then the
-variables are set and set variables are left alone.
-
-Nothing here is forced on you. Any of
+Returns `(applied, reason, vars)`: whether anything was set, a one-line reason, and the
+variables set. Call it before the first OpenGL context exists: `bin/oitoolsgui.jl` calls it
+before `using GLMakie`, and [`gui`](@ref) calls it again. Variables already set are left alone,
+so any of these takes precedence:
 
     OITOOLSGUI_NO_GPU_SETUP=1     # skip all of it
     GALLIUM_DRIVER=llvmpipe       # or any other explicit choice
     LIBGL_ALWAYS_SOFTWARE=1       # compare against software rendering
 
-wins, which is what you want when the question is whether a bug is the driver's fault.
 
-To see which renderer you actually ended up on, start the GUI with `QSG_INFO=1`; Qt reports
-the GL vendor and renderer as it builds the scene graph.
+With `QSG_INFO=1` Qt prints the GL vendor and renderer.
 """
 function configure_graphics!(; verbose::Bool = true)
     vars = Dict{String,String}()

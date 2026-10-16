@@ -84,8 +84,8 @@ end
 How many σ the better model is preferred by, as CANDID (Gallenne et al. 2015) computes it: the
 best model is taken to describe the data (its χ²ᵣ rescaled to 1), the χ² of the null model is
 then `ndof · χ²ᵣ,null / χ²ᵣ,best`, and its probability under a χ² distribution with `ndof`
-degrees of freedom is converted to the equivalent number of Gaussian σ. Not exact — it trusts
-the error bars up to a common factor — which is why it is a convention to state.
+degrees of freedom is converted to the equivalent number of Gaussian σ. It assumes the error
+bars are correct up to a common factor.
 """
 function detection_sigma(chi2r_null::Real, chi2r_best::Real, ndof::Integer)
     x = ndof * chi2r_null / chi2r_best
@@ -101,26 +101,25 @@ end
     companion_search(model_dict, data; companion = "comp", free = [companion * ",f"],
                      lb = Dict(), ub = Dict(), fmax = 0.5,
                      step = nothing, rmin = nothing, rmax = nothing, mask = 0.01,
-                     weights = [1, 1, 1], solver = :bradi, refine = 0, threads = true,
-                     on_grid = nothing) -> CompanionSearch
+                     weights = [1, 1, 1], solver = :bradi, path = :auto, refine = 0,
+                     threads = true, on_grid = nothing) -> CompanionSearch
 
-Search for a companion around the model's primary: on a grid of positions, fit the companion
-at each node with its position held there, map χ², and report the best node and its
+Search for a companion around the model's primary: the companion is fitted at each node of a
+grid of positions, with its position fixed there. Returns the χ² map, the best node and its
 significance against the model without a companion.
 
 **The model** is the primary plus a component `companion` with keys `companion,f`,
-`companion,x` and `companion,y` (their values are only starting points; x and y are set by the
-grid). The primary's flux should be written as `1 - \$companion,f`, so that the total is 1 at
-every node. A point companion is a component with no shape key; give it `ud` (and free it) for
+`companion,x` and `companion,y` (x and y are set by the grid). The primary's flux is written as
+`1 - \$companion,f`. A point companion is a component with no shape key; give it `ud` (and free it) for
 a resolved one. Bandwidth smearing follows the model's `"smear"` setting.
 
 **Free at each node**: `free`, which must include `companion,f`, bounded to `[0, fmax]`.
-- Only `companion,f` free → the fast path, everything else fixed at the dict's values. Fit the
-  primary first (without the companion) and pass its fitted values.
-- Anything else → the general path, VMLMB with `lb`/`ub` (defaults from `default_bounds`).
+- Only `companion,f` free, and no spectral lines on the companion: the fast path, the other
+  parameters fixed at the dict's values (fit the primary alone first).
+- Otherwise: the general path, VMLMB with `lb`/`ub` (defaults from `default_bounds`).
 
 **The grid** (defaults from the data):
-- `step` λ/(2 B_max) — half of PMOIRED's λ/B_max, since the position is not refined at a node;
+- `step` λ/(2 B_max), half of PMOIRED's λ/B_max;
 - `rmax` R λ/(2 B_max), the bandwidth-smearing radius, when the data have channel widths;
 - `rmin` the extent of the primary's analytic components (offset plus radius), at least `step`;
 - `mask`: nodes where the primary's image components, convolved with a beam of FWHM
@@ -132,21 +131,18 @@ at any node where it does not converge in the bounds.
 
 `weights` are those of `model_to_chi2`; the fast path takes V², T3amp, T3φ, VISAMP and VISPHI.
 
-`path = :general` uses VMLMB even when only the flux is free, which is how the two paths are
-compared.
+`path = :general` uses VMLMB even when only the flux is free.
 
 `refine`: after the grid, the `refine` best local minima of the map (nodes no worse than any
 searched neighbour) are each fitted again with `fit_model_lsqfit`, the companion's position
 free as well as `free`: x and y within `[-rmax, rmax]`, the flux within `[0, fmax]`, the rest
 within `lb`/`ub` or `default_bounds`. Minima that converge within half a step of a better one
-are merged. The node values are a grid's, at most half a step from the minimum; refining puts
-the best position, its flux and its significance at the minimum itself, with LM's σ. The map is
-unchanged. `0` (the default) skips it.
+are merged. When lower than the best node, the best refined minimum gives `best`, `fit` and
+`nsigma`, with LM's σ; the map is unchanged. `0` (default): no refinement.
 
-`on_grid`, when given, is called once the grid is laid out and before any node is fitted, with
-`(; x, y, chi2r, params, nnodes)`: the axes, and the arrays the search then fills node by node
-(`NaN` until a node is done). It is how a window draws the map while the search runs; the
-arrays are written by the search's threads while the caller reads them.
+`on_grid` is called before any node is fitted, with `(; x, y, chi2r, params, nnodes)`: the axes
+and the arrays the search fills node by node (`NaN` until done), written by the search's threads
+while the caller reads them.
 """
 function companion_search(model_dict::AbstractDict, data::OIdata;
                           companion::AbstractString = "comp",
@@ -343,8 +339,7 @@ end
 
 The grid [`companion_search`](@ref) searches, with the same defaults, without searching it:
 `(; x, y, nodes, step, rmin, rmax)`, where `nodes` are the `(i, j)` indices into `x` and `y`
-of the nodes that will be fitted (inside the radius range, outside the mask). For a panel that
-shows how large a search is before it runs.
+of the nodes that will be fitted (inside the radius range, outside the mask).
 """
 function companion_grid(model_dict::AbstractDict, data::OIdata; companion::AbstractString = "comp",
                         step = nothing, rmin = nothing, rmax = nothing, mask::Real = 0.01)

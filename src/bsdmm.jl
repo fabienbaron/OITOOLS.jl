@@ -255,7 +255,7 @@ end
 """
     reconstruct_bsdmm(x_init, data, ft; kwargs...)
 
-Block-Structured SDMM (BSDMM) image reconstruction for optical interferometry.
+Image reconstruction by BSDMM (Block-Simultaneous Direction Method of Multipliers).
 
 Solves:  `minimize_x  f(x) + Σ_i g_i(x)`
 

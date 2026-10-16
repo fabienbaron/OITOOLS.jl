@@ -1,16 +1,16 @@
 # Imaging (+ Modeling)
 
-Hybrid model + image reconstruction: a parametric model handles compact/unresolved
-components while an image captures the extended emission.
+A parametric model for the compact components plus a reconstructed image for the extended
+emission.
 
 | Function | Description |
 |----------|-------------|
-| `reconstruct_hybrid(x0, params, model, data, ft)` | Alternating image VMLMB + parameter NelderMead |
-| `reconstruct_sparco_flat(x0, params, model, data, ft)` | Joint VMLMB over params + image (legacy) |
+| `reconstruct_hybrid(x0, params, model, data, ft)` | Alternates image VMLMB and parameter Nelder-Mead |
+| `reconstruct_sparco_flat(x0, params, model, data, ft)` | Deprecated; use `reconstruct_hybrid` |
 | `model_and_image_to_chi2_fg(model, params, image, g_image, ft, data)` | Hybrid model+image chi² + gradient (mono or poly) |
 | `cvis_to_chi2_f(V, data)` | Chi² from complex visibilities (value only) |
-| `cvis_to_chi2_noalloc(V, data)` | Chi² alone, allocation-free — for inner sampler loops |
-| `cvis_to_chi2_fg(V, data)` | Chi² + complex adjoint source from complex visibilities (building block) |
+| `cvis_to_chi2_noalloc(V, data)` | Chi² from complex visibilities, without allocation |
+| `cvis_to_chi2_fg(V, data)` | Chi² and its gradient with respect to the complex visibilities |
 
 ```@docs
 reconstruct_hybrid

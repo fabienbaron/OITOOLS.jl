@@ -29,6 +29,14 @@ Item {
     // What the result pane shows: "", "headers", "validate", "split" or "cube".
     property string mode: ""
     property string headersPath: ""
+    // Headers' lower pane: the selected HDU's cards, or (Data) its contents in the table
+    property bool   tableData: false
+    property bool   tablePerChannel: true
+    property int    tableNWave: 0
+    property bool   tableIsPerChannel: false
+    property string tableStatus: ""
+    property int    currentHdu: 1
+    property var    hduW: ({ idx: 1, ext: 0, ins: 0, rev: 0, rows: 0 })   // the HDU list's field widths
 
     function failed(t) { return t.length > 0 && t[0] === "!" }
     function previewSplit(by, param) {
@@ -69,13 +77,57 @@ Item {
             hduModel.append({ idx: parseInt(f[0]), kind: f[1], extname: f[2] || "(primary)",
                               insname: f[3], revn: f[4], nrows: f[5], extra: f[6] })
         }
+        // the widest value of each field, for the list's alignment
+        var w = { idx: 1, ext: 0, ins: 0, rev: 0, rows: 0 }
+        for (var k = 0; k < hduModel.count; ++k) {
+            var m = hduModel.get(k)
+            w.idx = Math.max(w.idx, String(m.idx).length)
+            w.ext = Math.max(w.ext, m.extname.length)
+            w.ins = Math.max(w.ins, m.insname.length)
+            w.rev = Math.max(w.rev, m.revn !== "0" ? ("rev " + m.revn).length : 0)
+            w.rows = Math.max(w.rows, m.kind === "table" ? (m.nrows + " rows,").length : 0)
+        }
+        root.hduW = w
         root.headersPath = path
         root.mode = "headers"
         hduList.currentIndex = 0
         showHdu(1)
     }
 
-    function showHdu(i) { resultArea.text = Julia.shell_tools_hdu(root.headersPath, i) }
+    function showHdu(i) {
+        root.currentHdu = i
+        resultArea.text = Julia.shell_tools_hdu(root.headersPath, i)
+        if (root.tableData) showTable()
+    }
+    // The selected HDU's contents in the Data view; a non-table HDU shows its cards instead.
+    function showTable() {
+        var t = Julia.shell_table_show(root.headersPath, root.currentHdu, root.tablePerChannel)
+        if (failed(t)) { root.tableStatus = t.substring(2); root.tableNWave = 0; return }
+        var f = t.split("\t")
+        root.tableStatus = f[1]; root.tableNWave = parseInt(f[2]); root.tableIsPerChannel = f[3] === "1"
+        sizeTableColumns()
+        oiTable.positionViewAtRow(0, TableView.AlignTop)
+    }
+    // Each column as wide as what it holds: its name (bold) or its cells (monospace), whichever
+    // is wider; explicit widths, so a column edge can still be dragged.
+    function sizeTableColumns() {
+        var w = Julia.shell_table_widths()
+        oiTable.clearColumnWidths()
+        if (w.length === 0) return
+        var lines = w.split("\n")
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            var px = Math.max(parseInt(f[0]) * hdrMetrics.averageCharacterWidth * 1.15,
+                              parseInt(f[1]) * cellMetrics.averageCharacterWidth)
+            oiTable.setColumnWidth(i, Math.max(dp(40), Math.ceil(px) + dp(14)))
+        }
+        oiTable.forceLayout()
+    }
+    FontMetrics { id: cellMetrics; font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+    FontMetrics { id: hdrMetrics; font.bold: true; font.pointSize: pt(baseFontPt - 1) }
+    function filterTable() {
+        root.tableStatus = Julia.shell_table_filter(tableFilter.text, hideFlagged.checked)
+    }
 
     function validate() {
         if (filePath.text.length === 0) return
@@ -445,13 +497,6 @@ Item {
                         }
                         RowLayout {
                             Button {
-                                objectName: "toolsOifitsHeaders"
-                                text: "Headers"; enabled: filePath.text.length > 0
-                                onClicked: showHeaders(filePath.text)
-                                ToolTip.visible: hovered
-                                ToolTip.text: "Every HDU, its columns and header cards"
-                            }
-                            Button {
                                 objectName: "toolsValidate"
                                 text: "Validate"; enabled: filePath.text.length > 0
                                 onClicked: validate()
@@ -720,6 +765,62 @@ Item {
                     : "Results"
             }
             Label { id: cubeLabel; visible: false }
+            // Headers: the lower pane shows the cards or the contents
+            RowLayout {
+                visible: root.mode === "headers"
+                Layout.fillWidth: true
+                spacing: dp(6)
+                Button {
+                    objectName: "toolsShowHeader"
+                    text: "Header"; checkable: true; checked: !root.tableData
+                    onClicked: root.tableData = false
+                }
+                Button {
+                    objectName: "toolsShowData"
+                    text: "Data"; checkable: true; checked: root.tableData
+                    onClicked: { root.tableData = true; root.showTable() }
+                    ToolTip.visible: hovered; ToolTip.text: "The table's contents"
+                }
+                CheckBox {
+                    objectName: "toolsPerChannel"
+                    visible: root.tableData
+                    text: "per channel"
+                    checked: root.tablePerChannel
+                    onToggled: { root.tablePerChannel = checked; root.showTable() }
+                    ToolTip.visible: hovered; ToolTip.text: "One line per row and channel"
+                }
+                Label { text: "channel"; color: "#666"; visible: root.tableData && !root.tableIsPerChannel && root.tableNWave > 1 }
+                SpinBox {
+                    objectName: "toolsTableChannel"
+                    visible: root.tableData && !root.tableIsPerChannel && root.tableNWave > 1
+                    from: 1; to: Math.max(1, root.tableNWave); value: 1; editable: true
+                    implicitHeight: Math.max(dp(26), implicitContentHeight + topPadding + bottomPadding)
+                    onValueModified: root.tableStatus = Julia.shell_table_channel(value)
+                    ToolTip.visible: hovered; ToolTip.text: "The channel array columns show"
+                }
+                TextField {
+                    id: tableFilter
+                    objectName: "toolsTableFilter"
+                    visible: root.tableData
+                    Layout.fillWidth: true
+                    placeholderText: "S1-E1   λ 2.16–2.17   B 100–200"
+                    onEditingFinished: root.filterTable()
+                    ToolTip.visible: hovered; ToolTip.text: "Stations, or λ / B / B/λ / mjd ranges"
+                }
+                CheckBox {
+                    id: hideFlagged
+                    objectName: "toolsHideFlagged"
+                    visible: root.tableData
+                    text: "hide flagged"
+                    onToggled: root.filterTable()
+                }
+                Label {
+                    objectName: "toolsTableStatus"
+                    visible: root.tableData
+                    text: root.tableStatus
+                    color: "#666"
+                }
+            }
             // The HDU list over the selected HDU's cards (Headers), the split the user's to move;
             // otherwise the report or the cube alone.
             SplitView {
@@ -735,12 +836,19 @@ Item {
                 clip: true
                 model: ListModel { id: hduModel }
                 delegate: ItemDelegate {
+                    objectName: "hdu:" + model.idx
                     width: ListView.view.width
                     highlighted: ListView.isCurrentItem
-                    text: model.idx + "   " + model.extname +
-                          (model.insname.length > 0 ? "   " + model.insname : "") +
-                          (model.revn !== "0" ? "   rev " + model.revn : "") +
-                          (model.kind === "table" ? "   " + model.nrows + " rows, " : "   ") + model.extra
+                    // one field per column, each padded to the file's widest, in a fixed-width
+                    // font: the revisions, instruments and row counts line up across HDUs
+                    // (a field is briefly undefined while the list is refilled)
+                    text: String(model.idx ?? "").padStart(root.hduW.idx) + "  " +
+                          String(model.extname ?? "").padEnd(root.hduW.ext) + "  " +
+                          String(model.insname ?? "").padEnd(root.hduW.ins) + "  " +
+                          (model.revn && model.revn !== "0" ? "rev " + model.revn : "").padEnd(root.hduW.rev) + "  " +
+                          (model.kind === "table" ? (model.nrows + " rows,").padStart(root.hduW.rows) : "".padEnd(root.hduW.rows)) +
+                          "  " + String(model.extra ?? "")
+                    font.family: "monospace"
                     onClicked: { hduList.currentIndex = index; root.showHdu(model.idx) }
                 }
                 ScrollBar.vertical: ScrollBar {}
@@ -778,9 +886,80 @@ Item {
                     }
                 }
             }
+            // Data: the selected table, cells formatted when shown; a click on a header sorts
+            ColumnLayout {
+                visible: root.mode === "headers" && root.tableData
+                SplitView.fillHeight: root.mode === "headers" && root.tableData
+                SplitView.minimumHeight: dp(60)
+                spacing: 0
+                HorizontalHeaderView {
+                    id: oiTableHeader
+                    objectName: "toolsTableHeader"
+                    syncView: oiTable
+                    Layout.fillWidth: true
+                    clip: true
+                    delegate: Rectangle {
+                        required property int column
+                        required property var display
+                        implicitWidth: dp(110)
+                        implicitHeight: hdrText.implicitHeight + dp(6)
+                        color: "#ececec"
+                        border.color: "#d0d0d0"
+                        Label {
+                            id: hdrText
+                            anchors.centerIn: parent
+                            width: parent.width - dp(4)
+                            text: display
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
+                            font.bold: true
+                            font.pointSize: pt(baseFontPt - 1)
+                        }
+                        TapHandler { onTapped: root.tableStatus = Julia.shell_table_sort(column) }
+                        HoverHandler { id: hdrHover }
+                        ToolTip.visible: hdrHover.hovered && hdrTip.length > 0
+                        ToolTip.text: hdrTip
+                        property string hdrTip: hdrHover.hovered ? Julia.shell_table_comment(column) : ""
+                    }
+                }
+                TableView {
+                    id: oiTable
+                    objectName: "toolsTable"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: oitableModel
+                    resizableColumns: true
+                    columnSpacing: 1
+                    rowSpacing: 0
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.horizontal: ScrollBar {}
+                    delegate: Rectangle {
+                        required property int row
+                        required property string text
+                        required property bool flagged
+                        implicitWidth: dp(110)
+                        implicitHeight: dp(22)
+                        color: row % 2 ? "#f7f7f7" : "white"
+                        Label {
+                            anchors.fill: parent
+                            anchors.leftMargin: dp(4)
+                            anchors.rightMargin: dp(4)
+                            verticalAlignment: Text.AlignVCenter
+                            horizontalAlignment: Text.AlignRight
+                            text: parent.text
+                            color: parent.flagged ? "#a0a0a0" : "#000"
+                            elide: Text.ElideLeft
+                            font.family: "monospace"
+                            font.pointSize: pt(baseFontPt - 1)
+                        }
+                    }
+                }
+            }
             ScrollView {
-                visible: root.mode !== "cube"
-                SplitView.fillHeight: root.mode !== "cube"
+                visible: root.mode !== "cube" && !(root.mode === "headers" && root.tableData)
+                SplitView.fillHeight: root.mode !== "cube" && !(root.mode === "headers" && root.tableData)
                 SplitView.minimumHeight: dp(60)
                 TextArea {
                     id: resultArea

@@ -28,11 +28,6 @@ makedocs(;
     format = Documenter.HTML(;
         prettyurls = CI,
         collapselevel = 2,
-        # api/modeling.md is a single page carrying the whole model-fitting API, docstrings
-        # included, and passes Documenter's 100 KiB advisory. Raised rather than split: the
-        # value of that page is that everything about fitting a model is on it. The hard
-        # threshold, the one that fails the build, stays at its 200 KiB default.
-        size_threshold_warn = 150 * 1024,
     ),
     authors = "Fabien Baron and contributors",
     pages = [
@@ -56,7 +51,9 @@ makedocs(;
         "API Reference" => [
             "OIFITS Handling"            => "api/oifits.md",
             "Plotting"                   => "api/plotting.md",
+            "Model Setup"                => "api/model_setup.md",
             "Model Fitting"              => "api/modeling.md",
+            "Companions and Orbits"      => "api/companions_orbits.md",
             "Imaging (Setup)"            => "api/imaging_setup.md",
             "Imaging (Gradient Descent)" => "api/imaging_gd.md",
             "Imaging (BSDMM)"           => "api/imaging_bsdmm.md",

@@ -6,21 +6,25 @@
 
 **OITOOLS** is a [Julia](http://julialang.org/) package for optical interferometry,
 developed by Prof. Fabien Baron (Georgia State University) and collaborators.
-It covers the full data analysis workflow:
+It covers:
 
-- **Reading** OIFITS v1/v2 files with automatic quality filtering, spectral and
-  temporal binning, and OI_CORR support
-- **Plotting** UV coverage, V², closure phases, triple amplitudes, and flux spectra
-- **Model fitting** with NLopt, Levenberg–Marquardt, and UltraNest (Bayesian evidence)
-- **Image reconstruction** via gradient descent (VMLMB) with NFFT, including
-  polychromatic, time-variable, and SPARCO modes
-- **Simulating** synthetic OIFITS datasets from images or analytic models
+- **Reading** OIFITS v1/v2 files: quality filtering, spectral and temporal binning, OI_CORR,
+  checking and repairing files, writing OIFITS v2
+- **Plotting** uv coverage and observables, with matplotlib or Makie
+- **Model fitting** with NLopt, Levenberg–Marquardt, nested sampling (Nautilus, UltraNest),
+  ensemble slice sampling and parallel tempering (Pigeons); companion search, orbits, block
+  bootstrap
+- **Image reconstruction** by gradient descent (VMLMB), maximum entropy (BSMEM), BSDMM and
+  MCMC (SQUEEZE), including polychromatic, time-variable and SPARCO modes
+- **Simulating** OIFITS datasets from images or models, with a noise model matched to ASPRO
+- **Observation planning**: observability, delay lines, POP selection
+- A **graphical interface** covering all of the above ([The GUI](@ref gui-install))
 
 Source code: [github.com/fabienbaron/OITOOLS.jl](https://github.com/fabienbaron/OITOOLS.jl)
 
 ## Forward model pipeline
 
-Both image-based and parametric-model-based workflows follow the same pattern:
+Images and parametric models have the same functions:
 
 | Operation | Image domain | Model domain |
 |-----------|-------------|-------------|

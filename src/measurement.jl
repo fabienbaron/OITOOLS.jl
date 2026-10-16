@@ -28,18 +28,17 @@ end
   channels: those outside the model's spectral lines (± 1.5 FWHM for a Gaussian, ± 3 widths for a
   Lorentzian, PMOIRED's widths), and inside `continuum` (λ ranges in metres) when given.
   `:absolute` (default) compares VISPHI as it is.
-- `spectral_kernel = k` — PMOIRED's `wl kernel`: the model smoothed along each spectral vector
-  with a Gaussian of FWHM `k` channels (2⌊2k⌋ + 3 taps, normalised, edges mirrored) — the complex
-  visibility and the complex triple product as phasors, V² on its own — before the observables
-  are compared (and before `visphi = :continuum`). A compatibility mode reproducing PMOIRED (its
-  setupFit sets k = 2 for GRAVITY); see `PLAN_SpectralResponse.md` for what it approximates.
-  Smoothed over the channels present: where the data were filtered to a window the window's
-  edges are mirrored, where PMOIRED smooths across them.
-- `pmoired = true` — `visphi = :continuum` as PMOIRED's DPHI computes it (`computeDiffPhiOI`),
-  to reproduce its numbers: the continuum is every channel (a Gaussian or Lorentzian line is NOT
-  left out; a `truncexp` one is), and the data's polynomial is fitted weighted by 1/σ² but the
-  model's unweighted (its visibilities carry no errors): (d − P_w d) − (m − P_u m). The default
-  fits one polynomial, weighted, to the residuals over the channels away from the lines.
+- `spectral_kernel = k` — PMOIRED's `wl kernel`: before the comparison (and before
+  `visphi = :continuum`), the model is smoothed along each spectral vector with a Gaussian of
+  FWHM `k` channels (2⌊2k⌋ + 3 taps, normalised, edges mirrored): the complex visibility and the
+  complex triple product as phasors, V² separately. PMOIRED's setupFit uses k = 2 for GRAVITY.
+  Only the channels present are smoothed; at the edges of a filtered window the values are
+  mirrored, while PMOIRED smooths across them.
+- `pmoired = true` — `visphi = :continuum` computed as PMOIRED's DPHI (`computeDiffPhiOI`): the
+  continuum is every channel (Gaussian and Lorentzian lines included, `truncexp` lines
+  excluded), and the data's polynomial is weighted by 1/σ² while the model's is unweighted:
+  (d − P_w d) − (m − P_u m). The default fits one weighted polynomial to the residuals over the
+  channels away from the lines.
 """
 function measurement_model(; visphi::Symbol = :absolute, order = :auto, continuum = nothing,
                            spectral_kernel::Real = 0, pmoired::Bool = false)

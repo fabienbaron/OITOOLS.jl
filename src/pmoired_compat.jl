@@ -146,8 +146,7 @@ end
     pmoired_to_dict(s) -> Dict{String,Any}
 
 Convert a PMOIRED Python dict literal string directly to a Julia `Dict`.
-This is a convenience wrapper around `pmoired_to_julia` that evaluates the
-resulting Julia string, so users don't need `eval(Meta.parse(...))`.
+It evaluates the string produced by `pmoired_to_julia`.
 
 ```julia
 model_dict = pmoired_to_dict("{'star,ud': 3.2, 'ring,f': '1 - \\\$star,f'}")
@@ -271,15 +270,13 @@ _pmoired_value(v)                  = string(v)
 Render an OITOOLS model dictionary as PMOIRED source — the inverse of
 [`pmoired_to_dict`](@ref).
 
-Keys are emitted in sorted order so the output is reproducible and diffable. Julia `true`,
+Keys are sorted. Julia `true`,
 `false` and `nothing` become `True`, `False` and `None`; string values are quoted with
 single quotes, and in expressions `^` becomes Python's `**`; `\$`-references are the same in
 both packages.
 
 With `check=true` (the default) a warning is emitted for keys that have no PMOIRED
-equivalent — the `ldlin`/`ldquad`/`ldpow`/`resolved` geometries are OITOOLS additions. The
-model is still written; the warning exists because the failure is otherwise silent on the
-PMOIRED side.
+equivalent (the `ldlin`/`ldquad`/`ldpow`/`resolved` geometries); the model is still written.
 
 See also [`pmoired_to_dict`](@ref), [`dict_to_pmoired_file`](@ref).
 """
