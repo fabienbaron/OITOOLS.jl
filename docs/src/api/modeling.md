@@ -95,6 +95,21 @@ line_truncexp
 line_trunclor
 ```
 
+## Measurement model
+
+How a fit compares the model with spectrally resolved data, given to `fit_model_lsqfit` as
+`measurement`: the model's differential phases referenced to the continuum of each spectral
+vector, as the pipeline referenced the data (`visphi = :continuum`), and PMOIRED's spectral
+kernel (`spectral_kernel`). A spectral vector is the points of one table row — a baseline,
+triangle or telescope at one time — across the wavelengths.
+
+```@docs
+measurement_model
+MeasurementModel
+spectral_groups
+SpectralGroups
+```
+
 ## Many starts
 
 `multistart_fit` is PMOIRED's `gridFit`: Levenberg-Marquardt from every node of a grid

@@ -1,0 +1,47 @@
+# The application package.
+#
+# `PackageCompiler.create_app` needs a PACKAGE -- a name, a uuid and an entry point -- and
+# `bin/` is deliberately not one ("No name/uuid: this is an environment, not a package"). This
+# is `bin/` restated as a package so that `create_app` has something to build, with the same
+# GUI stack pinned the same way.
+#
+#     julia --project=app app/build.jl            # build the bundle (tens of minutes)
+#     xvfb-run -a julia --project=app -e 'using OITOOLSApp; OITOOLSApp.julia_main()'
+#
+# NOT a member of the root [workspace]. A workspace shares one manifest across its members,
+# which is right for docs and bin -- they are developed together -- and wrong here: an
+# application wants its own pinned, reproducible resolve, and `create_app` instantiates the
+# project it is given.
+
+name = "OITOOLSApp"
+uuid = "ea1a6171-4fde-4d0a-ab64-0199f3c1ebe9"
+version = "0.1.0"
+authors = ["Fabien Baron <fbaron@gsu.edu>"]
+
+[deps]
+GLFW_jll = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+Nautilus = "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73"
+OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
+Pigeons = "0eb8d820-af6a-4919-95ae-11206f830c31"
+QML = "2db162a6-7e43-52c3-8d84-290c1c42d82a"
+QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
+VarInf = "cd771066-68b7-4d72-889c-da7b55f139d5"
+
+# The optional engines are ORDINARY dependencies here, not suggestions. An application cannot
+# offer to install anything -- its depot is read-only and its user never installed Julia -- so
+# an engine that is not bundled is an engine that is permanently greyed out. All of them are
+# pure Julia and cost only load time.
+#
+# PythonCall and PythonPlot are deliberately absent: they would pull a 1.6 GB Conda environment
+# and map a SECOND Qt into the process. The application therefore ships without UltraNest and
+# without the matplotlib figures.
+[sources]
+Nautilus = {url = "https://github.com/fabienbaron/Nautilus.jl.git"}
+OITOOLS = {path = ".."}
+# By URL, not by path: a path resolves only on a machine with a sibling checkout, which made
+# the bundle unbuildable anywhere else. Develop locally through the manifest if editing VarInf.
+VarInf = {url = "https://github.com/fabienbaron/VarInf.jl.git"}
+
+[compat]
+julia = "1.13"
