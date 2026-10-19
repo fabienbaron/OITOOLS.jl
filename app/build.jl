@@ -31,9 +31,9 @@ const STMTS  = joinpath(APPSRC, "precompile_statements.jl")
 
 isfile(TRACE) || error("missing precompile trace: $TRACE")
 
-# ── optional: link with LLD instead of BFD (Windows) ─────────────────────────
+# ── link with LLD instead of BFD (Windows) ───────────────────────────────────
 #
-# OFF by default, and deliberately so. Set OITOOLS_FAST_LINK=1 to try it.
+# ON by default. Set OITOOLS_FAST_LINK=0 to fall back to MinGW's BFD `ld`.
 #
 # The sysimage link is the longest step of a Windows build -- about 16 minutes measured,
 # against a few on Linux. The reason is in the command PackageCompiler issues:
@@ -42,8 +42,8 @@ isfile(TRACE) || error("missing precompile trace: $TRACE")
 # which is why the same link is quick on Linux. `--whole-archive` guarantees nothing can be
 # dropped first, and BFD is single-threaded.
 #
-# LLD does the same job far faster and ships with Julia (`libexec/julia/lld`). Two details make
-# it awkward rather than a flag:
+# LLD does the same job far faster and ships with Julia (`libexec/julia/lld`). Three details
+# make it awkward rather than a flag:
 #
 #   * `-fuse-ld=lld` looks for a binary named `ld.lld`, and Julia's is a multi-flavour `lld`
 #     that chooses its personality from argv[0]. So a copy under the right name is made in a
@@ -52,18 +52,27 @@ isfile(TRACE) || error("missing precompile trace: $TRACE")
 #     `Base.shell_split` -- and that treats a backslash as an escape, so a Windows path does
 #     NOT survive it. Every path here is written with forward slashes, which Windows accepts
 #     and shell_split leaves alone. This is what broke an earlier attempt.
+#   * The copy cannot find libLLVM and the runtime DLLs it imports, which live in Julia's
+#     `bin` rather than beside it, and dies with no message (exit 53, the low byte of
+#     STATUS_DLL_NOT_FOUND). So `Sys.BINDIR` goes on PATH. gcc's own tools still load their
+#     DLLs from their own directory, which Windows searches before PATH.
+#
+# Memory: LLD maps its inputs and output whole and keeps the symbol table in RAM, so its peak
+# is roughly input + output + symbols -- a few GB for this image, where BFD streams. It is
+# also multi-threaded, each thread adding a little, so `--threads=4` keeps the peak bounded.
 #
 # `JULIA_CC` applies to every link in the build, not only the slow one. If anything fails,
-# unset OITOOLS_FAST_LINK and the default toolchain is used again.
-if Sys.iswindows() && get(ENV, "OITOOLS_FAST_LINK", "0") != "0" && !haskey(ENV, "JULIA_CC")
+# set OITOOLS_FAST_LINK=0 and the default toolchain is used again.
+if Sys.iswindows() && get(ENV, "OITOOLS_FAST_LINK", "1") != "0" && !haskey(ENV, "JULIA_CC")
     try
         lld = joinpath(Sys.BINDIR, "..", "libexec", "julia", "lld.exe")
         isfile(lld) || error("no lld at $lld")
         shim = mkpath(joinpath(tempdir(), "oitools-lld"))
         cp(lld, joinpath(shim, "ld.lld.exe"); force = true)
+        ENV["PATH"] = Sys.BINDIR * ";" * ENV["PATH"]    # ld.lld's DLLs
         gcc = first(PackageCompiler.get_compiler_cmd().exec)
         fwd(x) = replace(abspath(x), '\\' => '/')      # shell_split eats backslashes
-        ENV["JULIA_CC"] = "$(fwd(gcc)) -fuse-ld=lld -B$(fwd(shim))"
+        ENV["JULIA_CC"] = "$(fwd(gcc)) -fuse-ld=lld -B$(fwd(shim)) -Wl,--threads=4"
         @info "OITOOLS_FAST_LINK: linking with LLD" JULIA_CC = ENV["JULIA_CC"]
     catch err
         @warn "could not set up LLD; using the default linker" err
@@ -108,6 +117,55 @@ function set_windows_gui_subsystem!(exe::AbstractString)
         seek(io, opt + 68); write(io, UInt16(2))
         return true
     end
+end
+
+# ── the icon, in the executable (Windows) ────────────────────────────────────
+#
+# Explorer, the taskbar and Alt-Tab show the icon RESOURCE of the .exe, not a file beside it.
+# PackageCompiler's driver has none, so it is written in after the build with the Win32
+# resource-update API -- no rc compiler, no rcedit, no link flag, for the same reasons the
+# subsystem is patched rather than linked.
+#
+# A .ico file and an icon resource carry the same images in different envelopes: the file's
+# directory entries end in a 4-byte offset into the file, the resource's (GRPICONDIRENTRY) in a
+# 2-byte id naming a separate RT_ICON resource. So each image becomes RT_ICON n, and the
+# directory, rewritten with ids, becomes RT_GROUP_ICON 1 -- the lowest id, which is the one
+# Explorer picks for the file.
+"""
+    set_windows_icon!(exe, ico) -> Bool
+
+Embed the images of the `.ico` file `ico` as the icon of the PE executable `exe`, in place.
+"""
+function set_windows_icon!(exe::AbstractString, ico::AbstractString)
+    (isfile(exe) && isfile(ico)) || return false
+    data = read(ico)
+    rd16(i) = Int(data[i+1]) | Int(data[i+2]) << 8
+    rd32(i) = rd16(i) | rd16(i + 2) << 16
+    (length(data) >= 6 && rd16(0) == 0 && rd16(2) == 1) ||
+        (@warn "not an .ico file; no icon embedded" ico; return false)
+    n = rd16(4)
+    length(data) >= 6 + 16n || (@warn "truncated .ico; no icon embedded" ico; return false)
+    RT_ICON, RT_GROUP_ICON, LANG = 3, 14, 0x0409       # LANG_ENGLISH, SUBLANG_ENGLISH_US
+    h = ccall((:BeginUpdateResourceW, "kernel32"), stdcall, Ptr{Cvoid}, (Cwstring, Cint), exe, false)
+    h == C_NULL && (@warn "BeginUpdateResourceW failed; no icon embedded" exe; return false)
+    put(type, id, bytes) = ccall((:UpdateResourceW, "kernel32"), stdcall, Cint,
+                                 (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, UInt16, Ptr{UInt8}, UInt32),
+                                 h, Ptr{Cvoid}(type), Ptr{Cvoid}(id), LANG, bytes, length(bytes)) != 0
+    group = IOBuffer()
+    write(group, UInt16(0), UInt16(1), UInt16(n))
+    ok = true
+    for k in 0:n-1
+        e = 6 + 16k
+        size, off = rd32(e + 8), rd32(e + 12)
+        off + size <= length(data) || (ok = false; break)
+        ok &= put(RT_ICON, k + 1, data[off+1:off+size])
+        write(group, data[e+1:e+12], UInt16(k + 1))    # same 12 leading bytes, then the id
+    end
+    ok &= put(RT_GROUP_ICON, 1, take!(group))
+    # Commit only a complete set: `discard = true` leaves the file as it was.
+    done = ccall((:EndUpdateResourceW, "kernel32"), stdcall, Cint, (Ptr{Cvoid}, Cint), h, !ok) != 0
+    ok && done || @warn "could not embed the icon; the executable is unchanged" exe ico
+    return ok && done
 end
 
 @info "Building the application" out = OUT source = APPSRC
@@ -359,6 +417,8 @@ if Sys.iswindows()
         @info "stdout and stderr therefore go nowhere — crash.log is the diagnostic" *
               " (see crash_log_path() in app/src/OITOOLSApp.jl)"
     end
+    ico = joinpath(APPSRC, "assets", "oitools.ico")
+    set_windows_icon!(exe, ico) && @info "Windows: icon embedded in the executable" exe ico
 end
 
 # ── the launcher ─────────────────────────────────────────────────────────────
