@@ -289,6 +289,15 @@ read when the first Controls component is instantiated, at `loadqml`, not when
 `QGuiApplication` is constructed. That is still ahead of us even in a compiled application.
 Changing it therefore takes effect on the next launch, not the current one.
 """
+# Qt on Windows reads the environment through msvcrt's copy (`_wgetenv_s`, `getenv` in
+# Qt6Core.dll), which `ENV` (SetEnvironmentVariableW) does not update; msvcrt's `_wputenv`
+# updates that copy and the process environment both.
+function _setenv_for_qt!(name::AbstractString, value::AbstractString)
+    ENV[name] = value
+    Sys.iswindows() && ccall((:_wputenv, "msvcrt"), Cint, (Cwstring,), string(name, '=', value))
+    return value
+end
+
 function apply_controls_style!()
     haskey(ENV, "QT_QUICK_CONTROLS_STYLE") && return ENV["QT_QUICK_CONTROLS_STYLE"]
     want = DEFAULT_CONTROLS_STYLE
@@ -301,7 +310,7 @@ function apply_controls_style!()
     catch err
         @debug "could not read the saved controls style; using the default" err DEFAULT_CONTROLS_STYLE
     end
-    return ENV["QT_QUICK_CONTROLS_STYLE"] = want
+    return _setenv_for_qt!("QT_QUICK_CONTROLS_STYLE", want)
 end
 
 function OITOOLS.gui(session::Session = Session();

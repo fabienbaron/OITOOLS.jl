@@ -41,6 +41,7 @@ To run the GUI from the source instead (Julia 1.13 or later):
 ```bash
 git clone https://github.com/fabienbaron/OITOOLS.jl.git
 cd OITOOLS.jl
+julia -e 'using Pkg; Pkg.Registry.add("General"); Pkg.Registry.add(url = "https://github.com/emmt/EmmtRegistry")'   # once
 julia --project=bin -e 'using Pkg; Pkg.instantiate()'   # once
 julia --project=bin bin/oitoolsgui.jl [file.oifits]
 ```

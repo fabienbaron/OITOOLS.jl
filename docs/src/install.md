@@ -112,6 +112,7 @@ the core package, for other plotting front-ends.
 From a clone of the repository, in its root directory:
 
 ```bash
+julia -e 'using Pkg; Pkg.Registry.add("General"); Pkg.Registry.add(url = "https://github.com/emmt/EmmtRegistry")'   # once
 julia --project=bin -e 'using Pkg; Pkg.instantiate()'   # once
 julia --project=bin bin/oitoolsgui.jl [file.oifits]
 ```
