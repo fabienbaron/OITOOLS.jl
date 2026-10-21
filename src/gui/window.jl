@@ -313,6 +313,31 @@ function apply_controls_style!()
     return _setenv_for_qt!("QT_QUICK_CONTROLS_STYLE", want)
 end
 
+# When `exec()` returns, Qt may already have destroyed the window's GL context (it has on
+# Windows), and GLMakie's atexit `closeall()` would then free GPU buffers through it and print a
+# `ContextNotAvailable` trace. The window's screens are dropped from GLMakie's registries
+# instead, with their texture-atlas entries; their GL objects went with the context.
+function _forget_qml_screens!()
+    isqml(s) = s isa GLMakie.Screen{QMLMakie.QMLWindow}
+    try
+        for s in filter(isqml, collect(GLMakie.ALL_SCREENS))
+            s.glscreen.context.valid = false
+            delete!(GLMakie.ALL_SCREENS, s)
+            delete!(GLMakie.SCREEN_REUSE_POOL, s)
+        end
+        filter!(!isqml, GLMakie.SINGLETON_SCREEN)
+        for key in collect(keys(GLMakie.atlas_texture_cache))
+            key[2] isa QMLMakie.QMLWindow || continue
+            tex, callback = pop!(GLMakie.atlas_texture_cache, key)
+            tex.id = 0
+            Makie.remove_font_render_callback!(key[1], callback)
+        end
+    catch err
+        @debug "could not detach the window's screens from GLMakie" err
+    end
+    return nothing
+end
+
 function OITOOLS.gui(session::Session = Session();
                         qmlfile::AbstractString = _main_qml(),
                         autoquit_ms::Integer = 0,
@@ -497,6 +522,7 @@ function OITOOLS.gui(session::Session = Session();
                 verboseStartup  = get(ENV, "OITOOLSGUI_VERBOSE", "") == "1",
                 initialStatus   = sh.status)
     QML.exec()
+    _forget_qml_screens!()
 
     # An automated run has no way to read the console pane once the window is gone, so hand it
     # over on the way out. Only active when asked for; production runs never write a file.
