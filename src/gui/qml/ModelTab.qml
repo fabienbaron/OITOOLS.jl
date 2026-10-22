@@ -667,7 +667,7 @@ Item {
     // as a fit, but it is not an optimiser: it maps χ² over the companion's position. It is
     // started from its own section, and this says which of the two the timer below starts.
     property bool searchPending: false
-    // "Fit each…": the same fit on each ticked dataset, one after another on the worker.
+    // "Similar fit on…": the same fit on each ticked dataset, one after another on the worker.
     property bool eachPending: false
     property string eachNames: ""
     // "Multi-start…": many fits from grid / random starts (`multistart_fit`), the global minimum
@@ -790,6 +790,16 @@ Item {
                         root.fitText = "searching… " + p[0] + " of " + p[1] + " nodes"
                         chi2MapArea.update()
                     }
+                } else if (root.optimiser === "grid") {
+                    // A grid search too, point by point.
+                    var q = Julia.shell_grid_progress().split("\t")
+                    if (q.length === 2) {
+                        root.chi2MapP1 = gridP1.currentText; root.chi2MapP2 = gridP2.currentText
+                        root.chi2MapKind = "grid"
+                        root.diagView = "chi2map"
+                        root.fitText = "grid search… " + q[0] + " of " + q[1] + " points"
+                        chi2MapArea.update()
+                    }
                 }
                 return
             }
@@ -810,6 +820,7 @@ Item {
                 multiMinBox.currentIndex = 0
                 root.diagView = "chi2map"
             }
+            if (root.chi2MapKind === "grid" && root.chi2MapP1.length > 0) root.diagView = "chi2map"
             root.refreshCorrelation()
             // A corner plot on screen follows the latest fit; an older one would be another fit's.
             if (root.diagView === "corner") root.showCorner()
@@ -2930,87 +2941,6 @@ Item {
 
                                 }
 
-                                // The grid's own settings, on their own row: five more controls
-                                // beside the optimiser pushed the Fit button off the edge of the
-                                // window, and a row that only exists for one optimiser should not
-                                // cost the others their width.
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: root.dp(8)
-                                    visible: root.optimiser === "grid"
-
-                                    // Two parameters only: the cost is exponential, and three axes
-                                    // is a picture nobody can read. Every other free parameter is
-                                    // held at its current value, which makes this a SLICE through
-                                    // the χ² surface rather than a profile.
-                                    Label { text: "Grid over"; font.bold: true }
-                                    ComboBox {
-                                        id: gridP1
-                                        Layout.preferredWidth: root.dp(170)
-                                        model: root.freeNames
-                                    }
-                                    Label { text: "×"; color: "#666" }
-                                    ComboBox {
-                                        id: gridP2
-                                        Layout.preferredWidth: root.dp(170)
-                                        model: root.freeNames
-                                        currentIndex: Math.min(1, Math.max(0, root.freeNames.length - 1))
-                                    }
-                                    // One count per axis. The two parameters rarely deserve the
-                                    // same resolution — a diameter may need 200 steps where its
-                                    // darkening coefficient needs 40 — and tying them together
-                                    // spends the budget on whichever axis did not need it.
-                                    Label { text: "steps"; color: "#666" }
-                                    SpinBox {
-                                        id: gridN
-                                        from: 4; to: 500; stepSize: 4
-                                        value: 60
-                                        editable: true
-                                        Layout.preferredWidth: root.dp(110)
-                                        ToolTip.visible: hovered
-                                        ToolTip.text: "steps along " + gridP1.currentText
-                                    }
-                                    Label { text: "×"; color: "#666" }
-                                    SpinBox {
-                                        id: gridN2
-                                        from: 4; to: 500; stepSize: 4
-                                        value: 60
-                                        editable: true
-                                        Layout.preferredWidth: root.dp(110)
-                                        ToolTip.visible: hovered
-                                        ToolTip.text: "steps along " + gridP2.currentText
-                                    }
-                                    // fillWidth + elide, NOT a natural width. At its full length
-                                    // this label made the row wider than the panel, which widened
-                                    // the whole column and pushed the Fit button off the right
-                                    // edge of the window. The step sizes move to the tooltip.
-                                    Label {
-                                        Layout.fillWidth: true
-                                        elide: Text.ElideRight
-                                        text: "= " + (gridN.value * gridN2.value) + " evaluations"
-                                        color: "#888"
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                        ToolTip.visible: gridStepHover.hovered
-                                        ToolTip.text: "step size: " + root.fmt(root.gridStep1, 4) +
-                                                      " in " + gridP1.currentText + ", " +
-                                                      root.fmt(root.gridStep2, 4) +
-                                                      " in " + gridP2.currentText
-                                        HoverHandler { id: gridStepHover }
-                                    }
-                                    Label {
-                                        visible: root.nFree < 2
-                                        text: "needs two free parameters"
-                                        color: root.cBad
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                    }
-                                    Label {
-                                        visible: root.nFree >= 2 && gridP1.currentText === gridP2.currentText
-                                        text: "pick two different parameters"
-                                        color: root.cBad
-                                        font.pointSize: root.pt(root.baseFontPt - 1)
-                                    }
-                                }
-
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: root.dp(8)
@@ -3035,6 +2965,17 @@ Item {
                                         // arguments into the handler's scope and warns on every load.
                                         onActivated: function (index) {
                                             root.optimiser = root.optimiserKey(index)
+                                            // Jacobian covariance comes from Levenberg-Marquardt only,
+                                            // and a posterior from a sampler only.
+                                            var unc = root.uncertainty
+                                            if (root.isSampler(root.optimiser))
+                                                unc = "posterior"
+                                            else if (unc === "posterior")
+                                                unc = root.optimiser === "lsqfit" ? "jacobian" : "none"
+                                            else if (unc === "jacobian" && root.optimiser !== "lsqfit")
+                                                unc = "none"
+                                            root.uncertainty = unc
+                                            uncBox.currentIndex = ["none", "jacobian", "bootstrap", "posterior"].indexOf(unc)
                                         }
 
                                         // The Image tab's treatment of Pigeons and OIVI, applied
@@ -3101,16 +3042,6 @@ Item {
                                             ["none", "jacobian", "bootstrap", "posterior"][currentIndex]
                                     }
                                     Button {
-                                        objectName: "fitEachButton"
-                                        text: "Fit each…"
-                                        enabled: !root.running && root.canRun &&
-                                                 root.optimiser !== "grid" && !root.isSampler(root.optimiser)
-                                        onClicked: eachDialog.openWith(Julia.shell_dataset_names())
-                                        ToolTip.visible: hovered
-                                        ToolTip.text: enabled ? "The same fit on several datasets"
-                                                              : "needs Levenberg-Marquardt or NLopt"
-                                    }
-                                    Button {
                                         id: fitButton
                                         objectName: "fitButton"
                                         text: root.running ? "…" : "Fit"
@@ -3153,6 +3084,99 @@ Item {
                                     Label {
                                         visible: !root.canRun
                                         text: root.blockedReason
+                                        color: root.cBad
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                    Button {
+                                        objectName: "fitEachButton"
+                                        text: "Similar fit on…"
+                                        enabled: !root.running && root.canRun &&
+                                                 root.optimiser !== "grid" && !root.isSampler(root.optimiser)
+                                        onClicked: eachDialog.openWith(Julia.shell_dataset_names())
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: enabled ? "The same fit on several datasets"
+                                                              : "needs Levenberg-Marquardt or NLopt"
+                                    }
+                                }
+
+                                // The grid's own settings, on their own row: five more controls
+                                // beside the optimiser pushed the Fit button off the edge of the
+                                // window, and a row that only exists for one optimiser should not
+                                // cost the others their width.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: root.dp(8)
+                                    visible: root.optimiser === "grid"
+
+                                    // Two parameters only: the cost is exponential, and three axes
+                                    // is a picture nobody can read. Every other free parameter is
+                                    // held at its current value, which makes this a SLICE through
+                                    // the χ² surface rather than a profile.
+                                    Label { text: "Grid over"; font.bold: true }
+                                    ComboBox {
+                                        id: gridP1
+                                        Layout.preferredWidth: root.dp(170)
+                                        model: root.freeNames
+                                    }
+                                    Label { text: "×"; color: "#666" }
+                                    ComboBox {
+                                        id: gridP2
+                                        Layout.preferredWidth: root.dp(170)
+                                        model: root.freeNames
+                                        currentIndex: Math.min(1, Math.max(0, root.freeNames.length - 1))
+                                    }
+                                    // One count per axis. The two parameters rarely deserve the
+                                    // same resolution — a diameter may need 200 steps where its
+                                    // darkening coefficient needs 40 — and tying them together
+                                    // spends the budget on whichever axis did not need it.
+                                    Label { text: "steps"; color: "#666" }
+                                    SpinBox {
+                                        id: gridN
+                                        objectName: "gridN"
+                                        from: 4; to: 500; stepSize: 4
+                                        value: 60
+                                        editable: true
+                                        Layout.preferredWidth: root.dp(110)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "steps along " + gridP1.currentText
+                                    }
+                                    Label { text: "×"; color: "#666" }
+                                    SpinBox {
+                                        id: gridN2
+                                        objectName: "gridN2"
+                                        from: 4; to: 500; stepSize: 4
+                                        value: 60
+                                        editable: true
+                                        Layout.preferredWidth: root.dp(110)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "steps along " + gridP2.currentText
+                                    }
+                                    // fillWidth + elide, NOT a natural width. At its full length
+                                    // this label made the row wider than the panel, which widened
+                                    // the whole column and pushed the Fit button off the right
+                                    // edge of the window. The step sizes move to the tooltip.
+                                    Label {
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                        text: "= " + (gridN.value * gridN2.value) + " evaluations"
+                                        color: "#888"
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                        ToolTip.visible: gridStepHover.hovered
+                                        ToolTip.text: "step size: " + root.fmt(root.gridStep1, 4) +
+                                                      " in " + gridP1.currentText + ", " +
+                                                      root.fmt(root.gridStep2, 4) +
+                                                      " in " + gridP2.currentText
+                                        HoverHandler { id: gridStepHover }
+                                    }
+                                    Label {
+                                        visible: root.nFree < 2
+                                        text: "needs two free parameters"
+                                        color: root.cBad
+                                        font.pointSize: root.pt(root.baseFontPt - 1)
+                                    }
+                                    Label {
+                                        visible: root.nFree >= 2 && gridP1.currentText === gridP2.currentText
+                                        text: "pick two different parameters"
                                         color: root.cBad
                                         font.pointSize: root.pt(root.baseFontPt - 1)
                                     }
@@ -3242,6 +3266,13 @@ Item {
                                         model: ["replacement", "halfsample", "weights", "pmoired"]
                                         onActivated: root.bootMode =
                                             ["replacement", "halfsample", "weights", "pmoired"][currentIndex]
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: ({
+                                            replacement: "blocks drawn with replacement",
+                                            halfsample: "a random half of the blocks, each once",
+                                            weights: "every block, with random Dirichlet weights",
+                                            pmoired: "PMOIRED's scheme: two copies, half of each dropped"
+                                        })[root.bootMode]
                                     }
                                     Label {
                                         visible: root.bootMode === "pmoired"
@@ -3251,6 +3282,7 @@ Item {
                                     }
                                     Label { text: "granularity"; color: "#666" }
                                     ComboBox {
+                                        objectName: "bootGranularity"
                                         Layout.preferredWidth: root.dp(110)
                                         // :config is the default and the right one for calibrated
                                         // interferometric data — a block is one (MJD, configuration).
@@ -3258,6 +3290,12 @@ Item {
                                         onActivated: function (index) {
                                             root.bootGranularity = ["config", "epoch", "point"][index]
                                         }
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: ({
+                                            config: "one block per MJD and baseline, triangle or telescope",
+                                            epoch: "one block per MJD",
+                                            point: "one block per data point; underestimates σ"
+                                        })[root.bootGranularity]
                                     }
                                     Label { text: "seed"; color: "#666" }
                                     SpinBox {
@@ -3346,18 +3384,6 @@ Item {
                                                 ? "corner plots need PairPlots, which this build does not load"
                                                 : "the latest fit's bootstrap replicates or posterior, the best fit marked"
                                             onClicked: root.showCorner()
-                                        }
-                                        // Not a second image surface. The Model visualization tab
-                                        // already renders `model_to_image` of the current values,
-                                        // and "Adopt" writes a fit's values into the table — so
-                                        // this shows the fitted model by going there, rather than
-                                        // by drawing the same picture somewhere else.
-                                        Button {
-                                            text: "Model image"; implicitHeight: root.dp(20)
-                                            enabled: paramModel.count > 0
-                                            ToolTip.visible: hovered
-                                            ToolTip.text: "render the model as it stands, in Model visualization"
-                                            onClicked: { modelTabs.currentIndex = 1; root.renderModel() }
                                         }
                                         // Only for a model that varies with wavelength. One that
                                         // does not has an SED of flat lines, which is a control
@@ -4035,7 +4061,10 @@ Item {
             // Square, whatever the panel's shape: a corner plot's panels sit on a square grid,
             // and squeezed into a wide, short box their labels overlap. The Image scales it.
             var side = Math.max(560, Math.min(900, Math.max(cornerBox.width, cornerBox.height)))
-            var r = Julia.shell_corner_plot(side, side)
+            // Pixels for the size it is shown at on this screen, and at least twice the
+            // figure's: a 1:1 file stretched over a larger panel comes out blurred.
+            var shown = Math.min(cornerBox.width, cornerBox.height) * Screen.devicePixelRatio
+            var r = Julia.shell_corner_plot(side, side, Math.max(2, shown / side))
             if (r.length > 0 && r.charAt(0) === "!") { root.cornerPath = ""; root.cornerMsg = r.substring(2) }
             else { root.cornerPath = r; root.cornerMsg = "" }
             root.consoleChanged()

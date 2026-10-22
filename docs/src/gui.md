@@ -285,7 +285,7 @@ Examples: `demos/data/HD210763/rv_gallenne2023.csv`, `demos/data/Spica/rv_spica.
 constraints, priors or samplers) or *posterior* (the spread of a sampler's posterior).
 
 **Companion search…** searches for a point-source companion on a grid (`companion_search`);
-**Multi-start…** fits from many starting points (below). **Fit each…** fits each ticked dataset
+**Multi-start…** fits from many starting points (below). **Similar fit on…** fits each ticked dataset
 in turn (below).
 
 Views under the fits table:
@@ -294,7 +294,6 @@ Views under the fits table:
 - **Correlations**: the latest fit's parameter correlations.
 - **Corner**: the latest fit's bootstrap replicates or posterior samples, the best fit marked
   (needs PairPlots).
-- **Model image**: the model in Model visualization.
 - **SED**: total and per-component flux against the dataset's wavelengths, for models that use
   `$WL`.
 - **Orbit**: the relative orbit on the sky with the dataset's epochs, and the radial velocities
@@ -330,7 +329,7 @@ the fit's row.
 
 ## Fitting each dataset
 
-**Fit each…** runs the current fit (model, bounds, constraints, priors, observables, optimiser)
+**Similar fit on…** runs the current fit (model, bounds, constraints, priors, observables, optimiser)
 on each ticked dataset, each from the table's values, typically the epochs made by Tools'
 temporal binning. Levenberg-Marquardt or NLopt; Jacobian uncertainty or none. The **Epochs**
 table lists each dataset's mean MJD, χ²ᵣ, ndof and fitted parameters with σ; **Copy**

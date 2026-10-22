@@ -52,6 +52,13 @@ ApplicationWindow {
         toolTipText:     "#222222"
         brightText:      "#ffffff"
         link:            "#0645ad"
+        // The roles above apply to every colour group, so a disabled control would keep
+        // the same dark text as an enabled one.
+        disabled {
+            windowText:  "#a0a0a0"
+            text:        "#a0a0a0"
+            buttonText:  "#a0a0a0"
+        }
     }
 
     // ── one scale factor for all the chrome ───────────────────────────────────

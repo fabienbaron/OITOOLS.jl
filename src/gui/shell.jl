@@ -1148,6 +1148,7 @@ function shell_fit_model(free_lines::AbstractString,
     # stays alive and its output can be read while it is produced.
     sh.fitlog = ""
     optsym = Symbol(opt)
+    GRID_LIVE[] = nothing
     start_job!(sh, :fit, function (_stop)
         t0 = time()
         themap = nothing
@@ -1168,7 +1169,8 @@ function shell_fit_model(free_lines::AbstractString,
         r = if opt == "grid"
             themap = chi2_map(md, free, data, gp1, gp2;
                               lb, ub, weights, n1 = Int(gridn),
-                              n2 = gridn2 > 1 ? Int(gridn2) : Int(gridn))
+                              n2 = gridn2 > 1 ? Int(gridn2) : Int(gridn),
+                              on_grid = g -> (GRID_LIVE[] = g))
             FitResult(themap)
         elseif opt == "lsqfit"
             fit_model_lsqfit(md, free, data; lb, ub, weights, constraints = cons, rv,
@@ -1490,17 +1492,18 @@ end
 const CORNER_PNG = Ref("")
 
 """
-    shell_corner_plot(width, height) -> String
+    shell_corner_plot(width, height, px_per_unit = 1) -> String
 
 Draw the latest fit's corner plot (PairPlots, through `plot_corner_makie`) to a PNG and return
-its path, or a message beginning with `!`.
+its path, or a message beginning with `!`. The figure is `width` × `height` units, written at
+`px_per_unit` pixels per unit.
 
 The figure is never put on screen as a Makie scene: no plot may be created once the QML window
 holds the GL context, and a corner plot is a grid of new axes. It is built offscreen and saved,
 as "Save PNG" does, and the panel shows the file. Each call writes a new file name, so the
 panel's `Image` cannot show a cached older one.
 """
-function shell_corner_plot(width::Real = 800, height::Real = 800)
+function shell_corner_plot(width::Real = 800, height::Real = 800, px_per_unit::Real = 1)
     sh = _shell()
     isempty(sh.fits) && return "! no fit yet"
     Base.get_extension(OITOOLS, :OITOOLSPairPlotsExt) === nothing &&
@@ -1522,7 +1525,7 @@ function shell_corner_plot(width::Real = 800, height::Real = 800)
     isempty(CORNER_PNG[]) || rm(CORNER_PNG[]; force = true)
     p = joinpath(dir, string("corner-", getpid(), "-", time_ns(), ".png"))
     try
-        Makie.save(p, fig; backend = GLMakie)
+        Makie.save(p, fig; backend = GLMakie, px_per_unit = Float64(px_per_unit))
     catch err
         msg = "! could not write the corner plot: " * _cause(err)
         console!(sh, msg; kind = :err); return msg
@@ -1708,6 +1711,24 @@ function shell_companion_search(free_lines::AbstractString,
                   free, chi2_start)
     end)
     return "searching…"
+end
+
+# The grid search in progress: its axes and the χ² array `chi2_map` fills, set by its `on_grid`
+# hook on the worker and drawn from the GUI thread by `shell_grid_progress`.
+const GRID_LIVE = Ref{Any}(nothing)
+
+"""
+    shell_grid_progress() -> String
+
+Draw the running grid search into the map panel, and say how far it is: `"done\ttotal"`, or
+`""` before the grid exists. Called by the panel's job poll, on the GUI thread.
+"""
+function shell_grid_progress()
+    sh = _shell()
+    g = GRID_LIVE[]
+    (g === nothing || sh.chi2map === nothing) && return ""
+    done, total = update_grid_progress!(sh.chi2map, g)
+    return string(done, "\t", total)
 end
 
 # The search in progress: its grid and the arrays its threads fill, set by `companion_search`'s

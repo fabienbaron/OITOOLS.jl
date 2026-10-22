@@ -383,12 +383,14 @@ function fit_model_ensemble(model_dict::Dict{String}, list_free_params::Vector{S
                 dg.n_eval, maximum(R), maximum(R) > 1.01 ? " (NOT converged)" : "", τ,
                 τ > nsweep / 50 ? " (lower bound)" : "")
     end
-    return _sampler_result(Θ, vec(logps), fm, list_free_params, data, weights;
-                           logz = NaN, logzerr = NaN,
-                           diagnostics = (rhat = R, tau = τ, n_eval = dg.n_eval,
-                                          nwalkers = nw, mu = dg.mu, tuned = dg.tuned),
-                           result = (chain = chain, logps = logps, info = dg),
-                           sampler = :ensemble)
+    res = _sampler_result(Θ, vec(logps), fm, list_free_params, data, weights;
+                          logz = NaN, logzerr = NaN,
+                          diagnostics = (rhat = R, tau = τ, n_eval = dg.n_eval,
+                                         nwalkers = nw, mu = dg.mu, tuned = dg.tuned),
+                          result = (chain = chain, logps = logps, info = dg),
+                          sampler = :ensemble)
+    verb && print(res)
+    return res
 end
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -29,11 +29,11 @@ simulation.
 
 ## OK, I'm pressed for time, what do I do?
 
-If you just want to use OITOOLS or discover its main capabilities, download the single-file GUI for Linux:
+If you just want to use OITOOLS or discover its main capabilities, download the ready-made GUI:
 
-[Download the Linux AppImage GUI](https://www.astro.gsu.edu/~baron/OITOOLS-x86_64.AppImage)
+- [Download the Linux AppImage GUI](https://www.astro.gsu.edu/~baron/OITOOLS-x86_64.AppImage): make it executable (`chmod +x OITOOLS-x86_64.AppImage`) and run it.
+- [Download the Windows GUI](http://astro.gsu.edu/~baron/OITOOLS-win64.zip): unzip it and run `OITOOLSApp.exe` from its `bin` folder.
 
-Just make it executable  (`chmod +x OITOOLS-x86_64.AppImage`) and it's ready to run.
 Of course using the library itself is more flexible, but this way you can get an idea of what is even possible to achieve.
 
 To run the GUI from the source instead (Julia 1.13 or later):

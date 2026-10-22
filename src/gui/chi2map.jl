@@ -157,6 +157,44 @@ function update_companion_progress!(c, g, companion::AbstractString)
     return done, g.nnodes
 end
 
+"""
+    update_grid_progress!(c, g) -> (done, total)
+
+Draw a grid search while it runs: `g` is what [`chi2_map`](@ref) hands its `on_grid` hook, whose
+χ² array it is filling. Points not yet evaluated are blank; the contours and the ring are those
+of the points evaluated so far.
+"""
+function update_grid_progress!(c, g)
+    z = copy(g.chi2)                      # a snapshot: the worker keeps writing
+    done = count(isfinite, z)
+    _clear_minima!(c)
+    c.xs[] = Float32.(g.v1)
+    c.ys[] = Float32.(g.v2)
+    if done == 0
+        c.raw[] = fill(NaN32, size(z)); c.zs[] = fill(NaN32, size(z)); c.best[] = Makie.Point2f[]
+    else
+        lo = minimum(v -> isfinite(v) ? v : Inf, z)
+        dchi2 = Float32.(z .- lo)
+        c.raw[] = dchi2
+        zz = log10.(dchi2 .+ 1.0f0)
+        c.zs[] = zz
+        hi = maximum(v -> isfinite(v) ? v : -Inf, zz)
+        c.cbarlimits[] = (0.0f0, Float32(hi > 0 ? hi : 1))
+        b = argmin(v -> isfinite(z[v]) ? z[v] : Inf, CartesianIndices(z))
+        c.best[] = [Makie.Point2f(g.v1[b[1]], g.v2[b[2]])]
+    end
+    c.axis.aspect = nothing
+    c.heatmap.colormap = Makie.Reverse(:gist_heat)
+    c.colorbar.colormap = Makie.Reverse(:gist_heat)
+    c.colorbar.label = "log₁₀(Δχ² + 1)"
+    c.axis.xlabel = g.p1
+    c.axis.ylabel = g.p2
+    c.axis.title = @sprintf("grid search: %d of %d points", done, length(z))
+    Makie.xlims!(c.axis, first(g.v1), last(g.v1))
+    Makie.ylims!(c.axis, first(g.v2), last(g.v2))
+    return done, length(z)
+end
+
 # The sky's conventions for a companion map: East to the LEFT, equal scales on the two axes,
 # blank (NaN) where no node was fitted.
 function _draw_companion_map!(c, x, y, z, best, title, label)

@@ -130,10 +130,12 @@ function _fit_model_pigeons(model_dict::Dict{String}, list_free_params::Vector{S
     0 <= rt < 3 && @warn "Pigeons: $(rt) round trip(s) — the chains barely traversed the " *
                          "temperature ladder, so other modes may not have been visited. " *
                          "Raise n_rounds or n_chains."
-    return _sampler_result(Θ, logls, fm, list_free_params, data, weights;
-                           logz, logzerr = rt > 0 ? 1 / sqrt(rt) : NaN,
-                           diagnostics = (round_trips = rt, n_chains = Int(n_chains),
-                                          n_rounds = Int(n_rounds), explorer = explorer,
-                                          stepping_stone = ss),
-                           result = pt, sampler = :pigeons)
+    res = _sampler_result(Θ, logls, fm, list_free_params, data, weights;
+                          logz, logzerr = rt > 0 ? 1 / sqrt(rt) : NaN,
+                          diagnostics = (round_trips = rt, n_chains = Int(n_chains),
+                                         n_rounds = Int(n_rounds), explorer = explorer,
+                                         stepping_stone = ss),
+                          result = pt, sampler = :pigeons)
+    verb && print(res)
+    return res
 end

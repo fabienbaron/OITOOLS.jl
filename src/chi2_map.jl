@@ -106,6 +106,7 @@ res = FitResult(map)          # the best grid point
 | `lb`, `ub` | `Dict()` | bounds; used as the default axis extent |
 | `weights` | `[1,1,1,0,0,0,0]` | observable weights `[V2, T3amp, T3phi, visamp, visphi, flux, diffphase]` |
 | `nB_workspace` | `100` | passed through to `parse_model` |
+| `on_grid` | `nothing` | called before the first evaluation with `(; p1, p2, v1, v2, chi2)`: the axes and the χ² array, `NaN` until each point is evaluated |
 
 Each axis needs finite bounds or an explicit range. `p1` and `p2` must both be free.
 """
@@ -116,7 +117,7 @@ function chi2_map(model_dict::Dict{String}, list_free_params::AbstractVector{<:A
                   range1 = nothing, range2 = nothing,
                   lb = Dict{String,Float64}(), ub = Dict{String,Float64}(),
                   weights::AbstractVector{<:Real} = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-                  nB_workspace::Int = 100)
+                  nB_workspace::Int = 100, on_grid = nothing)
 
     free = String.(list_free_params)
     k1, k2 = String(p1), String(p2)
@@ -144,7 +145,8 @@ function chi2_map(model_dict::Dict{String}, list_free_params::AbstractVector{<:A
 
     v1 = collect(range(lo1, hi1; length = Int(n1)))
     v2 = collect(range(lo2, hi2; length = Int(n2)))
-    chi2 = Matrix{Float64}(undef, length(v1), length(v2))
+    chi2 = fill(NaN, length(v1), length(v2))
+    on_grid === nothing || on_grid((; p1 = k1, p2 = k2, v1, v2, chi2))
 
     # One scratch vector, reused. Single-threaded on purpose: a Hankel component's workspace
     # buffers live on the compiled model and are shared by every evaluation, so parallel

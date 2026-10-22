@@ -61,7 +61,7 @@ function __init__()
                      shell_bin_info, shell_rebin,
                      shell_chi2_map_info, shell_free_names,
                      shell_companion_candidates, shell_companion_grid, shell_companion_search,
-                     shell_companion_map_view, shell_companion_progress,
+                     shell_companion_map_view, shell_companion_progress, shell_grid_progress,
                      shell_multistart, shell_multistart_minima, shell_multistart_select,
                      shell_multistart_view, shell_multistart_names, shell_multistart_pmoired,
                      shell_lines, shell_add_line, shell_remove_line, shell_line_by_velocity,

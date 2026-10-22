@@ -17,8 +17,10 @@ Item {
     // What the engine printed, verbatim.
     property string text: ""
     property real   fontPointSize: 9
-    // Follow the tail as new output arrives. Off while the user is reading back through it.
+    // Follow the tail as new output arrives, while the view is at the bottom: scrolled up,
+    // it stays where the reader put it until they scroll back down.
     property bool   follow: true
+    property bool   _atBottom: true
 
     // A long run can print megabytes, and colouring all of it on every update is wasted work
     // nobody sees. Only the tail is rendered; the rest is still in the model.
@@ -101,8 +103,28 @@ Item {
             font.pointSize: root.fontPointSize
             text: root._html
             background: null
-            // Jump to the newest output, which is the part worth seeing while a run is going.
-            onTextChanged: if (root.follow) cursorPosition = length
         }
+    }
+
+    // The view scrolls, not the cursor: moving the cursor of an unfocused TextArea does not
+    // bring it into view, and replacing the text sends the view back to the top. Only the
+    // reader's own scrolling (a drag, the wheel, the scroll bar) decides whether to follow.
+    function _follow() {
+        var f = scroller.contentItem
+        if (root.follow && root._atBottom)
+            f.contentY = Math.max(0, f.contentHeight - f.height)
+    }
+    Connections {
+        target: scroller.contentItem
+        function onContentYChanged() {
+            var f = scroller.contentItem
+            if (f.moving || scroller.ScrollBar.vertical.pressed)
+                root._atBottom = f.contentY + f.height >= f.contentHeight - 4
+        }
+        function onContentHeightChanged() { Qt.callLater(root._follow) }
+    }
+    Connections {
+        target: area
+        function onTextChanged() { Qt.callLater(root._follow) }
     }
 }
