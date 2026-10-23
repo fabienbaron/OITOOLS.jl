@@ -1,26 +1,3 @@
-# The launcher environment.
-#
-# Running the GUI needs GLMakie, QMLMakie and QML, which OITOOLS keeps as WEAK dependencies so
-# that `using OITOOLS` costs 0.9 s instead of 8 and maps no Qt. Weak dependencies are not
-# loadable from `--project=.`, so this environment declares them as ordinary ones and pins the
-# whole GL and Qt stack in its Manifest.
-#
-#     julia --project=bin bin/oitoolsgui.jl [file.oifits]
-#
-# `julia --project=bin -e 'using Pkg; Pkg.instantiate()'` reproduces the exact versions.
-#
-# Four of the entries below are not the launcher's:
-#
-#   PythonPlot, PythonCall  test/gui/'s port harness compares Makie output against oiplot's
-#                           matplotlib originals, and PythonCall is what makes the UltraNest
-#                           sampler selectable. The launcher loads neither, so they cost the
-#                           GUI nothing at run time.
-#   Nautilus                importance nested sampling, the other pure-Julia sampler
-#   PairPlots               corner plots, likewise.
-#   PackageCompiler         bin/compile.jl only. Never loaded by the GUI.
-#
-# No name/uuid: this is an environment, not a package.
-
 [deps]
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 GLFW_jll = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
@@ -38,32 +15,9 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 VarInf = "cd771066-68b7-4d72-889c-da7b55f139d5"
 
 [sources]
-Nautilus = {url = "https://github.com/fabienbaron/Nautilus.jl.git"}
+Nautilus = {rev = "main", url = "https://github.com/fabienbaron/Nautilus.jl.git"}
 OITOOLS = {path = ".."}
-# VarInf is the generic VI core: unregistered, so it is named by URL rather than resolved from
-# a registry. A URL and not a path, because `bin` is a workspace member of the root project and
-# a workspace shares one manifest -- so a relative path here is resolved when the ROOT project
-# is instantiated, on a CI runner that has no sibling checkout, and the whole resolve fails.
-#
-# To WORK ON VarInf, `Pkg.develop(path = "…/VarInf.jl")` into this environment: that writes to
-# the manifest, which is gitignored, so the override stays local and CI still sees the URL.
-VarInf = {url = "https://github.com/fabienbaron/VarInf.jl.git"}
+VarInf = {rev = "main", url = "https://github.com/fabienbaron/VarInf.jl.git"}
 
-# The Conda environment every project in this repo shares, at
-# <depot>/conda_environments/oitools.
-#
-# CondaPkg otherwise builds one per ACTIVE PROJECT — `dirname(Base.active_project())/.CondaPkg`
-# — so this repo grew three of them, and the [workspace] above made that worse rather than
-# better: one shared manifest means each project resolves the union of every member's Python
-# dependencies, so all three reached the same full set. Measured at 763 MB + 1.6 GB + 1.6 GB of
-# the same packages, against 1.6 GB once.
-#
-# Set HERE rather than through JULIA_CONDAPKG_ENV because a preference is a committed file that
-# reads identically on Windows, macOS and Linux, needs no shell profile, and is scoped to this
-# repo instead of to every Julia project on the machine.
-#
-# CondaPkg is listed in [deps] for this to work at all: Preferences resolves only for DIRECT
-# dependencies, and reached indirectly through PythonCall it returns nothing with no error. It
-# is a real dependency in substance either way — this package ships a CondaPkg.toml.
 [preferences.CondaPkg]
 env = "@oitools"

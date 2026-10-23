@@ -299,8 +299,9 @@ Item {
     ListModel {
         id: targetModel
         // One northern seed, so the panel is never empty on a first run and never carries a
-        // target nobody asked for. "+ target" and SIMBAD add the rest.
-        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: false }
+        // target nobody asked for. "+ target" and SIMBAD add the rest. Its values are SIMBAD's,
+        // so it counts as resolved.
+        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: true }
     }
 
     function refreshTargets() {
@@ -385,6 +386,8 @@ Item {
     }
 
     function setTargetField(i, key, value) {
+        // Leaving a field unchanged is not an edit.
+        if (targetModel.get(i)[key] === value) return
         var patch = {}
         patch[key] = value
         // Editing name, RA or Dec by hand makes the row no longer what SIMBAD returned, so the
@@ -462,6 +465,39 @@ Item {
                 root.statusText = "resolved"
             }
         }
+    }
+
+    // The target list to and from a CSV file (`shell_save_targets`, `shell_load_targets`): every
+    // field, and whether SIMBAD resolved the row, so a loaded list need not be resolved again.
+    function saveTargets(path) {
+        var rows = []
+        for (var i = 0; i < targetModel.count; ++i) {
+            var t = targetModel.get(i)
+            if (!t.name || t.name.length === 0) continue
+            rows.push([t.name, t.ra, t.dec, t.magV, t.magJ, t.magH, t.magK, t.cached ? 1 : 0].join("\t"))
+        }
+        var r = Julia.shell_save_targets(path, rows.join("\n"))
+        root.statusText = r.length > 0 ? r : "saved " + rows.length + " targets"
+        root.consoleChanged()
+    }
+    function loadTargets(path) {
+        var r = Julia.shell_load_targets(path)
+        root.consoleChanged()
+        if (r.length === 0 || r.charAt(0) === "!") { root.statusText = r; return }
+        var lines = r.split("\n")
+        targetModel.clear()
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length < 8) continue
+            var num = function (v) { return v.length > 0 ? parseFloat(v) : 0.0 }
+            targetModel.append({ name: f[0], ra: num(f[1]), dec: num(f[2]),
+                                 magV: num(f[3]), magJ: num(f[4]), magH: num(f[5]), magK: num(f[6]),
+                                 cached: f[7] === "1" })
+        }
+        root.currentTargetIndex = 0
+        refreshTargets()
+        magForBand()
+        root.statusText = "loaded " + targetModel.count + " targets"
     }
 
     function clearCache() {
@@ -542,6 +578,7 @@ Item {
                                         // The cache is per session and worth showing: a resolve
                                         // answered from cache looks exactly like one that reached the
                                         // network, right up until the network is down.
+                                        objectName: "obsCacheCount"
                                         text: root.cacheCount + "/" + targetModel.count + " cached"
                                         color: "#888"; font.pointSize: pt(baseFontPt - 2)
                                     }
@@ -609,6 +646,13 @@ Item {
                                                     text: targetRow.name
                                                     placeholderText: "target name"
                                                     onEditingFinished: root.setTargetField(targetRow.index, "name", text)
+                                                    // Enter resolves the name, unless the row already
+                                                    // holds SIMBAD's answer for it.
+                                                    onAccepted: {
+                                                        root.setTargetField(targetRow.index, "name", text)
+                                                        if (text.length > 0 && !targetModel.get(targetRow.index).cached)
+                                                            root.resolveTarget(targetRow.index)
+                                                    }
                                                 }
                                                 Button {
                                                     text: "SIMBAD"
@@ -696,6 +740,22 @@ Item {
                                         text: "Resolve all"
                                         enabled: root.nNamedTargets > 0
                                         onClicked: root.resolveAll()
+                                    }
+                                    Button {
+                                        objectName: "targetsLoad"
+                                        text: "Load…"
+                                        // where the shipped lists are (demos/targets)
+                                        onClicked: targetsLoadDialog.openAt(Julia.picker_examples("targets"))
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "a target list (CSV)"
+                                    }
+                                    Button {
+                                        objectName: "targetsSave"
+                                        text: "Save…"
+                                        enabled: root.nNamedTargets > 0
+                                        onClicked: targetsSaveDialog.openAt("")
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "the target list, with what SIMBAD resolved"
                                     }
                                     Item { Layout.fillWidth: true }
                                 }
@@ -877,7 +937,7 @@ Item {
                                     Layout.fillWidth: true
                                     implicitHeight: Math.max(dp(26), implicitContentHeight + topPadding + bottomPadding)
                                     model: ["Single POPs", "Multiple POPs", "Multiple POPs + drop",
-                                            "Top 3 single POPs"]
+                                            "Best time coverage POPs"]
                                     currentIndex: root.popStrategy
                                     onActivated: function (index) {
                                         root.popStrategy = index
@@ -1628,23 +1688,6 @@ Item {
                             }
                         }
 
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: dp(150)
-                            color: "#fafafa"
-                            border.color: "#ddd"
-                            // wire: compute_delays(facility, dec, ha, config) and in_delay(...) —
-                            // OPD per baseline against the per-telescope delay_length, drawn by
-                            // Makie.
-                            Label {
-                                anchors.centerIn: parent
-                                horizontalAlignment: Text.AlignHCenter
-                                color: "#666"
-                                text: "delay vs hour angle\ncompute_delays() / in_delay()"
-                                font.family: "monospace"
-                            }
-                        }
-
                         // POP results are a table and not a plot because the answer is a
                         // configuration to dial in, and a configuration has to be read off exactly.
                         Rectangle {
@@ -2136,6 +2179,7 @@ Item {
                 }
 
                 Label {
+                    objectName: "obsStatus"
                     Layout.fillWidth: true
                     text: root.statusText
                     color: "#666"
@@ -2183,6 +2227,24 @@ Item {
     }
 
     ListModel { id: popModel }
+
+    FilePicker {
+        id: targetsLoadDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Target list"
+        filters: [{ label: "Target lists (*.csv *.txt)", patterns: "*.csv,*.txt" },
+                  { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.loadTargets(path) }
+    }
+    FilePicker {
+        id: targetsSaveDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save the target list"
+        saveMode: true
+        defaultSuffix: "csv"
+        filters: [{ label: "CSV files (*.csv)", patterns: "*.csv" }, { label: "All files", patterns: "*" }]
+        onAccepted: function (path) { root.saveTargets(path) }
+    }
 
     FilePicker {
         id: outputDialog
@@ -2284,7 +2346,7 @@ Item {
                                       tels, root.popString, root.useDelay, root.detailed,
                                       root.altLimit, root.altMax,
                                       root.timeSystem.toLowerCase(), plan, root.changeMinutes,
-                                      root.popStrategy === 3 && plan.length === 0 ? 3 : 0)
+                                      plan.length > 0 || root.popStrategy !== 3 ? "" : "coverage")
         // `summary \t dark window`. The summary is not shown here: it is long, it overflowed
         // the strip it sat in, and the console already keeps it. The chart itself is the
         // answer, and hovering a bar gives the numbers.
@@ -2409,10 +2471,11 @@ Item {
     property string popString: ""
 
     // How AutoPOPs and Search POPs search: one setting (0), several (1), several with
-    // telescopes dropped (2), up to `maxChanges` changes and `maxDrop` drops, or the best three
-    // single settings, each on its own row of the Gantt (3). A change takes `changeMinutes`.
+    // telescopes dropped (2), up to `maxChanges` changes and `maxDrop` drops, or the single
+    // settings best over the earliest, middle and latest third of the night, each on its own row
+    // of the Gantt (3). A change takes `changeMinutes`.
     property int popStrategy: 0
-    readonly property bool singlePops: popStrategy === 0 || popStrategy === 3
+    readonly property bool singlePops: popStrategy === 0 || popStrategy >= 3
     property int maxChanges: 2
     property int maxDrop: 1
     property int changeMinutes: 10

@@ -1678,10 +1678,9 @@ function gantt_onenight(targetname, obsdate, lst_in, lst_midnight_in, az, alt, g
     end
 
     if !isempty(show_indices)
-        # 1.2, not 2: at a fifth of the chart height the bar crowded the az/alt
-        # annotations drawn just above and below it. Kept equal to the GUI's
-        # TARGET_BAR_HEIGHT so the two renderings stay comparable.
-        _bars(show_indices, 2, 1.2, "blue", bar_label)
+        # Thin enough to leave the az/alt annotations above and below it clear, and equal to
+        # the GUI's TARGET_BAR_HEIGHT so the two renderings stay comparable.
+        _bars(show_indices, 2, 0.77, "blue", bar_label)
         # Annotate every run, not just the outermost pair: each run is one observing block,
         # and its own start/end time and az/alt are what you would write on a schedule.
         span = lst[end] - lst[1] + 0.5

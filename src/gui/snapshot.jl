@@ -241,13 +241,21 @@ function _snapshot_figure(sh::ShellState, which::AbstractString, size, detailed:
         ax = Makie.Axis(fig[1, 1])
         style_axis!(ax)
         if which == "gantt"
-            update_gantt!(build_gantt(fig, ax), sh.plan; detailed,
-                          time_system = GANTT_TIME_SYSTEM[])
+            g = build_gantt(fig, ax)
+            # the stacked rows when the panel shows them, as `shell_gantt` drew it
+            GANTT_STACK[] !== nothing && !detailed ?
+                update_gantt_stack!(g, GANTT_STACK[]...; time_system = GANTT_TIME_SYSTEM[]) :
+                update_gantt!(g, sh.plan; detailed, time_system = GANTT_TIME_SYSTEM[])
         else
             isempty(sh.plan.baselines) && return nothing
             update_delay_plot!(build_delay_plot(fig, ax), sh.plan)
         end
         _match_view!(ax, liveax)
+        # The night, which the panel shows beside the chart and a saved file has to carry.
+        # (The delay chart's own title starts with the target already.)
+        night = string(which == "gantt" ? sh.plan.name * " · " : "", "night of ",
+                       Dates.format(sh.plan.date, "yyyy-mm-dd"))
+        ax.title = isempty(ax.title[]) ? night : night * "   " * ax.title[]
         return fig
     end
     return "! no such plot: " * String(which)

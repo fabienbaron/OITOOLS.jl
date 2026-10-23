@@ -381,6 +381,7 @@ staged += stage("src", "configs")
 staged += stage("src", "gui", "qml")
 staged += stage("demos", "data")
 staged += stage("demos", "models")
+staged += stage("demos", "targets")
 staged += stage("app", "assets")           # the icon, for the desktop entry and the installer
 @info "Resources staged" dir = SHARE MB = round(staged / 1e6, digits = 1)
 

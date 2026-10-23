@@ -1167,6 +1167,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     TextArea {
                         id: logArea
+                        objectName: "consoleText"
                         readOnly: true
                         font.family: "monospace"
                         font.pointSize: pt(baseFontPt - 2)

@@ -340,7 +340,8 @@ end
 """
     picker_examples(kind) -> String
 
-Directory of the shipped examples for a kind of file, or `""` if there are none.
+Directory of the shipped examples for a kind of file (`"model"`, `"pmoired"`, `"targets"`), or
+`""` if there are none.
 
 Opening an import dialog in the filesystem root asks the user to find something they have never
 seen. `"pmoired"` points at models known to import: they were written by `dict_to_pmoired_file`
@@ -350,7 +351,8 @@ it cannot read fails at the point of use.
 function picker_examples(kind::AbstractString)
     k = lowercase(strip(String(kind)))
     sub = k == "pmoired" ? joinpath("demos", "models", "pmoired") :
-          k == "model"   ? joinpath("demos", "models")          : ""
+          k == "model"   ? joinpath("demos", "models")          :
+          k == "targets" ? joinpath("demos", "targets")         : ""
     isempty(sub) && return ""
     p = OITOOLS.resource(sub)
     return p === nothing ? "" : p

@@ -43,6 +43,15 @@ appearance settings. The console at the bottom shows the OITOOLS call for each a
   reconstruction uses; the dataset is unchanged. The χ²ᵣ in the Modeling header uses the same
   selection.
 
+## Targets (Observing)
+
+**Enter** in a target's name resolves it on SIMBAD, as **SIMBAD** does, unless the row already
+holds SIMBAD's answer for that name (its dot is green). **Save…** writes the list as CSV
+(`name, ra, dec, V, J, H, K, simbad`, coordinates in degrees, `simbad` 1 for a row SIMBAD
+resolved); **Load…** reads it back, or a file of names alone, one per line, as unresolved targets.
+It opens on `demos/targets`, whose `bright_stars.csv` lists twelve bright stars across the year,
+resolved on SIMBAD.
+
 ## POPs (Observing)
 
 **AutoPOPs** searches the POPs each time **Compute** runs, over the hours the target is above
@@ -55,11 +64,14 @@ it chooses the search:
 - **Multiple POPs + drop**: the same, dropping up to **drop ≤** telescopes where no setting
   keeps them all in delay. The reference telescope is dropped only when no other drop gains
   the same time.
-- **Top 3 single POPs**: the three best single settings, one row each with its POPs, the best
-  at the top. **Show details** and the delay carts show the best one.
+- **Best time coverage POPs**: for the earliest, middle and latest third of the observable
+  hours, the single setting with the most time in delay over it, one row each (a setting best
+  in several thirds once). **Show details** and the delay carts show the earliest.
 
 Plans are ranked by the time with every selected telescope, then the time with one dropped
-(the reference last), then with two, then by the fewest changes.
+(the reference last), then with two, then by the fewest changes, and last by the fewest POPs
+moved at them: among settings giving the same times, those keeping more POPs where they were.
+**Best time coverage POPs** picks its tied settings the same way.
 
 On the Gantt a multi-POP plan is one bar per segment, lighter where a telescope is dropped. The
 first POPs are written at the start, each change as **→** and the new POPs where it starts

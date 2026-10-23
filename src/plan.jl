@@ -870,9 +870,10 @@ The sequence of POP settings, and of telescopes dropped from `config`, that obse
 longest over the hour angles `ha` where `observable` is true.
 
 Plans are ranked by the minutes observed with every selected telescope, then with one dropped
-that is not the reference, then with the reference dropped, then the same with two dropped, and
-last by the fewest POP changes. Each comparison only breaks ties in the previous one, so time
-with the full array is never given up for time with fewer telescopes.
+that is not the reference, then with the reference dropped, then the same with two dropped, then
+by the fewest POP changes, and last by the fewest POPs moved over all the changes. Each
+comparison only breaks ties in the previous one, so time with the full array is never given up
+for time with fewer telescopes.
 
 - `reference`: the telescope protected from being dropped while another drop gains the same
   time; by default the telescope `config` marks 2, if any. A telescope marked 2 is also the
@@ -992,6 +993,7 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
     state_pop = Vector{Vector{Int}}()
     state_gain = Vector{Vector{UInt8}}()      # per minute: 0 = nothing observed, else the drop
     state_tier = Vector{Vector{UInt8}}()      # per minute: 0, else the drop's tier
+    state_members = Vector{Vector{Tuple{Vector{Int},Vector{UInt8}}}}()   # every (POPs, drops)
     p = ones(Int, nactive)
     full = ones(Int, facility.ntel)
     gain = zeros(UInt8, T); tier = zeros(UInt8, T)
@@ -1027,8 +1029,14 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
             end
         end
         nobs >= min_minutes || continue
-        haskey(seen, tier) && continue
+        # Every setting of a state is kept: the times cannot tell them apart, but the POPs moved
+        # at a change can, and the choice is made once the plan is known (`_pop_plan_trace`).
+        if haskey(seen, tier)
+            push!(state_members[seen[tier]], (copy(full), copy(gain)))
+            continue
+        end
         seen[copy(tier)] = length(state_pop) + 1
+        push!(state_members, [(copy(full), copy(gain))])
         push!(state_pop, copy(full))
         push!(state_gain, copy(gain))
         push!(state_tier, copy(tier))
@@ -1100,14 +1108,18 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
         for s in 1:K, k in 1:c+1
             last_row[s, k] > last_row[bs, bk] && ((bs, bk) = (s, k))
         end
-        push!(plans, _pop_plan_trace(bs, bk, T, Δ, came, top, state_gain, state_pop, drops,
-                                     tiers, grid, cfg1))
+        push!(plans, _pop_plan_trace(bs, bk, T, Δ, came, top, state_members, tiermat, drops,
+                                     tiers, grid, cfg1, active))
     end
     return plans
 end
 
-# Back from state `bs` with `bk - 1` changes at the last minute to the plan that reached it.
-function _pop_plan_trace(bs, bk, T, Δ, came, top, state_gain, state_pop, drops, tiers, grid, cfg1)
+# Back from state `bs` with `bk - 1` changes at the last minute to the plan that reached it, then
+# the settings that move the fewest POPs over its changes. For each run of one state the
+# candidates are every setting observing that run's own minutes in the same tiers -- of any
+# state, as what a setting does outside the run does not matter to it.
+function _pop_plan_trace(bs, bk, T, Δ, came, top, state_members, tiermat, drops, tiers, grid,
+                         cfg1, active)
     path_s = zeros(Int, T)                   # the state at each minute; 0 during a change
     t, s, k = T, bs, bk
     while t >= 1
@@ -1121,24 +1133,73 @@ function _pop_plan_trace(bs, bk, T, Δ, came, top, state_gain, state_pop, drops,
         end
     end
 
+    # The plan's states in order, and for each the setting that moves the fewest POPs over all
+    # its changes: a shortest path through the states' settings, the cost of a step being the
+    # POPs that differ.
+    blocks = Tuple{Int,Int,Int}[]            # (state, first minute, last minute)
+    for t in 1:T
+        st = path_s[t]
+        st == 0 && continue
+        if isempty(blocks) || last(blocks)[1] != st || path_s[t-1] == 0
+            push!(blocks, (st, t, t))
+        else
+            blocks[end] = (st, blocks[end][2], t)
+        end
+    end
+    K = size(tiermat, 1)
+    cands = map(blocks) do (st, t0, t1)
+        obs = [t for t in t0:t1 if tiermat[st, t] != 0]
+        same = [s for s in 1:K if all(t -> tiermat[s, t] == tiermat[st, t], obs)]
+        reduce(vcat, (state_members[s] for s in same))
+    end
+    moved(a, b) = count(i -> a[i] != b[i], active)
+    pick = Dict{Int,Tuple{Vector{Int},Vector{UInt8}}}()
+    if !isempty(blocks)
+        nb = length(blocks)
+        cost = [zeros(Int, length(cands[1]))]
+        back = [Int[]]
+        for b in 2:nb
+            prevm, curm = cands[b-1], cands[b]
+            cb = Vector{Int}(undef, length(curm)); bb = Vector{Int}(undef, length(curm))
+            for (j, (pj, _)) in enumerate(curm)
+                best, arg = typemax(Int), 1
+                for (i, (pi, _)) in enumerate(prevm)
+                    v = cost[b-1][i] + moved(pi, pj)
+                    v < best && ((best, arg) = (v, i))
+                end
+                cb[j] = best; bb[j] = arg
+            end
+            push!(cost, cb); push!(back, bb)
+        end
+        choice = Vector{Int}(undef, nb)
+        choice[nb] = argmin(cost[nb])
+        for b in nb:-1:2
+            choice[b-1] = back[b][choice[b]]
+        end
+        for (b, (_, t0, t1)) in enumerate(blocks), t in t0:t1
+            pick[t] = cands[b][choice[b]]
+        end
+    end
+
     # Segments: runs of one state and one drop, over the minutes something is observed.
     segs = PopSegment[]
     mins = zeros(Int, 5)
     t = 1
     while t <= T
         s = path_s[t]
-        g = s == 0 ? 0 : Int(state_gain[s][t])
+        mem = s == 0 ? nothing : pick[t]
+        g = s == 0 ? 0 : Int(mem[2][t])
         if g == 0
             t += 1; continue
         end
         u = t
-        while u < T && path_s[u+1] == s && state_gain[s][u+1] == g
+        while u < T && path_s[u+1] == s && pick[u+1] === mem && mem[2][u+1] == g
             u += 1
         end
         c = copy(cfg1)
         for d in drops[g][1]; c[d] = 0; end
         drops[g][4] > 0 && (c[drops[g][4]] = 2)
-        push!(segs, PopSegment(grid[t], grid[u], c, copy(state_pop[s]), tiers[g]))
+        push!(segs, PopSegment(grid[t], grid[u], c, copy(mem[1]), tiers[g]))
         mins[tiers[g]] += u - t + 1
         t = u + 1
     end

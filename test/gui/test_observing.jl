@@ -392,6 +392,11 @@
         x = unwrap_lst(p.lst)
         @test any(l -> l.kind === :time && l.x ≈ x[p.segments[end].i0], geo.labels)
         @test any(geo.poplabels[2][4]) && !any(geo.poplabels[1][4])
+        # Every character these labels draw is pre-warmed in the glyph atlas: one inserted
+        # once Qt owns the GL context breaks the plot that needed it.
+        drawn = vcat([l[3] for l in geo.poplabels], [l[3] for l in geo.seglabels],
+                     [m[2] for m in geo.marks], [geo.subtitle, "→ ", "EL", "×", "+E1"])
+        @test all(c -> c in GUI.PLOT_GLYPHS, join(drawn))
         # Vega passes above the soft limit either side of transit
         @test length(geo.ellabels) == count(b -> b.x1 - b.x0 >= 0.3, geo.softbars) >= 1
         @test startswith(geo.subtitle, string(length(p.segments), " segments · 1 change"))
@@ -426,7 +431,7 @@
         sm = pop_plan_summary(pp, f, ra, ones(Int, 6))
         @test occursin(" → ", sm) && occursin(r"−E1 \d+:\d\d", sm)
         # a telescope missing from the start is a cross, not a drop
-        hd = (15 * (23 + 16.1 / 3600), -(22 + 51 / 60 + 33 / 3600), DateTime(2026, 10, 26))
+        hd = (345.067176, -22.524347, DateTime(2026, 10, 26))    # SIMBAD
         php = night_pop_plan(f, hd...; max_changes = 2, max_drop = 1)
         shd = pop_plan_summary(php, f, hd[1], ones(Int, 6))
         @test startswith(shd, "× ") && !occursin("−", shd)
@@ -464,6 +469,55 @@
         # every bar sits on one of the rows
         @test all(b -> any(r -> abs(b.y - r[1]) < 1e-9, geo.rows), geo.bars)
         @test length(geo.transits) == 3
+    end
+
+    @testset "the settings that cover the night's thirds best" begin
+        ra, dec, d = 279.2347, 38.7837, DateTime(2026, 6, 21)
+        f = read_facility_file("CHARA")
+        ha, ok = GUI._night_sky(f, ra, dec, d, ones(Int, 6))
+        cov = coverage_pops(f, dec, ha[ok], ones(Int, 6))
+        @test [c.part for c in cov] == ["early", "middle", "late"]
+        # each is in delay inside its own third
+        h = sort(Float64.(ha[ok])); lo, hi = extrema(h); w = (hi - lo) / 3
+        for (k, c) in enumerate(cov)
+            a, b = lo + (k - 1) * w, k == 3 ? hi : lo + k * w
+            sub = Float32[x for x in h if a <= x <= b]
+            @test !isempty(in_delay(f, dec, sub, ones(Int, 6), c.pop).good_delay)
+        end
+        plans = [night_plan("CHARA", "Vega", ra, dec, d; pop = c.pop, use_delay = true) for c in cov]
+        geo = gantt_stack_geometry(plans, ["early", "middle", "late"], "best time coverage POPs")
+        @test geo.subtitle == "best time coverage POPs" && [r[2] for r in geo.rows] == ["early", "middle", "late"]
+        @test isempty(coverage_pops(f, dec, Float32[], ones(Int, 6)))
+        # each pick is a best setting for its third, and among the ties the picks move the
+        # fewest POPs from third to third: W2 stays on POP 5 throughout
+        for (k, c) in enumerate(cov)
+            a, b = lo + (k - 1) * w, k == 3 ? hi : lo + k * w
+            sub = Float32[x for x in h if a <= x <= b]
+            @test c.score == best_pop(f, dec, sub, ones(Int, 6); n_best = 1)[1].score
+        end
+        @test sum(count(i -> cov[k-1].pop[i] != cov[k].pop[i], 1:6) for k in 2:3) == 3
+        @test all(c -> c.pop[6] == 5, cov)
+    end
+
+    @testset "a target list to and from CSV" begin
+        tmp = mktempdir()
+        rows = join(["Vega\t279.234735\t38.783689\t0.03\t-0.18\t-0.03\t0.13\t1",
+                     "HD 217357, \"GJ 884\"\t345.067176\t-22.524347\t7.869\t\t\t4.478\t0"], "\n")
+        p = joinpath(tmp, "targets")
+        @test GUI.shell_save_targets(p, rows) == ""
+        @test isfile(p * ".csv")
+        back = split(GUI.shell_load_targets(p * ".csv"), "\n")
+        @test length(back) == 2
+        f1, f2 = split(back[1], "\t"), split(back[2], "\t")
+        @test f1[1] == "Vega" && f1[8] == "1" && parse(Float64, f1[2]) == 279.234735
+        # a name with a comma and quotes survives; unknown magnitudes stay unknown
+        @test f2[1] == "HD 217357, \"GJ 884\"" && f2[5] == "" && f2[8] == "0"
+        # names alone: unresolved targets
+        write(joinpath(tmp, "names.txt"), "Altair\n# a comment\nDeneb\n")
+        nm = split(GUI.shell_load_targets(joinpath(tmp, "names.txt")), "\n")
+        @test [split(r, "\t")[1] for r in nm] == ["Altair", "Deneb"]
+        @test all(r -> split(r, "\t")[8] == "0", nm)
+        @test startswith(GUI.shell_load_targets(joinpath(tmp, "none.csv")), "!")
     end
 
     @testset "the facility's display order" begin

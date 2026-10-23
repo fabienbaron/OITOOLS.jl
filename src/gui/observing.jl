@@ -47,18 +47,16 @@ telescope_config(selected, all) = Int[(String(t) in String.(selected)) ? 1 : 0 f
 """
 Height of a target's own bar, in the chart's 0–10 row units.
 
-Thinner than the constraint rows are tall. At 2.0 the bar was a fifth of the whole chart and
-crowded the az/alt annotations sitting just above and below it; 1.2 leaves them clear while
-keeping it the most prominent row, which it should be — it is the answer.
+Thinner than the constraint rows are tall, which leaves the az/alt annotations above and below
+it clear while keeping it the most prominent row: it is the answer.
 """
-const TARGET_BAR_HEIGHT = 1.2
+const TARGET_BAR_HEIGHT = 0.77
 
 """
 Gap between a bar edge and the az/alt numbers printed against it, in row units.
 
-The label heights are DERIVED from the bar rather than written down: they were once fixed at
-3.3 and 0.7 against a taller bar, and when the bar was slimmed to $TARGET_BAR_HEIGHT they
-stayed put and drifted away from the thing they annotate. One constant, two positions.
+The label heights are derived from the bar, so they follow `TARGET_BAR_HEIGHT`: one constant,
+two positions.
 
 Small on purpose. These numbers belong to the bar and should read as attached to it; the
 vertical times sit right against the ends already, and a horizontal number floating a third of
@@ -69,6 +67,9 @@ const LABEL_PAD = 0.02
 "Row centre of a target bar, and the two label heights that follow from its height."
 const TARGET_ROW = 2.0
 az_label_y()  = TARGET_ROW + TARGET_BAR_HEIGHT / 2 + LABEL_PAD
+
+"How far above `az_label_y()` the POPs over a bar are centred: clear of the az numbers."
+const POP_LABEL_LIFT = 0.36
 alt_label_y() = TARGET_ROW - TARGET_BAR_HEIGHT / 2 - LABEL_PAD
 
 """
@@ -572,6 +573,61 @@ function best_pops(facility, dec::Real, ha::AbstractVector, config; n::Integer =
 end
 
 """
+    coverage_pops(facility, dec, ha, config) -> Vector{NamedTuple}
+
+The single POP settings that cover the earliest, middle and latest third of the hour angles `ha`
+(the observable ones) best, as `(; pop, score, part)`: for each third, the setting with the most
+time in delay over it, `score` in its minutes there. Among settings tied in a third, the ones
+moving the fewest POPs from one third to the next. A setting best in several thirds is listed
+once, `part` naming them all (`"early, middle"`).
+"""
+function coverage_pops(facility, dec::Real, ha::AbstractVector, config)
+    f = facility isa AbstractString ? read_facility_file(String(facility)) : facility
+    h = sort(Float64.(collect(ha)))
+    out = NamedTuple{(:pop, :score, :part),Tuple{Vector{Int},Int,String}}[]
+    isempty(h) && return out
+    lo, hi = first(h), last(h)
+    w = (hi - lo) / 3
+    # each third's best settings, every one tied for the most minutes
+    thirds = Tuple{String,Vector{NamedTuple{(:pop, :score),Tuple{Vector{Int},Int}}}}[]
+    for (k, part) in enumerate(("early", "middle", "late"))
+        a, b = lo + (k - 1) * w, k == 3 ? hi : lo + k * w
+        sub = Float32[x for x in h if a <= x <= b]
+        r = best_pop(f, Float64(dec), sub, Int.(config); n_best = typemax(Int))
+        isempty(r) && continue
+        push!(thirds, (part, [q for q in r if q.score == r[1].score]))
+    end
+    isempty(thirds) && return out
+    # the picks that move the fewest POPs from third to third
+    active = findall(>(0), config)
+    moved(a, b) = count(i -> a[i] != b[i], active)
+    cost = [zeros(Int, length(thirds[1][2]))]; back = [Int[]]
+    for t in 2:length(thirds)
+        prev, cur = thirds[t-1][2], thirds[t][2]
+        cb = Int[]; bb = Int[]
+        for q in cur
+            v, i = findmin(i -> cost[t-1][i] + moved(prev[i].pop, q.pop), eachindex(prev))
+            push!(cb, v); push!(bb, i)
+        end
+        push!(cost, cb); push!(back, bb)
+    end
+    choice = zeros(Int, length(thirds)); choice[end] = argmin(cost[end])
+    for t in length(thirds):-1:2
+        choice[t-1] = back[t][choice[t]]
+    end
+    for (t, (part, qs)) in enumerate(thirds)
+        q = qs[choice[t]]
+        j = findfirst(o -> o.pop == q.pop, out)
+        if j === nothing
+            push!(out, (; pop = q.pop, score = q.score, part = part))
+        else
+            out[j] = (; pop = out[j].pop, score = out[j].score + q.score, part = out[j].part * ", " * part)
+        end
+    end
+    return out
+end
+
+"""
     pop_rows(pops) -> String
 
 `pop\tscore` rows for the panel's POP table.
@@ -968,11 +1024,11 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
                 # The first POPs where they start, a telescope not used being a "×"; later, the
                 # telescopes lost ("−W2") and regained ("+E1") where it happens.
                 if k == 1
-                    push!(poplabels, (lst[sg.i0], az_label_y() + 0.8, segment_label(p, sg),
+                    push!(poplabels, (lst[sg.i0], az_label_y() + POP_LABEL_LIFT, segment_label(p, sg),
                                       segment_changes(p, k), false))
                 else
                     t = transition_label(p, k)
-                    isempty(t) || push!(seglabels, (lst[sg.i0], az_label_y() + 0.8, t, Bool[]))
+                    isempty(t) || push!(seglabels, (lst[sg.i0], az_label_y() + POP_LABEL_LIFT, t, Bool[]))
                 end
             end
             # A telescope lost here: "DROP" at the end of the segment before, and the time it is
@@ -990,7 +1046,7 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
             for (c0, c1) in p.changes
                 k = findfirst(sg -> sg.i0 >= c1, p.segments)
                 k === nothing && continue
-                push!(poplabels, (lst[c0], az_label_y() + 0.8,
+                push!(poplabels, (lst[c0], az_label_y() + POP_LABEL_LIFT,
                                   segment_label(p, p.segments[k]),
                                   segment_changes(p, k), true))
             end
@@ -1048,7 +1104,7 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
             hw = cw * length(t) / 2
             under(l) = l.side === :start ? (l.x - hw < x < l.x + 4cw + hw) :
                                            (l.x - 4cw - hw < x < l.x + hw)
-            seglabels[k] = (x, az_label_y() + (any(under, azs) ? 0.8 : 0.35), t, ch)
+            seglabels[k] = (x, az_label_y() + (any(under, azs) ? POP_LABEL_LIFT : 0.08), t, ch)
         end
     end
 
@@ -1095,21 +1151,25 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
               multi = is_multi_pop(p), stack = false)
 end
 
-"Rows apart, in the chart's units, of the plans `gantt_stack_geometry` stacks."
-const STACK_ROW_STEP = 3.2
+"Rows apart, in the chart's units, of the plans `gantt_stack_geometry` stacks: a bar with its
+numbers below and its POPs above."
+const STACK_ROW_STEP = 1.6
 
 """
-    gantt_stack_geometry(plans, labels; time_system = :lst) -> geometry
+    gantt_stack_geometry(plans, labels, title = ""; time_system = :lst) -> geometry
 
 Several plans of one target on one night, each a summary row as `gantt_geometry` draws it, the
-first at the top: the chart for comparing the best few POP settings. Each row's tick is its
-entry of `labels` and its POPs are written above its bar, in the panel's telescope order.
+first at the top: the chart comparing single POP settings (`coverage_pops`). Each row's tick is
+its entry of `labels` and its POPs are written above its bar, in the panel's telescope order.
 """
-function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::AbstractVector{<:AbstractString};
+function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::AbstractVector{<:AbstractString},
+                              title::AbstractString = "";
                               time_system::Symbol = :lst)
     n = length(plans)
     geos = [gantt_geometry(p; time_system) for p in plans]
     g1 = first(geos)
+    # The renderer fits its view round the rows, so the chart is only as tall as they are.
+    ymax = (n - 1) * STACK_ROW_STEP + 4.0
     sh(y, k) = y + (n - k) * STACK_ROW_STEP
     bars = GanttBar[]; tlabels = GanttLabel[]; softbars = GanttBar[]
     rows = Tuple{Float64,String}[]
@@ -1126,15 +1186,14 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
         if !isempty(idx)
             on = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
             x = unwrap_lst(p.lst)[first(idx)]
-            push!(poplabels, (x, sh(az_label_y() + 0.8, k), join(string.(p.pop[on]), " "),
+            push!(poplabels, (x, sh(az_label_y() + POP_LABEL_LIFT, k), join(string.(p.pop[on]), " "),
                               falses(length(on)) |> collect, false))
         end
     end
-    ymax = max(10.0, (n - 1) * STACK_ROW_STEP + 5.0)
     bands = [GanttBar(b.x0, b.x1, ymax / 2, ymax, b.color, b.label) for b in g1.bands]
     return (; bars, labels = tlabels, bands, softbars, midnight = g1.midnight, now = g1.now,
               transit = g1.transit, transits, xlim = g1.xlim, target = g1.target, rows, ymax,
-              detailed = false, subtitle = "top $(n) single POPs",
+              detailed = false, subtitle = String(title),
               delay_applied = g1.delay_applied, seglabels = Tuple{Float64,Float64,String,Vector{Bool}}[],
               poplabels, ellabels, marks = Tuple{Float64,String,Symbol,Float64}[],
               switches = Float64[], multi = false, stack = true)

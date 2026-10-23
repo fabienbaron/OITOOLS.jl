@@ -86,7 +86,7 @@ export NightPlan, config_catalog, facility_telescopes, telescope_config,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,
        pop_label, is_multi_pop, segment_label, multi_pop_summary, night_pop_plan,
        telescope_display_order, pop_plan_text, parse_pop_plan_text, pop_plan_summary,
-       transition_label, gantt_stack_geometry, update_gantt_stack!,
+       transition_label, gantt_stack_geometry, update_gantt_stack!, coverage_pops,
        baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
        delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info,
        facility_subset, epochs_for_hour_angles

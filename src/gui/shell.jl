@@ -2968,6 +2968,88 @@ function _frac_literal(f::FractionalNoise)
 end
 
 """
+    shell_save_targets(path, rows) -> String
+    shell_load_targets(path) -> String
+
+The Observing panel's target list as a CSV file, one target per row: `name, ra, dec, V, J, H,
+K, simbad`, coordinates in decimal degrees, an empty magnitude for one not known, `simbad` `1`
+for a row whose values are SIMBAD's. `rows` and the result are the panel's own form, one target
+per line with the same fields tab-separated. A file of names alone, one per line, loads as
+unresolved targets. Each returns `""` or a message beginning with `!`, the loader its rows.
+"""
+function shell_save_targets(path::AbstractString, rows::AbstractString)
+    sh = SHELL[]
+    p = String(strip(strip_file_url(String(path))))
+    isempty(p) && return "! no file name"
+    endswith(lowercase(p), ".csv") || (p *= ".csv")
+    q(x) = occursin(r"[\",]", x) ? "\"" * replace(x, "\"" => "\"\"") * "\"" : x
+    try
+        open(p, "w") do io
+            println(io, "name,ra,dec,V,J,H,K,simbad")
+            for line in split(String(rows), '\n'; keepempty = false)
+                f = split(line, '\t')
+                length(f) >= 8 || continue
+                println(io, join([q(String(f[1])); String.(f[2:8])], ","))
+            end
+        end
+    catch err
+        return "! could not write " * p * ": " * _cause(err)
+    end
+    sh === nothing || console!(sh, "wrote the target list to " * p)
+    return ""
+end
+
+function shell_load_targets(path::AbstractString)
+    p = String(strip(strip_file_url(String(path))))
+    lines = try
+        readlines(p)
+    catch err
+        return "! could not read " * p * ": " * _cause(err)
+    end
+    # One CSV field list, honouring double quotes.
+    function fields(l)
+        out = String[]; buf = IOBuffer(); inq = false; i = firstindex(l)
+        while i <= lastindex(l)
+            c = l[i]
+            if inq
+                if c == '"' && nextind(l, i) <= lastindex(l) && l[nextind(l, i)] == '"'
+                    write(buf, '"'); i = nextind(l, i)
+                elseif c == '"'
+                    inq = false
+                else
+                    write(buf, c)
+                end
+            elseif c == '"'
+                inq = true
+            elseif c == ','
+                push!(out, String(take!(buf)))
+            else
+                write(buf, c)
+            end
+            i = nextind(l, i)
+        end
+        push!(out, String(take!(buf)))
+        return strip.(out)
+    end
+    rows = String[]
+    for l in lines
+        s = strip(l)
+        (isempty(s) || startswith(s, "#")) && continue
+        f = fields(s)
+        lowercase(f[1]) == "name" && continue            # the header
+        num(i) = i <= length(f) && tryparse(Float64, f[i]) !== nothing ? f[i] : ""
+        ra, dec = num(2), num(3)
+        simbad = length(f) >= 8 && f[8] == "1" && !isempty(ra) && !isempty(dec) ? "1" : "0"
+        push!(rows, join((f[1], isempty(ra) ? "0" : ra, isempty(dec) ? "0" : dec,
+                          num(4), num(5), num(6), num(7), simbad), "\t"))
+    end
+    isempty(rows) && return "! no targets in " * p
+    sh = SHELL[]
+    sh === nothing || console!(sh, "read $(length(rows)) targets from " * p)
+    return join(rows, "\n")
+end
+
+"""
     shell_simbad(name) -> String
 
 Resolve one target: `"ok\tra\tdec\tV\tJ\tH\tK\tmain_id\tsptype"`, or `"bad\t<why>"`.
@@ -5371,7 +5453,7 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
                      pops::AbstractString, use_delay::Bool, detailed::Bool,
                      alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
                      time_system::AbstractString = "lst", plan_text::AbstractString = "",
-                     change_minutes::Real = 10, top_n::Integer = 0)
+                     change_minutes::Real = 10, stack_mode::AbstractString = "")
     sh = _shell()
     date = try
         DateTime(String(dateiso))
@@ -5398,24 +5480,27 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
     tsys = Symbol(lowercase(String(time_system)))
     tsys in (:lst, :utc, :local) || (tsys = :lst)
     GANTT_TIME_SYSTEM[] = tsys
-    # The best `top_n` single POP settings, one row each, in the summary view; `p` becomes the
-    # best of them, which the delay chart shows. The detailed view shows `p` as given.
+    # With `stack_mode` "coverage", the single POP settings best over the earliest, middle and
+    # latest third of the observable hours, one row each, in the summary view. `p` becomes the
+    # first, which the delay chart shows; the detailed view shows `p` as given.
     GANTT_STACK[] = nothing
-    if top_n > 1 && use_delay && !detailed && isempty(strip(String(plan_text)))
-        stack = try
+    mode = String(stack_mode)
+    if mode == "coverage" && use_delay && !detailed && isempty(strip(String(plan_text)))
+        stack, labels = try
             f = read_facility_file(String(facility))
             ha, ok = _night_sky(f, ra, dec, date, cfg; alt_limit, alt_max)
-            res = any(ok) ? best_pops(f, Float64(dec), ha[ok], cfg; n = Int(top_n)) : []
-            console!(sh, "> best_pop(facility, $(round(Float64(dec); digits=4)), ha, $(cfg)) — top $(length(res))")
-            [night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
-                        config = cfg, pop = Int.(r.pop), use_delay = true,
-                        alt_limit = Float64(alt_limit), alt_max = Float64(alt_max)) for r in res]
+            res = any(ok) ? coverage_pops(f, Float64(dec), ha[ok], cfg) : []
+            console!(sh, "> coverage_pops(facility, $(round(Float64(dec); digits=4)), ha, $(cfg))")
+            ([night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
+                         config = cfg, pop = Int.(r.pop), use_delay = true,
+                         alt_limit = Float64(alt_limit), alt_max = Float64(alt_max)) for r in res],
+             [string(name, " ", r.part) for r in res])
         catch err
-            console!(sh, "! top POPs: " * _cause(err)); NightPlan[]
+            console!(sh, "! POP rows: " * _cause(err)); (NightPlan[], String[])
         end
         if !isempty(stack)
             p = first(stack)
-            GANTT_STACK[] = (stack, [string(name, " #", k) for k in eachindex(stack)])
+            GANTT_STACK[] = (stack, labels, "best time coverage POPs")
         end
     end
     if sh.gantt !== nothing
@@ -6016,8 +6101,8 @@ end
 shell_imaging_summary() =
     _shell().imaging === nothing ? "" : sprint(show, _shell().imaging)
 
-# The plans the Gantt shows as stacked rows (`top_n`), with their row labels; `nothing` when it
-# shows one plan.
+# The plans the Gantt shows as stacked rows (`stack_mode`), with their row labels and title;
+# `nothing` when it shows one plan.
 const GANTT_STACK = Ref{Any}(nothing)
 
 """

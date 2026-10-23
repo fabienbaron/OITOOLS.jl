@@ -17,6 +17,7 @@ function __init__()
                      shell_observables, shell_plot_kinds, shell_grouping_noun, shell_gantt_hover, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
                      shell_facilities, shell_telescopes, shell_telescope_order, shell_gantt, shell_best_pops, shell_pop_plans,
+                     shell_save_targets, shell_load_targets,
                      shell_shift_date, shell_sim_source, shell_simulate,
                      shell_model_image, shell_simbad, shell_ui_scale,
                      shell_fit_model, shell_fit_values, shell_fit_rows, shell_fit_correlation,

@@ -188,11 +188,39 @@ function build_gantt(fig, ax)
     ax.yticksvisible = false
     Makie.ylims!(ax, 0, 10)
 
-    return (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
-              softrects, gridsegs, midnightline, datepos, datetxt, transitpos,
-              switchsegs, segpos, segtxt, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
-              tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
-              legpos, legtxt, legcols)
+    # The rows' vertical extent, in chart units; the view is fitted round it (`_gantt_view!`).
+    yspan = Ref((0.0, 10.0))
+    g = (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
+           softrects, gridsegs, midnightline, datepos, datetxt, transitpos,
+           switchsegs, segpos, segtxt, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
+           tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
+           legpos, legtxt, legcols, yspan)
+    # A resized panel shows more or less around the same rows, at the same scale.
+    Makie.on(_ -> _gantt_view!(g), ax.scene.viewport)
+    return g
+end
+
+"""
+Pixels per chart unit, at plot scale 1. The chart keeps this scale whatever the panel's height,
+so a bar and the gaps between rows keep their size: a taller panel shows more space round the
+rows, not taller bars.
+"""
+const GANTT_PX_PER_UNIT = 60.0
+
+"The height things that span the chart -- bands, rules, lines -- are drawn to, either way of 0."
+const GANTT_FAR = 1.0e3
+
+# Fit the view round the rows at `GANTT_PX_PER_UNIT`, centred, or to the rows when they need more.
+function _gantt_view!(g)
+    lo, hi = g.yspan[]
+    vh = Float64(g.axis.scene.viewport[].widths[2])
+    h = vh > 0 ? max(hi - lo, vh / (GANTT_PX_PER_UNIT * live_plot_scale())) : hi - lo
+    c = (lo + hi) / 2
+    y0, y1 = c - h / 2, c + h / 2
+    Makie.ylims!(g.axis, y0, y1)
+    # The date the night turns over sits at the foot of the view.
+    isempty(g.datepos[]) || (g.datepos[] = [Makie.Point2f(first(g.datepos[])[1], y0 + 0.012 * (y1 - y0))])
+    return g
 end
 
 """
@@ -272,7 +300,7 @@ end
 function _gantt_rules!(g, xs, geo)
     segs = Makie.Point2f[]
     for x in xs
-        push!(segs, Makie.Point2f(x, 0), Makie.Point2f(x, geo.ymax))
+        push!(segs, Makie.Point2f(x, -GANTT_FAR), Makie.Point2f(x, GANTT_FAR))
     end
     g.gridsegs[] = segs
     return g
@@ -318,19 +346,20 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false,
 end
 
 """
-    update_gantt_stack!(g, plans, labels; time_system = :lst)
+    update_gantt_stack!(g, plans, labels[, title]; time_system = :lst)
 
 Draw several plans of one target as stacked rows, the first at the top
 (`gantt_stack_geometry`).
 """
-update_gantt_stack!(g, plans::AbstractVector{NightPlan}, labels; time_system::Symbol = :lst) =
-    _draw_gantt!(g, first(plans), gantt_stack_geometry(plans, labels; time_system); time_system)
+update_gantt_stack!(g, plans::AbstractVector{NightPlan}, labels, title...; time_system::Symbol = :lst) =
+    _draw_gantt!(g, first(plans), gantt_stack_geometry(plans, labels, title...; time_system); time_system)
 
 # Draw a geometry, `p` giving the night (date, clock) the axis is labelled from.
 function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
     _rect(b) = Makie.Rect2f(b.x0, b.y - b.height/2, max(b.x1 - b.x0, 1e-6), b.height)
 
-    g.bandrects[] = [_rect(b) for b in geo.bands]
+    # The twilight bands run the full height of whatever the view shows.
+    g.bandrects[] = [Makie.Rect2f(b.x0, -GANTT_FAR, max(b.x1 - b.x0, 1e-6), 2GANTT_FAR) for b in geo.bands]
     # Baselines colour by name through Explore's map, everything else by the named palette.
     # Built from the ROWS, not from the bars, so a baseline that is never in delay -- and so
     # draws no bar -- still consumes its colour and the others keep theirs.
@@ -344,7 +373,7 @@ function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
     g.bandcols[]  = [_gantt_color(b.color) for b in geo.bands]
     g.barrects[]  = [_rect(b) for b in geo.bars]
     g.softrects[] = [_rect(b) for b in geo.softbars]
-    g.switchsegs[] = reduce(vcat, ([Makie.Point2f(x, 0), Makie.Point2f(x, geo.ymax)]
+    g.switchsegs[] = reduce(vcat, ([Makie.Point2f(x, -GANTT_FAR), Makie.Point2f(x, GANTT_FAR)]
                                    for x in geo.switches); init = Makie.Point2f[])
     g.segpos[] = [Makie.Point2f(l[1], l[2]) for l in geo.seglabels]
     g.segtxt[] = Any[_segment_rich(l[3], l[4]) for l in geo.seglabels]
@@ -363,7 +392,7 @@ function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
     # `gantt_geometry` reports it outside the plotted hours: no line is the honest drawing of
     # "now is not on this chart", where a line at the edge would read as "now is right here".
     g.midline[]   = isfinite(geo.now) ?
-                    [Makie.Point2f(geo.now, 0), Makie.Point2f(geo.now, geo.ymax)] :
+                    [Makie.Point2f(geo.now, -GANTT_FAR), Makie.Point2f(geo.now, GANTT_FAR)] :
                     Makie.Point2f[]
 
     for (pick, pos, txt) in ((l -> l.kind === :time && l.side === :start, g.tspos, g.tstxt),
@@ -402,7 +431,7 @@ function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
     # Local midnight, and the date it turns over written just above the axis. `geo.midnight` is
     # on the same LST axis as everything else, so nothing needs converting to place it.
     g.midnightline[] = geo.xlim[1] <= geo.midnight <= geo.xlim[2] ?
-                       [Makie.Point2f(geo.midnight, 0), Makie.Point2f(geo.midnight, geo.ymax)] :
+                       [Makie.Point2f(geo.midnight, -GANTT_FAR), Makie.Point2f(geo.midnight, GANTT_FAR)] :
                        Makie.Point2f[]
     if geo.xlim[1] <= geo.midnight <= geo.xlim[2]
         d0 = Dates.Date(p.date)
@@ -418,7 +447,11 @@ function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
 
     gantt_time_axis!(g, p, geo; system = time_system)
     Makie.xlims!(g.axis, geo.xlim[1], geo.xlim[2])
-    Makie.ylims!(g.axis, 0, geo.ymax)
+    # The rows' extent: the detailed view's whole height, a summary's rows with their labels.
+    g.yspan[] = geo.detailed ? (0.0, Float64(geo.ymax)) :
+                (minimum(r[1] for r in geo.rows) - TARGET_BAR_HEIGHT / 2 - 0.35,
+                 maximum(r[1] for r in geo.rows) + TARGET_BAR_HEIGHT / 2 + 0.55)
+    _gantt_view!(g)
     return g
 end
 

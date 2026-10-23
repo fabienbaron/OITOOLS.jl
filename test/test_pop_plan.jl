@@ -26,7 +26,7 @@ using OITOOLS, Test, Dates
     end
 
     vega = (279.2347, 38.7837, DateTime(2026, 6, 21))
-    hd217357 = (15 * (23 + 16.1 / 3600), -(22 + 51 / 60 + 33 / 3600), DateTime(2026, 10, 26))
+    hd217357 = (345.067176, -22.524347, DateTime(2026, 10, 26))    # SIMBAD
 
     @testset "one setting is best_pop's best" begin
         o, ok = sky(vega...)
@@ -78,14 +78,14 @@ using OITOOLS, Test, Dates
 
     @testset "HD 217357 from CHARA on 2026-10-26" begin
         # Nothing with all six telescopes while it is above the horizon; without E1 the whole
-        # 70 minutes.
+        # 72 minutes.
         o, ok = sky(hd217357...)
         dec = hd217357[2]
         p6 = pop_plan(f, dec, o.ha, ones(Int, 6); observable = ok, max_changes = 2)
         @test isempty(p6.segments)
         cfg = [1, 1, 1, 1, 1, 2]                       # W2 the reference
         p = pop_plan(f, dec, o.ha, cfg; observable = ok, max_changes = 2, max_drop = 1)
-        @test p.minutes == (0, 70, 0, 0, 0)
+        @test p.minutes == (0, 72, 0, 0, 0)
         @test length(p.segments) == 1 && p.changes == 0
         @test p.segments[1].config == [1, 1, 0, 1, 1, 2]
         @test segments_in_delay(p, dec, cfg)
@@ -93,7 +93,7 @@ using OITOOLS, Test, Dates
         # and the minutes count as the reference's
         pr = pop_plan(f, dec, o.ha, [1, 1, 2, 1, 1, 1]; observable = ok, max_changes = 2,
                       max_drop = 1)
-        @test pr.minutes == (0, 0, 70, 0, 0)
+        @test pr.minutes == (0, 0, 72, 0, 0)
         # and another kept telescope is the delay reference for that segment
         @test pr.segments[1].config[3] == 0 && count(==(2), pr.segments[1].config) == 1
         @test segments_in_delay(pr, dec, [1, 1, 2, 1, 1, 1])
@@ -122,6 +122,35 @@ using OITOOLS, Test, Dates
         end
         @test ps[end].minutes == pop_plan(f, vega[2], o.ha, ones(Int, 6); observable = ok,
                                           max_changes = 2, max_drop = 1).minutes
+    end
+
+    @testset "no POP is moved that did not have to be" begin
+        # At each change, putting any one moved telescope back on its previous POP takes some
+        # baseline out of delay while the new setting is in force -- over every segment that
+        # keeps it, not only the first: otherwise the move was unnecessary.
+        cases = (vega, (279.2347, 38.7837, DateTime(2027, 6, 23)),
+                 (213.9153, 19.1824, DateTime(2026, 4, 15)), (310.358, 45.2803, DateTime(2026, 8, 20)))
+        for t in cases, cfg in (ones(Int, 6), [1, 1, 1, 1, 1, 2]), kd in (0, 1)
+            o, ok = sky(t...)
+            p = pop_plan(f, t[2], o.ha, cfg; observable = ok, max_changes = 3, max_drop = kd)
+            for k in 2:length(p.segments)
+                a, b = p.segments[k-1], p.segments[k]
+                a.pop == b.pop && continue
+                blk = [sg for sg in p.segments[k:end]]
+                j = findfirst(sg -> sg.pop != b.pop, blk)
+                j === nothing || (blk = blk[1:j-1])
+                for i in findall(>(0), cfg)
+                    a.pop[i] == b.pop[i] && continue
+                    q = copy(b.pop); q[i] = a.pop[i]
+                    fits = all(blk) do sg
+                        hs = Float32.(collect(sg.ha0:1/60:sg.ha1))
+                        r = in_delay(f, Float64(t[2]), hs, sg.config, q; beam_order = findall(>(0), cfg))
+                        length(r.good_delay) == length(hs)
+                    end
+                    @test !fits
+                end
+            end
+        end
     end
 
     @testset "degenerate input" begin
