@@ -768,7 +768,7 @@ function plot_v2_multifile_makie(datasets::AbstractVector; logscale::Bool = fals
         Makie.scatter!(ax, x, y; color = c, marker = OIPLOT_MARKER, markersize = markersize)
     end
     style_axis!(ax; scale)
-    ax.xlabel = "Baseline (Mλ)"
+    ax.xlabel = "Spatial frequency (Mλ)"
     ax.ylabel = "V²"
     ax.title  = string(length(datasets), " files")
     # Across every file: one axis, so the limits have to cover all of them.

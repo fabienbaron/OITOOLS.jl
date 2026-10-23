@@ -24,6 +24,12 @@ const GANTT_COLORS = Dict(
     "gray"         => Makie.RGBAf(0.502, 0.502, 0.502, 0.75),
     "orange"       => Makie.RGBAf(1.000, 0.647, 0.000, 1.0),
     "mediumpurple" => Makie.RGBAf(0.576, 0.439, 0.859, 1.0),
+    "sienna"       => Makie.RGBAf(0.627, 0.322, 0.176, 1.0),
+    # a multi-POP plan: segments with a telescope dropped, and the POPs row
+    "dodgerblue"     => Makie.RGBAf(0.118, 0.565, 1.000, 1.0),
+    "yellowgreen"    => Makie.RGBAf(0.604, 0.804, 0.196, 1.0),
+    "lightsteelblue" => Makie.RGBAf(0.690, 0.769, 0.871, 1.0),
+    "lightblue"      => Makie.RGBAf(0.678, 0.847, 0.902, 1.0),
     "blue"         => Makie.RGBAf(0.000, 0.000, 1.000, 1.0),
     "green"        => Makie.RGBAf(0.000, 0.502, 0.000, 1.0),
 )
@@ -76,6 +82,14 @@ function build_gantt(fig, ax)
     midnightline = Makie.Observable(Makie.Point2f[])
     datepos      = Makie.Observable(Makie.Point2f[]); datetxt = Makie.Observable(String[])
     transitpos   = Makie.Observable(Makie.Point2f[])
+    # A multi-POP plan: a line through every row at each POP change, the segment labels, and the
+    # POPs where each setting starts. "EL" marks the stretches above the soft elevation limit.
+    switchsegs   = Makie.Observable(Makie.Point2f[])
+    segpos       = Makie.Observable(Makie.Point2f[]); segtxt = Makie.Observable(Any[])
+    poppos       = Makie.Observable(Makie.Point2f[]); poptxt = Makie.Observable(Any[])
+    elpos        = Makie.Observable(Makie.Point2f[]); eltxt  = Makie.Observable(String[])
+    markpos      = Makie.Observable(Makie.Point2f[]); marktxt = Makie.Observable(String[])
+    markepos     = Makie.Observable(Makie.Point2f[]); marketxt = Makie.Observable(String[])
 
     # Bands first, then the time rules, then bars, then text.
     #
@@ -93,9 +107,12 @@ function build_gantt(fig, ax)
     # it work for every baseline colour in the detailed view.
     Makie.poly!(ax, softrects; color = (:white, 0.55), strokewidth = 1.1,
                 strokecolor = :black, linestyle = :dash)
+    Makie.linesegments!(ax, switchsegs; color = (:black, 0.6), linewidth = 1.0,
+                        linestyle = :dash)
     Makie.lines!(ax, midline; color = :red, linewidth = 1.5)
     # Local midnight, under the bars rather than over them: it is a reference, not a datum.
-    Makie.lines!(ax, midnightline; color = :black, linewidth = 1.2)
+    Makie.lines!(ax, midnightline; color = Makie.RGBAf(0.0, 0.39, 0.0, 1.0), linewidth = 1.2,
+                 linestyle = :dash)
     # The culmination, which is the one instant on the row an observer aims for.
     Makie.scatter!(ax, transitpos; color = :yellow, marker = :diamond, markersize = 11,
                    strokewidth = 0.8, strokecolor = :black)
@@ -103,32 +120,44 @@ function build_gantt(fig, ax)
     sc = live_plot_scale()
     fs = Float32(9 * sc)                            # the legend
     afs = Float32(GANTT_ANNOTATION_PT * sc)         # the numbers around each bar
+    nfs = Float32((GANTT_ANNOTATION_PT - 1) * sc)   # their az and elevation, a size smaller
     # Times are rotated to vertical, as in the original: at one-minute resolution the starts
     # and ends of adjacent blocks would otherwise overprint each other.
-    # Nudged outward in SCREEN pixels, not in data: the anchor stays the true bar end, which is
-    # what the geometry says, while the glyphs sit clear of the bar and of the az/alt numbers —
-    # the placement `ha="right"`/`ha="left"` gives in the original. A data-space offset would
-    # move with the zoom and stop meaning the same thing.
-    Makie.text!(ax, tspos; text = tstxt, rotation = Float32(π/2),
-                align = (:center, :center), offset = (-0.75afs, 0), fontsize = afs)
-    Makie.text!(ax, tepos; text = tetxt, rotation = Float32(π/2),
+    # Nudged INTO the bar in screen pixels, not in data: the anchor stays the true bar end, which
+    # is what the geometry says, and a data-space offset would move with the zoom. Inside rather
+    # than outside, so the end of one block and the start of the next do not overprint across a
+    # 10-minute POP change.
+    Makie.text!(ax, tspos; text = tstxt, rotation = Float32(π/2), color = :white,
                 align = (:center, :center), offset = (0.75afs, 0), fontsize = afs)
+    Makie.text!(ax, tepos; text = tetxt, rotation = Float32(π/2), color = :white,
+                align = (:center, :center), offset = (-0.75afs, 0), fontsize = afs)
     # The numbers read INWARD: the start pair begins at the bar's left edge and the end pair
     # finishes at its right one, so each stays over the bar it describes. Outward, as they were,
     # two runs a few minutes apart wrote their numbers over each other in the gap between them.
     Makie.text!(ax, azspos;  text = azstxt,  align = (:left,  :bottom),
-                offset = (0.2afs, 0),  fontsize = afs)
+                offset = (0.2afs, 0),  fontsize = nfs)
     Makie.text!(ax, azepos;  text = azetxt,  align = (:right, :bottom),
-                offset = (-0.2afs, 0), fontsize = afs)
+                offset = (-0.2afs, 0), fontsize = nfs)
     Makie.text!(ax, altspos; text = altstxt, align = (:left,  :top),
-                offset = (0.2afs, 0),  fontsize = afs)
+                offset = (0.2afs, 0),  fontsize = nfs)
     Makie.text!(ax, altepos; text = altetxt, align = (:right, :top),
-                offset = (-0.2afs, 0), fontsize = afs)
+                offset = (-0.2afs, 0), fontsize = nfs)
 
     # The date the night turns over, set just above the axis at midnight: a Gantt that crosses
     # into the next day otherwise gives no clue which day a morning hour belongs to.
     Makie.text!(ax, datepos; text = datetxt, align = (:center, :bottom), fontsize = afs,
                 color = :black)
+    Makie.text!(ax, segpos; text = segtxt, align = (:center, :center), fontsize = fs,
+                color = :black)
+    Makie.text!(ax, poppos; text = poptxt, align = (:left, :center), fontsize = fs,
+                color = :black)
+    Makie.text!(ax, elpos; text = eltxt, rotation = Float32(π/2), align = (:center, :center),
+                fontsize = fs, color = GANTT_MARK_COLOR)
+    # "POP" just after where a change starts, "DROP" just before a telescope is lost.
+    Makie.text!(ax, markpos; text = marktxt, rotation = Float32(π/2), align = (:center, :center),
+                offset = (0.75afs, 0), fontsize = afs, color = GANTT_MARK_COLOR)
+    Makie.text!(ax, markepos; text = marketxt, rotation = Float32(π/2), align = (:center, :center),
+                offset = (-0.75afs, 0), fontsize = afs, color = GANTT_MARK_COLOR)
 
     # A hand-drawn legend, for the reason build_canvas has one: a Makie Legend fixes its entry
     # count at construction, and this chart's varies with which constraints apply.
@@ -161,6 +190,7 @@ function build_gantt(fig, ax)
 
     return (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
               softrects, gridsegs, midnightline, datepos, datetxt, transitpos,
+              switchsegs, segpos, segtxt, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
               tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
               legpos, legtxt, legcols)
 end
@@ -254,6 +284,29 @@ function _gantt_hhmm(h)
     return string(lpad(div(m, 60) % 24, 2, '0'), ":", lpad(mod(m, 60), 2, '0'))
 end
 
+# A segment's POPs with those that changed from the previous setting in dark red (`changed` is
+# `segment_changes`, one entry per POP printed), or a transition label with the telescopes lost
+# ("−W2") in dark red and regained ("+E1") in dark green.
+const GANTT_CHANGE_COLOR = Makie.RGBAf(0.55, 0.0, 0.0, 1.0)
+const GANTT_REGAIN_COLOR = Makie.RGBAf(0.0, 0.39, 0.0, 1.0)
+# "EL", "POP" and the time a telescope is lost, written vertically inside the bar.
+const GANTT_MARK_COLOR = Makie.RGBAf(1.0, 0.55, 0.0, 1.0)
+function _segment_rich(t::AbstractString, changed::AbstractVector{Bool})
+    drop, pops = startswith(t, "−") || startswith(t, "+") ? (t, "") : ("", t)
+    parts = Any[]
+    for (j, w) in enumerate(split(drop))
+        j > 1 && push!(parts, " ")
+        push!(parts, Makie.rich(String(w); color = startswith(w, "+") ? GANTT_REGAIN_COLOR :
+                                                                         GANTT_CHANGE_COLOR))
+    end
+    for (j, v) in enumerate(split(pops))
+        j > 1 && push!(parts, " ")
+        push!(parts, j <= length(changed) && changed[j] ?
+                     Makie.rich(String(v); color = GANTT_CHANGE_COLOR) : String(v))
+    end
+    return Makie.rich(parts...)
+end
+
 """
     update_gantt!(g, plan; detailed = false, time_system = :lst)
 
@@ -261,8 +314,20 @@ Draw one night. Allocates only the vectors handed to the Observables.
 """
 function update_gantt!(g, p::NightPlan; detailed::Bool = false,
                        time_system::Symbol = :lst)
-    geo = gantt_geometry(p; detailed, time_system)
+    return _draw_gantt!(g, p, gantt_geometry(p; detailed, time_system); time_system)
+end
 
+"""
+    update_gantt_stack!(g, plans, labels; time_system = :lst)
+
+Draw several plans of one target as stacked rows, the first at the top
+(`gantt_stack_geometry`).
+"""
+update_gantt_stack!(g, plans::AbstractVector{NightPlan}, labels; time_system::Symbol = :lst) =
+    _draw_gantt!(g, first(plans), gantt_stack_geometry(plans, labels; time_system); time_system)
+
+# Draw a geometry, `p` giving the night (date, clock) the axis is labelled from.
+function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
     _rect(b) = Makie.Rect2f(b.x0, b.y - b.height/2, max(b.x1 - b.x0, 1e-6), b.height)
 
     g.bandrects[] = [_rect(b) for b in geo.bands]
@@ -279,6 +344,20 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false,
     g.bandcols[]  = [_gantt_color(b.color) for b in geo.bands]
     g.barrects[]  = [_rect(b) for b in geo.bars]
     g.softrects[] = [_rect(b) for b in geo.softbars]
+    g.switchsegs[] = reduce(vcat, ([Makie.Point2f(x, 0), Makie.Point2f(x, geo.ymax)]
+                                   for x in geo.switches); init = Makie.Point2f[])
+    g.segpos[] = [Makie.Point2f(l[1], l[2]) for l in geo.seglabels]
+    g.segtxt[] = Any[_segment_rich(l[3], l[4]) for l in geo.seglabels]
+    g.poppos[] = [Makie.Point2f(l[1], l[2]) for l in geo.poplabels]
+    g.poptxt[] = Any[l[5] ? Makie.rich(Makie.rich("→ "; color = GANTT_CHANGE_COLOR),
+                                       _segment_rich(l[3], l[4])) :
+                            _segment_rich(l[3], l[4]) for l in geo.poplabels]
+    g.markpos[]  = [Makie.Point2f(m[1], m[4]) for m in geo.marks if m[3] === :start]
+    g.marktxt[]  = [m[2] for m in geo.marks if m[3] === :start]
+    g.markepos[] = [Makie.Point2f(m[1], m[4]) for m in geo.marks if m[3] === :end]
+    g.marketxt[] = [m[2] for m in geo.marks if m[3] === :end]
+    g.elpos[]  = [Makie.Point2f(x, y) for (x, y) in geo.ellabels]
+    g.eltxt[]  = fill("EL", length(geo.ellabels))
     g.barcols[]   = [barcol(b) for b in geo.bars]
     # The clock at the facility as the night was worked out, not local midnight. Empty when
     # `gantt_geometry` reports it outside the plotted hours: no line is the honest drawing of
@@ -316,7 +395,7 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false,
     # shows. "delay lines not checked" is the honest label when they were not applied.
     g.axis.title = isempty(geo.subtitle) ?
                    (geo.delay_applied ? "" : "delay lines not checked") :
-                   "POPs   " * geo.subtitle
+                   (geo.multi || geo.stack) ? geo.subtitle : "POPs   " * geo.subtitle
 
     g.axis.yticks = ([r[1] for r in geo.rows], [r[2] for r in geo.rows])
 
@@ -334,9 +413,8 @@ function update_gantt!(g, p::NightPlan; detailed::Bool = false,
         g.datepos[] = Makie.Point2f[]; g.datetxt[] = String[]
     end
 
-    # The culmination, on the row the target occupies. y = 2 is that row, as `build_gantt` says.
-    g.transitpos[] = isfinite(geo.transit) ?
-                     [Makie.Point2f(geo.transit, 2.0)] : Makie.Point2f[]
+    # The culmination, on each row the target occupies.
+    g.transitpos[] = [Makie.Point2f(x, y) for (x, y) in geo.transits]
 
     gantt_time_axis!(g, p, geo; system = time_system)
     Makie.xlims!(g.axis, geo.xlim[1], geo.xlim[2])
@@ -392,6 +470,9 @@ function build_delay_plot(fig, ax)
 
     limitpts = Makie.Observable(Makie.Point2f[])
     Makie.lines!(ax, limitpts; color = (:gray, 0.6), linestyle = :dash, linewidth = 1.5)
+    # A multi-POP plan's changes, as on the Gantt.
+    switchpts = Makie.Observable(Makie.Point2f[])
+    Makie.linesegments!(ax, switchpts; color = (:black, 0.6), linewidth = 1.0, linestyle = :dash)
 
     # The altitude axis: same cell, ticks on the right, x linked so the two never drift apart.
     ax2 = Makie.Axis(fig[1, 1]; yaxisposition = :right, ylabel = "altitude (°)",
@@ -416,7 +497,7 @@ function build_delay_plot(fig, ax)
     ax.xlabel = "LST (h)"
     ax.ylabel = "delay cart position (m)"
     return (; figure = fig, axis = ax, altaxis = ax2, curves, lines, limitpts, altpts, ellim,
-              legpos, legtxt, legcol)
+              legpos, legtxt, legcol, switchpts)
 end
 
 """
@@ -444,8 +525,10 @@ function update_delay_plot!(d, p::NightPlan)
                     Makie.Point2f(NaN, NaN),
                     Makie.Point2f(x0, -geo.limit), Makie.Point2f(x1, -geo.limit)]
 
-    # Altitude in DEGREES on its own axis, so the dotted curve can actually be read off.
     lo, hi = geo.ylim
+    d.switchpts[] = reduce(vcat, ([Makie.Point2f(x, lo), Makie.Point2f(x, hi)]
+                                  for x in geo.switches); init = Makie.Point2f[])
+    # Altitude in DEGREES on its own axis, so the dotted curve can actually be read off.
     d.altpts[] = [Makie.Point2f(geo.alt.x[k], geo.alt.y[k]) for k in eachindex(geo.alt.x)]
     d.ellim[]  = [Makie.Point2f(x0, geo.alt_limit), Makie.Point2f(x1, geo.alt_limit)]
     Makie.ylims!(d.altaxis, geo.altlim[1], geo.altlim[2])

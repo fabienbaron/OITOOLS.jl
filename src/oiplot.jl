@@ -681,11 +681,11 @@ end
 
 # Residual plot spec: maps observable name to data/model fields and labels
 const _RES_SPECS = (
-    v2     = (y=:v2,     yerr=:v2_err,     x=:v2_baseline,     lam=:v2_lam,  mjd=:v2_mjd,  sta=:v2_sta_index, grp=:baseline, label="V²",      xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
-    t3amp  = (y=:t3amp,  yerr=:t3amp_err,  x=:t3_maxbaseline,  lam=:t3_lam,  mjd=:t3_mjd,  sta=:t3_sta_index, grp=:triplet,  label="T3amp",   xlabel=L"Max baseline (M$\lambda$)", phase=false, logplot_ok=true),
-    t3phi  = (y=:t3phi,  yerr=:t3phi_err,  x=:t3_maxbaseline,  lam=:t3_lam,  mjd=:t3_mjd,  sta=:t3_sta_index, grp=:triplet,  label="T3φ (°)", xlabel=L"Max baseline (M$\lambda$)", phase=true,  logplot_ok=false),
-    visamp = (y=:visamp, yerr=:visamp_err, x=:vis_baseline,    lam=:vis_lam, mjd=:vis_mjd, sta=:vis_sta_index,grp=:baseline, label="Visamp",  xlabel=L"Baseline (M$\lambda$)",     phase=false, logplot_ok=true),
-    visphi = (y=:visphi, yerr=:visphi_err, x=:vis_baseline,    lam=:vis_lam, mjd=:vis_mjd, sta=:vis_sta_index,grp=:baseline, label="Visφ (°)", xlabel=L"Baseline (M$\lambda$)",   phase=true,  logplot_ok=false),
+    v2     = (y=:v2,     yerr=:v2_err,     x=:v2_baseline,     lam=:v2_lam,  mjd=:v2_mjd,  sta=:v2_sta_index, grp=:baseline, label="V²",      xlabel=L"Spatial frequency (M$\lambda$)",     phase=false, logplot_ok=true),
+    t3amp  = (y=:t3amp,  yerr=:t3amp_err,  x=:t3_maxbaseline,  lam=:t3_lam,  mjd=:t3_mjd,  sta=:t3_sta_index, grp=:triplet,  label="T3amp",   xlabel=L"Max. spatial frequency (M$\lambda$)", phase=false, logplot_ok=true),
+    t3phi  = (y=:t3phi,  yerr=:t3phi_err,  x=:t3_maxbaseline,  lam=:t3_lam,  mjd=:t3_mjd,  sta=:t3_sta_index, grp=:triplet,  label="T3φ (°)", xlabel=L"Max. spatial frequency (M$\lambda$)", phase=true,  logplot_ok=false),
+    visamp = (y=:visamp, yerr=:visamp_err, x=:vis_baseline,    lam=:vis_lam, mjd=:vis_mjd, sta=:vis_sta_index,grp=:baseline, label="Visamp",  xlabel=L"Spatial frequency (M$\lambda$)",     phase=false, logplot_ok=true),
+    visphi = (y=:visphi, yerr=:visphi_err, x=:vis_baseline,    lam=:vis_lam, mjd=:vis_mjd, sta=:vis_sta_index,grp=:baseline, label="Visφ (°)", xlabel=L"Spatial frequency (M$\lambda$)",   phase=true,  logplot_ok=false),
 )
 
 function _adaptive_marker(npts)
@@ -1057,7 +1057,7 @@ Plot visibility phases (degrees). The layout is chosen automatically from the
 
 - **differential** (`phityp` is `"differential"`, matched case-insensitively) — one subplot per baseline with
   wavelength (nm) on the x-axis.
-- **absolute** (default) — single panel with baseline (Mλ) on the x-axis, coloured
+- **absolute** (default) — single panel with spatial frequency (Mλ) on the x-axis, coloured
   by baseline, wavelength, or MJD.
 
 Accepts a single `OIdata`, vector, or 2-D array.

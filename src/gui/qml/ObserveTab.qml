@@ -36,6 +36,9 @@ Item {
     property var    facilities: ["CHARA"]
     property string facility: "CHARA"
     property var    telescopeNames: []
+    // Indices into telescopeNames in the order the panel lists them (the facility's
+    // `display_order`). POP strings and telescopeConfig stay in telescopeNames' order.
+    property var    displayOrder: []
     // 0 = unused, 1 = used, 2 = reference — the encoding get_baselines() reads, so this vector
     // goes to best_pop / in_delay / simulate untranslated.
     property var    telescopeConfig: []
@@ -179,8 +182,8 @@ Item {
     }
     readonly property var selectedTelescopes: {
         var out = []
-        for (var i = 0; i < telescopeConfig.length; ++i)
-            if (telescopeConfig[i] > 0) out.push(telescopeNames[i])
+        for (var k = 0; k < displayOrder.length; ++k)
+            if (telescopeConfig[displayOrder[k]] > 0) out.push(telescopeNames[displayOrder[k]])
         return out
     }
     readonly property int nNamedTargets: {
@@ -239,6 +242,11 @@ Item {
     function selectFacility(f) {
         root.facility = f
         root.telescopeNames = telescopesFor(f)
+        var shown = Julia.shell_telescope_order(f).split("\n")
+        var ord = shown.map(function (n) { return root.telescopeNames.indexOf(n) })
+        if (ord.length !== root.telescopeNames.length || ord.indexOf(-1) >= 0)
+            ord = root.telescopeNames.map(function (_, i) { return i })
+        root.displayOrder = ord
         var cfg = []
         for (var i = 0; i < root.telescopeNames.length; ++i) cfg.push(1)
         root.telescopeConfig = cfg
@@ -279,9 +287,11 @@ Item {
 
     function configString() {
         var parts = []
-        for (var i = 0; i < root.telescopeConfig.length; ++i)
+        for (var k = 0; k < root.displayOrder.length; ++k) {
+            var i = root.displayOrder[k]
             if (root.telescopeConfig[i] > 0)
                 parts.push(root.telescopeNames[i] + (root.telescopeConfig[i] === 2 ? "*" : ""))
+        }
         return parts.length > 0 ? parts.join(" ") : "none"
     }
 
@@ -782,7 +792,7 @@ Item {
                                     spacing: dp(6)
                                     Repeater {
                                         id: telescopeRepeater
-                                        model: root.telescopeNames
+                                        model: root.displayOrder
                                         // The star is its own label, always present, and merely
                                         // invisible when this telescope is not the reference.
                                         // Appended to the checkbox's text it widened that one box
@@ -790,24 +800,23 @@ Item {
                                         // telescope onto a second row -- the layout changing shape
                                         // as a side effect of an unrelated choice.
                                         delegate: RowLayout {
-                                            required property int index
-                                            required property string modelData
+                                            required property int modelData    // the telescope's index
                                             spacing: 0
                                             CheckBox {
-                                                text: parent.modelData
+                                                text: root.telescopeNames[parent.modelData]
                                                 // Tight: six of these plus their stars have to
                                                 // sit on one row, and a Controls checkbox spends
                                                 // most of its default width on padding.
                                                 padding: 0
                                                 spacing: dp(3)
-                                                checked: root.telescopeConfig[parent.index] > 0
-                                                onToggled: root.setTelescopeUsed(parent.index, checked)
+                                                checked: root.telescopeConfig[parent.modelData] > 0
+                                                onToggled: root.setTelescopeUsed(parent.modelData, checked)
                                             }
                                             Label {
                                                 text: "★"
                                                 color: "#666"
                                                 font.pointSize: pt(baseFontPt - 3)
-                                                opacity: root.telescopeConfig[parent.index] === 2 ? 1 : 0
+                                                opacity: root.telescopeConfig[parent.modelData] === 2 ? 1 : 0
                                             }
                                         }
                                     }
@@ -861,6 +870,55 @@ Item {
                                     }
                                 }
 
+                                // How AutoPOPs and Search POPs search: one setting, or a plan of
+                                // several, which may drop telescopes.
+                                ComboBox {
+                                    objectName: "popStrategy"
+                                    Layout.fillWidth: true
+                                    implicitHeight: Math.max(dp(26), implicitContentHeight + topPadding + bottomPadding)
+                                    model: ["Single POPs", "Multiple POPs", "Multiple POPs + drop",
+                                            "Top 3 single POPs"]
+                                    currentIndex: root.popStrategy
+                                    onActivated: function (index) {
+                                        root.popStrategy = index
+                                        if (root.hasPlan && root.autoPops) root.computePlan()
+                                    }
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: "how POPs are searched"
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: !root.singlePops
+                                    spacing: dp(4)
+                                    Label { text: "changes ≤"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    SpinBox {
+                                        objectName: "popMaxChanges"
+                                        Layout.preferredWidth: dp(78)
+                                        from: 1; to: 5; value: root.maxChanges; editable: true
+                                        onValueModified: { root.maxChanges = value; if (root.hasPlan && root.autoPops) root.computePlan() }
+                                    }
+                                    Label { text: "drop ≤"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                            visible: root.popStrategy === 2 }
+                                    SpinBox {
+                                        objectName: "popMaxDrop"
+                                        Layout.preferredWidth: dp(70)
+                                        visible: root.popStrategy === 2
+                                        from: 1; to: 2; value: root.maxDrop; editable: true
+                                        onValueModified: { root.maxDrop = value; if (root.hasPlan && root.autoPops) root.computePlan() }
+                                    }
+                                    Label { text: "change"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    SpinBox {
+                                        objectName: "popChangeMinutes"
+                                        Layout.preferredWidth: dp(78)
+                                        from: 0; to: 60; value: root.changeMinutes; editable: true
+                                        onValueModified: { root.changeMinutes = value; if (root.hasPlan && root.autoPops) root.computePlan() }
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "minutes per POP change"
+                                    }
+                                    Label { text: "min"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                    Item { Layout.fillWidth: true }
+                                }
+
                                 // One dropdown per telescope, labelled with the telescope. CHARA has five
                                 // POPs; the number IS the beam path, so a free text box invites 0 and 9.
                                 //
@@ -885,16 +943,16 @@ Item {
                                     columnSpacing: dp(6)
                                     rowSpacing: dp(4)
                                     Repeater {
-                                        model: root.telescopeNames
+                                        model: root.displayOrder
                                         delegate: RowLayout {
-                                            required property int index
-                                            required property string modelData
+                                            id: popCell
+                                            required property int modelData    // the telescope's index
                                             Layout.fillWidth: true
                                             spacing: dp(3)
                                             Label {
-                                                text: modelData
+                                                text: root.telescopeNames[popCell.modelData]
                                                 font.bold: true
-                                                color: root.telescopeConfig[index] > 0 ? "#222" : "#aaa"
+                                                color: root.telescopeConfig[popCell.modelData] > 0 ? "#222" : "#aaa"
                                             }
                                             ComboBox {
                                                 // Wide enough for one digit and the indicator,
@@ -905,12 +963,12 @@ Item {
                                                 model: ["1", "2", "3", "4", "5"]
                                                 // Output, not input, while AutoPOPs is on: the
                                                 // next Compute would overwrite anything set here.
-                                                enabled: root.telescopeConfig[index] > 0 && !root.autoPops
-                                                currentIndex: Math.max(0, root.popAt(index) - 1)
+                                                enabled: root.telescopeConfig[popCell.modelData] > 0 && !root.autoPops
+                                                currentIndex: Math.max(0, root.popAt(popCell.modelData) - 1)
                                                 // the telescope's row, captured: inside the
                                                 // handler `index` would be the entry activated
-                                                readonly property int telescopeRow: index
-                                                objectName: "pop:" + index
+                                                readonly property int telescopeRow: popCell.modelData
+                                                objectName: "pop:" + popCell.modelData
                                                 onActivated: root.setPop(telescopeRow, currentIndex + 1)
                                             }
                                             // Takes up the slack, so the label and its dropdown sit at the
@@ -932,9 +990,9 @@ Item {
                                         placeholderText: root.autoPops
                                             ? "set by AutoPOPs"
                                             : "paste six POP numbers, e.g. 1 3 3 4 1 1"
-                                        text: root.popString
+                                        text: root.toDisplayOrder(root.popString)
                                         font.family: "monospace"
-                                        onEditingFinished: root.setPopString(text)
+                                        onEditingFinished: root.setPopString(root.fromDisplayOrder(text))
                                     }
                                     Button {
                                         text: "Copy"
@@ -1349,7 +1407,13 @@ Item {
                                 spacing: dp(4)
                                 visible: root.detailed
                                 Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#ffa500"; border.color: "#999" }
-                                Label { text: "elevation"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                                Label { text: "Rise/Set"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
+                            }
+                            RowLayout {
+                                spacing: dp(4)
+                                visible: root.detailed
+                                Rectangle { implicitWidth: dp(10); implicitHeight: dp(10); radius: dp(2); color: "#a0522d"; border.color: "#999" }
+                                Label { text: "Horizon"; color: "#666"; font.pointSize: pt(baseFontPt - 3) }
                             }
                             RowLayout {
                                 spacing: dp(4)
@@ -1540,12 +1604,20 @@ Item {
                                 // The best result is adopted rather than merely listed: leaving
                                 // the user to copy it is how the searched POPs get forgotten and
                                 // the delay check reports a third of the real window.
-                                onClicked: { root.findPops(); root.statusText =
-                                             popModel.count > 0 ? "POPs " + root.popString
-                                                                : "no POP configuration found" }
+                                onClicked: {
+                                    if (root.singlePops) {
+                                        root.findPops(); root.statusText =
+                                            popModel.count > 0 ? "POPs " + root.toDisplayOrder(root.popString)
+                                                               : "no POP configuration found"
+                                    } else {
+                                        root.findPlans()
+                                        root.statusText = planModel.count + " plans for " + root.nNamedTargets + " targets"
+                                    }
+                                }
                             }
-                            Label { text: "n_best"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
-                            SpinBox { id: nBestBox; from: 1; to: 20; value: 5 }
+                            Label { text: "n_best"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: root.singlePops }
+                            SpinBox { id: nBestBox; from: 1; to: 20; value: 5; visible: root.singlePops }
                             Label { text: "min minutes"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                             SpinBox { id: minMinutesBox; from: 0; to: 600; value: 10; editable: true }
                             Item { Layout.fillWidth: true }
@@ -1588,6 +1660,7 @@ Item {
 
                                 RowLayout {
                                     Layout.fillWidth: true
+                                    visible: root.singlePops
                                     spacing: dp(6)
                                     Label { Layout.preferredWidth: root.popColIndex; text: "#"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
@@ -1598,7 +1671,7 @@ Item {
                                     Label { Layout.preferredWidth: root.popColPops
                                             elide: Text.ElideRight
                                             text: root.telescopeNames.length > 0
-                                                  ? "POPs  (" + root.telescopeNames.join(" ") + ")"
+                                                  ? "POPs  (" + root.displayOrder.map(function (i) { return root.telescopeNames[i] }).join(" ") + ")"
                                                   : "POPs"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.preferredWidth: root.popColScore; text: "score"
@@ -1614,6 +1687,7 @@ Item {
 
                                 ListView {
                                     id: popList
+                                    visible: root.singlePops
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     clip: true
@@ -1635,7 +1709,7 @@ Item {
                                                 text: popRow.index + 1
                                                 font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
                                         Label { Layout.preferredWidth: root.popColPops
-                                                text: popRow.pops
+                                                text: root.toDisplayOrder(popRow.pops)
                                                 font.family: "monospace"; font.pointSize: pt(baseFontPt - 1)
                                                 elide: Text.ElideRight
                                                 color: popRow.pops === root.popString ? "#1a7f37" : "#222"
@@ -1661,8 +1735,101 @@ Item {
 
                                 Label {
                                     Layout.fillWidth: true
-                                    visible: popModel.count === 0
+                                    visible: root.singlePops && popModel.count === 0
                                     text: "no POP search run yet"
+                                    color: "#aaa"
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                // The multi-POP strategies: every named target's plans, ranked
+                                // as the search ranks them (time with every telescope, then
+                                // with fewer, then the fewest changes). Use picks a target's
+                                // plan for its chart.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: !root.singlePops
+                                    spacing: dp(6)
+                                    Label { Layout.preferredWidth: root.planColTarget; text: "target"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.popColIndex; text: "#"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.fillWidth: true; elide: Text.ElideRight
+                                            text: root.telescopeNames.length > 0
+                                                  ? "plan  (" + root.displayOrder.map(function (i) { return root.telescopeNames[i] }).join(" ") + ")"
+                                                  : "plan"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.planColNum; text: "changes"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.planColNum; text: "dropped"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.planColHours; text: "h, all / total"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Item { Layout.preferredWidth: root.popColUse }
+                                }
+                                ListView {
+                                    id: planList
+                                    objectName: "planList"
+                                    visible: !root.singlePops
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    clip: true
+                                    model: planModel
+                                    delegate: RowLayout {
+                                        id: planRow
+                                        required property int index
+                                        required property string target
+                                        required property int rank
+                                        required property string summary
+                                        required property string changes
+                                        required property string dropped
+                                        required property string full
+                                        required property string total
+                                        required property string plan
+                                        readonly property bool inUse: plan.length > 0 &&
+                                                                      root.targetPlans[target] === plan
+                                        width: planList.width
+                                        height: implicitHeight
+                                        spacing: dp(6)
+                                        // The target named on its first row only, so each
+                                        // target's ranking reads as a block.
+                                        Label { Layout.preferredWidth: root.planColTarget
+                                                text: planRow.rank <= 1 ? planRow.target : ""
+                                                elide: Text.ElideRight; font.bold: true
+                                                font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.popColIndex
+                                                text: planRow.rank > 0 ? planRow.rank : ""
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.fillWidth: true
+                                                text: planRow.summary; elide: Text.ElideRight
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1)
+                                                color: planRow.inUse ? "#1a7f37" : (planRow.rank > 0 ? "#222" : "#aaa")
+                                                font.bold: planRow.inUse }
+                                        Label { Layout.preferredWidth: root.planColNum; text: planRow.changes
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.planColNum; text: planRow.dropped
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.planColHours
+                                                text: planRow.rank > 0 ? planRow.full + " / " + planRow.total : ""
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Button {
+                                            objectName: "planUse:" + planRow.target + ":" + planRow.rank
+                                            Layout.preferredWidth: root.popColUse
+                                            visible: planRow.rank > 0
+                                            text: planRow.inUse ? "in use" : "Use"
+                                            implicitHeight: Math.max(dp(20), implicitContentHeight + topPadding + bottomPadding)
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: planRow.inUse ? "back to AutoPOPs for " + planRow.target
+                                                                        : "chart " + planRow.target + " with this plan"
+                                            // Clicked again on the plan in use: back to AutoPOPs.
+                                            onClicked: planRow.inUse ? root.adoptPlan(planRow.target, "")
+                                                                     : root.adoptPlan(planRow.target, planRow.plan)
+                                        }
+                                    }
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    visible: !root.singlePops && planModel.count === 0
+                                    text: "no plan search run yet"
                                     color: "#aaa"
                                     horizontalAlignment: Text.AlignHCenter
                                 }
@@ -1991,6 +2158,9 @@ Item {
     readonly property int popColScore: dp(90)
     readonly property int popColHA:    dp(130)
     readonly property int popColUse:   dp(72)
+    readonly property int planColTarget: dp(110)
+    readonly property int planColNum:    dp(64)
+    readonly property int planColHours:  dp(100)
 
     // POP search results. Empty until a search runs; the first append fixes the roles, which are
     // pops, score and haRange.
@@ -2098,13 +2268,23 @@ Item {
 
         // Search BEFORE planning, so the night is computed with the POPs it reports rather
         // than with the previous ones. Assigning popString is enough for the dropdowns and the
-        // text field to follow: they read `popAt`, which reads popString.
-        if (root.autoPops) root.searchAndAdoptPops(t, tels)
+        // text field to follow: they read `popAt`, which reads popString. A multi-POP plan
+        // goes to the chart as its text; one chosen in the POPs tab stands until replaced.
+        var plan = ""
+        if (root.targetPlans[t.name] !== undefined) {
+            plan = root.targetPlans[t.name]
+            root.popString = firstPops(plan)
+        } else if (root.autoPops && root.useDelay) {
+            if (root.singlePops) root.searchAndAdoptPops(t, tels)
+            else plan = root.searchBestPlan(t, tels)
+        }
+        root.popPlanText = plan
 
         var reply = Julia.shell_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
                                       tels, root.popString, root.useDelay, root.detailed,
                                       root.altLimit, root.altMax,
-                                      root.timeSystem.toLowerCase())
+                                      root.timeSystem.toLowerCase(), plan, root.changeMinutes,
+                                      root.popStrategy === 3 && plan.length === 0 ? 3 : 0)
         // `summary \t dark window`. The summary is not shown here: it is long, it overflowed
         // the strip it sat in, and the console already keeps it. The chart itself is the
         // answer, and hovering a bar gives the numbers.
@@ -2126,7 +2306,8 @@ Item {
     // result means no configuration reaches the target, which the plan itself then reports as
     // zero observable hours rather than as an error here.
     function searchAndAdoptPops(t, tels) {
-        var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra, tels, 3)
+        var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra, tels, 3,
+                                         root.altLimit, root.altMax)
         if (!rows || rows.length === 0) return false
         var best = rows.split("\n")[0].split("\t")[0]
         if (!best || best.length === 0) return false
@@ -2150,6 +2331,21 @@ Item {
         return ""
     }
 
+    // A POP string between the telescopes' order and the panel's: what is shown and typed
+    // is in display order, what is stored and sent to Julia in telescopeNames' order.
+    function toDisplayOrder(text) {
+        var f = text.trim().length > 0 ? text.trim().split(/\s+/) : []
+        if (f.length !== displayOrder.length) return text
+        return displayOrder.map(function (i) { return f[i] }).join(" ")
+    }
+    function fromDisplayOrder(text) {
+        var f = text.trim().split(/[\s,]+/).filter(function (t) { return t.length > 0 })
+        if (f.length !== displayOrder.length) return text
+        var out = []
+        for (var k = 0; k < displayOrder.length; ++k) out[displayOrder[k]] = f[k]
+        return out.join(" ")
+    }
+
     function popAt(i) {
         var f = popString.trim().split(/\s+/)
         if (i < 0 || i >= f.length) return 1
@@ -2163,6 +2359,7 @@ Item {
         while (f.length < n) f.push("1")
         f[i] = String(v)
         popString = f.slice(0, n).join(" ")
+        clearCurrentPlan()
         if (hasPlan && useDelay) computePlan()
     }
 
@@ -2176,6 +2373,7 @@ Item {
             out.push(String(isNaN(v) || v < 1 || v > 5 ? 1 : v))
         }
         popString = out.join(" ")
+        clearCurrentPlan()
         if (hasPlan && useDelay) computePlan()
     }
 
@@ -2192,7 +2390,8 @@ Item {
         if (t === null) return
         popModel.clear()
         var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra,
-                                         root.selectedTelescopes.join(" "), nBestBox.value)
+                                         root.selectedTelescopes.join(" "), nBestBox.value,
+                                         root.altLimit, root.altMax)
         root.consoleChanged()
         if (rows.length === 0) return
         var lines = rows.split("\n")
@@ -2208,6 +2407,91 @@ Item {
     }
 
     property string popString: ""
+
+    // How AutoPOPs and Search POPs search: one setting (0), several (1), several with
+    // telescopes dropped (2), up to `maxChanges` changes and `maxDrop` drops, or the best three
+    // single settings, each on its own row of the Gantt (3). A change takes `changeMinutes`.
+    property int popStrategy: 0
+    readonly property bool singlePops: popStrategy === 0 || popStrategy === 3
+    property int maxChanges: 2
+    property int maxDrop: 1
+    property int changeMinutes: 10
+    // The multi-POP plan the chart was computed with, as `pop_plan_text`; empty for one setting.
+    property string popPlanText: ""
+    // Plans chosen with Use in the POPs tab, by target name. Reassigned, never mutated in place,
+    // so the bindings that read it see the change.
+    property var targetPlans: ({})
+    ListModel { id: planModel }
+
+    // A plan's first POP setting, for the dropdowns: the POPs of its first segment.
+    function firstPops(plan) {
+        var f = plan.split(";")[0].trim().split(/\s+/)
+        return f.length > 4 ? f.slice(4).join(" ") : ""
+    }
+    function setTargetPlan(name, plan) {
+        var m = {}
+        for (var k in root.targetPlans) if (k !== name) m[k] = root.targetPlans[k]
+        if (plan.length > 0) m[name] = plan
+        root.targetPlans = m
+    }
+    // The current target goes back to one POP setting: editing the POPs by hand.
+    function clearCurrentPlan() {
+        var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
+        if (t !== null) setTargetPlan(t.name, "")
+        root.popPlanText = ""
+    }
+
+    // The best multi-POP plan for a target, adopted: returns its text, "" when none observes it.
+    function searchBestPlan(t, tels) {
+        var rows = Julia.shell_pop_plans(root.facility, t.dec, root.dateISO, t.ra, tels,
+                                         root.referenceTelescope, root.maxChanges,
+                                         root.popStrategy === 2 ? root.maxDrop : 0,
+                                         root.changeMinutes, root.altLimit, root.altMax)
+        if (!rows || rows.length === 0) return ""
+        var f = rows.split("\n")[0].split("\t")
+        if (f.length < 6) return ""
+        root.popString = firstPops(f[5])
+        return f[5]
+    }
+
+    // Search POPs with a multi-POP strategy: every named target's plans, ranked, in one table.
+    function findPlans() {
+        planModel.clear()
+        var tels = root.selectedTelescopes.join(" ")
+        for (var i = 0; i < targetModel.count; ++i) {
+            var t = targetModel.get(i)
+            if (!t.name || t.name.length === 0) continue
+            var rows = Julia.shell_pop_plans(root.facility, t.dec, root.dateISO, t.ra, tels,
+                                             root.referenceTelescope, root.maxChanges,
+                                             root.popStrategy === 2 ? root.maxDrop : 0,
+                                             root.changeMinutes, root.altLimit, root.altMax)
+            if (!rows || rows.length === 0) {
+                planModel.append({ target: t.name, rank: 0, summary: "no plan observes it",
+                                   changes: "", dropped: "", full: "", total: "", plan: "" })
+                continue
+            }
+            var lines = rows.split("\n")
+            for (var j = 0; j < lines.length; ++j) {
+                var f = lines[j].split("\t")
+                if (f.length < 6) continue
+                planModel.append({ target: t.name, rank: j + 1, summary: f[0], changes: f[1],
+                                   dropped: f[2], full: f[3], total: f[4], plan: f[5] })
+            }
+        }
+        root.consoleChanged()
+    }
+
+    // Use in the plans table: that target's chart is computed with this plan from now on, in
+    // place of what AutoPOPs would choose; the other targets keep AutoPOPs. An empty plan
+    // gives the target back to AutoPOPs.
+    function adoptPlan(name, plan) {
+        setTargetPlan(name, plan)
+        var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
+        if (t !== null && t.name === name) {
+            if (plan.length > 0) root.popString = firstPops(plan)
+            computePlan()
+        }
+    }
 
     // Raised when Julia has written to the shared console and the window should re-read it.
 

@@ -304,7 +304,7 @@ export simbad_target, SIMBAD_BANDS, simbad_tap, SIMBAD_TAP_URL
 export night_observability, compute_delays, in_delay, delay_ha_intervals, best_pop, observable_epochs
 export horizon_limit, night_window
 export index_runs
-export obs_plan, chara_plan, print_pop_results
+export obs_plan, chara_plan, print_pop_results, pop_plan, pop_plans, print_pop_plan, PopPlan, PopSegment
 export moon_radec, moon_illumination, angular_separation
 
 # ── Writing OIFITS ───────────────────────────────────────────────────────────

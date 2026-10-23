@@ -43,6 +43,36 @@ appearance settings. The console at the bottom shows the OITOOLS call for each a
   reconstruction uses; the dataset is unchanged. The χ²ᵣ in the Modeling header uses the same
   selection.
 
+## POPs (Observing)
+
+**AutoPOPs** searches the POPs each time **Compute** runs, over the hours the target is above
+the elevation limits and the horizon, in astronomical night, clear of the moon. The menu under
+it chooses the search:
+
+- **Single POPs**: one setting for the night (`best_pop`).
+- **Multiple POPs**: up to **changes ≤** POP changes, each taking **change** minutes
+  (`pop_plan`).
+- **Multiple POPs + drop**: the same, dropping up to **drop ≤** telescopes where no setting
+  keeps them all in delay. The reference telescope is dropped only when no other drop gains
+  the same time.
+- **Top 3 single POPs**: the three best single settings, one row each with its POPs, the best
+  at the top. **Show details** and the delay carts show the best one.
+
+Plans are ranked by the time with every selected telescope, then the time with one dropped
+(the reference last), then with two, then by the fewest changes.
+
+On the Gantt a multi-POP plan is one bar per segment, lighter where a telescope is dropped. The
+first POPs are written at the start, each change as **→** and the new POPs where it starts
+(those that change in red), with **POP** in the bar; a telescope not used is a **×** in the
+POPs. **DROP** marks the end of the segment before a telescope is lost, **−E1** the point it is
+lost and **+E1** where it comes back.
+**EL** marks the time above the soft elevation limit. **Show details** adds a POPs row and a
+line through every row at each change.
+
+**POPs › Search POPs** lists, for a multi-POP search, the ranked plans of every named target:
+the plan, its changes, the telescopes dropped, and the hours with every telescope and in all.
+**Use** charts that target with the plan in place of AutoPOPs; **in use** gives it back.
+
 ## Tools
 
 Two frames; the results are shown on the right.

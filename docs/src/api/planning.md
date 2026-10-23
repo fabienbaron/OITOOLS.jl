@@ -5,6 +5,9 @@
 | `night_observability(facility, ra, dec, date)` | One night's LST, hour angle, altitude, azimuth, delay and Moon constraints; `ra`, `dec` in decimal degrees |
 | `best_pop(facility, dec, ha, config)` | The POP configurations with the most usable time |
 | `print_pop_results(facility, config, results)` | Print `best_pop` results |
+| `pop_plan(facility, dec, ha, config; observable, reference, max_changes, max_drop, change_minutes)` | A night's sequence of POP settings and dropped telescopes, ranked by time with every telescope, then with fewer, then fewest changes |
+| `pop_plans(facility, dec, ha, config; …)` | The best `pop_plan` for each number of changes, from one search |
+| `print_pop_plan(facility, plan)` | Print a `pop_plan` result |
 | `obs_plan(target, facility, ra, dec, date, pop, config)` | Gantt chart of the night (needs PythonPlot) |
 | `chara_plan(target, facility, ra, dec, date, pop, config)` | Delay plot in the style of CHARA's planner (needs PythonPlot) |
 | `compute_delays(facility, dec, ha, config, pop)` | Compute OPD delays for a given config/POP. `config`: 0=unused, 1=use, 2=reference cart; `pop`: one entry per telescope in 1:5 |
@@ -22,6 +25,11 @@
 night_observability
 best_pop
 print_pop_results
+pop_plan
+pop_plans
+PopPlan
+PopSegment
+print_pop_plan
 obs_plan
 chara_plan
 compute_delays

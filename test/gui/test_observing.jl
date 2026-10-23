@@ -358,4 +358,117 @@
         @test all(0 .<= p.moon_sep .<= 180)
         @test occursin("moon", sprint(show, p))
     end
+
+    @testset "a multi-POP plan: segments, changes, and the charts drawn from them" begin
+        ra, dec, d = 279.2347, 38.7837, DateTime(2026, 6, 21)
+        pp = night_pop_plan("CHARA", ra, dec, d; max_changes = 2, max_drop = 1)
+        @test pp.changes == 1 && pp.minutes[1] > 0 && pp.minutes[2] > 0
+        p = night_plan("CHARA", "Vega", ra, dec, d; use_delay = true, popplan = pp)
+        @test is_multi_pop(p)
+        @test length(p.changes) == pp.changes
+        # the minutes observed are the plan's, on the night's grid
+        @test abs(length(observable_indices(p)) - sum(pp.minutes)) <= 2 * length(pp.segments)
+        # nothing is observed while the POPs change ...
+        for (c0, c1) in p.changes
+            @test c1 - c0 == 10
+            @test isempty(intersect(observable_indices(p), c0:c1-1))
+        end
+        # E1 dropped in the last segment, after the last change: no second change for it
+        @test p.segments[end].tier == 2 && p.segments[end].config[3] == 0
+        # E1 W2 W1 S2 S1 E2, the dropped E1 a cross; "−E1" where it is lost
+        @test segment_label(p, p.segments[end]) == "× " *
+              join(string.(p.segments[end].pop[[6, 5, 2, 1, 4]]), " ")
+        @test transition_label(p, length(p.segments)) == "−E1"
+        @test transition_label(p, 1) == ""
+
+        geo = gantt_geometry(p)
+        @test geo.multi
+        # the first setting where it starts, the change as "→" where it starts
+        @test length(geo.poplabels) == 2 && !geo.poplabels[1][5] && geo.poplabels[2][5]
+        @test geo.poplabels[2][1] ≈ unwrap_lst(p.lst)[first(only(p.changes))]
+        # "POP" where it changes, "DROP" before E1 is lost and the time it is lost
+        @test count(m -> m[2] == "POP", geo.marks) == 1
+        @test count(m -> m[2] == "DROP", geo.marks) == 1
+        x = unwrap_lst(p.lst)
+        @test any(l -> l.kind === :time && l.x ≈ x[p.segments[end].i0], geo.labels)
+        @test any(geo.poplabels[2][4]) && !any(geo.poplabels[1][4])
+        # Vega passes above the soft limit either side of transit
+        @test length(geo.ellabels) == count(b -> b.x1 - b.x0 >= 0.3, geo.softbars) >= 1
+        @test startswith(geo.subtitle, string(length(p.segments), " segments · 1 change"))
+        @test any(l -> l[3] == "−E1", geo.seglabels)
+        det = gantt_geometry(p; detailed = true)
+        @test any(r -> r[2] == "POPs", det.rows) && length(det.switches) == 1
+        # ... but the Gantt draws no gap for it: the bar before runs on to the one after
+        c0, c1 = only(p.changes)
+        x = unwrap_lst(p.lst)
+        @test any(b -> b.x1 ≈ x[c1], geo.bars) && any(b -> b.x0 ≈ x[c1], geo.bars)
+        # the delay curves break while the carts move
+        dg = delay_plot_geometry(p)
+        @test all(c -> all(isnan, c.y[c0:c1-1]) && all(isfinite, c.y[1:c0-1]), dg.curves)
+        @test length(dg.switches) == 1 && all(isfinite, dg.ylim)
+
+        # one setting: the plan and its chart are what they were
+        p1 = night_plan("CHARA", "Vega", ra, dec, d; use_delay = true, pop = [1, 1, 2, 3, 1, 5])
+        @test !is_multi_pop(p1) && isempty(p1.changes)
+        @test pop_label(p1) == "E1:P2 W2:P5 W1:P1 S2:P1 S1:P1 E2:P3"     # the panel's order
+        g1geo = gantt_geometry(p1)
+        @test !g1geo.multi && isempty(g1geo.poplabels) && isempty(g1geo.seglabels)
+    end
+
+    @testset "POP plans as text, as a summary, and ranked for the POPs tab" begin
+        ra, dec, d = 279.2347, 38.7837, DateTime(2026, 6, 21)
+        f = read_facility_file("CHARA")
+        pp = night_pop_plan(f, ra, dec, d; max_changes = 2, max_drop = 1)
+        q = parse_pop_plan_text(pop_plan_text(pp))
+        @test q.changes == pp.changes && q.minutes == pp.minutes
+        @test [sg.pop for sg in q.segments] == [sg.pop for sg in pp.segments]
+        @test [sg.config for sg in q.segments] == [sg.config for sg in pp.segments]
+        sm = pop_plan_summary(pp, f, ra, ones(Int, 6))
+        @test occursin(" → ", sm) && occursin(r"−E1 \d+:\d\d", sm)
+        # a telescope missing from the start is a cross, not a drop
+        hd = (15 * (23 + 16.1 / 3600), -(22 + 51 / 60 + 33 / 3600), DateTime(2026, 10, 26))
+        php = night_pop_plan(f, hd...; max_changes = 2, max_drop = 1)
+        shd = pop_plan_summary(php, f, hd[1], ones(Int, 6))
+        @test startswith(shd, "× ") && !occursin("−", shd)
+        p_hd = night_plan("CHARA", "HD 217357", hd...; use_delay = true, popplan = php)
+        g_hd = gantt_geometry(p_hd)
+        @test startswith(only(g_hd.poplabels)[3], "× ") && isempty(g_hd.seglabels)
+        @test !any(m -> m[2] == "DROP", g_hd.marks)
+        rows = split(GUI.shell_pop_plans("CHARA", dec, "2026-06-21T00:00:00", ra,
+                                     "S1 S2 E1 E2 W1 W2", "W2", 2, 1, 10), "\n")
+        @test length(rows) >= 2
+        f6 = [parse(Float64, split(r, "\t")[4]) for r in rows]
+        tot = [parse(Float64, split(r, "\t")[5]) for r in rows]
+        # best first: full-array hours never increase down the table
+        @test issorted(f6; rev = true)
+        @test all(r -> length(split(r, "\t")) == 6, rows)
+        @test first(tot) == maximum(tot)
+        # the plan column is what shell_gantt takes
+        @test parse_pop_plan_text(split(first(rows), "\t")[6]).minutes == pp.minutes
+    end
+
+    @testset "the top single POP settings, one row each" begin
+        ra, dec, d = 279.2347, 38.7837, DateTime(2026, 6, 21)
+        f = read_facility_file("CHARA")
+        ha, ok = GUI._night_sky(f, ra, dec, d, ones(Int, 6))
+        res = best_pops(f, dec, ha[ok], ones(Int, 6); n = 3)
+        plans = [night_plan("CHARA", "Vega", ra, dec, d; pop = r.pop, use_delay = true) for r in res]
+        geo = gantt_stack_geometry(plans, ["#1", "#2", "#3"])
+        @test geo.stack && length(geo.rows) == 3
+        # the first at the top, rows STACK_ROW_STEP apart
+        ys = [r[1] for r in geo.rows]
+        @test ys == sort(ys; rev = true) && all(≈(GUI.STACK_ROW_STEP), -diff(ys))
+        # each row's POPs above its bar, in the panel's order
+        @test length(geo.poplabels) == 3
+        @test geo.poplabels[1][3] == join(string.(plans[1].pop[[3, 6, 5, 2, 1, 4]]), " ")
+        # every bar sits on one of the rows
+        @test all(b -> any(r -> abs(b.y - r[1]) < 1e-9, geo.rows), geo.bars)
+        @test length(geo.transits) == 3
+    end
+
+    @testset "the facility's display order" begin
+        @test telescope_display_order("CHARA") == [3, 6, 5, 2, 1, 4]       # E1 W2 W1 S2 S1 E2
+        f = read_facility_file("VLTI_AT_small")
+        @test telescope_display_order(f) == collect(1:f.ntel)              # none declared
+    end
 end

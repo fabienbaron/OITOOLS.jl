@@ -60,7 +60,7 @@ function build_residuals(fig, ax)
                                               markersize = 5, marker = OIPLOT_MARKER)
                           for k in RESIDUAL_KINDS)
 
-    ax.xlabel = "Baseline (Mλ)"
+    ax.xlabel = "Spatial frequency (Mλ)"
     ax.ylabel = "(model − data) / σ"
     ax.title  = ""
 

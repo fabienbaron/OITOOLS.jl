@@ -86,13 +86,15 @@
         # observe", and only a per-baseline row says which baseline is the reason.
         det = gantt_geometry(plan; detailed = true)
         @test length(plan.baselines) == 6            # four telescopes -> six baselines
-        # a row for the answer, one for elevation, one for the moon, and one per baseline
-        @test length(det.rows) == 3 + length(plan.baselines)
+        # a row for the answer, ASPRO's Rise/Set and Horizon (CHARA has horizon profiles), one
+        # for the moon, and one per baseline
+        @test plan.has_horizon
+        @test length(det.rows) == 4 + length(plan.baselines)
         ticks = [r[2] for r in det.rows]
         @test ticks[1] == "Vega"
-        # "elevation", not "altitude": the row carries the alt_limit/alt_max window, and
-        # elevation is the word the observing panel puts on the same pair of numbers.
-        @test "elevation" in ticks && "moon" in ticks
+        @test "Rise/Set" in ticks && "Horizon" in ticks && "moon" in ticks
+        # the two rows are the halves of the elevation window the observable bar uses
+        @test sort(plan.good_alt) == sort(intersect(plan.good_riseset, plan.good_horizon))
         for b in plan.baselines
             @test b.name in ticks
         end

@@ -14,6 +14,10 @@ throughput = 1.0
 wind_speed = 6.95
 r0 = 0.078
 
+# The order the Observing panel lists the telescopes and their POPs in: CHARA's beam order.
+# POP vectors and telescope configurations stay in the order of the [[telescope]] entries.
+display_order = ["E1", "W2", "W1", "S2", "S1", "E2"]
+
 # Atmosphere at Mount Wilson. seeing is at 500 nm at zenith; t0 is the coherence time.
 # r0 above is kept for backwards compatibility and is equivalent to seeing = 1.36".
 seeing = 1.0

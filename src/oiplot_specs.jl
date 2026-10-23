@@ -62,37 +62,37 @@ end
 const OBS_PLOT_SPECS = Dict{String, ObsPlotSpec}(
     "V2" => ObsPlotSpec(
         "V²", "V²",
-        L"Baseline (M$\lambda$)",
+        L"Spatial frequency (M$\lambda$)",
         :v2, :v2_err, :v2_baseline, :v2_lam, :v2_mjd,
         :v2_sta_index, :baseline, true, 1e-6),
     "T3PHI" => ObsPlotSpec(
         "T3φ", "T3φ (°)",
-        L"Baseline (M$\lambda$)",
+        L"Spatial frequency (M$\lambda$)",
         :t3phi, :t3phi_err, :t3_baseline, :t3_lam, :t3_mjd,
         :t3_sta_index, :triplet, false, 1e-6),
     "T3PHI_MAX" => ObsPlotSpec(
         "T3φ", "T3φ (°)",
-        L"Max. baseline (M$\lambda$)",
+        L"Max. spatial frequency (M$\lambda$)",
         :t3phi, :t3phi_err, :t3_maxbaseline, :t3_lam, :t3_mjd,
         :t3_sta_index, :triplet, false, 1e-6),
     "T3AMP" => ObsPlotSpec(
         "T3amp", "T3amp",
-        L"Baseline (M$\lambda$)",
+        L"Spatial frequency (M$\lambda$)",
         :t3amp, :t3amp_err, :t3_baseline, :t3_lam, :t3_mjd,
         :t3_sta_index, :triplet, true, 1e-6),
     "T3AMP_MAX" => ObsPlotSpec(
         "T3amp", "T3amp",
-        L"Max. baseline (M$\lambda$)",
+        L"Max. spatial frequency (M$\lambda$)",
         :t3amp, :t3amp_err, :t3_maxbaseline, :t3_lam, :t3_mjd,
         :t3_sta_index, :triplet, true, 1e-6),
     "VISAMP" => ObsPlotSpec(
         "Visamp", "Visamp",
-        L"Baseline (M$\lambda$)",
+        L"Spatial frequency (M$\lambda$)",
         :visamp, :visamp_err, :vis_baseline, :vis_lam, :vis_mjd,
         :vis_sta_index, :baseline, true, 1e-6),
     "VISPHI" => ObsPlotSpec(
         "Visφ", "Visφ (°)",
-        L"Baseline (M$\lambda$)",
+        L"Spatial frequency (M$\lambda$)",
         :visphi, :visphi_err, :vis_baseline, :vis_lam, :vis_mjd,
         :vis_sta_index, :baseline, false, 1e-6),
     "FLUX" => ObsPlotSpec(

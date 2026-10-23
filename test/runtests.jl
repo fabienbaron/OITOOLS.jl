@@ -44,6 +44,7 @@ BLAS.set_num_threads(1)
     include("test_measurement.jl")       # the measurement model: continuum-referenced phases
     include("test_aspro_noise.jl")       # the noise model against ASPRO 2's own error bars
     include("test_planning.jl")          # astrometry, twilight, observability conventions
+    include("test_pop_plan.jl")          # multi-POP night plans: changes, dropped telescopes
     include("test_simbad.jl")            # SIMBAD over TAP: parsing, offline fixture
     include("test_nested.jl")            # nested sampling: both backends, compared
     include("test_samplers.jl")          # ensemble slice sampling and Pigeons, against Nautilus
