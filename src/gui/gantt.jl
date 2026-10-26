@@ -153,7 +153,7 @@ function build_gantt(fig, ax)
                 color = :black)
     Makie.text!(ax, elpos; text = eltxt, rotation = Float32(π/2), align = (:center, :center),
                 fontsize = fs, color = GANTT_MARK_COLOR)
-    # "POP" just after where a change starts, "DROP" just before a telescope is lost.
+    # "POP" just after where a change starts, the time it starts and "DROP" just before.
     Makie.text!(ax, markpos; text = marktxt, rotation = Float32(π/2), align = (:center, :center),
                 offset = (0.75afs, 0), fontsize = afs, color = GANTT_MARK_COLOR)
     Makie.text!(ax, markepos; text = marketxt, rotation = Float32(π/2), align = (:center, :center),
@@ -239,7 +239,6 @@ which is a measurement against the time axis rather than against the bars.
 """
 function gantt_time_axis!(g, p::NightPlan, geo; system::Symbol = :lst)
     ax = g.axis
-    x0, x1 = geo.xlim
 
     # White dotted rules on a light background, which is how ASPRO draws them. A grey grid is
     # invisible against the twilight bands -- they are grey too -- and the bands are the whole
@@ -251,20 +250,31 @@ function gantt_time_axis!(g, p::NightPlan, geo; system::Symbol = :lst)
     ax.xminorgridvisible  = false
     ax.xminorticksvisible = true
     ax.xminorticks        = Makie.IntervalsBetween(4)
-    quarters = Float64[]
 
+    t = gantt_time_ticks(p, geo.xlim...; system)
+    t === nothing && return g
+    (isempty(t.majors) && system !== :lst) || (ax.xticks = (t.majors, t.labels))
+    ax.xlabel = t.xlabel
+    _gantt_rules!(g, t.quarters, geo)
+    return g
+end
+
+"""
+    gantt_time_ticks(p::NightPlan, x0, x1; system = :lst) -> (; majors, labels, quarters, xlabel)
+
+The time axis of `gantt_time_axis!` between LST `x0` and `x1`: the hourly ticks' positions in
+LST and their `HH:MM` labels in `system`, the quarter hours, and the axis label. `nothing` when
+the night has no UTC mapping for `:utc` or `:local`.
+"""
+function gantt_time_ticks(p::NightPlan, x0, x1; system::Symbol = :lst)
     if system === :lst
-        h0 = ceil(x0); h1 = floor(x1)
-        majors = collect(h0:1.0:h1)
-        ax.xticks = (majors, [_gantt_hhmm(h) for h in majors])
-        ax.xlabel = gantt_time_label(:lst, p)
-        append!(quarters, (ceil(x0 * 4) / 4):0.25:x1)
-        _gantt_rules!(g, quarters, geo)
-        return g
+        majors = collect(ceil(x0):1.0:floor(x1))
+        return (; majors, labels = [_gantt_hhmm(h) for h in majors],
+                  quarters = collect((ceil(x0 * 4) / 4):0.25:x1), xlabel = gantt_time_label(:lst, p))
     end
 
     u0 = lst_to_utc(p, x0); u1 = lst_to_utc(p, x1)
-    (isfinite(u0) && isfinite(u1) && u1 > u0) || return g
+    (isfinite(u0) && isfinite(u1) && u1 > u0) || return nothing
 
     # Civil offset in hours at a given UTC hour of this night. Zero for UTC; for local it is
     # evaluated AT THE TICK, so a night spanning a daylight-saving change is right either side.
@@ -275,7 +285,7 @@ function gantt_time_axis!(g, p::NightPlan, geo; system::Symbol = :lst)
     # it everywhere except within an hour of the switch itself.
     to_utc(q) = (u = q - off(q); q - off(u))
 
-    majors = Float64[]; labels = String[]
+    majors = Float64[]; labels = String[]; quarters = Float64[]
     # Quarter hours of the DISPLAYED clock, each mapped back onto the LST axis. Stepping in LST
     # instead would put the rules at ragged clock times, which is the opposite of the point.
     q = ceil((u0 + off(u0)) * 4) / 4
@@ -289,11 +299,7 @@ function gantt_time_axis!(g, p::NightPlan, geo; system::Symbol = :lst)
         end
         q += 0.25
     end
-
-    isempty(majors) || (ax.xticks = (majors, labels))
-    ax.xlabel = gantt_time_label(system, p)
-    _gantt_rules!(g, quarters, geo)
-    return g
+    return (; majors, labels, quarters, xlabel = gantt_time_label(system, p))
 end
 
 "Vertical rules at `xs`, spanning the chart."
@@ -520,25 +526,43 @@ function build_delay_plot(fig, ax)
     ellim = Makie.Observable(Makie.Point2f[])
     Makie.lines!(ax2, ellim; color = (:red, 0.6), linewidth = 1.5)
 
-    fs = Float32(9 * live_plot_scale())
+    # The legend, in rows under the chart: an axis of its own in the row below, unit square
+    # in x and one unit per row in y, with no decorations.
+    sc = live_plot_scale()
+    fs = Float32(9 * sc)
+    legax = Makie.Axis(fig[2, 1]; height = 2fs)
+    Makie.hidedecorations!(legax)
+    Makie.hidespines!(legax)
+    for it in (:scrollzoom, :dragpan, :rectanglezoom, :limitreset)
+        Makie.deregister_interaction!(legax, it)
+    end
     legpos = Makie.Observable(Makie.Point2f[]); legtxt = Makie.Observable(String[])
     legcol = Makie.Observable(Makie.RGBAf[])
-    Makie.scatter!(ax, legpos; color = legcol, marker = :rect, markersize = fs)
-    Makie.text!(ax, legpos; text = legtxt, align = (:left, :center), fontsize = fs,
+    Makie.scatter!(legax, legpos; color = legcol, marker = :rect, markersize = fs)
+    Makie.text!(legax, legpos; text = legtxt, align = (:left, :center), fontsize = fs,
                 offset = (fs, 0))
 
     ax.xlabel = "LST (h)"
     ax.ylabel = "delay cart position (m)"
-    return (; figure = fig, axis = ax, altaxis = ax2, curves, lines, limitpts, altpts, ellim,
-              legpos, legtxt, legcol, switchpts)
+    # The Gantt's tick size, and axis labels a step above the legend's.
+    for a in (ax, ax2)
+        a.xlabelsize = a.ylabelsize = Float32(10.5 * sc)
+        a.xticklabelsize = a.yticklabelsize = Float32(8 * sc)
+    end
+    return (; figure = fig, axis = ax, altaxis = ax2, legaxis = legax, legfs = fs, curves, lines,
+              limitpts, altpts, ellim, legpos, legtxt, legcol, switchpts)
 end
 
+"Baselines per legend row under the delay chart."
+const DELAY_LEGEND_COLUMNS = 8
+
 """
-    update_delay_plot!(d, plan)
+    update_delay_plot!(d, plan; time_system = :lst)
 
 Draw one night's delay carts. Curves beyond this array's baseline count are hidden, not removed.
+The x axis is labelled in `time_system` as the Gantt's is (`gantt_time_ticks`).
 """
-function update_delay_plot!(d, p::NightPlan)
+function update_delay_plot!(d, p::NightPlan; time_system::Symbol = :lst)
     geo = delay_plot_geometry(p)
     n = min(length(geo.curves), MAX_BASELINES)
 
@@ -566,14 +590,24 @@ function update_delay_plot!(d, p::NightPlan)
     d.ellim[]  = [Makie.Point2f(x0, geo.alt_limit), Makie.Point2f(x1, geo.alt_limit)]
     Makie.ylims!(d.altaxis, geo.altlim[1], geo.altlim[2])
 
-    ytop = hi - 0.06 * (hi - lo)
-    d.legpos[] = [Makie.Point2f(x0 + 0.02 * (x1 - x0), ytop - 0.055 * (hi - lo) * (k - 1))
+    ncol = max(1, min(n, DELAY_LEGEND_COLUMNS))
+    nrow = max(1, cld(n, ncol))
+    d.legpos[] = [Makie.Point2f((mod(k - 1, ncol) + 0.1) / ncol, div(k - 1, ncol) + 0.5)
                   for k in 1:n]
+    d.legaxis.height = 1.6f0 * d.legfs * nrow
+    Makie.limits!(d.legaxis, 0, 1, nrow, 0)
     d.legtxt[] = [geo.curves[k].name for k in 1:n]
     d.legcol[] = [DELAY_COLORS[mod1(k, length(DELAY_COLORS))] for k in 1:n]
 
     d.axis.title = geo.target * " — delay carts (limit ±" * string(round(geo.limit; digits = 1)) *
                    " m, elevation limit " * string(round(Int, geo.alt_limit)) * "°)"
+    t = gantt_time_ticks(p, x0, x1; system = time_system)
+    if t !== nothing
+        isempty(t.majors) || (d.axis.xticks = (t.majors, t.labels))
+        d.axis.xlabel = t.xlabel
+    end
+    d.axis.xminorticksvisible = true
+    d.axis.xminorticks = Makie.IntervalsBetween(4)
     Makie.xlims!(d.axis, x0, x1)
     Makie.ylims!(d.axis, lo, hi)
     return d

@@ -26,12 +26,13 @@
 #
 # A DISPLAY IS NEEDED to build, because the trace opens a GL context. Xvfb is enough.
 #
-# ONE ORDERING CAVEAT, handled for you. `bin/oitoolsgui.jl` decides GLMakie's windowing
+# ONE ORDERING CAVEAT, handled for you. `oitoolsgui` decides GLMakie's windowing
 # platform before Qt's, because only GLMakie's can fail: GLFW.jl initialises from its own
 # `__init__`, which in a sysimage runs before any user code, so `JULIA_GLFW_PLATFORM` arrives
 # too late and GLFW stays on X11. The launcher notices and pins Qt to xcb to match, so the two
 # halves agree either way. On a Wayland session that means a sysimage run uses XWayland where
-# the plain launcher uses Wayland.
+# the plain launcher uses Wayland. It also warns that GLMakie was already loaded, which in a
+# sysimage it always is.
 #
 # To get native Wayland out of a sysimage, export the variable before Julia starts:
 #

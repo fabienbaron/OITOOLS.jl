@@ -9,21 +9,11 @@
 # dependencies and are not loadable at all; if they resolve anyway it is from your default
 # environment, at whatever versions happen to be there.
 #
-# The ordering below is the whole point of this file, and it is forced by one fact: Mesa and
-# GLFW both read their configuration when the first OpenGL context is created, so both hints
-# have to be set above `using GLMakie`. That is why neither function lives in the GUI
-# extension — loading GLMakie is what creates it, so anything inside it is already too late:
+# The window is opened by `oitoolsgui` (src/gui_launcher.jl), which sets the Mesa, GLFW and Qt
+# variables in the order they must come and then loads GLMakie, QMLMakie, QML and the optional
+# packages. UltraNest needs PythonCall, which is loaded by hand:
 #
-#   configure_graphics!    core package,          src/graphics.jl      (needs nothing)
-#   prefer_native_wayland! GLFW_jll extension,    ext/OITOOLSGLFWExt.jl (needs libglfw only)
-#   configure_qt_platform! core package,          src/graphics.jl      (follows the one above)
-#
-# The GUI's own types (Session, load_dataset!) do live in OITOOLSGUIExt, so they are reached
-# after the fact through `Base.get_extension`.
-#
-# MPLBACKEND does not need forcing here: OITOOLS keeps matplotlib in an extension
-# (OITOOLSPythonPlotExt), so importing it starts no backend probe and maps no second Qt.
-# `check_qt_conflict` runs inside `gui` in case something else in the session loads one.
+#     julia --project=bin -e 'using PythonCall; include("bin/oitoolsgui.jl")'
 
 # A CondaPkg resolve that gets interrupted leaves its lock file behind, and every later start
 # then blocks on it FOREVER -- the process stays alive, no window ever appears, and the only
@@ -46,55 +36,4 @@ let lock = joinpath(@__DIR__, "..", ".CondaPkg", "lock")
 end
 
 using OITOOLS
-
-configure_graphics!()          # before the first GL context — see src/graphics.jl
-using GLFW_jll                 # activates OITOOLSGLFWExt; dlopens libglfw, needs no display
-
-# GLMakie's platform is decided FIRST, then Qt is made to match it. The two must agree — one on
-# Wayland and one on X11 means two EGL display connections in one process — and only GLMakie's
-# choice can fail: GLFW.jl hard-codes X11, and in a sysimage its `__init__` has already run, so
-# `JULIA_GLFW_PLATFORM` comes too late. Qt has no such constraint, so Qt is the one that yields.
-wl = prefer_native_wayland!()  # before `using GLMakie`; sets JULIA_GLFW_PLATFORM on Wayland
-configure_qt_platform!(; match_x11 = !wl.applied)   # before Qt starts, see src/graphics.jl
-
-using GLMakie, QMLMakie, QML   # these three activate OITOOLSGUIExt, which defines gui()
-
-# Activates OITOOLSNautilusExt, which is what makes "Nested sampling" selectable in the Model
-# panel rather than greyed out. Loaded unconditionally because it is pure Julia and costs
-# 0.08 s against OITOOLS's own 0.83 s -- the weak-dependency argument that keeps Qt and Makie
-# out of `using OITOOLS` does not apply at that price, and a sampler that is installed but
-# invisible is worse than the load time.
-#
-# UltraNest is the other backend and stays opt-in: it needs PythonCall and the Conda
-# environment, so it is loaded by hand when a second, independent evidence estimate is wanted:
-#
-#     julia --project=bin -e 'using PythonCall; include("bin/oitoolsgui.jl")'
-using Nautilus
-
-# The optional packages, on the same argument as Nautilus: an extension activates only when its
-# trigger package is LOADED, not when it is merely installed, and the window greys an entry on
-# exactly that check — Pigeons for "Tempering" (Image) and "Parallel tempering" (Modeling),
-# VarInf for "Variational inference", PairPlots for the Modeling tab's "Corner" view.
-# Installed-but-invisible is the worst of the three states, so they are loaded when present and
-# skipped in silence when not — this environment pins them, but the script has to run in
-# environments that do not.
-for opt in (:Pigeons, :VarInf, :PairPlots)
-    try
-        @eval using $opt
-    catch err
-        @debug "optional engine package not available" opt err
-    end
-end
-
-# An extension's exports do not reach the caller on their own, so name the module and pull them
-# in. This is the same route test/gui/runtests.jl uses.
-const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
-GUI === nothing && error("OITOOLSGUIExt did not load; GLMakie, QMLMakie and QML are all needed")
-using .GUI
-
-session = Session()
-for f in ARGS
-    isfile(f) ? load_dataset!(session, f; warn = false, verbose = false) :
-                @warn "not a file, skipping" f
-end
-gui(session)
+oitoolsgui(ARGS...)

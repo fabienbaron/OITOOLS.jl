@@ -1131,6 +1131,90 @@ end
         end
     end
 
+    @testset "panel density from the EDID" begin
+        G = GUI
+        # a 128-byte block whose first detailed timing is w x h on a wmm x hmm image
+        function edid_block(w, h, wmm, hmm)
+            e = zeros(UInt8, 128)
+            e[55:56] .= (0x02, 0x3a)
+            e[57] = w & 0xff; e[59] = (w >> 8) << 4
+            e[60] = h & 0xff; e[62] = (h >> 8) << 4
+            e[67] = wmm & 0xff; e[68] = hmm & 0xff
+            e[69] = ((wmm >> 8) << 4) | (hmm >> 8)
+            return e
+        end
+        @test G.edid_native_mode(edid_block(1920, 1080, 527, 296)) ==
+              (; width = 1920, height = 1080, width_mm = 527, height_mm = 296)
+        @test G.edid_native_mode(zeros(UInt8, 128)) === nothing      # no timing descriptor
+        @test G.edid_native_mode(edid_block(1920, 1080, 0, 0)) === nothing  # no size
+        @test G.edid_native_mode(UInt8[]) === nothing
+
+        drm_root = mktempdir()
+        function drm_connector(name, status, e)
+            dir = mkpath(joinpath(drm_root, name))
+            write(joinpath(dir, "status"), status * "\n"); write(joinpath(dir, "edid"), e)
+        end
+        drm_connector("card1-eDP-1", "connected", edid_block(2560, 1600, 344, 215))
+        drm_connector("card1-HDMI-A-1", "connected", edid_block(1920, 1080, 527, 296))
+        drm_connector("card1-DP-1", "disconnected", edid_block(2560, 1600, 600, 375))
+        drm_connector("card1-DP-2", "connected", UInt8[])
+        if Sys.islinux()
+            @test G.panel_dpi(2560, 1600; root = drm_root) ≈ 2560 / (344 / 25.4)    # 189
+            @test G.panel_dpi(1920, 1080; root = drm_root) ≈ 1920 / (527 / 25.4)    # 92.5
+            @test G.panel_dpi(3840, 2160; root = drm_root) == 0.0                   # no such display
+            drm_connector("card2-DP-3", "connected", edid_block(1920, 1080, 344, 194))
+            @test G.panel_dpi(1920, 1080; root = drm_root) == 0.0                   # two that disagree
+        end
+        @test G.panel_dpi(1920, 1080; root = joinpath(drm_root, "absent")) == 0.0
+        if Sys.islinux()
+            @test G.panel_dpi(2561, 1600; root = drm_root) ≈ 2560 / (344 / 25.4)    # a size rounded through 1.5
+        end
+
+        # the whole-window scale for a density
+        @test OITOOLS.window_scale_for(189.0) == 1.25
+        @test OITOOLS.window_scale_for(141.6) == 1.0
+        @test OITOOLS.window_scale_for(92.5) == 1.0
+        @test OITOOLS.window_scale_for(282.0) == 2.0
+    end
+
+    @testset "Qt's scale before it starts" begin
+        qt_env = (OITOOLS.QT_SCALE_VARS..., "XDG_CONFIG_HOME", "WSL_DISTRO_NAME", "PATH")
+        qt_keep = Dict(k => ENV[k] for k in qt_env if haskey(ENV, k))
+        try
+            foreach(k -> delete!(ENV, k), OITOOLS.QT_SCALE_VARS)
+            qt_cfg = mktempdir(); ENV["XDG_CONFIG_HOME"] = qt_cfg
+            # one set by hand is left alone
+            ENV["QT_SCALE_FACTOR"] = "2"
+            rq = configure_qt_scale!(verbose = false)
+            @test !rq.applied && ENV["QT_SCALE_FACTOR"] == "2"
+            delete!(ENV, "QT_SCALE_FACTOR")
+            # a saved window_scale wins, on any session
+            mkpath(joinpath(qt_cfg, "oitools"))
+            write(joinpath(qt_cfg, "oitools", "gui.toml"), "ui_scale = 0.7\nwindow_scale = 1.25\n")
+            rq = configure_qt_scale!(verbose = false)
+            if Sys.islinux()
+                @test rq.applied && ENV["QT_SCALE_FACTOR"] == "1.25"
+            else
+                @test !rq.applied
+            end
+            # under WSL, from Windows' display scale in the registry: 150% stands for 180 dpi
+            if Sys.islinux()
+                delete!(ENV, "QT_SCALE_FACTOR")
+                rm(joinpath(qt_cfg, "oitools", "gui.toml"))
+                ENV["WSL_DISTRO_NAME"] = "test"
+                bin = mktempdir()
+                write(joinpath(bin, "reg.exe"), "#!/bin/sh\nprintf '\\r\\n    AppliedDPI    REG_DWORD    0x90\\r\\n'\n")
+                chmod(joinpath(bin, "reg.exe"), 0o755)
+                ENV["PATH"] = bin * ":" * get(qt_keep, "PATH", "/usr/bin")
+                rq = configure_qt_scale!(verbose = false)
+                @test rq.applied && ENV["QT_SCALE_FACTOR"] == "1.25"
+            end
+        finally
+            foreach(k -> delete!(ENV, k), qt_env)
+            merge!(ENV, qt_keep)
+        end
+    end
+
     @testset "console pane" begin
         G = GUI
         sh = G.ShellState(Session(), nothing, nothing, nothing, String[], Any[], 0,

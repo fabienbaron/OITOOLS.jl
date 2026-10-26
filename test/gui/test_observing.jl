@@ -386,10 +386,13 @@
         # the first setting where it starts, the change as "→" where it starts
         @test length(geo.poplabels) == 2 && !geo.poplabels[1][5] && geo.poplabels[2][5]
         @test geo.poplabels[2][1] ≈ unwrap_lst(p.lst)[first(only(p.changes))]
-        # "POP" where it changes, "DROP" before E1 is lost and the time it is lost
+        # "POP" where it changes and the time it starts just before, "DROP" before E1 is lost
+        # and the time it is lost
         @test count(m -> m[2] == "POP", geo.marks) == 1
         @test count(m -> m[2] == "DROP", geo.marks) == 1
         x = unwrap_lst(p.lst)
+        c0 = first(only(p.changes))
+        @test any(m -> m[3] === :end && m[1] ≈ x[c0] && occursin(r"^\d\d:\d\d$", m[2]), geo.marks)
         @test any(l -> l.kind === :time && l.x ≈ x[p.segments[end].i0], geo.labels)
         @test any(geo.poplabels[2][4]) && !any(geo.poplabels[1][4])
         # Every character these labels draw is pre-warmed in the glyph atlas: one inserted

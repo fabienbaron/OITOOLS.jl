@@ -174,7 +174,7 @@ function empty_night end
 # deliberately, because this has to be callable BEFORE `using GLMakie`. See src/graphics.jl.
 function prefer_native_wayland! end
 
-export configure_graphics!, configure_qt_platform!, prefer_native_wayland!, is_wsl
+export configure_graphics!, configure_qt_platform!, configure_qt_scale!, prefer_native_wayland!, is_wsl
 export resource_dir
 export oitoolsgui
 

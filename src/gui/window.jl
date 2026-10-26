@@ -33,7 +33,7 @@ function __init__()
                      shell_save_settings, shell_load_settings, shell_reset_settings,
                      shell_settings_path,
                      shell_controls_styles, shell_default_controls_style,
-                     shell_ui_font_files, shell_plot_scale,
+                     shell_ui_font_files, shell_panel_dpi, shell_window_scale, shell_plot_scale,
                      shell_version,
                      shell_set_zoom_step,
                      shell_model_rows, shell_model_components, shell_model_inspection,
@@ -238,6 +238,21 @@ Asked for rather than repeated in QML: the reset has to restore what an unconfig
 would run, and a literal in the panel would go on claiming the old answer after this changed.
 """
 shell_default_controls_style() = DEFAULT_CONTROLS_STYLE
+
+"""
+Device-pixel density of the display with native mode `w` x `h`: from its EDID (`panel_dpi`),
+else under WSL from Windows' display scale (`wsl_panel_dpi`); 0 if unknown.
+"""
+function shell_panel_dpi(w, h)
+    d = panel_dpi(Float64(w), Float64(h))
+    return d > 0 ? d : wsl_panel_dpi()
+end
+
+"Qt's own scale in force, from `QT_SCALE_FACTOR` (`configure_qt_scale!`); 1 when unset."
+function shell_window_scale()
+    v = tryparse(Float64, get(ENV, "QT_SCALE_FACTOR", ""))
+    return v === nothing || !(v > 0) ? 1.0 : v
+end
 
 """
     shell_ui_font_files() -> String

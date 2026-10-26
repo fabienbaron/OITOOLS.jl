@@ -102,8 +102,8 @@ const SCREEN_DPI_LIVE = Ref(0.0)
 """
 Plot scale, anchored on the same desktop the UI scale is: 1.19 at `PLOT_REF_DPI`.
 
-The exponent is 0.5, which carries it to 1.7 at 189 dpi. Chrome uses ~0.9 -- see
-`src/gui/qml/Main.qml`, which owns that half.
+The exponent is 0.5, which carries it to 1.7 at 189 dpi. The chrome has its own fit in
+`src/gui/qml/Main.qml`.
 """
 const PLOT_REF_DPI          = 92.6
 const PLOT_SCALE_AT_REF_DPI = 1.19

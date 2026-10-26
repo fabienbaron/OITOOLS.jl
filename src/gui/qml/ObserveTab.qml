@@ -192,9 +192,6 @@ Item {
             if (targets[i].name && targets[i].name.length > 0) n += 1
         return n
     }
-    readonly property int nBaselines:
-        referenceTelescope.length > 0 ? Math.max(0, nSelectedTelescopes - 1)
-                                      : nSelectedTelescopes * (nSelectedTelescopes - 1) / 2
     // One string rather than a set of booleans: the reason a run is impossible has to be
     // readable next to the button, not deduced from which control happens to be grey.
     // In copy mode the array, the night and the combiner are not consulted at all — the uv
@@ -883,10 +880,9 @@ Item {
                                 }
                                 Label {
                                     Layout.fillWidth: true
-                                    text: root.nSelectedTelescopes < 2
-                                          ? "select at least 2 telescopes"
-                                          : root.configString() + "  ·  " + root.nBaselines + " baselines"
-                                    color: root.nSelectedTelescopes < 2 ? "#b00000" : "#666"
+                                    visible: root.nSelectedTelescopes < 2
+                                    text: "select at least 2 telescopes"
+                                    color: "#b00000"
                                     font.pointSize: pt(baseFontPt - 2)
                                     elide: Text.ElideRight
                                 }
@@ -936,8 +932,12 @@ Item {
                                     objectName: "popStrategy"
                                     Layout.fillWidth: true
                                     implicitHeight: Math.max(dp(26), implicitContentHeight + topPadding + bottomPadding)
-                                    model: ["Single POPs", "Multiple POPs", "Multiple POPs + drop",
-                                            "Best time coverage POPs"]
+                                    model: ["Single POPs", "POP changes on a single line",
+                                            "POP changes && Telescope Drops on a single line",
+                                            "Three-line POP selection for best time coverage"]
+                                    // "&&" is a literal "&" in the list's items, which read "&" as
+                                    // a mnemonic; the closed box shows the text as it is.
+                                    displayText: currentText.replace("&&", "&")
                                     currentIndex: root.popStrategy
                                     onActivated: function (index) {
                                         root.popStrategy = index
@@ -1049,7 +1049,7 @@ Item {
                                         enabled: !root.autoPops
                                         placeholderText: root.autoPops
                                             ? "set by AutoPOPs"
-                                            : "paste six POP numbers, e.g. 1 3 3 4 1 1"
+                                            : "paste 6 POPs e.g. 1 3 3 4 1 1"
                                         text: root.toDisplayOrder(root.popString)
                                         font.family: "monospace"
                                         onEditingFinished: root.setPopString(root.fromDisplayOrder(text))
@@ -1085,10 +1085,8 @@ Item {
 
                                 GridLayout {
                                     Layout.fillWidth: true
-                                    // One pair per row. At four columns the two labels and their two fields
-                                    // set a minimum width the panel could not meet, so it pushed
-                                    // into the Gantt beside it. Taller is free here; wider is not.
-                                    columns: 2
+                                    // Two pairs per row, as in Time below.
+                                    columns: 4
                                     columnSpacing: dp(6)
                                     rowSpacing: dp(4)
 
@@ -1354,6 +1352,7 @@ Item {
                             spacing: dp(8)
 
                             Button {
+                                objectName: "obsCompute"
                                 text: "Compute"
                                 enabled: root.nNamedTargets > 0 && root.dateISO.length > 0
                                 ToolTip.visible: hovered && !enabled
@@ -1372,6 +1371,7 @@ Item {
                             Label { text: "Time"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                             ComboBox {
                                 id: timeSystemBox
+                                objectName: "obsTimeSystem"
                                 Layout.preferredWidth: dp(110)
                                 model: root.timeSystems
                                 currentIndex: root.timeSystems.indexOf(root.timeSystem)
@@ -1536,6 +1536,7 @@ Item {
 
                                 MakieArea {
                                     id: ganttArea
+                                    objectName: "ganttArea"
                                     anchors.fill: parent
                                     scene: ganttPlot
 
@@ -1544,10 +1545,20 @@ Item {
                                     // picking already uses -- so there is no second coordinate
                                     // system to keep in step with this one.
                                     HoverHandler { id: ganttHover }
-                                    ToolTip.visible: ganttHover.hovered &&
-                                                     root.hoverText.length > 0
-                                    ToolTip.text: root.hoverText
-                                    ToolTip.delay: 250
+                                    // Beside the pointer, kept inside the chart: below and to
+                                    // the right, flipped above or to the left near an edge.
+                                    ToolTip {
+                                        id: ganttTip
+                                        readonly property real px: ganttHover.point.position.x
+                                        readonly property real py: ganttHover.point.position.y
+                                        visible: ganttHover.hovered && root.hoverText.length > 0
+                                        text: root.hoverText
+                                        delay: 250
+                                        x: px + dp(14) + width <= ganttArea.width ? px + dp(14)
+                                                                                  : Math.max(0, px - dp(8) - width)
+                                        y: py + dp(18) + height <= ganttArea.height ? py + dp(18)
+                                                                                    : Math.max(0, py - dp(8) - height)
+                                    }
 
                                     // Polled rather than pushed: Makie has no QML-visible signal
                                     // for a mouse move, and 120 ms is imperceptible for a

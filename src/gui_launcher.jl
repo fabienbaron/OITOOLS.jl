@@ -1,15 +1,12 @@
 # ===========================================================================
 # oitoolsgui() — one call from a plain `using OITOOLS`.
 #
-# `bin/oitoolsgui.jl` exists because the graphics hints have to be set in a fixed order and
-# each one has to happen BEFORE the package that reads it is loaded: Mesa and GLFW both read
-# their configuration when the first OpenGL context is created, and Qt reads its platform when
-# it starts. A script gets that ordering by writing the `using` lines in the right places.
-#
-# A function can get the same ordering, and for the same reason, as long as it is the thing
-# that does the loading: `Base.require` at the right point in the body is exactly a `using` at
-# the right point in a file. What it cannot do is undo a `using GLMakie` the caller already
-# ran, so that case is detected and reported rather than silently producing a window on the
+# The graphics hints have to be set in a fixed order, each one BEFORE the package that reads
+# it is loaded: Mesa and GLFW both read their configuration when the first OpenGL context is
+# created, and Qt reads its platform and scale when it starts. This function is the thing that
+# does the loading, so `Base.require` at the right point in the body is exactly a `using` at
+# the right point in a file. `bin/oitoolsgui.jl` is a call to it. What it cannot do is undo a
+# `using GLMakie` the caller already ran, so that case is detected and reported rather than silently producing a window on the
 # wrong platform.
 # ===========================================================================
 
@@ -193,8 +190,8 @@ end
 
 Open the GUI, loading everything it needs on the way.
 
-From the REPL: `using OITOOLS; oitoolsgui()`, optionally with OIFITS files to open. It does
-what `bin/oitoolsgui.jl` does.
+From the REPL: `using OITOOLS; oitoolsgui()`, optionally with OIFITS files to open.
+`bin/oitoolsgui.jl` calls it with the files on its command line.
 
 GLMakie, QMLMakie and QML must be installed in the active environment (or use
 `--project=bin`). `GLFW_jll` (native Wayland), `Nautilus` (nested sampling), `Pigeons`
@@ -227,6 +224,7 @@ function oitoolsgui(files::AbstractString...; optional::Bool = true, verbose::Bo
         (; applied = false)
     end
     configure_qt_platform!(; match_x11 = !wl.applied, verbose)   # before Qt starts
+    configure_qt_scale!(; verbose)                               # before Qt starts
 
     for (name, uuid) in _GUI_PACKAGES
         _require_or_explain(name, uuid)

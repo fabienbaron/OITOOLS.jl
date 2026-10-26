@@ -315,9 +315,9 @@ end
 # silently shipping a smaller bundle than the last one.
 function _untracked_count(src, files)
     isdir(src) || return 0
-    keep = Set(joinpath(ROOT, f) for f in files)
+    keep = Set(normpath(joinpath(ROOT, f)) for f in files)
     return count(p -> !(p in keep),
-                 (joinpath(r, f) for (r, _, fs) in walkdir(src) for f in fs))
+                 (normpath(joinpath(r, f)) for (r, _, fs) in walkdir(src) for f in fs))
 end
 
 # QMLMakie's own QML module ("Makie", supplying MakieArea) is registered by its `__init__`

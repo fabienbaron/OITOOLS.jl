@@ -109,6 +109,7 @@ oitoolsgui
 gui
 configure_graphics!
 configure_qt_platform!
+configure_qt_scale!
 is_wsl
 resource_dir
 ```

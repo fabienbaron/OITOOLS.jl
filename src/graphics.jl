@@ -75,7 +75,7 @@ Keep Qt on the same windowing system as GLMakie.
 
 Qt follows the session (Wayland or X11) on its own. With `match_x11 = true`, set when GLMakie
 could not use Wayland, this sets `QT_QPA_PLATFORM=xcb` so that Qt uses X11 too.
-`bin/oitoolsgui.jl` passes `match_x11 = !prefer_native_wayland!().applied`, which is true when
+[`oitoolsgui`](@ref) passes `match_x11 = !prefer_native_wayland!().applied`, which is true when
 `\$FORCE_X11` is set or GLFW was already initialised (as in a PackageCompiler sysimage). An
 explicit `QT_QPA_PLATFORM` is left alone.
 """
@@ -102,8 +102,8 @@ end
 Set the Mesa driver variables needed on WSL; elsewhere, do nothing.
 
 Returns `(applied, reason, vars)`: whether anything was set, a one-line reason, and the
-variables set. Call it before the first OpenGL context exists: `bin/oitoolsgui.jl` calls it
-before `using GLMakie`, and [`gui`](@ref) calls it again. Variables already set are left alone,
+variables set. Call it before the first OpenGL context exists: [`oitoolsgui`](@ref) calls
+it before loading GLMakie, and [`gui`](@ref) calls it again. Variables already set are left alone,
 so any of these takes precedence:
 
     OITOOLSGUI_NO_GPU_SETUP=1     # skip all of it
@@ -148,4 +148,204 @@ function configure_graphics!(; verbose::Bool = true)
 
     verbose && @info "WSL detected: routing OpenGL through D3D12 instead of llvmpipe" driver vars
     return (applied = true, reason = "WSL with a D3D12 GPU", vars = vars)
+end
+
+import TOML
+
+"""
+    gui_settings_file() -> String
+
+Where the appearance defaults live: `oitools/gui.toml` under the platform's per-user config
+directory.
+
+Deliberately not `LocalPreferences.toml`: these are the user's window, not the project's, and
+they should follow the user across every project that launches the GUI.
+"""
+function gui_settings_file()
+    base = Sys.iswindows() ? get(ENV, "APPDATA", homedir()) :
+           get(ENV, "XDG_CONFIG_HOME", joinpath(homedir(), ".config"))
+    return joinpath(base, "oitools", "gui.toml")
+end
+
+"""
+    edid_native_mode(edid) -> (; width, height, width_mm, height_mm) or nothing
+
+The native mode of a display and its image size, from the first detailed timing descriptor
+of its EDID (bytes 54-71). `nothing` when the block is too short or the descriptor is not a
+timing (pixel clock 0) or gives no size.
+"""
+function edid_native_mode(edid::AbstractVector{UInt8})
+    length(edid) >= 72 || return nothing
+    d = @view edid[55:72]
+    (d[1] == 0 && d[2] == 0) && return nothing
+    w  = Int(d[3])  | (Int(d[5] >> 4) << 8)
+    h  = Int(d[6])  | (Int(d[8] >> 4) << 8)
+    wm = Int(d[13]) | (Int(d[15] >> 4) << 8)
+    hm = Int(d[14]) | (Int(d[15] & 0x0f) << 8)
+    (w > 0 && h > 0 && wm > 0 && hm > 0) || return nothing
+    return (; width = w, height = h, width_mm = wm, height_mm = hm)
+end
+
+"""
+    panel_dpis(; root = "/sys/class/drm") -> Vector{(; width, height, dpi)}
+
+Every connected display with a readable EDID under `root`: its native mode in device pixels
+and its density in device pixels per inch. Empty off Linux.
+"""
+function panel_dpis(; root::AbstractString = "/sys/class/drm")
+    out = @NamedTuple{width::Int, height::Int, dpi::Float64}[]
+    Sys.islinux() && isdir(root) || return out
+    for c in readdir(root; join = true)
+        st, ed = joinpath(c, "status"), joinpath(c, "edid")
+        isfile(st) && isfile(ed) || continue
+        try
+            strip(read(st, String)) == "connected" || continue
+            m = edid_native_mode(read(ed))
+            m === nothing && continue
+            push!(out, (; width = m.width, height = m.height, dpi = m.width / (m.width_mm / 25.4)))
+        catch err
+            @debug "unreadable display connector" c err
+        end
+    end
+    return out
+end
+
+# One density for a set of displays: theirs when they agree to within 1 dpi, else 0.
+_one_dpi(ps) = isempty(ps) ? 0.0 :
+               maximum(p -> p.dpi, ps) - minimum(p -> p.dpi, ps) < 1 ? first(ps).dpi : 0.0
+
+"""
+    panel_dpi(width, height; root = "/sys/class/drm") -> Float64
+
+Density, in device pixels per inch, of the connected display whose native mode is `width` x
+`height` device pixels (to 2 pixels, for a size rounded through a fractional scale), from its
+EDID. Zero when no connected display has that mode, when the
+displays that do disagree, or off Linux.
+
+Under X11 Qt takes the screen's size in millimetres from the X server, which can report a
+nominal figure (a configured DPI, XWayland's default) rather than the panel's.
+"""
+panel_dpi(width::Real, height::Real; root::AbstractString = "/sys/class/drm") =
+    _one_dpi(filter(p -> abs(p.width - width) <= 2 && abs(p.height - height) <= 2,
+                    panel_dpis(; root)))
+
+"Variables through which Qt is told its scale; any of them set means it is not ours to choose."
+const QT_SCALE_VARS = ("QT_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS",
+                       "QT_ENABLE_HIGHDPI_SCALING", "QT_AUTO_SCREEN_SCALE_FACTOR")
+
+"""
+    window_scale_for(dpi) -> Float64
+
+The whole-window scale a panel of `dpi` device pixels per inch gets: `dpi / 150` to the nearest
+0.25, and never below 1. 1.25 for a 189 dpi 16" 2560x1600 panel, 1 for a 141 dpi 15.6"
+1920x1080 one and for a desktop monitor.
+"""
+window_scale_for(dpi::Real) = max(1.0, round(4 * dpi / 150) / 4)
+
+# Xft.dpi / 96: the scale Qt on X11 applies by itself. 1 when unset or unreadable.
+function _x11_desktop_scale()
+    xrdb = Sys.which("xrdb")
+    xrdb === nothing && return 1.0
+    try
+        for l in eachline(pipeline(`$xrdb -query`; stderr = devnull))
+            m = match(r"^Xft\.dpi:\s*([0-9.]+)", l)
+            m === nothing && continue
+            v = tryparse(Float64, m[1])
+            return v === nothing || v <= 0 ? 1.0 : v / 96
+        end
+    catch err
+        @debug "xrdb -query failed" err
+    end
+    return 1.0
+end
+
+# Windows' display scale (its dpi / 96) as read under WSL from the registry through `reg.exe`;
+# 0 when it cannot be read. WSLg gives Qt a scale of 1 whatever Windows uses.
+function _windows_desktop_scale()
+    reg = Sys.which("reg.exe")
+    reg === nothing && isfile("/mnt/c/Windows/System32/reg.exe") &&
+        (reg = "/mnt/c/Windows/System32/reg.exe")
+    reg === nothing && return 0.0
+    for (key, name) in (("HKCU\\Control Panel\\Desktop\\WindowMetrics", "AppliedDPI"),
+                        ("HKCU\\Control Panel\\Desktop", "LogPixels"))
+        try
+            out = read(pipeline(`$reg query $key /v $name`; stderr = devnull), String)
+            m = match(r"REG_DWORD\s+0x([0-9a-fA-F]+)", out)
+            m === nothing && continue
+            v = parse(Int, m[1]; base = 16)
+            v > 0 && return v / 96
+        catch err
+            @debug "reg.exe query failed" key name err
+        end
+    end
+    return 0.0
+end
+
+"""
+    wsl_panel_dpi() -> Float64
+
+Under WSL, the panel density Windows' display scale stands for: 120 dpi per 100%, the step
+Windows recommends, so 180 at 150%. 0 outside WSL or when the registry cannot be read. WSLg
+reports a nominal 96-100 dpi for any display and exposes no EDID.
+"""
+function wsl_panel_dpi()
+    is_wsl() || return 0.0
+    return 120 * _windows_desktop_scale()
+end
+
+"""
+    configure_qt_scale!(; verbose = true) -> (; applied, reason, vars)
+
+Scale all of Qt on Linux, through `QT_SCALE_FACTOR`, when the desktop does not.
+
+Qt draws the controls' padding, borders and indicators at the desktop's scale. On X11 at 100%
+a dense panel gets them at one device pixel per point while the window's own scale enlarges
+the text, so text crowds its fields; Windows at 150% draws the same panel's controls at 1.5.
+This sets the factor `window_scale_for` gives the panel's EDID density, divided by what X11
+already applies (`Xft.dpi`). Under WSL, whose WSLg gives Qt a scale of 1, the density is
+`wsl_panel_dpi`, from Windows' display scale (`AppliedDPI` in the registry).
+
+`window_scale` in `gui_settings_file()` wins when positive (1 turns it off). Left alone: any
+of `QT_SCALE_VARS` already set; a Wayland session other than WSLg, whose compositor gives Qt
+its scale; WSL when the registry cannot be read; displays that disagree in density or have no
+EDID. Must run before `QML` is loaded, which creates the `QGuiApplication`; `app/launcher.sh`
+does the same for the bundle.
+"""
+function configure_qt_scale!(; verbose::Bool = true)
+    vars = Dict{String,String}()
+    no(reason) = (applied = false, reason = reason, vars = vars)
+    Sys.islinux() || return no("not Linux")
+    for v in QT_SCALE_VARS
+        haskey(ENV, v) && return no("$v already set")
+    end
+    saved = 0.0
+    try
+        path = gui_settings_file()
+        if isfile(path)
+            v = get(TOML.parsefile(path), "window_scale", 0.0)
+            v isa Real && isfinite(v) && (saved = Float64(v))
+        end
+    catch err
+        @debug "could not read the saved window scale" err
+    end
+    f = if saved > 0
+        clamp(saved, 0.5, 4.0)
+    elseif is_wsl()
+        dpi = wsl_panel_dpi()
+        dpi > 0 || return no("WSL; Windows' display scale unreadable")
+        window_scale_for(dpi)
+    else
+        x11 = lowercase(get(ENV, "QT_QPA_PLATFORM", "")) == "xcb" || !haskey(ENV, "WAYLAND_DISPLAY")
+        x11 || return no("Wayland session; the compositor scales Qt")
+        dpi = _one_dpi(panel_dpis())
+        dpi > 0 || return no("no single panel density from the EDID")
+        window_scale_for(dpi) / _x11_desktop_scale()
+    end
+    abs(f - 1) < 0.01 && return no("scale 1")
+    vars["QT_SCALE_FACTOR"] = string(round(f; digits = 3))
+    merge!(ENV, vars)
+    verbose && @info "Qt scaled to match the panel" QT_SCALE_FACTOR = vars["QT_SCALE_FACTOR"]
+    return (applied = true, reason = (saved > 0 ? "saved window_scale" :
+                                  is_wsl() ? "Windows' display scale" : "from the panel's EDID"),
+            vars = vars)
 end

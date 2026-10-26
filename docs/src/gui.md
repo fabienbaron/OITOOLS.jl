@@ -59,19 +59,20 @@ the elevation limits and the horizon, in astronomical night, clear of the moon. 
 it chooses the search:
 
 - **Single POPs**: one setting for the night (`best_pop`).
-- **Multiple POPs**: up to **changes ≤** POP changes, each taking **change** minutes
-  (`pop_plan`).
-- **Multiple POPs + drop**: the same, dropping up to **drop ≤** telescopes where no setting
-  keeps them all in delay. The reference telescope is dropped only when no other drop gains
-  the same time.
-- **Best time coverage POPs**: for the earliest, middle and latest third of the observable
-  hours, the single setting with the most time in delay over it, one row each (a setting best
-  in several thirds once). **Show details** and the delay carts show the earliest.
+- **POP changes on a single line**: up to **changes ≤** POP changes, each taking **change**
+  minutes (`pop_plan`).
+- **POP changes & Telescope Drops on a single line**: the same, dropping up to **drop ≤**
+  telescopes where no setting keeps them all in delay. The reference telescope is dropped only
+  when no other drop gains the same time.
+- **Three-line POP selection for best time coverage**: for the earliest, middle and latest
+  third of the observable hours, the single setting with the most time in delay over it, one
+  row each (a setting best in several thirds once). **Show details** and the delay carts show
+  the earliest.
 
 Plans are ranked by the time with every selected telescope, then the time with one dropped
 (the reference last), then with two, then by the fewest changes, and last by the fewest POPs
 moved at them: among settings giving the same times, those keeping more POPs where they were.
-**Best time coverage POPs** picks its tied settings the same way.
+**Three-line POP selection for best time coverage** picks its tied settings the same way.
 
 On the Gantt a multi-POP plan is one bar per segment, lighter where a telescope is dropped. The
 first POPs are written at the start, each change as **→** and the new POPs where it starts

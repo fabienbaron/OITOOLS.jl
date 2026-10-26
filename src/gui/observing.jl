@@ -1039,8 +1039,10 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
                                          _hhmm(_gantt_clock(p, lst[sg.i0], time_system)), :time, :start))
             end
         end
+        # "POP" where a change starts, and the time it starts just before it.
         for (c0, _) in p.changes
             push!(marks, (lst[c0], "POP", :start, TARGET_ROW))
+            push!(marks, (lst[c0], _hhmm(_gantt_clock(p, lst[c0], time_system)), :end, TARGET_ROW))
         end
         if !detailed
             for (c0, c1) in p.changes

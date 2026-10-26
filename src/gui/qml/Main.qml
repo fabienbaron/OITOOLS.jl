@@ -75,45 +75,37 @@ ApplicationWindow {
     readonly property real qtTextScale:
         Math.max(0.5, Math.min(4.0, Screen.logicalPixelDensity * 25.4 / 96.0))
 
-    // What the screen actually is, from PHYSICAL pixel density.
+    // What the screen actually is: its density in DEVICE pixels per inch.
     //
-    // `Screen.pixelDensity` comes from the EDID and genuinely differs between machines, where
-    // `logicalPixelDensity` does not. Measured: a 24" 1920x1080 desktop reports 92.6 dpi and a
-    // 16" laptop panel around 189, while BOTH report logicalPixelDensity 96 and
-    // devicePixelRatio 1. Scaling off the logical figure is why one hardcoded factor could fit
-    // one machine and be far too large on the other.
-    readonly property real physicalDpi: Screen.pixelDensity * 25.4
+    // `Screen.pixelDensity` is per logical pixel, so it is multiplied by the device pixel
+    // ratio: a 16" 2560x1600 panel at 150% reports 126 and is 189. On Linux the panel's own
+    // EDID wins when one matches the screen's mode, since under X11 Qt takes the size in mm
+    // from the X server, which can report a nominal 96-100 dpi for any panel. Under WSL, which
+    // has no EDID and the same nominal density, Windows' display scale stands for it.
+    readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1.0
+    readonly property real panelDpi: Julia.shell_panel_dpi(Math.round(Screen.width * devicePixelRatio),
+                                                           Math.round(Screen.height * devicePixelRatio))
+    readonly property real deviceDpi: panelDpi > 0 ? panelDpi
+                                                   : Screen.pixelDensity * 25.4 * devicePixelRatio
+    // Per logical pixel, the unit `dp()` and the plot scale work in.
+    readonly property real physicalDpi: deviceDpi / devicePixelRatio
 
-    // Anchored on points judged by eye, not derived: 0.73 on this 92.6 dpi 1920x1080 desktop
-    // and, earlier, 1.25 on a laptop panel of roughly 189 dpi. `refDpi`/`refScale`/
-    // `dpiExponent` ARE that fit -- move them if a screen reads wrong, rather than trying to
-    // re-derive a rule.
-    //
-    // The desktop anchor was 0.875 and is now 0.73, which moves the whole curve down by the
-    // same 17%: the laptop point it predicts is 1.04 rather than the 1.25 once judged there.
-    // That is deliberate -- one judgement, applied uniformly -- but if 1.25 still reads right
-    // on that panel, the two anchors want an exponent of 0.75 instead of 0.5, not a different
-    // refScale.
-    //
-    // The exponent falls out as 0.5. Matching physical SIZE would be 1.0 and give 0.61 here,
-    // too small: a desktop monitor sits further away than a laptop screen and wants larger
-    // elements to subtend the same angle. Viewing distance is not knowable, so the root splits
-    // the difference, and it happens to pass through both judgements.
+    // The size on screen is uiScale x devicePixelRatio, set by the device density alone:
+    // `refScale` at `refDpi`, growing as density^`dpiExponent`. Judged by eye: 0.73 on a
+    // 92.6 dpi 1920x1080 desktop at 100%, and 0.62 on a 189 dpi 16" 2560x1600 laptop at 150%
+    // (0.93 on screen), which the exponent 0.34 fits. The OS scaling is then divided out, so
+    // one panel gets the same size whatever scaling or platform it runs under; on Linux the
+    // launcher sets that scaling from the panel when the desktop does not (`configure_qt_scale!`).
     //
     // This governs the CHROME only. The window is sized from the screen (below) and plot text
-    // from the density (`live_plot_scale` in Julia) -- tying either to this factor was tried
-    // and both were wrong: the window shrank when the widgets did, leaving less room for the
-    // data rather than more.
-    //
-    // 189 is an estimate for the laptop, not a reading. The startup line below prints the
-    // physical dpi, so it can be replaced with the real one and the exponent refitted.
+    // from the density (`live_plot_scale` in Julia).
     readonly property real refDpi:      92.6
     readonly property real refScale:    0.73
-    readonly property real dpiExponent: 0.5
+    readonly property real dpiExponent: 0.34
     readonly property real autoScale:
         Math.max(0.5, Math.min(4.0,
-            physicalDpi > 0 ? refScale * Math.pow(physicalDpi / refDpi, dpiExponent)
-                            : refScale))
+            (deviceDpi > 0 ? refScale * Math.pow(deviceDpi / refDpi, dpiExponent) : refScale)
+            / devicePixelRatio))
 
     // Turned by hand in the settings panel; 0 means "no override". It wins over both the
     // startup variable and the screen, because it is the most recent thing the user said.
@@ -147,7 +139,7 @@ ApplicationWindow {
         shippedFontRegular.status === FontLoader.Ready ? shippedFontRegular.name : ""
 
     readonly property var appearanceDefaults: ({
-        uiScaleUser: 0, uiFontFamily: "", baseFontPt: 11, plotScaleUser: 0, markerSizeUser: 0,
+        uiScaleUser: 0, windowScaleUser: 0, uiFontFamily: "", baseFontPt: 11, plotScaleUser: 0, markerSizeUser: 0,
         // The shipped style is Julia's to name (`DEFAULT_CONTROLS_STYLE`), so it is asked for
         // rather than repeated here: a reset has to restore what the window would ship with,
         // not a literal that was true when this line was written.
@@ -155,6 +147,10 @@ ApplicationWindow {
     })
 
     property real uiScaleUser: appearanceDefaults.uiScaleUser
+    // Qt's own scale (QT_SCALE_FACTOR), read by the launcher before Qt starts, so a change
+    // takes effect at the next launch. 0 is automatic; `windowScaleRunning` is the one in force.
+    property real windowScaleUser: appearanceDefaults.windowScaleUser
+    readonly property real windowScaleRunning: Julia.shell_window_scale()
     property string uiFontFamily: appearanceDefaults.uiFontFamily
     // Qt Quick Controls style. Read by `apply_controls_style!` from the settings file BEFORE
     // the QML is loaded, so a change here takes effect at the next launch, not this one.
@@ -387,9 +383,11 @@ ApplicationWindow {
         // computed there, and they have to follow the same factor as the chrome around them.
         Julia.shell_ui_scale(uiScale, physicalDpi)
         if (verboseStartup) console.log(
-        "OITOOLSGUI ui scale: screen=" + physicalDpi.toFixed(1) + " dpi physical, "
+        "OITOOLSGUI ui scale: screen=" + (Screen.pixelDensity * 25.4).toFixed(1) + " dpi physical, "
         + (Screen.logicalPixelDensity * 25.4).toFixed(1) + " logical"
         + "  devicePixelRatio=" + Screen.devicePixelRatio.toFixed(2)
+        + "  panel=" + (panelDpi > 0 ? panelDpi.toFixed(1) + " dpi" : "unknown")
+        + "  device=" + deviceDpi.toFixed(1) + " dpi"
         + "  autoScale=" + autoScale.toFixed(3)
         + (uiScaleOverride > 0 ? "  override=" + uiScaleOverride.toFixed(3) : "  (no override)")
         + "  -> uiScale=" + uiScale.toFixed(3) + " fontScale=" + fontScale.toFixed(3))
@@ -408,6 +406,7 @@ ApplicationWindow {
             var v = parseFloat(f[1])
             switch (f[0]) {
             case "ui_scale":    if (v > 0) win.uiScaleUser = v; break
+            case "window_scale": win.windowScaleUser = v > 0 ? v : 0; break
             case "ui_font":     win.uiFontFamily = f[1]; break
             case "controls_style": win.controlsStyle = f[1]; break
             case "ui_font_pt":  if (v > 0) win.baseFontPt = v; break
@@ -502,6 +501,8 @@ ApplicationWindow {
             // Read the live values back, so the panel opens showing what is in force rather
             // than what it last displayed.
             uiScaleSpin.value = Math.round(win.uiScale * 100)
+            windowScaleSpin.value = Math.round((win.windowScaleUser > 0 ? win.windowScaleUser
+                                                                        : win.windowScaleRunning) * 100)
             uiFontSizeSpin.value = Math.round(win.baseFontPt)
             // The combo only reports what was last picked FROM it, so a family that arrived
             // from the saved defaults has to be found in the list by hand. -1 for a name that
@@ -726,8 +727,41 @@ ApplicationWindow {
                         ToolTip.visible: hovered
                         ToolTip.text: uiScaleOverride > 0
                             ? "back to OITOOLSGUI_SCALE=" + uiScaleOverride.toFixed(2)
-                            : "back to the value computed from " + physicalDpi.toFixed(0) + " dpi"
+                            : "back to the value computed from " + deviceDpi.toFixed(0) + " dpi"
                         onClicked: win.uiScaleUser = 0
+                    }
+
+                    // Linux only: elsewhere nothing reads it before Qt starts.
+                    Label { text: "Window scale"; color: "#666"; visible: Qt.platform.os === "linux" }
+                    SpinBox {
+                        id: windowScaleSpin
+                        visible: Qt.platform.os === "linux"
+                        from: 50; to: 400; stepSize: 25
+                        value: Math.round((win.windowScaleUser > 0 ? win.windowScaleUser
+                                                                   : win.windowScaleRunning) * 100)
+                        editable: true
+                        textFromValue: function (v) { return (v / 100).toFixed(2) }
+                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
+                        Layout.fillWidth: true
+                        onValueModified: win.windowScaleUser = value / 100
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Qt's scale; next launch"
+                    }
+                    RowLayout {
+                        visible: Qt.platform.os === "linux"
+                        Button {
+                            text: "auto"
+                            enabled: win.windowScaleUser > 0
+                            ToolTip.visible: hovered
+                            ToolTip.text: "from the panel"
+                            onClicked: win.windowScaleUser = 0
+                        }
+                        Label {
+                            text: win.windowScaleUser > 0
+                                  && Math.abs(win.windowScaleUser - win.windowScaleRunning) > 0.005
+                                  ? "on restart" : ""
+                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                        }
                     }
 
                     Label { text: "Controls style"; color: "#666" }
@@ -919,6 +953,7 @@ ApplicationWindow {
                             // with a different one.
                             var path = Julia.shell_save_settings(
                                 [ "ui_scale\t"    + win.uiScaleUser,
+                                  "window_scale\t" + win.windowScaleUser,
                                   "ui_font\t"     + win.uiFontFamily,
                                   "controls_style\t" + win.controlsStyle,
                                   "ui_font_pt\t"  + win.baseFontPt,
@@ -944,6 +979,7 @@ ApplicationWindow {
                             // no longer exists anywhere.
                             win.workDirectory  = ""
                             win.uiScaleUser    = d.uiScaleUser
+                            win.windowScaleUser = d.windowScaleUser
                             win.uiFontFamily   = d.uiFontFamily
                             win.baseFontPt     = d.baseFontPt
                             win.controlsStyle  = d.controlsStyle

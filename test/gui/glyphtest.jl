@@ -52,8 +52,8 @@ const SETUP   = get(ENV, "SETUP", "1") in ("1", "true", "yes")
 
 # The launcher's load order, reproduced exactly, because it is part of what is under test.
 #
-# `bin/oitoolsgui.jl` calls `configure_graphics!()` and then `prefer_native_wayland!()` BEFORE
-# `using GLMakie`, since GLFW reads its windowing choice when the first GL context is created.
+# `oitoolsgui` calls `configure_graphics!()` and then `prefer_native_wayland!()` BEFORE
+# loading GLMakie, since GLFW reads its windowing choice when the first GL context is created.
 # Skip it and, on a Wayland session, GLFW takes XWayland while Qt takes Wayland natively --
 # two windowing systems in one process sharing one GL context. `SETUP=0` is how to find out
 # whether that pairing is what corrupts the atlas.

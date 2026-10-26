@@ -41,7 +41,6 @@ Item {
         root.summaryRows = out
     }
     // Whether the frame of controls is open; the plot keeps its width when it is not.
-    property bool frameOpen: true
     // The plot kind as the menu shows it, for the window's PNG file name.
     readonly property string currentKind: kindBox.currentText
     property string pickText: ""
@@ -219,7 +218,6 @@ Item {
         // ── the frame ────────────────────────────────────────────────────────────
         ScrollView {
             id: frame
-            visible: root.frameOpen
             SplitView.preferredWidth: root.dp(420)
             SplitView.minimumWidth: root.dp(220)
             contentWidth: availableWidth
@@ -486,19 +484,7 @@ Item {
                     // below.
                 }
 
-                // Over the plot, as the other perspectives place theirs: the frame's toggle in
-                // one corner, Save PNG in the other. Dimmed until hovered, so neither competes
-                // with the data for attention.
-                Button {
-                    anchors.left: parent.left
-                    anchors.top: parent.top
-                    anchors.margins: dp(6)
-                    text: root.frameOpen ? "◀" : "▶"
-                    opacity: hovered ? 1.0 : 0.5
-                    ToolTip.visible: hovered
-                    ToolTip.text: root.frameOpen ? "hide the controls" : "show the controls"
-                    onClicked: root.frameOpen = !root.frameOpen
-                }
+                // Over the plot, dimmed until hovered so it does not compete with the data.
                 Button {
                     anchors.right: parent.right
                     anchors.top: parent.top

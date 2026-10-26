@@ -3184,21 +3184,6 @@ function shell_version()
 end
 
 """
-    gui_settings_file() -> String
-
-Where the appearance defaults live: `oitools/gui.toml` under the platform's per-user config
-directory.
-
-Deliberately not `LocalPreferences.toml`: these are the user's window, not the project's, and
-they should follow the user across every project that launches the GUI.
-"""
-function gui_settings_file()
-    base = Sys.iswindows() ? get(ENV, "APPDATA", homedir()) :
-           get(ENV, "XDG_CONFIG_HOME", joinpath(homedir(), ".config"))
-    return joinpath(base, "oitools", "gui.toml")
-end
-
-"""
     shell_save_settings(payload) -> String
 
 Write the settings panel's values to `gui_settings_file()`, and say where they went.
@@ -5509,7 +5494,7 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
             update_gantt!(sh.gantt, p; detailed, time_system = tsys)
     end
     # The delay chart is drawn from the same plan, so both views are always of one night.
-    sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p)
+    sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p; time_system = tsys)
 
     sh.plan = p          # the hover readout reads this; see shell_gantt_hover
     h = observable_hours(p)

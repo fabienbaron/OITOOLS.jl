@@ -248,7 +248,7 @@ function _snapshot_figure(sh::ShellState, which::AbstractString, size, detailed:
                 update_gantt!(g, sh.plan; detailed, time_system = GANTT_TIME_SYSTEM[])
         else
             isempty(sh.plan.baselines) && return nothing
-            update_delay_plot!(build_delay_plot(fig, ax), sh.plan)
+            update_delay_plot!(build_delay_plot(fig, ax), sh.plan; time_system = GANTT_TIME_SYSTEM[])
         end
         _match_view!(ax, liveax)
         # The night, which the panel shows beside the chart and a saved file has to carry.
