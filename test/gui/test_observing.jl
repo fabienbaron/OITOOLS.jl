@@ -178,6 +178,24 @@
         @test telescope_config(["S1", "E1"], tels) == [1, 0, 1, 0, 0, 0]
         @test telescope_config(String[], tels)     == zeros(Int, 6)
         @test telescope_config(tels, tels)         == ones(Int, 6)
+        # the delay reference, marked as the panel sends it
+        @test telescope_config(["S1", "E1", "W2*"], tels) == [1, 0, 1, 0, 0, 2]
+    end
+
+    @testset "the delay reference: the most central telescope, on the equator's plane" begin
+        f = read_facility_file("CHARA")
+        tels = facility_telescopes("CHARA")
+        @test tels[central_telescope(f, ones(Int, 6))] == "W2"
+        @test tels[central_telescope(f, [1, 1, 1, 1, 1, 0])] == "S2"
+        @test tels[central_telescope(f, telescope_config(["E1", "E2"], tels))] in ("E1", "E2")
+        @test central_telescope(f, zeros(Int, 6)) == 0
+        @test GUI.shell_central_telescope("CHARA", "S1 S2 E1 E2 W1") == "S2"
+        @test GUI.shell_central_telescope("CHARA", "") == ""
+        # the shell's single-setting search takes the reference from the marked list: Capella's
+        # best setting with W2 as reference (test_pop_plan.jl)
+        rows = GUI.shell_best_pops("CHARA", 45.998, "2026-09-15T00:00:00", 79.172,
+                                   "S1 S2 E1 E2 W1 W2*", 1)
+        @test startswith(rows, "1 1 4 4 1 5\t")
     end
 
     @testset "Vega is a summer target from CHARA, and not a winter one" begin
@@ -423,7 +441,7 @@
         @test !g1geo.multi && isempty(g1geo.poplabels) && isempty(g1geo.seglabels)
     end
 
-    @testset "POP plans as text, as a summary, and ranked for the POPs tab" begin
+    @testset "POP plans as text, as a summary, and ranked for the POP strategies tab" begin
         ra, dec, d = 279.2347, 38.7837, DateTime(2026, 6, 21)
         f = read_facility_file("CHARA")
         pp = night_pop_plan(f, ra, dec, d; max_changes = 2, max_drop = 1)
@@ -453,6 +471,182 @@
         @test first(tot) == maximum(tot)
         # the plan column is what shell_gantt takes
         @test parse_pop_plan_text(split(first(rows), "\t")[6]).minutes == pp.minutes
+    end
+
+    @testset "a night's POP timeline" begin
+        ra, dec, d = 279.2347, 38.7837, DateTime(2026, 6, 21)
+        f = read_facility_file("CHARA")
+        pp = night_pop_plan(f, ra, dec, d; max_changes = 2, max_drop = 1)
+        p = night_plan("CHARA", "Vega", ra, dec, d; use_delay = true, popplan = pp)
+        p1 = night_plan("CHARA", "Vega", ra, dec, d; use_delay = true, pop = [1, 1, 2, 3, 1, 5])
+        obs(q) = Set(observable_indices(q))
+        spans(rows) = [r for r in rows if !(r.kind in (:drop, :readd))]
+        # The rows cover the dark hours once, in order; the settings are the observed samples.
+        function tiles(q, rows)
+            sp = spans(rows)
+            @test first(sp).i0 == minimum(q.good_twilight)
+            @test last(sp).i1 == maximum(q.good_twilight)
+            @test all(sp[k].i0 == sp[k-1].i1 + 1 for k in 2:length(sp))
+            @test sum(r.hours for r in rows if r.kind === :setting) ≈ observable_hours(q)
+            @test all(r -> r.kind !== :setting || all(in(obs(q)), r.i0:r.i1), rows)
+            @test all(r -> r.kind !== :gap || !any(in(obs(q)), r.i0:r.i1), rows)
+            # each gap says what excludes it: elevation first, then the Moon, then the delay
+            for r in filter(r -> r.kind === :gap, rows), i in r.i0:r.i1
+                want = !(i in q.good_alt) ? :elevation : !(i in q.good_moon) ? :moon : :delay
+                @test r.why === want
+            end
+            # each span ends where the next begins, on the clock
+            @test all(sp[k].t0 ≈ sp[k-1].t1 for k in 2:length(sp))
+        end
+
+        rows = pop_plan_timeline(p)
+        tiles(p, rows)
+        kinds = [r.kind for r in rows]
+        # one POP change, 10 minutes, listing only the carts that move
+        ch = only(filter(r -> r.kind === :change, rows))
+        @test ch.hours ≈ 10 / 60
+        k = findfirst(==(:change), kinds)
+        before, after = rows[k-1], rows[findnext(==(:setting), kinds, k)]
+        @test !isempty(ch.moved)
+        @test all(((t, a, b),) -> before.pop[t] == a && after.pop[t] == b && a != b, ch.moved)
+        @test length(ch.moved) == count(t -> before.pop[t] != after.pop[t], findall(>(0), p.config))
+        # E1 dropped with the POPs unchanged: a drop row, no change row next to it
+        kd = only(findall(==(:drop), kinds))
+        @test rows[kd].tels == [3] && rows[kd+1].kind === :setting && rows[kd+1].config[3] == 0
+        @test rows[kd-1].kind === :setting && rows[kd-1].pop == rows[kd+1].pop
+        @test isnan(rows[kd].t1) && rows[kd].t0 ≈ rows[kd+1].t0
+
+        # one setting: settings and gaps only
+        r1 = pop_plan_timeline(p1)
+        tiles(p1, r1)
+        @test all(r -> r.kind in (:setting, :gap), r1)
+        @test all(r -> r.kind !== :setting || r.pop == p1.pop, r1)
+
+        # the clocks move the times and nothing else
+        x = unwrap_lst(p.lst)
+        for sys in (:utc, :local)
+            rs = pop_plan_timeline(p; system = sys)
+            @test [r.kind for r in rs] == kinds
+            @test [r.hours for r in rs] == [r.hours for r in rows]
+            @test isequal([r.ha0 for r in rs], [r.ha0 for r in rows])
+            @test all(r -> r.t0 ≈ GUI._gantt_clock(p, x[r.i0], sys), rs)
+        end
+        u = pop_plan_timeline(p; system = :utc); l = pop_plan_timeline(p; system = :local)
+        off = l[1].t0 - u[1].t0
+        @test off ≈ GUI.local_utc_offset(f, d) && all(k -> l[k].t0 - u[k].t0 ≈ off, eachindex(u))
+        # local midnight falls inside this night: the times increase through it
+        t0s = [r.t0 for r in spans(l)]
+        @test issorted(t0s) && first(t0s) < 24 < last(t0s)
+        txt = timeline_text(l, p; system = :local)
+        @test occursin(r"\n\s+23:\d\d", txt) || occursin(r"\n\s+0:\d\d", txt)
+        @test startswith(txt, "LOCAL") && occursin("POP change", txt) && occursin("drop E1", txt)
+
+        # synthetic plans: the same night with other segments
+        remake(q; kw...) = NightPlan((get(kw, fn, getfield(q, fn)) for fn in fieldnames(NightPlan))...)
+        s1 = p.segments[1]
+        a = s1.i0; b = s1.i1; m = (a + b) ÷ 2; q3 = div(b - m, 2) + m
+        drop = copy(s1.config); drop[3] = 0
+        seg(i0, i1, cfg, pop) = GUI.PlanSegment((i0, i1, cfg, pop, 1))
+        # a telescope dropped, then added back, POPs unchanged
+        pr = remake(p; segments = [seg(a, m, s1.config, s1.pop), seg(m + 1, q3, drop, s1.pop),
+                                   seg(q3 + 1, b, s1.config, s1.pop), p.segments[2:end]...])
+        rr = pop_plan_timeline(pr)
+        kr = [r.kind for r in rr]
+        i = findfirst(==(:drop), kr)
+        @test rr[i].tels == [3] && kr[i+1] === :setting && kr[i+2] === :readd && rr[i+2].tels == [3]
+        tiles(pr, rr)
+        # a POP change and a drop at the same boundary: the change, then the drop
+        s2 = p.segments[2]
+        d2 = copy(s2.config); d2[3] = 0
+        pc = remake(p; segments = [s1, seg(s2.i0, s2.i1, d2, s2.pop), p.segments[3:end]...])
+        kc = [r.kind for r in pop_plan_timeline(pc)]
+        j = findfirst(==(:change), kc)
+        @test kc[j+1:j+3] == [:drop, :setting, :readd] || kc[j+1:j+2] == [:drop, :setting]
+        # Capella through LST 0 h: settings in time order, every POP change a change row
+        cra, cdec, cd = 79.172, 45.998, DateTime(2026, 9, 15)
+        cp = night_pop_plan(f, cra, cdec, cd; max_changes = 2, max_drop = 1)
+        cq = night_plan("CHARA", "Capella", cra, cdec, cd; use_delay = true, popplan = cp)
+        crows = pop_plan_timeline(cq)
+        tiles(cq, crows)
+        cs = filter(r -> r.kind in (:setting, :change), crows)
+        @test !any(k -> cs[k-1].kind === :setting && cs[k].kind === :setting &&
+                        cs[k-1].pop[cq.config .> 0] != cs[k].pop[cq.config .> 0], 2:length(cs))
+        @test count(r -> r.kind === :change, crows) == cp.changes
+        @test issorted([r.ha0 for r in crows if r.kind === :setting])
+        @test first(crows).kind === :gap && first(crows).why === :elevation
+        @test occursin("elevation-restricted", timeline_text(crows, cq))
+        # the candidates chart: single settings and multi-POP plans as stacked rows, a plan's
+        # row with its own POPs, changes and drops
+        g2 = gantt_stack_geometry([p1, p], ["#1", "#2"], "Vega · 2 candidates")
+        @test [r[2] for r in g2.rows] == ["#1", "#2"] && g2.rows[1][1] > g2.rows[2][1]
+        @test count(m -> m[2] == "POP", g2.marks) == length(p.changes)
+        @test count(m -> m[2] == "DROP", g2.marks) == 1
+        @test length(g2.poplabels) == 1 + count(l -> true, gantt_geometry(p).poplabels)
+        @test all(m -> m[4] ≈ g2.rows[2][1], g2.marks)          # on the plan's row
+        @test GUI.shell_plans_gantt("CHARA", "Vega", ra, dec, "2026-06-21T00:00:00",
+                                    "S1 S2 E1 E2 W1 W2", "#1\t1 1 2 3 1 5\t\n#2\t\t" * pop_plan_text(pp),
+                                    true) |> x -> parse(Int, x) > 0
+        @test startswith(GUI.shell_plans_gantt("CHARA", "Vega", ra, dec, "2026-06-21T00:00:00",
+                                               "", "", true), "!")
+        # the delay reference: `*` after its POP; "Ref → E2" with its time where it changes and
+        # the POPs do not; with a POP change, only the new POPs, `*` on the new reference
+        w2 = copy(s1.config); w2[6] = 2
+        e2 = copy(s1.config); e2[4] = 2                     # E2 the reference, W2 still in
+        nw = copy(e2); nw[6] = 0                            # W2 dropped, E2 the reference
+        pf = remake(p; config = w2, segments = [seg(a, m, w2, s1.pop), seg(m + 1, q3, e2, s1.pop),
+                                                 seg(q3 + 1, b, nw, s1.pop)], changes = Tuple{Int,Int}[])
+        @test segment_label(pf, pf.segments[1]) == join([string(s1.pop[i], i == 6 ? "*" : "") for i in [3, 6, 5, 2, 1, 4]], " ")
+        @test occursin("*", segment_label(pf, pf.segments[2])) && endswith(segment_label(pf, pf.segments[2]), "*")
+        @test transition_label(pf, 2) == "Ref → E2"
+        @test transition_label(pf, 3) == "−W2"                 # E2 was the reference already
+        @test GUI.reference_change(pf, 2) == 4 && GUI.reference_change(pf, 3) == 0
+        gf = gantt_geometry(pf)
+        xf = unwrap_lst(pf.lst)
+        @test any(l -> l[3] == "Ref → E2" && l[1] ≈ xf[m + 1], gf.seglabels)
+        @test any(l -> l.kind === :time && l.x ≈ xf[m + 1], gf.labels)
+        @test all(c -> c in GUI.PLOT_GLYPHS, "Ref → E2*")
+        rf = pop_plan_timeline(pf)
+        kf = [r.kind for r in rf]
+        i = findfirst(==(:ref), kf)
+        @test rf[i].tels == [4] && kf[i+1] === :setting && isnan(rf[i].t1)
+        @test occursin("Ref → E2", timeline_text(rf, pf))
+        @test GUI.timeline_fields(rf[i+1], pf)[4] == segment_label(pf, pf.segments[2])
+        # reference and POPs both change: no "Ref", the new POPs carry the `*`
+        p2 = copy(s1.pop); p2[3] = s1.pop[3] == 1 ? 2 : 1
+        pc2 = remake(pf; segments = [seg(a, m, w2, s1.pop), seg(m + 1, b, e2, p2)])
+        @test transition_label(pc2, 2) == "" && GUI.reference_change(pc2, 2) == 0
+        @test !any(==(:ref), [r.kind for r in pop_plan_timeline(pc2)])
+        # the single-setting title and the stacked rows mark it too
+        pw = night_plan("CHARA", "Vega", ra, dec, d; use_delay = true, pop = [1, 1, 2, 3, 1, 5],
+                        config = [1, 1, 1, 1, 1, 2])
+        @test occursin("W2:P5*", pop_label(pw))
+        @test any(l -> occursin("5*", l[3]), gantt_stack_geometry([pw], ["#1"]).poplabels)
+        # no darkness: no rows
+        @test isempty(pop_plan_timeline(remake(p; good_twilight = Int[])))
+
+        # the shell builds the same night as the Gantt and gives the same rows
+        txtplan = pop_plan_text(pp)
+        sh = split(GUI.shell_pop_timeline("CHARA", "Vega", ra, dec, "2026-06-21T00:00:00",
+                                          "S1 S2 E1 E2 W1 W2", "", true, DEFAULT_ALT_LIMIT,
+                                          DEFAULT_ALT_MAX, "local", txtplan, 10), "\n")
+        q = night_plan("CHARA", "Vega", ra, dec, d; use_delay = true,
+                       popplan = parse_pop_plan_text(txtplan))
+        @test sh == [join(GUI.timeline_fields(r, q), "\t") for r in pop_plan_timeline(q; system = :local)]
+        @test startswith(GUI.shell_pop_timeline("CHARA", "Vega", ra, dec, "2026-06-21T00:00:00",
+                                                "S1 S2 E1 E2 W1 W2", "", true, DEFAULT_ALT_LIMIT,
+                                                DEFAULT_ALT_MAX, "utc", txtplan, 10, true), "UTC")
+        @test startswith(GUI.shell_pop_timeline("CHARA", "Vega", ra, dec, "not a date", "", "", true), "!")
+
+        # hour angles on a clock; summaries on a clock
+        h = -2.25
+        @test GUI._hhmm(hour_angle_clock(p, h)) == GUI._hhmm(ra / 15 + h)
+        @test hour_angle_clock(p, h; system = :utc) ≈ GUI.lst_to_utc(p, hour_angle_clock(p, h))
+        cfg = ones(Int, 6)
+        @test pop_plan_summary(pp, f, ra, cfg; clock = identity) == pop_plan_summary(pp, f, ra, cfg)
+        rows4 = split(GUI.shell_best_pops("CHARA", dec, "2026-06-21T00:00:00", ra,
+                                          "S1 S2 E1 E2 W1 W2", 2, DEFAULT_ALT_LIMIT,
+                                          DEFAULT_ALT_MAX, "utc"), "\n")
+        @test all(r -> length(split(r, "\t")) == 4 && occursin(r"^\d+:\d\d – \d+:\d\d$", split(r, "\t")[4]), rows4)
     end
 
     @testset "the top single POP settings, one row each" begin

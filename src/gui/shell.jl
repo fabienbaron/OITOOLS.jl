@@ -2758,7 +2758,7 @@ _sky_args(sky) = haskey(sky, :image) ?
 The sky a simulation is of, as the keyword arguments `simulate` and `simulate_from_oifits`
 both take: `(; image, pixsize)` for a FITS file, `(; flat_model, flat_params)` for a model.
 
-One resolver for both entry points, so "Copy existing OIFITS structure" changes the COVERAGE
+One resolver for both entry points, so "Use existing OIFITS as template" changes the COVERAGE
 and nothing else — the sky the two produce cannot differ.
 
 An empty model path means the model the Modeling perspective is holding, which is the whole
@@ -2869,9 +2869,9 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
 
     if _optbool(o, "copy", false)
         e = current_dataset(sh)
-        e === nothing && return "! Copy existing OIFITS structure needs a dataset loaded in Exploring"
+        e === nothing && return "! Use existing OIFITS as template needs a dataset loaded in Exploring"
         length(e.files) > 1 &&
-            return "! Copy existing OIFITS structure copies one file; $(e.name) is $(length(e.files)) files read as one"
+            return "! Use existing OIFITS as template takes one file; $(e.name) is $(length(e.files)) files read as one"
         mode = get(o, "copy_mode", "copy_snr")
         frac === nothing ||
             return "! fractional noise needs a simulated observation; a copied structure keeps its own noise"
@@ -5430,6 +5430,19 @@ end
 shell_telescopes(name::AbstractString) = join(facility_telescopes(String(name)), "\n")
 
 """
+    shell_central_telescope(facility, telescopes) -> String
+
+The name of the delay reference to use among `telescopes` (space-separated names):
+[`central_telescope`](@ref)'s choice. `""` with none.
+"""
+function shell_central_telescope(facility::AbstractString, telescopes::AbstractString)
+    f = read_facility_file(String(facility))
+    sel = filter(!isempty, String.(split(String(telescopes))))
+    r = central_telescope(f, telescope_config(sel, String.(f.tel_names)))
+    return r == 0 ? "" : String(f.tel_names[r])
+end
+
+"""
     shell_telescope_order(name) -> String
 
 The facility's telescopes in the order the Observing panel lists them, one per line: the
@@ -5438,6 +5451,38 @@ facility file's `display_order` when it names each telescope once, else the file
 function shell_telescope_order(name::AbstractString)
     f = read_facility_file(String(name))
     return join(String.(f.tel_names)[telescope_display_order(f)], "\n")
+end
+
+# A clock name from the panel: `:lst`, `:utc` or `:local`, LST for anything else.
+function _time_system(name::AbstractString)
+    t = Symbol(lowercase(String(name)))
+    return t in (:lst, :utc, :local) ? t : :lst
+end
+
+# The night the Observe panel draws, from its controls: `(; plan, date, config)`, or a message
+# beginning with `!`. `plan_text` is a multi-POP plan as `pop_plan_text`; empty, the POPs `pops`.
+function _night_plan_for(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
+                         alt_limit, alt_max, plan_text, change_minutes)
+    date = try
+        DateTime(String(dateiso))
+    catch
+        return "! not a date: $(dateiso)"
+    end
+    tels = facility_telescopes(String(facility))
+    sel  = filter(!isempty, String.(split(String(telescopes))))
+    cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
+    pp   = isempty(strip(String(pops))) ? nothing :
+           [parse(Int, x) for x in split(String(pops))]
+    return try
+        plan = isempty(strip(String(plan_text))) ? nothing : parse_pop_plan_text(plan_text)
+        (; plan = night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
+                             config = cfg, pop = pp, use_delay = use_delay, popplan = plan,
+                             change_minutes = Float64(change_minutes),
+                             alt_limit = Float64(alt_limit), alt_max = Float64(alt_max)),
+           date, config = cfg)
+    catch err
+        "! " * _cause(err)
+    end
 end
 
 """
@@ -5458,27 +5503,10 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
                      time_system::AbstractString = "lst", plan_text::AbstractString = "",
                      change_minutes::Real = 10, stack_mode::AbstractString = "")
     sh = _shell()
-    date = try
-        DateTime(String(dateiso))
-    catch
-        return "! not a date: $(dateiso)"
-    end
-    tels = facility_telescopes(String(facility))
-    sel  = filter(!isempty, String.(split(String(telescopes))))
-    cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
-    pp   = isempty(strip(String(pops))) ? nothing :
-           [parse(Int, x) for x in split(String(pops))]
-
-    p = try
-        # A multi-POP plan from the POPs tab or AutoPOPs, as `pop_plan_text`; else the POPs.
-        plan = isempty(strip(String(plan_text))) ? nothing : parse_pop_plan_text(plan_text)
-        night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
-                   config = cfg, pop = pp, use_delay = use_delay, popplan = plan,
-                   change_minutes = Float64(change_minutes),
-                   alt_limit = Float64(alt_limit), alt_max = Float64(alt_max))
-    catch err
-        msg = "! " * _cause(err); console!(sh, msg); return msg
-    end
+    np = _night_plan_for(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
+                         alt_limit, alt_max, plan_text, change_minutes)
+    np isa String && (startswith(np, "! not a date") || console!(sh, np); return np)
+    p, date, cfg = np.plan, np.date, np.config
 
     tsys = Symbol(lowercase(String(time_system)))
     tsys in (:lst, :utc, :local) || (tsys = :lst)
@@ -5543,20 +5571,84 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
 end
 
 """
-    shell_pop_plans(facility, dec, dateiso, ra, telescopes, reference, max_changes, max_drop,
-                    change_minutes, alt_limit, alt_max) -> String
+    shell_pop_timeline(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
+                       alt_limit, alt_max, time_system, plan_text, change_minutes,
+                       as_text = false) -> String
 
-The POPs tab's plans for one target, best first: the best with at most 0 … `max_changes` POP
+The night `shell_gantt` draws for the same arguments, as its POP timeline
+([`pop_plan_timeline`](@ref)): one line per row, `from \t to \t kind \t pops \t ha \t time \t
+note`, times `H:MM` on the clock `time_system`, `kind` one of `setting change drop readd gap`.
+With `as_text`, the table as [`timeline_text`](@ref) writes it. `""` for a night with no
+darkness; a message beginning with `!` on failure.
+"""
+function shell_pop_timeline(facility::AbstractString, name::AbstractString, ra::Real, dec::Real,
+                            dateiso::AbstractString, telescopes::AbstractString,
+                            pops::AbstractString, use_delay::Bool,
+                            alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
+                            time_system::AbstractString = "lst", plan_text::AbstractString = "",
+                            change_minutes::Real = 10, as_text::Bool = false)
+    np = _night_plan_for(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
+                         alt_limit, alt_max, plan_text, change_minutes)
+    np isa String && return np
+    tsys = _time_system(time_system)
+    rows = pop_plan_timeline(np.plan; system = tsys)
+    as_text && return timeline_text(rows, np.plan; system = tsys)
+    return join((join(timeline_fields(r, np.plan), "\t") for r in rows), "\n")
+end
+
+"The POP strategies tab's candidate plans, drawn as stacked Gantt rows (`shell_plans_gantt`)."
+const PLANS_GANTT = Ref{Any}(nothing)
+
+"""
+    shell_plans_gantt(facility, name, ra, dec, dateiso, telescopes, rows, use_delay,
+                      alt_limit, alt_max, time_system, change_minutes) -> String
+
+Draw candidate plans of one target as stacked Gantt rows on the POP strategies tab's chart, the
+first at the top. `rows` is one candidate per line, `label \t pops \t plan_text`: a single
+setting by its POPs (`plan_text` empty), a multi-POP plan by its `pop_plan_text`. Returns the
+chart's height in pixels at which every row keeps the Gantt's own scale (`GANTT_PX_PER_UNIT`),
+or a message beginning with `!`.
+"""
+function shell_plans_gantt(facility::AbstractString, name::AbstractString, ra::Real, dec::Real,
+                           dateiso::AbstractString, telescopes::AbstractString,
+                           rows::AbstractString, use_delay::Bool,
+                           alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
+                           time_system::AbstractString = "lst", change_minutes::Real = 10)
+    g = PLANS_GANTT[]
+    plans = NightPlan[]; labels = String[]
+    for line in split(String(rows), '\n'; keepempty = false)
+        f = split(line, '\t')
+        length(f) >= 2 || continue
+        np = _night_plan_for(facility, name, ra, dec, dateiso, telescopes, f[2], use_delay,
+                             alt_limit, alt_max, length(f) >= 3 ? f[3] : "", change_minutes)
+        np isa String && return np
+        push!(plans, np.plan); push!(labels, String(f[1]))
+    end
+    isempty(plans) && return "! no candidates"
+    rows_px = ((length(plans) - 1) * STACK_ROW_STEP + 4.0) * GANTT_PX_PER_UNIT * live_plot_scale()
+    px = string(ceil(Int, rows_px + 70 * live_plot_scale()))     # and the time axis and title
+    g === nothing && return px
+    update_gantt_stack!(g, plans, labels, string(name, " · ", length(plans), " candidates");
+                        time_system = _time_system(time_system))
+    return px
+end
+
+"""
+    shell_pop_plans(facility, dec, dateiso, ra, telescopes, reference, max_changes, max_drop,
+                    change_minutes, alt_limit, alt_max, time_system = "lst") -> String
+
+The POP strategies tab's plans for one target, best first: the best with at most 0 … `max_changes` POP
 changes and 0 … `max_drop` telescopes dropped, each distinct plan once, ranked as `pop_plan`
 ranks them. One row per plan, `summary \t changes \t dropped \t hours with every telescope
 \t hours in all \t plan`, `plan` being the `pop_plan_text` that `shell_gantt` takes.
-`reference` is the telescope protected from being dropped (a name, or empty). `""` when no plan
-observes anything.
+`reference` is the telescope protected from being dropped (a name, or empty). The summary's
+times are on the clock `time_system`. `""` when no plan observes anything.
 """
 function shell_pop_plans(facility::AbstractString, dec::Real, dateiso::AbstractString,
                          ra::Real, telescopes::AbstractString, reference::AbstractString,
                          max_changes::Integer, max_drop::Integer, change_minutes::Real,
-                         alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX)
+                         alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
+                         time_system::AbstractString = "lst")
     sh = SHELL[]
     say(t) = sh === nothing ? nothing : console!(sh, t)
     date = try
@@ -5564,6 +5656,7 @@ function shell_pop_plans(facility::AbstractString, dec::Real, dateiso::AbstractS
     catch
         say("! POP plans: '$(dateiso)' is not a date"); return ""
     end
+    tsys = _time_system(time_system)
     try
         f = read_facility_file(String(facility))
         tels = facility_telescopes(String(facility))
@@ -5585,10 +5678,17 @@ function shell_pop_plans(facility::AbstractString, dec::Real, dateiso::AbstractS
         end
         isempty(plans) && (say("  no POP plan observes this target"); return "")
         sort!(plans; by = q -> (q.minutes..., -q.changes), rev = true)
+        clock = if tsys === :lst
+            nothing
+        else
+            p0 = night_plan(f, "", Float64(ra), Float64(dec), date; config = cfg,
+                            alt_limit = Float64(alt_limit), alt_max = Float64(alt_max))
+            x -> hour_angle_clock(p0, x - Float64(ra) / 15; system = tsys)
+        end
         rows = String[]
         for pl in plans
             dropped = unique(i for sg in pl.segments for i in eachindex(cfg) if cfg[i] > 0 && sg.config[i] == 0)
-            push!(rows, join((pop_plan_summary(pl, f, ra, cfg), string(pl.changes),
+            push!(rows, join((pop_plan_summary(pl, f, ra, cfg; clock), string(pl.changes),
                               isempty(dropped) ? "—" : join(tels[dropped], " "),
                               @sprintf("%.1f", pl.minutes[1] / 60), @sprintf("%.1f", sum(pl.minutes) / 60),
                               pop_plan_text(pl)), "\t"))
@@ -5603,15 +5703,18 @@ end
 
 """
     shell_best_pops(facility, dec, dateiso, ra, telescopes, n = 5,
-                    alt_limit = DEFAULT_ALT_LIMIT, alt_max = DEFAULT_ALT_MAX) -> String
+                    alt_limit = DEFAULT_ALT_LIMIT, alt_max = DEFAULT_ALT_MAX,
+                    time_system = "lst") -> String
 
-The best POP configurations for this target and night, as `pop\tscore\thaRange` rows. They are
+The best POP configurations for this target and night, as `pop\tscore\thaRange\ttimeRange`
+rows, the time range on the clock `time_system`. They are
 scored over the hours the target is observable: above `alt_limit` and the horizon, below
 `alt_max`, in astronomical night, clear of the moon.
 """
 function shell_best_pops(facility::AbstractString, dec::Real, dateiso::AbstractString,
                          ra::Real, telescopes::AbstractString, n::Integer = 5,
-                         alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX)
+                         alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
+                         time_system::AbstractString = "lst")
     sh = SHELL[]
     say(t) = sh === nothing ? nothing : console!(sh, t)
     date = try
@@ -5640,20 +5743,25 @@ function shell_best_pops(facility::AbstractString, dec::Real, dateiso::AbstractS
         end
         say("  best: POPs $(join(res[1].pop, " ")) — $(res[1].score) steps")
 
-        # `pops \t score \t haRange` — the table promises an HA range, and it is worth the
-        # extra in_delay per candidate (microseconds): a configuration is chosen for WHEN it
-        # works, not only for how long.
+        # `pops \t score \t haRange \t timeRange` — the table promises an HA range, and it is
+        # worth the extra in_delay per candidate (microseconds): a configuration is chosen for
+        # WHEN it works, not only for how long. The time range is on the clock `time_system`.
+        tsys = _time_system(time_system)
+        p0 = night_plan(f, "", Float64(ra), Float64(dec), date; config = cfg,
+                        alt_limit = Float64(alt_limit), alt_max = Float64(alt_max))
         rows = String[]
         for r in res
-            span = try
+            span, clk = try
                 g = in_delay(f, Float64(dec), ha, cfg, Int.(r.pop)).good_delay
-                isempty(g) ? "—" :
-                    string(round(ha[first(g)]; digits = 2), " … ",
-                           round(ha[last(g)];  digits = 2), " h")
+                isempty(g) ? ("—", "—") :
+                    (string(round(ha[first(g)]; digits = 2), " … ",
+                            round(ha[last(g)];  digits = 2), " h"),
+                     string(_hhmm(hour_angle_clock(p0, ha[first(g)]; system = tsys)), " – ",
+                            _hhmm(hour_angle_clock(p0, ha[last(g)]; system = tsys))))
             catch
-                "—"
+                ("—", "—")
             end
-            push!(rows, join((join(string.(r.pop), " "), string(r.score), span), "\t"))
+            push!(rows, join((join(string.(r.pop), " "), string(r.score), span, clk), "\t"))
         end
         return join(rows, "\n")
     catch err

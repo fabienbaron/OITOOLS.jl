@@ -57,9 +57,15 @@ resolved on SIMBAD.
 
 ## POPs (Observing)
 
+**Reference** is the delay reference: its cart stays put and the others follow it, so every POP
+search, Gantt chart and delay chart checks the baselines to it. There is always one, W2 by
+default; unticking it makes the most central telescope left the reference (the one whose
+largest distance to the others, projected on the equator, is smallest).
+
 **AutoPOPs** searches the POPs each time **Compute** runs, over the hours the target is above
 the elevation limits and the horizon, in astronomical night, clear of the moon. The menu under
-it chooses the search:
+it chooses the search, in two sections, single target and multiple targets (the multiple-target
+strategy is listed and not yet available):
 
 - **Single POPs**: one setting for the night (`best_pop`).
 - **POP changes on a single line**: up to **changes ≤** POP changes, each taking **change**
@@ -67,7 +73,7 @@ it chooses the search:
 - **POP changes & Telescope Drops on a single line**: the same, dropping up to **drop ≤**
   telescopes where no setting keeps them all in delay. The reference telescope is dropped only
   when no other drop gains the same time.
-- **Three-line POP selection for best time coverage**: for the earliest, middle and latest
+- **Three-row POP (time coverage)**: for the earliest, middle and latest
   third of the observable hours, the single setting with the most time in delay over it, one
   row each (a setting best in several thirds once). **Show details** and the delay carts show
   the earliest.
@@ -75,7 +81,7 @@ it chooses the search:
 Plans are ranked by the time with every selected telescope, then the time with one dropped
 (the reference last), then with two, then by the fewest changes, and last by the fewest POPs
 moved at them: among settings giving the same times, those keeping more POPs where they were.
-**Three-line POP selection for best time coverage** picks its tied settings the same way.
+**Three-row POP (time coverage)** picks its tied settings the same way.
 
 On the Gantt a multi-POP plan is one bar per segment, lighter where a telescope is dropped. The
 first POPs are written at the start, each change as **→** and the new POPs where it starts
@@ -85,9 +91,22 @@ lost and **+E1** where it comes back.
 **EL** marks the time above the soft elevation limit. **Show details** adds a POPs row and a
 line through every row at each change.
 
-**POPs › Search POPs** lists, for a multi-POP search, the ranked plans of every named target:
-the plan, its changes, the telescopes dropped, and the hours with every telescope and in all.
-**Use** charts that target with the plan in place of AutoPOPs; **in use** gives it back.
+**POP strategies** has the same strategy menu, a target menu (the target selected in the
+list) and, for the strategies with changes, the minutes a POP change takes (the POPs panel's
+**change**). A change of reference takes no time. **Search POPs** lists that target's candidates: for a multi-POP strategy the ranked
+plans (the plan, its changes, the telescopes dropped, and the hours with every telescope and in
+all), for a single-setting one the best settings with their hour-angle and time ranges. The
+times in the tables are on the clock chosen under **Time** when the search ran. Under the
+tables a Gantt chart draws every candidate as a row, numbered as in the table. **Use** charts
+the target with a candidate in place of AutoPOPs; **in use** gives it back.
+
+**Timeline**, under the tables, gives the night of the row clicked, or of the chart after
+**Compute**, one row per step (`pop_plan_timeline`): each stretch observed with its POPs
+(**×** for a telescope not used), its hour angles and duration; each POP change with the
+telescopes whose POP moves; each telescope dropped or added; and the dark hours with nothing
+observed, with the first constraint that excludes them: elevation-restricted, too close to the
+Moon, or out of delay. Times follow the Gantt's clock. **Use** charts the target with the
+selected candidate; **Copy** copies the timeline as text.
 
 ## Tools
 

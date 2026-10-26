@@ -862,6 +862,23 @@ struct PopPlan
 end
 
 """
+    unwrap_hour_angles(ha) -> Vector{Float64}
+
+Hour angles in time order made continuous: 24 h added or taken off wherever consecutive samples
+jump by more than 12 h, the first sample in [-12, 12). In the input's floating-point type.
+"""
+function unwrap_hour_angles(ha::AbstractVector{<:Real})
+    T = float(eltype(ha))
+    out = copyto!(Vector{T}(undef, length(ha)), ha)
+    isempty(out) && return out
+    out[1] = mod(out[1] + T(12), T(24)) - T(12)
+    for i in 2:length(out)
+        out[i] += T(24) * round((out[i-1] - out[i]) / T(24))
+    end
+    return out
+end
+
+"""
     pop_plan(facility, dec, ha, config; observable = trues(length(ha)), reference = 0,
              max_changes = 2, max_drop = 0, change_minutes = 10, min_minutes = 10,
              delay_length = nothing, pop_array = nothing, airpath = nothing) -> PopPlan
@@ -885,6 +902,10 @@ for time with fewer telescopes.
 - `change_minutes`: the time a POP change takes, during which nothing is observed. Dropping or
   re-adding a telescope moves no POP and costs nothing.
 - `min_minutes`: POP settings observable for less than this are not considered.
+
+`ha` is the night's grid in time order. It is taken as continuous (`unwrap_hour_angles`), so a
+night through ±12 h gives segments with hour angles beyond 12 in magnitude, on the branch of
+the night's first sample.
 
 The search runs on a 1-minute grid over the observable span. The delay offsets are those of the
 whole selection: a dropped telescope's beam keeps its channel. [`pop_plans`](@ref) gives the
@@ -919,7 +940,7 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
 
     # The 1-minute grid over the observable span, and which of its minutes the sky allows: each
     # takes the observability of the nearest sample of `ha`.
-    hs = Float64.(ha)
+    hs = unwrap_hour_angles(Float64.(ha))
     obs_i = findall(observable)
     lo, hi = minimum(hs[obs_i]), maximum(hs[obs_i])
     grid = collect(lo:1/60:hi)

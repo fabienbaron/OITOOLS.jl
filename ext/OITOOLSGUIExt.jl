@@ -83,7 +83,7 @@ export ImagingSetup, ImagingResult, imaging_defaults, imaging_weights, fov,
        parse_regularizers, bin_wavelengths,
        shell_optional_engines, shell_tempering_diagnostics, IMAGING_ENGINES, SHELL,
        vi_sky_params, vi_prior_draw
-export NightPlan, config_catalog, facility_telescopes, telescope_config,
+export NightPlan, config_catalog, facility_telescopes, telescope_config, central_telescope,
        night_plan, observable_indices, observable_hours, plan_rows, best_pops, pop_rows,
        GanttBar, GanttLabel, gantt_geometry, unwrap_lst, build_gantt, update_gantt!,
        pop_label, is_multi_pop, segment_label, multi_pop_summary, night_pop_plan,
@@ -91,7 +91,7 @@ export NightPlan, config_catalog, facility_telescopes, telescope_config,
        transition_label, gantt_stack_geometry, update_gantt_stack!, coverage_pops,
        baseline_delay_windows, DEFAULT_ALT_LIMIT, DEFAULT_ALT_MAX, TARGET_BAR_HEIGHT,
        delay_plot_geometry, build_delay_plot, update_delay_plot!, simulate_source_info,
-       facility_subset, epochs_for_hour_angles
+       facility_subset, epochs_for_hour_angles, TimelineRow, pop_plan_timeline, timeline_text, hour_angle_clock
 export build_chi2_map, update_chi2_map!
 export build_residuals, update_residuals!, residual_series,
        RESIDUAL_KINDS, RESIDUAL_SPECS, RESIDUAL_COLORS

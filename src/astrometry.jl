@@ -19,7 +19,7 @@ Local sidereal time and hour angle for a target, from UTC timestamps.
 - `ra_hours`: right ascension in **hours**, not degrees. A target's `raep0` follows the
   OIFITS standard and is stored in degrees, so callers must pass `raep0/15`.
 
-Returns `(lst, hour_angle)`, both in hours. `lst` is wrapped into [0,24).
+Returns `(lst, hour_angle)`, both in hours: `lst` in [0, 24), `hour_angle` in [-12, 12).
 """
 function hour_angle_calc(dates, longitude::Float64, ra_hours::Union{Vector{Float64}, Float64};ldir="E")
 
@@ -67,7 +67,8 @@ for (i, d) in enumerate(dates)
     l < 0 && (l += 24)
     l > 24 && (l -= (24*floor(l/24)))
     h = l - (ra isa Float64 ? ra : ra[i])
-    h < -12 && (h += 24)   # had to add this, normal ???? FB
+    h < -12 && (h += 24)
+    h >= 12 && (h -= 24)
     lst[i] = l
     hour_angle[i] = h
 end

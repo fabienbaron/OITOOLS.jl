@@ -499,7 +499,7 @@ ApplicationWindow {
         // The dataset Julia is showing, not the newest: with several loaded before the window
         // opened, the newest is not the one every perspective is looking at.
         datasetBox.currentIndex = Math.max(0, Julia.shell_current_dataset() - 1)
-        // Observing's "Copy existing OIFITS structure" simulates through the loaded file's uv
+        // Observing's "Use existing OIFITS as template" simulates through the loaded file's uv
         // points, so it needs to know there IS one — and to say so beside the button rather
         // than after Simulate is pressed.
         observeTab.datasetCount = names.length
@@ -1446,12 +1446,13 @@ ApplicationWindow {
         return root
     }
     // One tab-separated line: name x y w h enabled checked current text (newlines as spaces).
+    // A control with no text (a SpinBox) reports its value there.
     function walkDescribe(o) {
         const pt = o.mapToItem(null, 0, 0)
         const flat = v => (v === undefined || v === null) ? "" : String(v).replace(/[\t\n]/g, " ")
         return [o.objectName, Math.round(pt.x), Math.round(pt.y), Math.round(o.width),
                 Math.round(o.height), o.enabled, flat(o.checked), flat(o.currentText),
-                flat(o.text)].join("\t")
+                flat(o.text !== undefined ? o.text : o.value)].join("\t")
     }
     // Scroll every Flickable around `o` (a ScrollView's, a ListView) until `o` is in view.
     function walkReveal(o) {

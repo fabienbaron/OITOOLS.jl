@@ -389,7 +389,7 @@ _ud(d) = dict_to_model(Dict{String,Any}("star,ud"=>d, "star,f"=>1.0), String[])
 
     # ── Step 5: re-observing an existing file's structure ────────────────────
     #
-    # The other simulator, and the one the Observing panel's "Copy existing OIFITS structure"
+    # The other simulator, and the one the Observing panel's "Use existing OIFITS as template"
     # runs. It had no tests at all, which is how a cube reached it as a flat vector and how a
     # copied SNR wrote NaN over every point of a file with a zero-valued V².
     @testset "simulate_from_oifits" begin

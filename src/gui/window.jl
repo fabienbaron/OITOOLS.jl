@@ -16,7 +16,7 @@ function __init__()
                      shell_console, shell_ready, shell_about, shell_reset_zoom, shell_pick_text,
                      shell_observables, shell_plot_kinds, shell_grouping_noun, shell_gantt_hover, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
-                     shell_facilities, shell_telescopes, shell_telescope_order, shell_gantt, shell_best_pops, shell_pop_plans,
+                     shell_facilities, shell_telescopes, shell_telescope_order, shell_central_telescope, shell_gantt, shell_pop_timeline, shell_plans_gantt, shell_best_pops, shell_pop_plans,
                      shell_save_targets, shell_load_targets,
                      shell_shift_date, shell_sim_source, shell_simulate,
                      shell_model_image, shell_simbad, shell_ui_scale,
@@ -440,6 +440,12 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(dax)
     delayplot = build_delay_plot(dfig, dax)
 
+    # The POP strategies tab's candidates, one Gantt row each.
+    pgfig = Makie.Figure(fonts = PLOT_FONTS)
+    pgax  = Makie.Axis(pgfig[1, 1]; xlabel = "LST (h)", title = "")
+    style_axis!(pgax)
+    PLANS_GANTT[] = build_gantt(pgfig, pgax)
+
     # And one for the model rendering. `build_canvas` gives an axis with a heatmap already on
     # it, which is all this needs; `show_image!` then draws into it.
     mfig = Makie.Figure(fonts = PLOT_FONTS)
@@ -533,6 +539,7 @@ function OITOOLS.gui(session::Session = Session();
                 imagePlot       = imfig,
                 ganttPlot       = gfig,
                 delayPlot       = dfig,
+                plansGanttPlot  = pgfig,
                 modelPlot       = mfig,
                 chi2MapPlot     = ofig,
                 profilePlot     = prfig,

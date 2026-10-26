@@ -117,10 +117,13 @@ function build_gantt(fig, ax)
     Makie.scatter!(ax, transitpos; color = :yellow, marker = :diamond, markersize = 11,
                    strokewidth = 0.8, strokecolor = :black)
 
-    sc = live_plot_scale()
-    fs = Float32(9 * sc)                            # the legend
-    afs = Float32(GANTT_ANNOTATION_PT * sc)         # the numbers around each bar
-    nfs = Float32((GANTT_ANNOTATION_PT - 1) * sc)   # their az and elevation, a size smaller
+    # Text sizes follow `scale`, which every draw sets to the live plot scale (`_gantt_restyle!`):
+    # the chart is built before the window reports its scale.
+    scale = Makie.Observable(Float32(live_plot_scale()))
+    fs  = Makie.lift(s -> 9s, scale)                                    # the legend
+    afs = Makie.lift(s -> Float32(GANTT_ANNOTATION_PT) * s, scale)      # the numbers around each bar
+    nfs = Makie.lift(s -> Float32(GANTT_ANNOTATION_PT - 1) * s, scale)  # their az and elevation
+    off(k) = Makie.lift(a -> (Float32(k) * a, 0.0f0), afs)
     # Times are rotated to vertical, as in the original: at one-minute resolution the starts
     # and ends of adjacent blocks would otherwise overprint each other.
     # Nudged INTO the bar in screen pixels, not in data: the anchor stays the true bar end, which
@@ -128,20 +131,20 @@ function build_gantt(fig, ax)
     # than outside, so the end of one block and the start of the next do not overprint across a
     # 10-minute POP change.
     Makie.text!(ax, tspos; text = tstxt, rotation = Float32(π/2), color = :white,
-                align = (:center, :center), offset = (0.75afs, 0), fontsize = afs)
+                align = (:center, :center), offset = off(0.75), fontsize = afs)
     Makie.text!(ax, tepos; text = tetxt, rotation = Float32(π/2), color = :white,
-                align = (:center, :center), offset = (-0.75afs, 0), fontsize = afs)
+                align = (:center, :center), offset = off(-0.75), fontsize = afs)
     # The numbers read INWARD: the start pair begins at the bar's left edge and the end pair
     # finishes at its right one, so each stays over the bar it describes. Outward, as they were,
     # two runs a few minutes apart wrote their numbers over each other in the gap between them.
     Makie.text!(ax, azspos;  text = azstxt,  align = (:left,  :bottom),
-                offset = (0.2afs, 0),  fontsize = nfs)
+                offset = off(0.2),  fontsize = nfs)
     Makie.text!(ax, azepos;  text = azetxt,  align = (:right, :bottom),
-                offset = (-0.2afs, 0), fontsize = nfs)
+                offset = off(-0.2), fontsize = nfs)
     Makie.text!(ax, altspos; text = altstxt, align = (:left,  :top),
-                offset = (0.2afs, 0),  fontsize = nfs)
+                offset = off(0.2),  fontsize = nfs)
     Makie.text!(ax, altepos; text = altetxt, align = (:right, :top),
-                offset = (-0.2afs, 0), fontsize = nfs)
+                offset = off(-0.2), fontsize = nfs)
 
     # The date the night turns over, set just above the axis at midnight: a Gantt that crosses
     # into the next day otherwise gives no clue which day a morning hour belongs to.
@@ -155,15 +158,15 @@ function build_gantt(fig, ax)
                 fontsize = fs, color = GANTT_MARK_COLOR)
     # "POP" just after where a change starts, the time it starts and "DROP" just before.
     Makie.text!(ax, markpos; text = marktxt, rotation = Float32(π/2), align = (:center, :center),
-                offset = (0.75afs, 0), fontsize = afs, color = GANTT_MARK_COLOR)
+                offset = off(0.75), fontsize = afs, color = GANTT_MARK_COLOR)
     Makie.text!(ax, markepos; text = marketxt, rotation = Float32(π/2), align = (:center, :center),
-                offset = (-0.75afs, 0), fontsize = afs, color = GANTT_MARK_COLOR)
+                offset = off(-0.75), fontsize = afs, color = GANTT_MARK_COLOR)
 
     # A hand-drawn legend, for the reason build_canvas has one: a Makie Legend fixes its entry
     # count at construction, and this chart's varies with which constraints apply.
     Makie.scatter!(ax, legpos; color = legcols, marker = :rect, markersize = fs)
     Makie.text!(ax, legpos; text = legtxt, align = (:left, :center), fontsize = fs,
-                offset = (fs, 0))
+                offset = Makie.lift(f -> (f, 0.0f0), fs))
 
     # The target names the row it occupies, as a y tick — which is where the original puts it,
     # and it leaves the title free. y = 2 is the row the observable bar is drawn on.
@@ -172,13 +175,6 @@ function build_gantt(fig, ax)
     # Dark enough that the white time rules read against it. The twilight bands sit on top and
     # step darker from here, so this is the chart's "outside the night" tone rather than paper.
     ax.backgroundcolor = Makie.RGBAf(0.88, 0.88, 0.88, 1.0)
-    # The axis text follows `live_plot_scale`, as the annotations do, so the settings panel's
-    # plot scale moves all of it together. Left at Makie's default the tick labels are more
-    # than twice the size of the numbers they sit under.
-    ax.xticklabelsize = Float32(8 * sc)
-    ax.yticklabelsize = Float32(9 * sc)
-    ax.xlabelsize     = Float32(9 * sc)
-    ax.titlesize      = Float32(9 * sc)
     ax.yticks = ([2.0], [""])
     # No horizontal gridline. The y axis is categorical -- one row per target -- so a line
     # through the row divides nothing, and it runs straight through the rotated start/end times
@@ -194,7 +190,8 @@ function build_gantt(fig, ax)
            softrects, gridsegs, midnightline, datepos, datetxt, transitpos,
            switchsegs, segpos, segtxt, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
            tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
-           legpos, legtxt, legcols, yspan)
+           legpos, legtxt, legcols, yspan, scale)
+    _gantt_restyle!(g)
     # A resized panel shows more or less around the same rows, at the same scale.
     Makie.on(_ -> _gantt_view!(g), ax.scene.viewport)
     return g
@@ -211,6 +208,20 @@ const GANTT_PX_PER_UNIT = 60.0
 const GANTT_FAR = 1.0e3
 
 # Fit the view round the rows at `GANTT_PX_PER_UNIT`, centred, or to the rows when they need more.
+# The text at the live plot scale. The axis text follows it as the annotations do, so the
+# settings panel's plot scale moves all of it together; left at Makie's default the tick labels
+# are more than twice the size of the numbers they sit under.
+function _gantt_restyle!(g)
+    sc = Float32(live_plot_scale())
+    g.scale[] == sc || (g.scale[] = sc)
+    ax = g.axis
+    ax.xticklabelsize = 8sc
+    ax.yticklabelsize = 9sc
+    ax.xlabelsize     = 9sc
+    ax.titlesize      = 9sc
+    return g
+end
+
 function _gantt_view!(g)
     lo, hi = g.yspan[]
     vh = Float64(g.axis.scene.viewport[].widths[2])
@@ -362,6 +373,7 @@ update_gantt_stack!(g, plans::AbstractVector{NightPlan}, labels, title...; time_
 
 # Draw a geometry, `p` giving the night (date, clock) the axis is labelled from.
 function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
+    _gantt_restyle!(g)
     _rect(b) = Makie.Rect2f(b.x0, b.y - b.height/2, max(b.x1 - b.x0, 1e-6), b.height)
 
     # The twilight bands run the full height of whatever the view shows.
@@ -528,9 +540,10 @@ function build_delay_plot(fig, ax)
 
     # The legend, in rows under the chart: an axis of its own in the row below, unit square
     # in x and one unit per row in y, with no decorations.
-    sc = live_plot_scale()
-    fs = Float32(9 * sc)
-    legax = Makie.Axis(fig[2, 1]; height = 2fs)
+    # Text sizes follow `scale`, set to the live plot scale at every draw (`_delay_restyle!`).
+    scale = Makie.Observable(Float32(live_plot_scale()))
+    fs = Makie.lift(s -> 9s, scale)
+    legax = Makie.Axis(fig[2, 1]; height = 2fs[])
     Makie.hidedecorations!(legax)
     Makie.hidespines!(legax)
     for it in (:scrollzoom, :dragpan, :rectanglezoom, :limitreset)
@@ -540,17 +553,25 @@ function build_delay_plot(fig, ax)
     legcol = Makie.Observable(Makie.RGBAf[])
     Makie.scatter!(legax, legpos; color = legcol, marker = :rect, markersize = fs)
     Makie.text!(legax, legpos; text = legtxt, align = (:left, :center), fontsize = fs,
-                offset = (fs, 0))
+                offset = Makie.lift(f -> (f, 0.0f0), fs))
 
     ax.xlabel = "LST (h)"
     ax.ylabel = "delay cart position (m)"
-    # The Gantt's tick size, and axis labels a step above the legend's.
-    for a in (ax, ax2)
-        a.xlabelsize = a.ylabelsize = Float32(10.5 * sc)
-        a.xticklabelsize = a.yticklabelsize = Float32(8 * sc)
+    d = (; figure = fig, axis = ax, altaxis = ax2, legaxis = legax, legfs = fs, curves, lines,
+           limitpts, altpts, ellim, legpos, legtxt, legcol, switchpts, scale)
+    _delay_restyle!(d)
+    return d
+end
+
+# The Gantt's tick size, and axis labels a step above the legend's, at the live plot scale.
+function _delay_restyle!(d)
+    sc = Float32(live_plot_scale())
+    d.scale[] == sc || (d.scale[] = sc)
+    for a in (d.axis, d.altaxis)
+        a.xlabelsize = a.ylabelsize = 10.5f0 * sc
+        a.xticklabelsize = a.yticklabelsize = 8sc
     end
-    return (; figure = fig, axis = ax, altaxis = ax2, legaxis = legax, legfs = fs, curves, lines,
-              limitpts, altpts, ellim, legpos, legtxt, legcol, switchpts)
+    return d
 end
 
 "Baselines per legend row under the delay chart."
@@ -563,6 +584,7 @@ Draw one night's delay carts. Curves beyond this array's baseline count are hidd
 The x axis is labelled in `time_system` as the Gantt's is (`gantt_time_ticks`).
 """
 function update_delay_plot!(d, p::NightPlan; time_system::Symbol = :lst)
+    _delay_restyle!(d)
     geo = delay_plot_geometry(p)
     n = min(length(geo.curves), MAX_BASELINES)
 
@@ -594,7 +616,7 @@ function update_delay_plot!(d, p::NightPlan; time_system::Symbol = :lst)
     nrow = max(1, cld(n, ncol))
     d.legpos[] = [Makie.Point2f((mod(k - 1, ncol) + 0.1) / ncol, div(k - 1, ncol) + 0.5)
                   for k in 1:n]
-    d.legaxis.height = 1.6f0 * d.legfs * nrow
+    d.legaxis.height = 1.6f0 * d.legfs[] * nrow
     Makie.limits!(d.legaxis, 0, 1, nrow, 0)
     d.legtxt[] = [geo.curves[k].name for k in 1:n]
     d.legcol[] = [DELAY_COLORS[mod1(k, length(DELAY_COLORS))] for k in 1:n]

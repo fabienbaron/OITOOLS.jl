@@ -40,9 +40,30 @@ end
 
 The `config` vector `compute_delays` wants, from a set of selected telescope names.
 
-One entry per telescope in the facility's own order, 1 for in and 0 for out.
+One entry per telescope in the facility's own order: 0 for out, 1 for in, 2 for the delay
+reference, which `selected` names with a trailing `*` (`"W2*"`).
 """
-telescope_config(selected, all) = Int[(String(t) in String.(selected)) ? 1 : 0 for t in all]
+function telescope_config(selected, all)
+    sel = String.(selected)
+    return Int[(String(t) * "*") in sel ? 2 : String(t) in sel ? 1 : 0 for t in all]
+end
+
+"""
+    central_telescope(facility, config) -> Int
+
+The telescope of `config` (entries > 0) whose largest distance to the others, projected on the
+plane of the equator, is smallest: the delay reference that keeps the other carts' swing over
+a night smallest. That swing is `cos δ` times this projected distance. `0` with none selected.
+"""
+function central_telescope(f::FacilityConfig, config::AbstractVector{<:Integer})
+    used = findall(>(0), config)
+    isempty(used) && return 0
+    l = f.lat * π / 180
+    n, e, u = f.sta_xyz[:, 1], f.sta_xyz[:, 2], f.sta_xyz[:, 3]     # north, east, up
+    x = u .* cos(l) .- n .* sin(l)
+    far(r) = maximum(hypot(x[i] - x[r], e[i] - e[r]) for i in used)
+    return used[argmin([far(r) for r in used])]
+end
 
 """
 Height of a target's own bar, in the chart's 0–10 row units.
@@ -316,9 +337,10 @@ end
 function _plan_segments(plan::PopPlan, ha::AbstractVector, step_minutes::Float64,
                         change_minutes::Float64)
     tol = step_minutes / 120                 # half a step, in hours
+    hc = unwrap_hour_angles(ha)              # the branch `pop_plan` searched on
     segs = PlanSegment[]
     for sg in plan.segments
-        idx = findall(h -> sg.ha0 - tol <= h <= sg.ha1 + tol, ha)
+        idx = findall(h -> sg.ha0 - tol <= h <= sg.ha1 + tol, hc)
         isempty(idx) && continue
         push!(segs, PlanSegment((first(idx), last(idx), sg.config, sg.pop, sg.tier)))
     end
@@ -428,17 +450,20 @@ function parse_pop_plan_text(text::AbstractString)
 end
 
 """
-    pop_plan_summary(plan, facility, ra, config) -> String
+    pop_plan_summary(plan, facility, ra, config; clock = nothing) -> String
 
 One line for the panel's table, in its telescope order: the first POPs, then `→` and the new
 POPs at each change, and `−E1 22:34` where a telescope of `config` is dropped (`+E1` where it
-comes back), at the LST it happens. A telescope a segment does not use is a `×` in its POPs.
+comes back), at the time it happens: LST, or `clock(lst)` hours when `clock` is given. A
+telescope a segment does not use is a `×` in its POPs.
 """
-function pop_plan_summary(plan::PopPlan, f::FacilityConfig, ra::Real, config::AbstractVector{<:Integer})
+function pop_plan_summary(plan::PopPlan, f::FacilityConfig, ra::Real, config::AbstractVector{<:Integer};
+                          clock = nothing)
     isempty(plan.segments) && return ""
     on = [i for i in telescope_display_order(f) if i <= length(config) && config[i] > 0]
-    lst(h) = _hhmm(mod(Float64(ra) / 15 + h, 24))
-    pops(sg) = join((sg.config[i] > 0 ? string(sg.pop[i]) : "×" for i in on), " ")
+    lst(h) = clock === nothing ? _hhmm(mod(Float64(ra) / 15 + h, 24)) :
+                                 _hhmm(clock(Float64(ra) / 15 + h))
+    pops(sg) = join((_pop_text(sg.pop, sg.config, i) for i in on), " ")
     out = pops(plan.segments[1])
     for k in 2:length(plan.segments)
         a, b = plan.segments[k-1], plan.segments[k]
@@ -447,6 +472,9 @@ function pop_plan_summary(plan::PopPlan, f::FacilityConfig, ra::Real, config::Ab
         back = [i for i in on if b.config[i] > 0 && a.config[i] == 0]
         isempty(lost) || (out *= " −" * join(f.tel_names[lost], " −") * " " * lst(b.ha0))
         isempty(back) || (out *= " +" * join(f.tel_names[back], " +") * " " * lst(b.ha0))
+        r = _reference(b.config)
+        r != 0 && r != _reference(a.config) && a.pop == b.pop &&
+            (out *= " Ref → " * f.tel_names[r] * " " * lst(b.ha0))
     end
     return out
 end
@@ -700,34 +728,57 @@ function pop_label(p::NightPlan)
     parts = String[]
     for i in on
         name = i <= length(p.telescopes) ? p.telescopes[i] : string("T", i)
-        push!(parts, string(name, ":P", i <= length(p.pop) ? p.pop[i] : 1))
+        push!(parts, string(name, ":P", i <= length(p.pop) ? p.pop[i] : 1, p.config[i] == 2 ? "*" : ""))
     end
     return join(parts, " ")
+end
+
+# One telescope's POP as the labels write it: `5`, `5*` for the delay reference, `×` unused.
+_pop_text(pop, config, i) = config[i] > 0 ? string(pop[i], config[i] == 2 ? "*" : "") : "×"
+
+# The delay reference of a configuration (its entry 2), or 0.
+_reference(config) = something(findfirst(==(2), config), 0)
+
+"""
+    reference_change(plan, k) -> Int
+
+The telescope that becomes the delay reference at segment `k` when it has the same POPs as
+segment `k-1` (a change of reference with no POP change); `0` otherwise.
+"""
+function reference_change(p::NightPlan, k::Integer)
+    k == 1 && return 0
+    sg, prev = p.segments[k], p.segments[k-1]
+    r = _reference(sg.config)
+    return r != 0 && r != _reference(prev.config) && sg.pop == prev.pop ? r : 0
 end
 
 """
     segment_label(plan, segment) -> String
 
 One segment of a multi-POP plan: the POPs of the selected telescopes in the panel's order, `×`
-for one the segment does not use, e.g. `"× 5 3 1 5 4"`.
+for one the segment does not use and `*` after the delay reference's, e.g. `"× 5* 3 1 5 4"`.
 """
 function segment_label(p::NightPlan, sg)
     order = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
-    return join((sg.config[i] > 0 ? string(sg.pop[i]) : "×" for i in order), " ")
+    return join((_pop_text(sg.pop, sg.config, i) for i in order), " ")
 end
 
 """
     transition_label(plan, k) -> String
 
-The telescopes segment `k` loses (`−W2`) and regains (`+E1`) from segment `k-1`; `""` for the
-first segment, which loses nothing: one the plan never had is a `×` in its POPs.
+The telescopes segment `k` loses (`−W2`) and regains (`+E1`) from segment `k-1`, and
+`Ref → E2` where the delay reference changes with no POP change (`reference_change`); `""` for
+the first segment, which loses nothing: one the plan never had is a `×` in its POPs. A reference
+change with a POP change shows in the new POPs instead, `*` marking the reference.
 """
 function transition_label(p::NightPlan, k::Integer)
     k == 1 && return ""
     sg, prev = p.segments[k], p.segments[k-1]
     on = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
+    r = reference_change(p, k)
     return join(vcat(["−" * p.telescopes[i] for i in on if sg.config[i] == 0 && prev.config[i] > 0],
-                     ["+" * p.telescopes[i] for i in on if sg.config[i] > 0 && prev.config[i] == 0]), " ")
+                     ["+" * p.telescopes[i] for i in on if sg.config[i] > 0 && prev.config[i] == 0],
+                     r == 0 ? String[] : ["Ref → " * p.telescopes[r]]), " ")
 end
 
 """
@@ -764,6 +815,171 @@ function multi_pop_summary(p::NightPlan)
     return string(nseg, nseg == 1 ? " segment · " : " segments · ", nchg,
                   nchg == 1 ? " change · " : " changes · ", h(length(observable_indices(p))),
                   " h (", h(full), " h with ", n, " telescopes)")
+end
+
+"""
+One row of a night's POP timeline (`pop_plan_timeline`).
+
+`kind` is `:setting` (observed under `pop`/`config`), `:change` (the carts move; `moved` lists
+`(telescope, from, to)`), `:drop` / `:readd` (an instant: `tels` stop or start being used),
+`:ref` (an instant: `tels` becomes the delay reference with the POPs unchanged),
+or `:gap` (dark, nothing observed; `why` is `:elevation`, `:moon` or `:delay`, the first of
+them that excludes it, in that order). `i0:i1` are the samples of the night's grid it covers, and
+`t0`/`t1` its start and end on the chosen clock, unwrapped (they may pass 24); `t1` is the start
+of the next sample, so consecutive rows share an edge, and `NaN` for an instant.
+"""
+struct TimelineRow
+    kind   :: Symbol
+    i0     :: Int
+    i1     :: Int
+    t0     :: Float64
+    t1     :: Float64
+    ha0    :: Float64
+    ha1    :: Float64
+    pop    :: Vector{Int}
+    config :: Vector{Int}
+    moved  :: Vector{Tuple{Int,Int,Int}}
+    tels   :: Vector{Int}
+    hours  :: Float64
+    why    :: Symbol
+end
+
+"""
+    pop_plan_timeline(p::NightPlan; system = :lst) -> Vector{TimelineRow}
+
+The dark hours of `p` as consecutive rows: each stretch observed under one POP setting and set
+of telescopes, each POP change, each telescope dropped or added, and the stretches where nothing
+is observed. Times on the clock `system` (`:lst`, `:utc`, `:local`), as the Gantt labels them.
+Empty when the night has no astronomical darkness.
+"""
+function pop_plan_timeline(p::NightPlan; system::Symbol = :lst)
+    rows = TimelineRow[]
+    isempty(p.good_twilight) && return rows
+    n = length(p.lst)
+    lo, hi = extrema(p.good_twilight)
+    obs = falses(n); obs[observable_indices(p)] .= true
+    seg = zeros(Int, n)
+    for (k, sg) in enumerate(p.segments)
+        seg[sg.i0:sg.i1] .= k
+    end
+    chg = falses(n)
+    for (c0, c1) in p.changes
+        chg[c0:c1-1] .= true
+    end
+    alt = falses(n); alt[p.good_alt] .= true
+    moon = falses(n); moon[p.good_moon] .= true
+    function state(i)
+        chg[i] && return (:change, Int[], Int[])
+        obs[i] || return (!alt[i] ? :elevation : !moon[i] ? :moon : :delay, Int[], Int[])
+        seg[i] > 0 && return (:setting, p.segments[seg[i]].config, p.segments[seg[i]].pop)
+        return (:setting, p.config, p.pop)
+    end
+
+    x = unwrap_lst(p.lst)
+    edge(i) = i < n ? x[i+1] : x[i] + (n > 1 ? x[i] - x[i-1] : p.step_minutes / 60)
+    clock(v) = _gantt_clock(p, v, system)
+    hours(i0, i1) = (i1 - i0 + 1) * p.step_minutes / 60
+    row(kind, i0, i1; pop = Int[], config = Int[], moved = Tuple{Int,Int,Int}[], tels = Int[],
+        why = :none) =
+        TimelineRow(kind, i0, i1, clock(x[i0]), kind in (:drop, :readd, :ref) ? NaN : clock(edge(i1)),
+                    kind === :setting ? Float64(p.ha[i0]) : NaN,
+                    kind === :setting ? Float64(p.ha[i1]) : NaN,
+                    pop, config, moved, tels, kind in (:drop, :readd, :ref) ? 0.0 : hours(i0, i1), why)
+
+    # runs of one state over the dark hours
+    runs = Tuple{Int,Int,Any}[]
+    i0 = lo; s0 = state(lo)
+    for i in lo+1:hi+1
+        s = i <= hi ? state(i) : nothing
+        if s != s0
+            push!(runs, (i0, i - 1, s0)); i0 = i; s0 = s
+        end
+    end
+
+    used = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
+    settings = [k for (k, r) in enumerate(runs) if r[3][1] === :setting]
+    gapwhy = (:elevation, :moon, :delay)
+    prev = nothing                                  # the last setting's (config, pop)
+    for (k, (a, b, s)) in enumerate(runs)
+        kind, cfg, pop = s
+        if kind === :change
+            before = something(findlast(<(k), settings), 0)
+            after  = something(findfirst(>(k), settings), 0)
+            moved = Tuple{Int,Int,Int}[]
+            if before > 0 && after > 0
+                pa, pb = runs[settings[before]][3][3], runs[settings[after]][3][3]
+                moved = [(t, pa[t], pb[t]) for t in used if pa[t] != pb[t]]
+            end
+            push!(rows, row(:change, a, b; moved))
+        elseif kind in gapwhy
+            push!(rows, row(:gap, a, b; why = kind))
+        else
+            if prev !== nothing && prev[1] != cfg
+                lost = [t for t in used if prev[1][t] > 0 && cfg[t] == 0]
+                back = [t for t in used if prev[1][t] == 0 && cfg[t] > 0]
+                isempty(lost) || push!(rows, row(:drop, a, a; tels = lost))
+                isempty(back) || push!(rows, row(:readd, a, a; tels = back))
+                r = _reference(cfg)
+                r != 0 && r != _reference(prev[1]) && prev[2] == pop &&
+                    push!(rows, row(:ref, a, a; tels = [r]))
+            end
+            push!(rows, row(:setting, a, b; pop = copy(pop), config = copy(cfg)))
+            prev = (cfg, pop)
+        end
+    end
+    return rows
+end
+
+"What a timeline gap row says, by the constraint that excludes it."
+const GAP_LABELS = Dict(:elevation => "elevation-restricted", :moon => "too close to the Moon",
+                        :delay => "out of delay")
+
+# A duration in hours as `h:mm`.
+function _hmm(h::Real)
+    m = round(Int, 60 * Float64(h))
+    return string(div(m, 60), ":", lpad(mod(m, 60), 2, '0'))
+end
+
+# A timeline row as the fields the panel shows: from, to, what, POPs, HA, duration, note.
+function timeline_fields(r::TimelineRow, p::NightPlan)
+    order = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
+    to = isnan(r.t1) ? "" : _hhmm(r.t1)
+    if r.kind === :setting
+        pops = join((_pop_text(r.pop, r.config, i) for i in order), " ")
+        return (_hhmm(r.t0), to, "setting", pops, @sprintf("%+.1f … %+.1f", r.ha0, r.ha1),
+                _hmm(r.hours), "")
+    elseif r.kind === :change
+        note = join((string(p.telescopes[t], " ", a, "→", b) for (t, a, b) in r.moved), " · ")
+        return (_hhmm(r.t0), to, "change", "", "", _hmm(r.hours), note)
+    elseif r.kind === :gap
+        return (_hhmm(r.t0), to, "gap", "", "", _hmm(r.hours), GAP_LABELS[r.why])
+    else
+        return (_hhmm(r.t0), "", String(r.kind), "", "", "", join(p.telescopes[r.tels], " "))
+    end
+end
+
+"""
+    timeline_text(rows, p::NightPlan; system = :lst) -> String
+
+A timeline as a plain-text table, one row per line, the telescopes named in the header in the
+panel's order.
+"""
+function timeline_text(rows::AbstractVector{TimelineRow}, p::NightPlan; system::Symbol = :lst)
+    order = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
+    what(f) = f[3] == "setting" ? f[4] :
+              f[3] == "change"  ? "POP change  " * f[7] :
+              f[3] == "gap"     ? f[7] :
+              f[3] == "drop"    ? "drop " * f[7] :
+              f[3] == "ref"     ? "Ref → " * f[7] : "add " * f[7]
+    w = max(30, 2 + maximum((length(what(timeline_fields(r, p))) for r in rows); init = 0))
+    lines = [rpad(uppercase(String(system)), 6) * rpad("from", 7) * rpad("to", 7) *
+             rpad("POPs (" * join(p.telescopes[order], " ") * ")", w) * rpad("HA", 15) * "time"]
+    for r in rows
+        f = timeline_fields(r, p)
+        push!(lines, rpad("", 6) * rpad(f[1], 7) * rpad(f[2], 7) * rpad(what(f), w) *
+                     rpad(f[5], 15) * f[6])
+    end
+    return join(rstrip.(lines), "\n")
 end
 
 """
@@ -1037,6 +1253,10 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
                 push!(marks, (seg_x1(k - 1), "DROP", :end, TARGET_ROW))
                 push!(labels, GanttLabel(lst[sg.i0], TARGET_ROW,
                                          _hhmm(_gantt_clock(p, lst[sg.i0], time_system)), :time, :start))
+            elseif reference_change(p, k) != 0
+                # a new reference alone: its time, as a drop's
+                push!(labels, GanttLabel(lst[sg.i0], TARGET_ROW,
+                                         _hhmm(_gantt_clock(p, lst[sg.i0], time_system)), :time, :start))
             end
         end
         # "POP" where a change starts, and the time it starts just before it.
@@ -1161,8 +1381,10 @@ const STACK_ROW_STEP = 1.6
     gantt_stack_geometry(plans, labels, title = ""; time_system = :lst) -> geometry
 
 Several plans of one target on one night, each a summary row as `gantt_geometry` draws it, the
-first at the top: the chart comparing single POP settings (`coverage_pops`). Each row's tick is
-its entry of `labels` and its POPs are written above its bar, in the panel's telescope order.
+first at the top: the chart comparing single POP settings (`coverage_pops`), or the candidate
+plans of the POP strategies tab. Each row's tick is its entry of `labels`; a single setting's
+POPs are written above its bar, in the panel's telescope order, and a multi-POP plan's row
+carries its own POPs, changes and drops.
 """
 function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::AbstractVector{<:AbstractString},
                               title::AbstractString = "";
@@ -1176,6 +1398,8 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
     bars = GanttBar[]; tlabels = GanttLabel[]; softbars = GanttBar[]
     rows = Tuple{Float64,String}[]
     poplabels = Tuple{Float64,Float64,String,Vector{Bool},Bool}[]
+    seglabels = Tuple{Float64,Float64,String,Vector{Bool}}[]
+    marks = Tuple{Float64,String,Symbol,Float64}[]
     ellabels = Tuple{Float64,Float64}[]; transits = Tuple{Float64,Float64}[]
     for (k, (p, g)) in enumerate(zip(plans, geos))
         append!(bars, [GanttBar(b.x0, b.x1, sh(b.y, k), b.height, b.color, b.label) for b in g.bars])
@@ -1185,10 +1409,16 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
         append!(transits, [(x, sh(y, k)) for (x, y) in g.transits])
         push!(rows, (sh(TARGET_ROW, k), labels[k]))
         idx = sort(collect(observable_indices(p)))
-        if !isempty(idx)
+        if is_multi_pop(p)
+            # its own POPs, changes and drops, as its summary row draws them
+            append!(poplabels, [(x, sh(y, k), t, c, a) for (x, y, t, c, a) in g.poplabels])
+            append!(seglabels, [(x, sh(y, k), t, c) for (x, y, t, c) in g.seglabels])
+            append!(marks, [(x, t, sd, sh(y, k)) for (x, t, sd, y) in g.marks])
+        elseif !isempty(idx)
             on = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
             x = unwrap_lst(p.lst)[first(idx)]
-            push!(poplabels, (x, sh(az_label_y() + POP_LABEL_LIFT, k), join(string.(p.pop[on]), " "),
+            push!(poplabels, (x, sh(az_label_y() + POP_LABEL_LIFT, k),
+                              join((_pop_text(p.pop, p.config, i) for i in on), " "),
                               falses(length(on)) |> collect, false))
         end
     end
@@ -1196,8 +1426,8 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
     return (; bars, labels = tlabels, bands, softbars, midnight = g1.midnight, now = g1.now,
               transit = g1.transit, transits, xlim = g1.xlim, target = g1.target, rows, ymax,
               detailed = false, subtitle = String(title),
-              delay_applied = g1.delay_applied, seglabels = Tuple{Float64,Float64,String,Vector{Bool}}[],
-              poplabels, ellabels, marks = Tuple{Float64,String,Symbol,Float64}[],
+              delay_applied = g1.delay_applied, seglabels,
+              poplabels, ellabels, marks,
               switches = Float64[], multi = false, stack = true)
 end
 
@@ -1210,6 +1440,21 @@ function _gantt_clock(p::NightPlan, x::Real, system::Symbol)
     system === :utc && return u
     return u + local_utc_offset(p, Dates.DateTime(Dates.Date(p.date)) +
                                    Dates.Millisecond(round(Int, u * 3.6e6)))
+end
+
+"""
+    hour_angle_clock(p::NightPlan, ha; system = :lst) -> Float64
+
+Where hour angle `ha` of `p`'s target falls on the clock `system`, in hours (not wrapped): the
+LST `ra/15 + ha` taken on the branch of the night's own LST axis, then as `_gantt_clock` maps it.
+"""
+function hour_angle_clock(p::NightPlan, ha::Real; system::Symbol = :lst)
+    x = p.ra / 15 + Float64(ha)
+    lst = unwrap_lst(p.lst)
+    isempty(lst) && return x
+    mid = (first(lst) + last(lst)) / 2
+    x += 24 * round((mid - x) / 24)
+    return _gantt_clock(p, x, system)
 end
 
 function _hhmm(h::Real)

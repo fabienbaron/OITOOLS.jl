@@ -94,7 +94,7 @@ Item {
     // plan line rather than given a view of its own, and uv coverage and SNR belong to a
     // dataset — so the way to see them is to Simulate and open the result in Exploring, which
     // already draws both, rather than to build a second uv plot here.
-    property var viewNames: ["Gantt", "Delay carts", "POPs"]
+    property var viewNames: ["Gantt", "Delay carts", "POP strategies"]
     // Readonly and driven by the TabBar: a ComboBox or TabBar drops a two-way currentIndex
     // binding the instant the user clicks, so the control is the source of truth and this is a
     // read-only mirror of it.
@@ -180,6 +180,12 @@ Item {
         for (var i = 0; i < telescopeConfig.length; ++i) if (telescopeConfig[i] > 0) n += 1
         return n
     }
+    // The selected telescopes as Julia reads them, the delay reference marked `*`: every POP
+    // search and every night is computed with the reference.
+    function telescopesArg() {
+        return root.selectedTelescopes.map(function (n) {
+            return n === root.referenceTelescope ? n + "*" : n }).join(" ")
+    }
     readonly property var selectedTelescopes: {
         var out = []
         for (var k = 0; k < displayOrder.length; ++k)
@@ -247,7 +253,9 @@ Item {
         var cfg = []
         for (var i = 0; i < root.telescopeNames.length; ++i) cfg.push(1)
         root.telescopeConfig = cfg
-        setReference(root.defaultReference)      // a no-op on a facility without that telescope
+        setReference(root.defaultReference)
+        if (root.referenceTelescope.length === 0)    // a facility without W2
+            setReference(Julia.shell_central_telescope(root.facility, root.selectedTelescopes.join(" ")))
         root.combiners = combinersFor(f)
         selectCombiner(root.combiners.length > 0 ? root.combiners[0] : "")
     }
@@ -262,8 +270,11 @@ Item {
         var cfg = root.telescopeConfig.slice()
         cfg[i] = used ? 1 : 0
         root.telescopeConfig = cfg
-        // A reference that is no longer in the array is not a reference.
-        if (!used && root.telescopeNames[i] === root.referenceTelescope) setReference("")
+        // There is always a reference: losing it, the most central telescope left takes over.
+        if (!used && root.telescopeNames[i] === root.referenceTelescope)
+            setReference(Julia.shell_central_telescope(root.facility, root.selectedTelescopes.join(" ")))
+        else if (used && root.referenceTelescope.length === 0)
+            setReference(Julia.shell_central_telescope(root.facility, root.selectedTelescopes.join(" ")))
     }
 
     // A reference telescope reduces the baselines to reference-to-each instead of every pair
@@ -271,6 +282,8 @@ Item {
     // PLANNING notion -- best_pop and in_delay read it -- and it does not reach the simulator,
     // because `facility_subset` keeps every telescope whose entry is non-zero and a reference
     // is a 2. So a simulated dataset still carries all 15 baselines.
+    // The name is set before the config: the config rebuilds the Reference box's list, and the
+    // box picks its entry from `referenceTelescope` when it does.
     function setReference(name) {
         var cfg = root.telescopeConfig.slice()
         var ok = false
@@ -278,8 +291,8 @@ Item {
             if (cfg[i] === 2) cfg[i] = 1
             if (root.telescopeNames[i] === name && cfg[i] > 0) { cfg[i] = 2; ok = true }
         }
-        root.telescopeConfig = cfg
         root.referenceTelescope = ok ? name : ""
+        root.telescopeConfig = cfg
     }
 
     function configString() {
@@ -298,7 +311,7 @@ Item {
         // One northern seed, so the panel is never empty on a first run and never carries a
         // target nobody asked for. "+ target" and SIMBAD add the rest. Its values are SIMBAD's,
         // so it counts as resolved.
-        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: true }
+        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: true; resolving: false }
     }
 
     function refreshTargets() {
@@ -370,7 +383,8 @@ Item {
 
     function addTarget() {
         targetModel.append({ name: "", ra: 0.0, dec: 0.0,
-                             magV: 0.0, magJ: 0.0, magH: 0.0, magK: 0.0, cached: false })
+                             magV: 0.0, magJ: 0.0, magH: 0.0, magK: 0.0, cached: false,
+                             resolving: false })
         root.currentTargetIndex = targetModel.count - 1
         refreshTargets()
     }
@@ -423,6 +437,7 @@ Item {
         var nm = targetModel.get(i).name
         if (!nm || nm.length === 0) return
         root.statusText = "resolving " + nm + "…"
+        targetModel.set(i, { resolving: true })
         resolveTimer.queue = [i]
         resolveTimer.restart()
     }
@@ -437,22 +452,26 @@ Item {
         }
         if (q.length === 0) { root.statusText = "nothing to resolve"; return }
         root.statusText = "resolving " + q.length + " target" + (q.length === 1 ? "" : "s") + "…"
+        for (var k = 0; k < q.length; ++k) targetModel.set(q[k], { resolving: true })
         resolveTimer.queue = q
         resolveTimer.restart()
     }
 
     // One row per tick, so a list of ten targets repaints between queries instead of freezing
-    // for the whole batch.
+    // for the whole batch. The queued rows' dots are orange until their own query returns; the
+    // first query waits long enough for that to be drawn.
     Timer {
         id: resolveTimer
         property var queue: []
         property int failures: 0
-        interval: 20
+        interval: 50
         repeat: false
         onTriggered: {
             if (queue.length === 0) return
             var i = queue.shift()
-            if (!root.applySimbad(i, Julia.shell_simbad(targetModel.get(i).name))) failures += 1
+            var ok = root.applySimbad(i, Julia.shell_simbad(targetModel.get(i).name))
+            targetModel.set(i, { resolving: false })
+            if (!ok) failures += 1
             root.consoleChanged()       // shell_simbad logs what it resolved; show it
             if (queue.length > 0) {
                 restart()
@@ -489,7 +508,7 @@ Item {
             var num = function (v) { return v.length > 0 ? parseFloat(v) : 0.0 }
             targetModel.append({ name: f[0], ra: num(f[1]), dec: num(f[2]),
                                  magV: num(f[3]), magJ: num(f[4]), magH: num(f[5]), magK: num(f[6]),
-                                 cached: f[7] === "1" })
+                                 cached: f[7] === "1", resolving: false })
         }
         root.currentTargetIndex = 0
         refreshTargets()
@@ -601,6 +620,7 @@ Item {
                                         required property real magH
                                         required property real magK
                                         required property bool cached
+                                        required property bool resolving
 
                                         Layout.fillWidth: true
                                         implicitHeight: targetRowColumn.implicitHeight + dp(10)
@@ -630,12 +650,16 @@ Item {
                                                 Rectangle {
                                                     // Per-row cache indicator: filled means these
                                                     // numbers came from a resolve this session, hollow
-                                                    // means they were typed or have been edited since.
+                                                    // means they were typed or have been edited since,
+                                                    // orange that SIMBAD is being asked.
+                                                    objectName: "obsTargetDot:" + targetRow.index
                                                     Layout.alignment: Qt.AlignVCenter
                                                     implicitWidth: dp(9); implicitHeight: dp(9)
                                                     radius: implicitWidth / 2
-                                                    color: targetRow.cached ? "#59a14f" : "transparent"
-                                                    border.color: targetRow.cached ? "#59a14f" : "#bbb"
+                                                    color: targetRow.resolving ? "#f28e2b" :
+                                                           targetRow.cached ? "#59a14f" : "transparent"
+                                                    border.color: targetRow.resolving ? "#f28e2b" :
+                                                                  targetRow.cached ? "#59a14f" : "#bbb"
                                                 }
                                                 TextField {
                                                     objectName: "obsTargetName:" + targetRow.index
@@ -832,14 +856,23 @@ Item {
                                     ComboBox {
                                         id: referenceBox
                                         Layout.fillWidth: true
-                                        // Choosing one reduces the baselines to reference-to-each
-                                        // instead of every pair, so "(none)" is the default and the
-                                        // reduction is always deliberate.
-                                        model: ["(none)"].concat(root.selectedTelescopes)
+                                        // The delay reference: its cart stays put and the others
+                                        // follow, so the delay check is of the baselines to it.
+                                        // W2 (`defaultReference`) by default; there is always one.
+                                        objectName: "obsReference"
+                                        model: root.selectedTelescopes
                                         enabled: root.nSelectedTelescopes > 1
-                                        currentIndex: Math.max(0, model.indexOf(root.referenceTelescope))
-                                        onModelChanged: currentIndex = Math.max(0, model.indexOf(root.referenceTelescope))
-                                        onActivated: root.setReference(currentIndex === 0 ? "" : currentText)
+                                        function sync() { currentIndex = model.indexOf(root.referenceTelescope) }
+                                        Component.onCompleted: sync()
+                                        onModelChanged: sync()
+                                        Connections {
+                                            target: root
+                                            function onReferenceTelescopeChanged() { referenceBox.sync() }
+                                        }
+                                        onActivated: {
+                                            root.setReference(currentText)
+                                            if (root.hasPlan) root.computePlan()
+                                        }
                                     }
                                 }
 
@@ -928,21 +961,13 @@ Item {
 
                                 // How AutoPOPs and Search POPs search: one setting, or a plan of
                                 // several, which may drop telescopes.
-                                ComboBox {
+                                StrategyBox {
                                     objectName: "popStrategy"
                                     Layout.fillWidth: true
-                                    implicitHeight: Math.max(dp(26), implicitContentHeight + topPadding + bottomPadding)
-                                    model: ["Single POPs", "POP changes on a single line",
-                                            "POP changes && Telescope Drops on a single line",
-                                            "Three-line POP selection for best time coverage"]
-                                    // "&&" is a literal "&" in the list's items, which read "&" as
-                                    // a mnemonic; the closed box shows the text as it is.
-                                    displayText: currentText.replace("&&", "&")
-                                    currentIndex: root.popStrategy
-                                    onActivated: function (index) {
-                                        root.popStrategy = index
-                                        if (root.hasPlan && root.autoPops) root.computePlan()
-                                    }
+                                    uiScale: root.uiScale
+                                    rows: root.strategyRows
+                                    strategy: root.popStrategy
+                                    onChosen: function (st) { root.setStrategy(st) }
                                     ToolTip.visible: hovered
                                     ToolTip.text: "how POPs are searched"
                                 }
@@ -968,10 +993,13 @@ Item {
                                     }
                                     Label { text: "change"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                     SpinBox {
+                                        id: changeMinutesBox
                                         objectName: "popChangeMinutes"
                                         Layout.preferredWidth: dp(78)
-                                        from: 0; to: 60; value: root.changeMinutes; editable: true
-                                        onValueModified: { root.changeMinutes = value; if (root.hasPlan && root.autoPops) root.computePlan() }
+                                        from: 0; to: 60; editable: true
+                                        // follows the shared value after an edit in either box
+                                        Binding { target: changeMinutesBox; property: "value"; value: root.changeMinutes }
+                                        onValueModified: root.setChangeMinutes(value)
                                         ToolTip.visible: hovered
                                         ToolTip.text: "minutes per POP change"
                                     }
@@ -1667,25 +1695,63 @@ Item {
                             Layout.fillWidth: true
                             Layout.margins: dp(4)
                             spacing: dp(8)
+                            StrategyBox {
+                                objectName: "popStrategyTab"
+                                Layout.preferredWidth: dp(330)
+                                uiScale: root.uiScale
+                                rows: root.strategyRows
+                                strategy: root.popStrategy
+                                onChosen: function (st) { root.setStrategy(st) }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "how POPs are searched"
+                            }
+                            // The target searched and charted, the same as the selected row in
+                            // the target list.
+                            ComboBox {
+                                id: popTargetBox
+                                objectName: "popTarget"
+                                visible: !root.multiTarget
+                                Layout.preferredWidth: dp(170)
+                                model: root.targets.map(function (t) { return t.name && t.name.length > 0 ? t.name : "(unnamed)" })
+                                function sync() { currentIndex = Math.min(root.currentTargetIndex, count - 1) }
+                                Component.onCompleted: sync()
+                                onModelChanged: sync()
+                                Connections {
+                                    target: root
+                                    function onCurrentTargetIndexChanged() { popTargetBox.sync() }
+                                }
+                                onActivated: function (index) { root.selectTarget(index) }
+                                ToolTip.visible: hovered
+                                ToolTip.text: "target"
+                            }
                             Button {
+                                objectName: "popSearch"
                                 text: "Search POPs"
-                                enabled: root.nSelectedTelescopes >= 2 && root.nNamedTargets > 0
+                                enabled: root.nSelectedTelescopes >= 2 && root.nNamedTargets > 0 && !root.multiTarget
                                 // CHARA_POP_ARRAY and CHARA_AIRPATH are the defaults inside
                                 // best_pop, which is the other half of why this tab is CHARA-only.
                                 // The best result is adopted rather than merely listed: leaving
                                 // the user to copy it is how the searched POPs get forgotten and
                                 // the delay check reports a third of the real window.
-                                onClicked: {
-                                    if (root.singlePops) {
-                                        root.findPops(); root.statusText =
-                                            popModel.count > 0 ? "POPs " + root.toDisplayOrder(root.popString)
-                                                               : "no POP configuration found"
-                                    } else {
-                                        root.findPlans()
-                                        root.statusText = planModel.count + " plans for " + root.nNamedTargets + " targets"
-                                    }
-                                }
+                                onClicked: root.runSearch()
                             }
+                            // the same value as the POPs panel's "change … min"
+                            Label { text: "POP change"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: !root.singlePops }
+                            SpinBox {
+                                id: changeMinutesTabBox
+                                objectName: "popChangeMinutesTab"
+                                Layout.preferredWidth: dp(78)
+                                visible: !root.singlePops
+                                from: 0; to: 60; editable: true
+                                // follows the shared value after an edit in either box
+                                Binding { target: changeMinutesTabBox; property: "value"; value: root.changeMinutes }
+                                onValueModified: root.setChangeMinutes(value)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "minutes per POP change"
+                            }
+                            Label { text: "min"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: !root.singlePops }
                             Label { text: "n_best"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
                                     visible: root.singlePops }
                             SpinBox { id: nBestBox; from: 1; to: 20; value: 5; visible: root.singlePops }
@@ -1699,11 +1765,18 @@ Item {
                             }
                         }
 
+                        // The tables on top, the timeline of the selected row below.
+                        SplitView {
+                            id: popSplit
+                            orientation: Qt.Vertical
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
                         // POP results are a table and not a plot because the answer is a
                         // configuration to dial in, and a configuration has to be read off exactly.
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
+                            SplitView.fillHeight: true
+                            SplitView.minimumHeight: dp(80)
                             color: "#ffffff"
                             border.color: "#ddd"
 
@@ -1732,6 +1805,8 @@ Item {
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.preferredWidth: root.popColHA; text: "HA range"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.popColHA; text: root.tableClock
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     // The Use button's column, reserved so the heading above it
                                     // does not drift left of the data it names.
                                     Item { Layout.preferredWidth: root.popColUse }
@@ -1752,6 +1827,8 @@ Item {
                                         required property string pops
                                         required property string score
                                         required property string haRange
+                                        required property string timeRange
+                                        readonly property bool picked: root.selectedRow === "pops:" + pops
                                         width: popList.width
                                         // A ListView sizes delegates horizontally only, and a
                                         // RowLayout outside a layout parent keeps height 0, so
@@ -1759,8 +1836,10 @@ Item {
                                         height: implicitHeight
                                         spacing: dp(6)
 
+                                        TapHandler { onTapped: root.selectRow("pops:" + popRow.pops) }
                                         Label { Layout.preferredWidth: root.popColIndex
-                                                text: popRow.index + 1
+                                                objectName: "popRank:" + popRow.index
+                                                text: (popRow.picked ? "▸" : "") + (popRow.index + 1)
                                                 font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
                                         Label { Layout.preferredWidth: root.popColPops
                                                 text: root.toDisplayOrder(popRow.pops)
@@ -1773,6 +1852,9 @@ Item {
                                                 font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
                                         Label { Layout.preferredWidth: root.popColHA
                                                 text: popRow.haRange
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.popColHA
+                                                text: popRow.timeRange
                                                 font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
                                         Button {
                                             Layout.preferredWidth: root.popColUse
@@ -1809,7 +1891,7 @@ Item {
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.fillWidth: true; elide: Text.ElideRight
                                             text: root.telescopeNames.length > 0
-                                                  ? "plan  (" + root.displayOrder.map(function (i) { return root.telescopeNames[i] }).join(" ") + ")"
+                                                  ? "plan, " + root.tableClock + "  (" + root.displayOrder.map(function (i) { return root.telescopeNames[i] }).join(" ") + ")"
                                                   : "plan"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.preferredWidth: root.planColNum; text: "changes"
@@ -1841,6 +1923,7 @@ Item {
                                         required property string plan
                                         readonly property bool inUse: plan.length > 0 &&
                                                                       root.targetPlans[target] === plan
+                                        readonly property bool picked: root.selectedRow === "plan:" + target + ":" + rank
                                         width: planList.width
                                         height: implicitHeight
                                         spacing: dp(6)
@@ -1850,8 +1933,10 @@ Item {
                                                 text: planRow.rank <= 1 ? planRow.target : ""
                                                 elide: Text.ElideRight; font.bold: true
                                                 font.pointSize: pt(baseFontPt - 1) }
+                                        TapHandler { onTapped: if (planRow.rank > 0) root.selectRow("plan:" + planRow.target + ":" + planRow.rank) }
                                         Label { Layout.preferredWidth: root.popColIndex
-                                                text: planRow.rank > 0 ? planRow.rank : ""
+                                                objectName: "planRank:" + planRow.target + ":" + planRow.rank
+                                                text: planRow.rank > 0 ? (planRow.picked ? "▸" : "") + planRow.rank : ""
                                                 font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
                                         Label { Layout.fillWidth: true
                                                 text: planRow.summary; elide: Text.ElideRight
@@ -1888,6 +1973,146 @@ Item {
                                     horizontalAlignment: Text.AlignHCenter
                                 }
                             }
+                        }
+
+                        // The candidates in the tables, one Gantt row each, numbered as in them.
+                        Rectangle {
+                            SplitView.preferredHeight: root.plansGanttHeight
+                            SplitView.minimumHeight: dp(60)
+                            color: "#ffffff"
+                            border.color: "#ddd"
+                            MakieArea {
+                                id: plansGanttArea
+                                objectName: "plansGanttArea"
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                visible: root.hasCandidates
+                                scene: plansGanttPlot
+                            }
+                            Label {
+                                anchors.centerIn: parent
+                                visible: !root.hasCandidates
+                                text: "Search POPs to compare the candidates"
+                                color: "#aaa"
+                            }
+                        }
+
+                        // The night of the selected row, or of the chart, step by step.
+                        Rectangle {
+                            SplitView.preferredHeight: dp(220)
+                            SplitView.minimumHeight: dp(80)
+                            color: "#ffffff"
+                            border.color: "#ddd"
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: dp(4)
+                                spacing: dp(2)
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: dp(6)
+                                    Label { text: "Timeline"; font.bold: true }
+                                    Label {
+                                        objectName: "popTimelineTitle"
+                                        Layout.fillWidth: true
+                                        text: root.timelineTitle
+                                        color: "#666"; elide: Text.ElideRight
+                                        font.pointSize: pt(baseFontPt - 1)
+                                    }
+                                    Button {
+                                        objectName: "popTimelineUse"
+                                        text: "Use"
+                                        enabled: root.selectedRow.length > 0
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "use this strategy"
+                                        onClicked: root.useSelected()
+                                    }
+                                    Button {
+                                        objectName: "popTimelineCopy"
+                                        text: "Copy"
+                                        enabled: timelineModel.count > 0
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "copy as text"
+                                        onClicked: root.copyTimeline()
+                                    }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: dp(6)
+                                    Label { Layout.preferredWidth: root.tlColClock; text: root.timeSystem
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.tlColTime; text: "to"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.tlColWhat; elide: Text.ElideRight
+                                            text: root.telescopeNames.length > 0
+                                                  ? "POPs  (" + root.displayOrder.filter(function (i) { return root.telescopeConfig[i] > 0 })
+                                                                    .map(function (i) { return root.telescopeNames[i] }).join(" ") + ")"
+                                                  : "POPs"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.popColHA; text: "HA"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Label { Layout.preferredWidth: root.tlColTime; text: "time"
+                                            font.bold: true; font.pointSize: pt(baseFontPt - 2) }
+                                    Item { Layout.fillWidth: true }
+                                }
+                                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: dp(1); color: "#ddd" }
+                                ListView {
+                                    id: timelineList
+                                    objectName: "popTimeline"
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    clip: true
+                                    model: timelineModel
+                                    delegate: RowLayout {
+                                        id: tlRow
+                                        required property int index
+                                        required property string from
+                                        required property string to
+                                        required property string kind
+                                        required property string pops
+                                        required property string ha
+                                        required property string span
+                                        required property string note
+                                        width: timelineList.width
+                                        height: implicitHeight
+                                        spacing: dp(6)
+                                        readonly property color ink:
+                                            kind === "setting" ? "#222" :
+                                            kind === "change"  ? "#8b0000" :
+                                            kind === "gap"     ? "#aaa" : "#1e90ff"
+                                        Label { Layout.preferredWidth: root.tlColClock; text: tlRow.from; color: tlRow.ink
+                                                objectName: "tlFrom:" + tlRow.index
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.tlColTime; text: tlRow.to; color: tlRow.ink
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.tlColWhat; elide: Text.ElideRight
+                                                objectName: "tlWhat:" + tlRow.index
+                                                color: tlRow.ink
+                                                text: tlRow.kind === "setting" ? tlRow.pops :
+                                                      tlRow.kind === "change"  ? "POP change  " + tlRow.note :
+                                                      tlRow.kind === "gap"     ? tlRow.note :
+                                                      tlRow.kind === "drop"    ? "drop " + tlRow.note :
+                                                      tlRow.kind === "ref"     ? "Ref → " + tlRow.note : "add " + tlRow.note
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.popColHA; text: tlRow.ha; color: tlRow.ink
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Label { Layout.preferredWidth: root.tlColTime; text: tlRow.span; color: tlRow.ink
+                                                font.family: "monospace"; font.pointSize: pt(baseFontPt - 1) }
+                                        Item { Layout.fillWidth: true }
+                                    }
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    visible: timelineModel.count === 0
+                                    text: root.timelineTitle.length > 0 ? "no dark hours" : "Compute, or pick a row above"
+                                    color: "#aaa"
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                                // Copy goes through a text editor's clipboard; never shown.
+                                TextEdit { id: timelineCopyBuffer; visible: false }
+                            }
+                        }
                         }
                     }
                 }
@@ -2122,22 +2347,6 @@ Item {
                         ToolTip.text: "Observe at the cube's wavelengths (the image, or the model's image cube) instead of the spectral setup"
                     }
 
-                    // Here rather than on a row of its own: it is one switch, and the panel is
-                    // long enough already. What it means is in the tooltip and in the line
-                    // below, which only appears once it is on.
-                    CheckBox {
-                        id: copyStructureBox
-                        text: "Copy OIFITS structure"
-                        checked: root.simCopyStructure
-                        onToggled: root.simCopyStructure = checked
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Re-observe this sky through the LOADED dataset's own uv " +
-                                      "points and signal-to-noise, instead of computing an " +
-                                      "observation from the array and the night. The result is " +
-                                      "that dataset, of a different source — comparable to it " +
-                                      "point by point."
-                    }
-
                     // The sky's status either way — a simulation is OF something in both
                     // modes — with the coverage's provenance appended when it is not the
                     // array's, since that is what makes the HA range and the magnitudes idle.
@@ -2157,23 +2366,6 @@ Item {
                     spacing: dp(8)
 
                     Button {
-                        text: "Output file…"
-                        onClicked: outputDialog.openAt("")
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.outputFile.length > 0 ? root.outputFile : "no output file chosen"
-                        color: root.outputFile.length > 0 ? "#000" : "#888"
-                        font.family: "monospace"
-                        elide: Text.ElideMiddle
-                    }
-                    Label {
-                        visible: !root.canSimulate
-                        text: root.blockReason
-                        color: "#b00000"
-                        font.pointSize: pt(baseFontPt - 2)
-                    }
-                    Button {
                         id: simulateButton
                         text: "Simulate"
                         enabled: root.canSimulate
@@ -2186,6 +2378,37 @@ Item {
                         // stays a button and stays disabled until there is a file to carry across.
                         enabled: root.lastSimulatedFile.length > 0
                         onClicked: root.openRequested(root.lastSimulatedFile)
+                    }
+                    // The loaded dataset's uv points and SNR in place of an observation computed
+                    // from the array and the night.
+                    CheckBox {
+                        id: copyStructureBox
+                        objectName: "simTemplate"
+                        text: "Use existing OIFITS as template"
+                        checked: root.simCopyStructure
+                        onToggled: root.simCopyStructure = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "uv and SNR of the loaded dataset"
+                    }
+                    Button {
+                        text: "Output file…"
+                        onClicked: outputDialog.openAt("")
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.outputFile.length > 0 ? root.outputFile : "no output file chosen"
+                        color: root.outputFile.length > 0 ? "#000" : "#888"
+                        font.family: "monospace"
+                        elide: Text.ElideMiddle
+                    }
+                    // What blocks Simulate, unless it is the source, which the Source row
+                    // already shows in red.
+                    Label {
+                        objectName: "simBlockReason"
+                        visible: !root.canSimulate && root.blockReason.indexOf("no source") !== 0
+                        text: root.blockReason
+                        color: "#b00000"
+                        font.pointSize: pt(baseFontPt - 2)
                     }
                 }
 
@@ -2216,6 +2439,9 @@ Item {
     readonly property int planColTarget: dp(110)
     readonly property int planColNum:    dp(64)
     readonly property int planColHours:  dp(100)
+    readonly property int tlColClock: dp(64)
+    readonly property int tlColTime:  dp(56)
+    readonly property int tlColWhat:  dp(380)
 
     // POP search results. Empty until a search runs; the first append fixes the roles, which are
     // pops, score and haRange.
@@ -2337,7 +2563,7 @@ Item {
     function computePlan() {
         var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
         if (t === null) { planText = "no target"; return }
-        var tels = root.selectedTelescopes.join(" ")
+        var tels = root.telescopesArg()
 
         // Search BEFORE planning, so the night is computed with the POPs it reports rather
         // than with the previous ones. Assigning popString is enough for the dropdowns and the
@@ -2367,6 +2593,8 @@ Item {
         hasPlan = planText.indexOf("!") !== 0
         ganttArea.update()
         delayArea.update()
+        root.selectedRow = ""
+        refreshTimeline()
         root.consoleChanged()
     }
 
@@ -2380,7 +2608,7 @@ Item {
     // zero observable hours rather than as an error here.
     function searchAndAdoptPops(t, tels) {
         var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra, tels, 3,
-                                         root.altLimit, root.altMax)
+                                         root.altLimit, root.altMax, root.timeSystem.toLowerCase())
         if (!rows || rows.length === 0) return false
         var best = rows.split("\n")[0].split("\t")[0]
         if (!best || best.length === 0) return false
@@ -2462,18 +2690,20 @@ Item {
         var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
         if (t === null) return
         popModel.clear()
+        root.tableClock = root.timeSystem
         var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra,
-                                         root.selectedTelescopes.join(" "), nBestBox.value,
-                                         root.altLimit, root.altMax)
+                                         root.telescopesArg(), nBestBox.value,
+                                         root.altLimit, root.altMax, root.timeSystem.toLowerCase())
         root.consoleChanged()
         if (rows.length === 0) return
         var lines = rows.split("\n")
         for (var i = 0; i < lines.length; ++i) {
             var f = lines[i].split("\t")
-            // The delegate declares these three as `required`, and a required role the model
+            // The delegate declares these four as `required`, and a required role the model
             // does not supply means the delegate is never created — no rows, no error.
-            if (f.length === 3)
-                popModel.append({ pops: f[0], score: f[1], haRange: f[2] })
+            if (f.length >= 3)
+                popModel.append({ pops: f[0], score: f[1], haRange: f[2],
+                                  timeRange: f.length > 3 ? f[3] : "" })
         }
         // The best one is the one worth using, so take it rather than making the user copy it.
         if (popModel.count > 0) root.popString = popModel.get(0).pops
@@ -2486,7 +2716,34 @@ Item {
     // settings best over the earliest, middle and latest third of the night, each on its own row
     // of the Gantt (3). A change takes `changeMinutes`.
     property int popStrategy: 0
-    readonly property bool singlePops: popStrategy === 0 || popStrategy >= 3
+    readonly property bool singlePops: popStrategy === 0 || popStrategy === 3
+    // One POP timeline shared by every target (PLAN_MultiTargetPOP.md); listed, not yet chosen.
+    readonly property bool multiTarget: popStrategy === 4
+    readonly property var strategyRows: [
+        { text: "— single target", strategy: -1 },
+        { text: "Single POPs", strategy: 0 },
+        { text: "POP changes on a single line", strategy: 1 },
+        { text: "POP changes && Telescope Drops on a single line", strategy: 2 },
+        { text: "Three-row POP (time coverage)", strategy: 3 },
+        { text: "— multiple targets", strategy: -1 },
+        { text: "POP changes on a single line, all targets", strategy: 4, off: true }
+    ]
+    // The minutes a POP change takes: the night and the candidates are computed again with it.
+    function setChangeMinutes(v) {
+        if (v === root.changeMinutes) return
+        root.changeMinutes = v
+        if (root.hasPlan && root.autoPops) root.computePlan()
+        else refreshTimeline()
+        if (planModel.count > 0) runSearch()
+    }
+    function setStrategy(st) {
+        if (st === root.popStrategy) return
+        root.popStrategy = st
+        root.selectedRow = ""
+        if (root.hasPlan && root.autoPops) root.computePlan()
+        else refreshTimeline()
+        if (popModel.count > 0 || planModel.count > 0) runSearch()
+    }
     property int maxChanges: 2
     property int maxDrop: 1
     property int changeMinutes: 10
@@ -2520,7 +2777,8 @@ Item {
         var rows = Julia.shell_pop_plans(root.facility, t.dec, root.dateISO, t.ra, tels,
                                          root.referenceTelescope, root.maxChanges,
                                          root.popStrategy === 2 ? root.maxDrop : 0,
-                                         root.changeMinutes, root.altLimit, root.altMax)
+                                         root.changeMinutes, root.altLimit, root.altMax,
+                                         root.timeSystem.toLowerCase())
         if (!rows || rows.length === 0) return ""
         var f = rows.split("\n")[0].split("\t")
         if (f.length < 6) return ""
@@ -2531,14 +2789,16 @@ Item {
     // Search POPs with a multi-POP strategy: every named target's plans, ranked, in one table.
     function findPlans() {
         planModel.clear()
-        var tels = root.selectedTelescopes.join(" ")
-        for (var i = 0; i < targetModel.count; ++i) {
+        root.tableClock = root.timeSystem
+        var tels = root.telescopesArg()
+        for (var i = Math.max(0, currentTargetIndex); i <= Math.max(0, currentTargetIndex) && i < targetModel.count; ++i) {
             var t = targetModel.get(i)
             if (!t.name || t.name.length === 0) continue
             var rows = Julia.shell_pop_plans(root.facility, t.dec, root.dateISO, t.ra, tels,
                                              root.referenceTelescope, root.maxChanges,
                                              root.popStrategy === 2 ? root.maxDrop : 0,
-                                             root.changeMinutes, root.altLimit, root.altMax)
+                                             root.changeMinutes, root.altLimit, root.altMax,
+                                             root.timeSystem.toLowerCase())
             if (!rows || rows.length === 0) {
                 planModel.append({ target: t.name, rank: 0, summary: "no plan observes it",
                                    changes: "", dropped: "", full: "", total: "", plan: "" })
@@ -2564,6 +2824,145 @@ Item {
         if (t !== null && t.name === name) {
             if (plan.length > 0) root.popString = firstPops(plan)
             computePlan()
+        }
+    }
+
+    // ── the timeline ─────────────────────────────────────────────────────────
+    //
+    // The row picked in the tables (`pops:<POPs>` or `plan:<target>:<rank>`); empty, the chart's
+    // own target and POPs. Compute clears it, so after Compute the timeline is the chart's.
+    property string selectedRow: ""
+    // The clock the tables' times were computed on: they keep it until the next search.
+    property string tableClock: timeSystem
+    property string timelineTitle: ""
+    ListModel { id: timelineModel }
+    onTimeSystemChanged: { refreshTimeline(); if (root.hasCandidates) refreshPlansGantt() }
+
+    function selectRow(key) {
+        root.selectedRow = root.selectedRow === key ? "" : key
+        refreshTimeline()
+    }
+
+    // What the timeline shows: `{ t, pops, plan, title }`, or null.
+    function timelineSource() {
+        var cur = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
+        var key = root.selectedRow
+        if (key.indexOf("plan:") === 0) {
+            for (var i = 0; i < planModel.count; ++i) {
+                var r = planModel.get(i)
+                if ("plan:" + r.target + ":" + r.rank !== key) continue
+                for (var k = 0; k < targetModel.count; ++k) {
+                    var t = targetModel.get(k)
+                    if (t.name === r.target)
+                        return { t: t, pops: firstPops(r.plan), plan: r.plan,
+                                 title: r.target + " · plan " + r.rank }
+                }
+            }
+        } else if (key.indexOf("pops:") === 0 && cur !== null) {
+            var pops = key.slice(5)
+            return { t: cur, pops: pops, plan: "", title: cur.name + " · " + toDisplayOrder(pops) }
+        }
+        if (!root.hasPlan || cur === null) return null
+        return { t: cur, pops: root.popString, plan: root.popPlanText, title: cur.name + " · chart" }
+    }
+
+    function timelineCall(src, asText) {
+        return Julia.shell_pop_timeline(root.facility, src.t.name, src.t.ra, src.t.dec, root.dateISO,
+                                        root.telescopesArg(), src.pops, root.useDelay,
+                                        root.altLimit, root.altMax, root.timeSystem.toLowerCase(),
+                                        src.plan, root.changeMinutes, asText)
+    }
+
+    function refreshTimeline() {
+        timelineModel.clear()
+        var src = timelineSource()
+        if (src === null) { root.timelineTitle = ""; return }
+        root.timelineTitle = src.title
+        var r = timelineCall(src, false)
+        if (r.length > 0 && r.charAt(0) === "!") { root.timelineTitle = src.title + " — " + r; return }
+        var lines = r.length > 0 ? r.split("\n") : []
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length < 7) continue
+            timelineModel.append({ from: f[0], to: f[1], kind: f[2], pops: f[3], ha: f[4],
+                                   span: f[5], note: f[6] })
+        }
+    }
+
+    function copyTimeline() {
+        var src = timelineSource()
+        if (src === null) return
+        timelineCopyBuffer.text = root.timelineTitle + "\n" + timelineCall(src, true)
+        timelineCopyBuffer.selectAll()
+        timelineCopyBuffer.copy()
+        root.statusText = "timeline copied"
+    }
+
+    // ── Search POPs, the candidates chart, Use ──────────────────────────────
+    property bool hasCandidates: false
+    // The candidates chart's height at the Gantt's own scale, as Julia reports it.
+    property int plansGanttHeight: dp(240)
+
+    // The selected target's candidates for the strategy chosen, into the tables and the chart.
+    function runSearch() {
+        root.selectedRow = ""
+        if (root.singlePops) {
+            planModel.clear()
+            findPops()
+            root.statusText = popModel.count > 0 ? "POPs " + toDisplayOrder(root.popString)
+                                                 : "no POP configuration found"
+        } else {
+            popModel.clear()
+            findPlans()
+            root.statusText = planModel.count + " plans"
+        }
+        refreshPlansGantt()
+        refreshTimeline()
+    }
+
+    function refreshPlansGantt() {
+        var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
+        var rows = []
+        if (root.singlePops) {
+            for (var i = 0; i < popModel.count; ++i)
+                rows.push("#" + (i + 1) + "\t" + popModel.get(i).pops + "\t")
+        } else {
+            for (var j = 0; j < planModel.count; ++j) {
+                var r = planModel.get(j)
+                if (r.rank > 0 && t !== null && r.target === t.name)
+                    rows.push("#" + r.rank + "\t" + firstPops(r.plan) + "\t" + r.plan)
+            }
+        }
+        if (t === null || rows.length === 0) { root.hasCandidates = false; return }
+        var reply = Julia.shell_plans_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
+                                            root.telescopesArg(), rows.join("\n"),
+                                            root.useDelay, root.altLimit, root.altMax,
+                                            root.timeSystem.toLowerCase(), root.changeMinutes)
+        root.hasCandidates = reply.length > 0 && reply.charAt(0) !== "!"
+        if (root.hasCandidates) root.plansGanttHeight = parseInt(reply)
+        else root.statusText = reply
+        plansGanttArea.update()
+    }
+
+    function selectTarget(i) {
+        if (i === root.currentTargetIndex) return
+        root.currentTargetIndex = i
+        root.selectedRow = ""
+        if (root.hasPlan) computePlan()
+        if (popModel.count > 0 || planModel.count > 0) runSearch()
+        else refreshTimeline()
+    }
+
+    // The selected row's strategy for the chart, in place of AutoPOPs.
+    function useSelected() {
+        var key = root.selectedRow
+        if (key.indexOf("pops:") === 0) {
+            adoptPops(key.slice(5))
+        } else if (key.indexOf("plan:") === 0) {
+            for (var i = 0; i < planModel.count; ++i) {
+                var r = planModel.get(i)
+                if ("plan:" + r.target + ":" + r.rank === key) { adoptPlan(r.target, r.plan); break }
+            }
         }
     }
 
