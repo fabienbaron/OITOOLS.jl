@@ -51,7 +51,7 @@ using OITOOLS: to_ft_precision, image_to_chi2
 # kind by. Duplicating them here would mean the GUI could offer a component OITOOLS cannot read.
 using OITOOLS: _KIND_GEOMETRY, _ANALYTIC_PARAM_SUFFIXES
 # Shared with the launcher, which reads them before Qt starts.
-using OITOOLS: gui_settings_file, edid_native_mode, panel_dpi, panel_dpis, wsl_panel_dpi
+using OITOOLS: gui_settings_file, edid_native_mode, panel_dpi, panel_dpis, wsl_panel_dpi, auto_window_scale
 using Printf, Dates, TOML
 using Statistics: std, cor     # posterior spread and correlations, for the fit table and its panel
 using Makie

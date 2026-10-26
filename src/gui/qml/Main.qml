@@ -82,15 +82,15 @@ ApplicationWindow {
     // EDID wins when one matches the screen's mode, since under X11 Qt takes the size in mm
     // from the X server, which can report a nominal 96-100 dpi for any panel. Under WSL, which
     // has no EDID and the same nominal density, Windows' display scale stands for it.
-    readonly property real devicePixelRatio: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1.0
-    readonly property real panelDpi: Julia.shell_panel_dpi(Math.round(Screen.width * devicePixelRatio),
-                                                           Math.round(Screen.height * devicePixelRatio))
+    readonly property real screenDpr: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1.0
+    readonly property real panelDpi: Julia.shell_panel_dpi(Math.round(Screen.width * screenDpr),
+                                                           Math.round(Screen.height * screenDpr))
     readonly property real deviceDpi: panelDpi > 0 ? panelDpi
-                                                   : Screen.pixelDensity * 25.4 * devicePixelRatio
+                                                   : Screen.pixelDensity * 25.4 * screenDpr
     // Per logical pixel, the unit `dp()` and the plot scale work in.
-    readonly property real physicalDpi: deviceDpi / devicePixelRatio
+    readonly property real physicalDpi: deviceDpi / screenDpr
 
-    // The size on screen is uiScale x devicePixelRatio, set by the device density alone:
+    // The size on screen is uiScale x screenDpr, set by the device density alone:
     // `refScale` at `refDpi`, growing as density^`dpiExponent`. Judged by eye: 0.73 on a
     // 92.6 dpi 1920x1080 desktop at 100%, and 0.62 on a 189 dpi 16" 2560x1600 laptop at 150%
     // (0.93 on screen), which the exponent 0.34 fits. The OS scaling is then divided out, so
@@ -105,7 +105,7 @@ ApplicationWindow {
     readonly property real autoScale:
         Math.max(0.5, Math.min(4.0,
             (deviceDpi > 0 ? refScale * Math.pow(deviceDpi / refDpi, dpiExponent) : refScale)
-            / devicePixelRatio))
+            / screenDpr))
 
     // Turned by hand in the settings panel; 0 means "no override". It wins over both the
     // startup variable and the screen, because it is the most recent thing the user said.
@@ -143,14 +143,28 @@ ApplicationWindow {
         // The shipped style is Julia's to name (`DEFAULT_CONTROLS_STYLE`), so it is asked for
         // rather than repeated here: a reset has to restore what the window would ship with,
         // not a literal that was true when this line was written.
-        zoomStepUser: 0, controlsStyle: Julia.shell_default_controls_style()
+        zoomStepUser: 0, controlsStyle: Julia.shell_default_controls_style(),
+        startTab: "exploring", startFullscreen: false, rememberGeometry: false,
+        obsTimeSystem: "LST", obsElevMin: 25.0, obsElevMax: 85.0
     })
 
+    // A multiple of the size computed for the screen (`autoScale`, or OITOOLSGUI_SCALE when
+    // set): 0 means none, so `uiSize` is 1 by default on every screen.
     property real uiScaleUser: appearanceDefaults.uiScaleUser
+    readonly property real uiSize: uiScaleUser > 0 ? uiScaleUser : 1.0
+    // Read by Julia from the saved settings before the window exists (`_initial_tab`,
+    // `fullscreenOnStart`), so these take effect at the next launch.
+    property string startTab: appearanceDefaults.startTab
+    property bool startFullscreen: appearanceDefaults.startFullscreen
+    // Written at close, with the window's geometry, when set.
+    property bool rememberGeometry: appearanceDefaults.rememberGeometry
     // Qt's own scale (QT_SCALE_FACTOR), read by the launcher before Qt starts, so a change
     // takes effect at the next launch. 0 is automatic; `windowScaleRunning` is the one in force.
     property real windowScaleUser: appearanceDefaults.windowScaleUser
     readonly property real windowScaleRunning: Julia.shell_window_scale()
+    // What "auto" gives at the next launch, and what that launch will use.
+    readonly property real windowScaleAuto: Julia.shell_auto_window_scale()
+    readonly property real windowScaleTarget: windowScaleUser > 0 ? windowScaleUser : windowScaleAuto
     property string uiFontFamily: appearanceDefaults.uiFontFamily
     // Qt Quick Controls style. Read by `apply_controls_style!` from the settings file BEFORE
     // the QML is loaded, so a change here takes effect at the next launch, not this one.
@@ -174,9 +188,7 @@ ApplicationWindow {
     // that appears to do nothing until you press an unrelated button reads as broken.
     onWorkDirectoryChanged: Julia.shell_set_work_directory(workDirectory)
 
-    readonly property real uiScale: uiScaleUser > 0     ? uiScaleUser
-                                  : uiScaleOverride > 0 ? uiScaleOverride
-                                                        : autoScale
+    readonly property real uiScale: (uiScaleOverride > 0 ? uiScaleOverride : autoScale) * uiSize
     readonly property real fontScale: uiScale / qtTextScale
 
     function dp(px)     { return Math.round(px * uiScale) }   // pixel lengths
@@ -295,13 +307,43 @@ ApplicationWindow {
     // reading 0 would say nothing about what the plots are doing.
     function readPlotSettings() {
         var f = Julia.shell_plot_scale().split("\t")
-        if (f.length !== 4) return
+        if (f.length !== 5) return
         plotScaleSpin.value  = Math.round(parseFloat(f[0]) * 100)
         win.plotScaleUser    = parseFloat(f[1])
         win.markerSizeUser   = parseFloat(f[2])
         markerSpin.value     = Math.round(win.markerSizeUser)
-        win.zoomStepUser     = parseFloat(f[3])
-        zoomSpin.value       = Math.round(win.zoomStepUser * 100)
+        zoomSpin.value       = Math.round(parseFloat(f[3]) * 100)
+        win.zoomStepUser     = parseFloat(f[4])
+    }
+
+    // The settings boxes whose values live elsewhere -- the start-up choices here, the
+    // Observing ones in its tab -- set from those, since a box the user changed no longer
+    // follows its binding.
+    function refreshSettingsBoxes() {
+        startTabBox.currentIndex = Math.max(0, startTabBox.model.map(function (t) { return t.toLowerCase() })
+                                                              .indexOf(win.startTab))
+        startFullscreenBox.checked  = win.startFullscreen
+        rememberGeometryBox.checked = win.rememberGeometry
+        controlsStyleBox.currentIndex = Math.max(0, controlsStyleBox.model.indexOf(win.controlsStyle))
+        obsTimeBox.currentIndex  = Math.max(0, observeTab.timeSystems.indexOf(observeTab.timeSystem))
+        obsElevMinField.text     = observeTab.altLimit.toFixed(1)
+        obsElevMaxField.text     = observeTab.altMax.toFixed(1)
+    }
+
+    // The Gantt's clock, from the settings panel: as the Observing tab's own box does, the
+    // chart on screen is redrawn in it.
+    function setObserveTimeSystem(name) {
+        if (observeTab.timeSystem === name) return
+        observeTab.timeSystem = name
+        if (observeTab.hasPlan) observeTab.computePlan()
+    }
+
+    // The geometry goes to the settings file at close when the user asked for it to be kept;
+    // a full-screen window has none worth keeping.
+    onClosing: function (close) {
+        if (!rememberGeometry || visibility !== Window.Windowed) return
+        Julia.shell_save_settings(["remember_geometry\t1", "window_x\t" + x, "window_y\t" + y,
+                                   "window_width\t" + width, "window_height\t" + height].join("\n"))
     }
 
     // Which observables the loaded file actually holds. Julia counts VALID points, not tables,
@@ -313,9 +355,9 @@ ApplicationWindow {
                      visamp: false, visphi: false, flux: false, diffvis: false }
         var s = Julia.shell_observables()
         if (s.length > 0) {
-            var parts = s.split(",")
-            for (var i = 0; i < parts.length; ++i) {
-                var kv = parts[i].split("=")
+            let parts = s.split(",")
+            for (let i = 0; i < parts.length; ++i) {
+                let kv = parts[i].split("=")
                 if (kv.length === 2) have[kv[0]] = (kv[1] === "1")
             }
         }
@@ -334,9 +376,9 @@ ApplicationWindow {
         // unconstrained at the pixel scale.
         var g = Julia.shell_image_defaults()
         if (g.length > 0) {
-            var gp = g.split(",")
-            for (var k = 0; k < gp.length; ++k) {
-                var kv2 = gp[k].split("=")
+            let gp = g.split(",")
+            for (let k = 0; k < gp.length; ++k) {
+                let kv2 = gp[k].split("=")
                 if (kv2.length !== 2) continue
                 if (kv2[0] === "pixsize") imageTab.pixsize = parseFloat(kv2[1])
                 if (kv2[0] === "nx")      imageTab.nx      = parseInt(kv2[1])
@@ -372,8 +414,8 @@ ApplicationWindow {
         // it depends on whether the package extension loaded, so it is read once here rather
         // than left hardcoded false in ImageTab as both of these were.
         var eng = Julia.shell_optional_engines().split(",")
-        for (var i = 0; i < eng.length; ++i) {
-            var kv = eng[i].split("=")
+        for (let i = 0; i < eng.length; ++i) {
+            let kv = eng[i].split("=")
             if (kv[0] === "vi")        imageTab.oiviAvailable    = (kv[1] === "1")
             if (kv[0] === "tempering") { imageTab.pigeonsAvailable = (kv[1] === "1")
                                          modelTab.pigeonsAvailable = (kv[1] === "1") }
@@ -400,12 +442,22 @@ ApplicationWindow {
         var txt = Julia.shell_load_settings()
         if (txt.length === 0) return
         var lines = txt.split("\n")
-        for (var i = 0; i < lines.length; ++i) {
-            var f = lines[i].split("\t")
+        var geo = {}
+        for (let i = 0; i < lines.length; ++i) {
+            let f = lines[i].split("\t")
             if (f.length !== 2) continue
-            var v = parseFloat(f[1])
+            let v = parseFloat(f[1])
             switch (f[0]) {
-            case "ui_scale":    if (v > 0) win.uiScaleUser = v; break
+            // "ui_size", not the older "ui_scale", which held the factor itself
+            case "ui_size":     if (v > 0) win.uiScaleUser = v; break
+            case "start_tab":   win.startTab = f[1]; break
+            case "start_fullscreen":  win.startFullscreen  = (v === 1); break
+            case "remember_geometry": win.rememberGeometry = (v === 1); break
+            case "window_x": case "window_y": case "window_width": case "window_height":
+                                geo[f[0]] = v; break
+            case "obs_time_system": observeTab.timeSystem = f[1]; break
+            case "obs_elev_min": if (v >= 0 && v <= 90) observeTab.altLimit = v; break
+            case "obs_elev_max": if (v >= 0 && v <= 90) observeTab.altMax = v; break
             case "window_scale": win.windowScaleUser = v > 0 ? v : 0; break
             case "ui_font":     win.uiFontFamily = f[1]; break
             case "controls_style": win.controlsStyle = f[1]; break
@@ -417,6 +469,16 @@ ApplicationWindow {
             case "zoom_step":   if (v > 1) { win.zoomStepUser = v
                                              Julia.shell_set_zoom_step(v) } break
             case "work_directory": win.workDirectory = f[1]; break
+            }
+        }
+        // The saved geometry, kept on the desktop: a window last closed on a monitor that is
+        // no longer attached must not open off screen.
+        if (rememberGeometry && !fullscreenOnStart && geo.window_width > 0 && geo.window_height > 0) {
+            win.width  = Math.min(Math.max(900, geo.window_width),  Screen.desktopAvailableWidth)
+            win.height = Math.min(Math.max(600, geo.window_height), Screen.desktopAvailableHeight)
+            if (isFinite(geo.window_x) && isFinite(geo.window_y)) {
+                win.x = Math.max(0, Math.min(geo.window_x, Screen.desktopAvailableWidth  - win.width))
+                win.y = Math.max(0, Math.min(geo.window_y, Screen.desktopAvailableHeight - win.height))
             }
         }
         if (verboseStartup) console.log("OITOOLSGUI applied saved appearance defaults")
@@ -500,9 +562,9 @@ ApplicationWindow {
             if (settingsPanel.opened) { settingsPanel.close(); return }
             // Read the live values back, so the panel opens showing what is in force rather
             // than what it last displayed.
-            uiScaleSpin.value = Math.round(win.uiScale * 100)
-            windowScaleSpin.value = Math.round((win.windowScaleUser > 0 ? win.windowScaleUser
-                                                                        : win.windowScaleRunning) * 100)
+            uiScaleSpin.value = Math.round(win.uiSize * 100)
+            windowScaleSpin.value = Math.round(win.windowScaleTarget * 100)
+            win.refreshSettingsBoxes()
             uiFontSizeSpin.value = Math.round(win.baseFontPt)
             // The combo only reports what was last picked FROM it, so a family that arrived
             // from the saved defaults has to be found in the list by hand. -1 for a name that
@@ -574,6 +636,18 @@ ApplicationWindow {
         }
     }
 
+    // A settings group's title, with what it applies to or when on the right.
+    component SettingsHeader: RowLayout {
+        id: header
+        property string title
+        property string note
+        Layout.fillWidth: true
+        Layout.topMargin: dp(4)
+        Label { text: header.title; font.bold: true }
+        Item { Layout.fillWidth: true }
+        Label { text: header.note; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+    }
+
     // ── appearance settings ───────────────────────────────────────────────────
     //
     // The controls show what is CURRENTLY in force, and the scale, font and plot controls
@@ -596,8 +670,8 @@ ApplicationWindow {
         function openWith(t) {
             var kv = {}
             var lines = t.split("\n")
-            for (var i = 0; i < lines.length; ++i) {
-                var f = lines[i].split("\t"); kv[f[0]] = f.length > 1 ? f[1] : ""
+            for (let i = 0; i < lines.length; ++i) {
+                let f = lines[i].split("\t"); kv[f[0]] = f.length > 1 ? f[1] : ""
             }
             info = kv
             open()
@@ -656,14 +730,14 @@ ApplicationWindow {
         // toolbar's height too low and ran off the bottom even when it would otherwise fit --
         // photographed under Xvfb at 26 pt before this line was written.
         //
-        // The width grows with the FONT, not with the content: 430 was chosen at 11 pt, and the
-        // rows are text, so a larger font needs proportionally more room or the spin boxes get
+        // The width grows with the FONT, not with the content: 860 at 11 pt, enough for a work
+        // directory path, and the rows are text, so a larger font needs proportionally more room or the spin boxes get
         // squeezed. Deriving it from the content's implicit width instead is what Qt reports as
         // a binding loop -- the content's width comes back from the panel's, so asking the
         // content how wide the panel should be closes the circle.
         x: Math.max(dp(12), Math.round((parent.width  - width)  / 2))
         y: Math.max(dp(12), Math.round((parent.height - height) / 2))
-        width:  Math.min(dp(430) * Math.max(1, baseFontPt / 11), parent.width - dp(24))
+        width:  Math.min(dp(860) * Math.max(1, baseFontPt / 11), parent.width - dp(24))
         height: Math.min(implicitHeight, parent.height - dp(24))
         // Dimmed behind, for the same reason: it separates the panel from whatever it covers.
         modal: true
@@ -690,197 +764,291 @@ ApplicationWindow {
                 width: settingsScroll.availableWidth
                 spacing: dp(10)
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Label { text: "Appearance"; font.bold: true }
-                    Item { Layout.fillWidth: true }
-                    Label {
-                        text: "plot font and controls style need a restart"
-                        color: "#888"
-                        font.pointSize: pt(baseFontPt - 2)
-                    }
-                }
+                // Grouped by what a setting changes and when it takes effect: the window now,
+                // the next launch, the plots, the Observing tab, and where files open.
 
+                // ── Window ────────────────────────────────────────────────────
+                SettingsHeader { title: "Window"; note: "applies now" }
                 GridLayout {
-                    columns: 3
+                    columns: 2
                     columnSpacing: dp(8)
                     rowSpacing: dp(6)
                     Layout.fillWidth: true
 
-                    // ── UI ────────────────────────────────────────────────────────
-                    Label { text: "UI scale"; color: "#666" }
-                    SpinBox {
-                        id: uiScaleSpin
-                        from: 50; to: 400; stepSize: 5
-                        value: Math.round(win.uiScale * 100)
-                        editable: true
-                        textFromValue: function (v) { return (v / 100).toFixed(2) }
-                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
-                        Layout.fillWidth: true
-                        // Everything sized through dp()/pt() rebinds, so the window resizes as the
-                        // number changes rather than on close.
-                        onValueModified: win.uiScaleUser = value / 100
+                    Label { text: "UI scale"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    RowLayout {
+                        spacing: dp(8)
+                        // A multiple of the size computed for this screen, so 1.00 is the default
+                        // on every screen. Everything sized through dp()/pt() rebinds, so the
+                        // window resizes as the number changes.
+                        SpinBox {
+                            id: uiScaleSpin
+                            objectName: "uiScaleSpin"
+                            Layout.preferredWidth: dp(120)
+                            from: 50; to: 300; stepSize: 5
+                            value: Math.round(win.uiSize * 100)
+                            editable: true
+                            textFromValue: function (v) { return (v / 100).toFixed(2) }
+                            valueFromText: function (t) { return Math.round(parseFloat(t.replace(",", ".")) * 100) }
+                            validator: RegularExpressionValidator { regularExpression: /[0-9]*[.,]?[0-9]*×?/ }
+                            onValueModified: win.uiScaleUser = value / 100
+                        }
+                        Button {
+                            text: "auto"
+                            enabled: win.uiScaleUser > 0
+                            ToolTip.visible: hovered
+                            ToolTip.text: uiScaleOverride > 0
+                                ? "1.00 = OITOOLSGUI_SCALE=" + uiScaleOverride.toFixed(2)
+                                : "1.00 = sized for " + deviceDpi.toFixed(0) + " dpi"
+                            onClicked: { win.uiScaleUser = 0; uiScaleSpin.value = 100 }
+                        }
                     }
-                    Button {
-                        text: "auto"
-                        enabled: win.uiScaleUser > 0
+
+                    Label { text: "Font"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    RowLayout {
+                        spacing: dp(8)
+                        ComboBox {
+                            id: uiFontBox
+                            Layout.preferredWidth: dp(240)
+                            // Index 0 is "whatever the window would use if you had never set
+                            // this", and it NAMES that font: which one it is depends on whether
+                            // the shipped face loaded. When it did, the platform's own font goes
+                            // at the end instead.
+                            model: win.shippedFontFamily.length > 0
+                                 ? ["Noto Sans", "DejaVu Sans", "Liberation Sans", "JuliaMono",
+                                    "(system font)"]
+                                 : ["(system default)", "DejaVu Sans", "Noto Sans",
+                                    "Liberation Sans", "JuliaMono"]
+                            onActivated: win.uiFontFamily =
+                                currentIndex === 0             ? ""
+                              : currentText === "(system font)" ? Qt.application.font.family
+                                                                : currentText
+                        }
+                        Label { text: "size"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+                        SpinBox {
+                            id: uiFontSizeSpin
+                            Layout.preferredWidth: dp(120)
+                            from: 6; to: 24; stepSize: 1
+                            value: Math.round(baseFontPt)
+                            editable: true
+                            onValueModified: win.baseFontPt = value
+                        }
+                    }
+                }
+
+                // ── Start-up ──────────────────────────────────────────────────
+                SettingsHeader { title: "Start-up"; note: "applies at next launch" }
+                GridLayout {
+                    columns: 2
+                    columnSpacing: dp(8)
+                    rowSpacing: dp(6)
+                    Layout.fillWidth: true
+
+                    Label { text: "Controls style"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    ComboBox {
+                        id: controlsStyleBox
+                        Layout.preferredWidth: dp(240)
+                        // The list comes from Julia (CONTROLS_STYLES), so offering a style the
+                        // bundled Qt does not carry cannot happen. Line 1 is the style the window
+                        // is RUNNING; the rest are the choices.
+                        property var styleInfo: Julia.shell_controls_styles().split("\n")
+                        model: styleInfo.slice(1)
+                        currentIndex: Math.max(0, model.indexOf(win.controlsStyle))
+                        onActivated: win.controlsStyle = currentText
                         ToolTip.visible: hovered
-                        ToolTip.text: uiScaleOverride > 0
-                            ? "back to OITOOLSGUI_SCALE=" + uiScaleOverride.toFixed(2)
-                            : "back to the value computed from " + deviceDpi.toFixed(0) + " dpi"
-                        onClicked: win.uiScaleUser = 0
+                        ToolTip.text: "running: " + styleInfo[0]
                     }
 
                     // Linux only: elsewhere nothing reads it before Qt starts.
-                    Label { text: "Window scale"; color: "#666"; visible: Qt.platform.os === "linux" }
-                    SpinBox {
-                        id: windowScaleSpin
-                        visible: Qt.platform.os === "linux"
-                        from: 50; to: 400; stepSize: 25
-                        value: Math.round((win.windowScaleUser > 0 ? win.windowScaleUser
-                                                                   : win.windowScaleRunning) * 100)
-                        editable: true
-                        textFromValue: function (v) { return (v / 100).toFixed(2) }
-                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
-                        Layout.fillWidth: true
-                        onValueModified: win.windowScaleUser = value / 100
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Qt's scale; next launch"
-                    }
+                    Label { text: "Linux UI scaler"; color: "#666"; Layout.preferredWidth: dp(120); visible: Qt.platform.os === "linux" }
                     RowLayout {
+                        spacing: dp(8)
                         visible: Qt.platform.os === "linux"
+                        SpinBox {
+                            id: windowScaleSpin
+                            objectName: "windowScaleSpin"
+                            Layout.preferredWidth: dp(120)
+                            from: 50; to: 400; stepSize: 25
+                            value: Math.round(win.windowScaleTarget * 100)
+                            editable: true
+                            textFromValue: function (v) { return (v / 100).toFixed(2) }
+                            valueFromText: function (t) { return Math.round(parseFloat(t.replace(",", ".")) * 100) }
+                            validator: RegularExpressionValidator { regularExpression: /[0-9]*[.,]?[0-9]*×?/ }
+                            onValueModified: win.windowScaleUser = value / 100
+                            ToolTip.visible: hovered
+                            ToolTip.text: "running: " + win.windowScaleRunning.toFixed(2)
+                        }
                         Button {
                             text: "auto"
                             enabled: win.windowScaleUser > 0
                             ToolTip.visible: hovered
-                            ToolTip.text: "from the panel"
-                            onClicked: win.windowScaleUser = 0
-                        }
-                        Label {
-                            text: win.windowScaleUser > 0
-                                  && Math.abs(win.windowScaleUser - win.windowScaleRunning) > 0.005
-                                  ? "on restart" : ""
-                            color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                            ToolTip.text: "auto: " + win.windowScaleAuto.toFixed(2)
+                            onClicked: {
+                                win.windowScaleUser = 0
+                                windowScaleSpin.value = Math.round(win.windowScaleAuto * 100)
+                            }
                         }
                     }
 
-                    Label { text: "Controls style"; color: "#666" }
+                    Label { text: "Open on"; color: "#666"; Layout.preferredWidth: dp(120) }
                     ComboBox {
-                        id: controlsStyleBox
-                        Layout.fillWidth: true
-                        // The list comes from Julia rather than being repeated here: a second copy
-                        // would be free to drift from CONTROLS_STYLES, and offering a style the
-                        // bundled Qt does not carry would fail at the next launch rather than at
-                        // the click. Line 1 is the style in force; the rest are the choices.
-                        property var styleInfo: Julia.shell_controls_styles().split("\n")
-                        model: styleInfo.slice(1)
-                        // Line 1 is the style the window is actually RUNNING, which is what the
-                        // box has to show: after a change it stays the previous choice until the
-                        // next launch, and a box claiming otherwise would misreport the window.
-                        currentIndex: Math.max(0, model.indexOf(styleInfo[0]))
-                        onActivated: win.controlsStyle = currentText
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Basic is Qt's own and what this window was drawn against; " +
-                                      "Fusion is smaller and more desktop-like. Applies at the next launch."
-                    }
-                    Label {
-                        text: win.controlsStyle === controlsStyleBox.styleInfo[0] ? "" : "on restart"
-                        color: "#888"; font.pointSize: pt(baseFontPt - 2)
+                        id: startTabBox
+                        objectName: "startTabBox"
+                        Layout.preferredWidth: dp(240)
+                        model: ["Exploring", "Observing", "Modeling", "Imaging", "Tools"]
+                        currentIndex: Math.max(0, model.map(function (t) { return t.toLowerCase() })
+                                                       .indexOf(win.startTab))
+                        onActivated: win.startTab = currentText.toLowerCase()
                     }
 
-                    Label { text: "UI font"; color: "#666" }
+                    Label { text: "Window"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    RowLayout {
+                        spacing: dp(12)
+                        CheckBox {
+                            id: startFullscreenBox
+                            objectName: "startFullscreenBox"
+                            text: "full screen"
+                            checked: win.startFullscreen
+                            onToggled: win.startFullscreen = checked
+                        }
+                        CheckBox {
+                            id: rememberGeometryBox
+                            objectName: "rememberGeometryBox"
+                            text: "remember size and position"
+                            checked: win.rememberGeometry
+                            onToggled: win.rememberGeometry = checked
+                        }
+                    }
+                }
+
+                // ── Plots ─────────────────────────────────────────────────────
+                SettingsHeader { title: "Plots"; note: "applies now" }
+                GridLayout {
+                    columns: 2
+                    columnSpacing: dp(8)
+                    rowSpacing: dp(6)
+                    Layout.fillWidth: true
+
+                    Label { text: "Text scale"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    RowLayout {
+                        spacing: dp(8)
+                        SpinBox {
+                            id: plotScaleSpin
+                            objectName: "plotScaleSpin"
+                            Layout.preferredWidth: dp(120)
+                            from: 50; to: 500; stepSize: 5
+                            value: 119                     // replaced on open by the live value
+                            editable: true
+                            textFromValue: function (v) { return (v / 100).toFixed(2) }
+                            valueFromText: function (t) { return Math.round(parseFloat(t.replace(",", ".")) * 100) }
+                            validator: RegularExpressionValidator { regularExpression: /[0-9]*[.,]?[0-9]*×?/ }
+                            onValueModified: {
+                                win.plotScaleUser = value / 100
+                                Julia.shell_set_plot_scale(win.plotScaleUser)
+                            }
+                        }
+                        Button {
+                            text: "auto"
+                            enabled: win.plotScaleUser > 0
+                            ToolTip.visible: hovered
+                            ToolTip.text: "from the screen's density"
+                            onClicked: { Julia.shell_set_plot_scale(0); readPlotSettings() }
+                        }
+                    }
+
+                    Label { text: "Symbols"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    RowLayout {
+                        spacing: dp(8)
+                        SpinBox {
+                            id: markerSpin
+                            Layout.preferredWidth: dp(120)
+                            from: 0; to: 30; stepSize: 1
+                            value: 0
+                            editable: true
+                            // 0 means "whatever the plot chooses", which differs per view -- uv
+                            // coverage draws smaller points than an observable plot.
+                            textFromValue: function (v) { return v === 0 ? "auto" : String(v) }
+                            valueFromText: function (t) { return t === "auto" ? 0 : parseInt(t) }
+                            onValueModified: {
+                                win.markerSizeUser = value
+                                Julia.shell_set_marker_size(value)
+                            }
+                        }
+                        Label { text: "px"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+                    }
+
+                    Label { text: "Wheel zoom"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    RowLayout {
+                        spacing: dp(8)
+                        SpinBox {
+                            id: zoomSpin
+                            Layout.preferredWidth: dp(120)
+                            from: 102; to: 300; stepSize: 5
+                            value: 125
+                            editable: true
+                            textFromValue: function (v) { return (v / 100).toFixed(2) + "×" }
+                            valueFromText: function (t) { return Math.round(parseFloat(t.replace(",", ".")) * 100) }
+                            validator: RegularExpressionValidator { regularExpression: /[0-9]*[.,]?[0-9]*×?/ }
+                            onValueModified: {
+                                win.zoomStepUser = value / 100
+                                Julia.shell_set_zoom_step(win.zoomStepUser)
+                            }
+                        }
+                        Button {
+                            text: "auto"
+                            enabled: win.zoomStepUser > 0
+                            onClicked: { Julia.shell_set_zoom_step(0); readPlotSettings() }
+                        }
+                        Label { text: "per detent"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+                    }
+
+                    // Shown, not settable: Makie takes the font when a Figure is built, and every
+                    // route to change it afterwards throws out of its compute graph.
+                    Label { text: "Font"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    Label { text: Julia.shell_plot_font() + "  (fixed)" }
+                }
+
+                // ── Observing ─────────────────────────────────────────────────
+                SettingsHeader { title: "Observing"; note: "applies now" }
+                GridLayout {
+                    columns: 2
+                    columnSpacing: dp(8)
+                    rowSpacing: dp(6)
+                    Layout.fillWidth: true
+
+                    Label { text: "Time axis"; color: "#666"; Layout.preferredWidth: dp(120) }
                     ComboBox {
-                        id: uiFontBox
-                        // Index 0 is "whatever the window would use if you had never set this",
-                        // and it NAMES that font rather than saying "default": which one it is
-                        // depends on whether the shipped face loaded. When it did, the separate
-                        // "Noto Sans" entry would be the same font twice, so the list carries
-                        // the platform's own font at the end instead.
-                        model: win.shippedFontFamily.length > 0
-                             ? ["Noto Sans", "DejaVu Sans", "Liberation Sans", "JuliaMono",
-                                "(system font)"]
-                             : ["(system default)", "DejaVu Sans", "Noto Sans",
-                                "Liberation Sans", "JuliaMono"]
-                        Layout.fillWidth: true
-                        onActivated: win.uiFontFamily =
-                            currentIndex === 0             ? ""
-                          : currentText === "(system font)" ? Qt.application.font.family
-                                                            : currentText
-                    }
-                    SpinBox {
-                        id: uiFontSizeSpin
-                        from: 6; to: 24; stepSize: 1
-                        value: Math.round(baseFontPt)
-                        editable: true
-                        onValueModified: win.baseFontPt = value
+                        id: obsTimeBox
+                        objectName: "obsTimeBox"
+                        Layout.preferredWidth: dp(120)
+                        model: observeTab.timeSystems
+                        currentIndex: Math.max(0, observeTab.timeSystems.indexOf(observeTab.timeSystem))
+                        onActivated: win.setObserveTimeSystem(currentText)
                     }
 
-                    // ── plots ─────────────────────────────────────────────────────
-                    Label { text: "Plot font"; color: "#666" }
-                    ComboBox {
-                        id: plotFontBox
-                        // Shown, not settable. Makie takes the font at Figure CONSTRUCTION; every
-                        // route to change it afterwards throws `Failed to resolve
-                        // data_boundingbox` out of its compute graph -- tried on the axis label,
-                        // tick label and colorbar attributes alike. Changing it means restarting.
-                        model: ["DejaVu Sans", "JuliaMono", "Noto Sans", "Liberation Sans",
-                                "(Makie default)"]
-                        enabled: false
-                        Layout.fillWidth: true
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Set at startup; Makie cannot change a figure's font once it " +
-                                      "exists. Edit PLOT_FONT in src/gui/plots.jl."
-                    }
-                    SpinBox {
-                        id: plotScaleSpin
-                        from: 50; to: 500; stepSize: 5
-                        value: 119                     // replaced on open by the live value
-                        editable: true
-                        textFromValue: function (v) { return (v / 100).toFixed(2) }
-                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
-                        onValueModified: {
-                            win.plotScaleUser = value / 100
-                            Julia.shell_set_plot_scale(win.plotScaleUser)
+                    Label { text: "Elevation"; color: "#666"; Layout.preferredWidth: dp(120) }
+                    RowLayout {
+                        spacing: dp(8)
+                        TextField {
+                            id: obsElevMinField
+                            objectName: "obsElevMin"
+                            Layout.preferredWidth: dp(70)
+                            text: observeTab.altLimit.toFixed(1)
+                            validator: DoubleValidator { bottom: 0.0; top: 90.0; decimals: 1
+                                                         notation: DoubleValidator.StandardNotation }
+                            onEditingFinished: observeTab.altLimit = parseFloat(text)
                         }
-                    }
-
-                    Label { text: "Plot symbols"; color: "#666" }
-                    SpinBox {
-                        id: markerSpin
-                        from: 0; to: 30; stepSize: 1
-                        value: 0
-                        editable: true
-                        Layout.fillWidth: true
-                        // 0 means "whatever the plot chooses", which differs per view -- uv
-                        // coverage draws smaller points than an observable plot.
-                        textFromValue: function (v) { return v === 0 ? "auto" : String(v) }
-                        valueFromText: function (t) { return t === "auto" ? 0 : parseInt(t) }
-                        onValueModified: {
-                            win.markerSizeUser = value
-                            Julia.shell_set_marker_size(value)
+                        Label { text: "to"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
+                        TextField {
+                            id: obsElevMaxField
+                            objectName: "obsElevMax"
+                            Layout.preferredWidth: dp(70)
+                            text: observeTab.altMax.toFixed(1)
+                            validator: DoubleValidator { bottom: 0.0; top: 90.0; decimals: 1
+                                                         notation: DoubleValidator.StandardNotation }
+                            onEditingFinished: observeTab.altMax = parseFloat(text)
                         }
-                    }
-                    Label { text: "px"; color: "#888"; font.pointSize: pt(baseFontPt - 2) }
-
-                    // ── zoom ──────────────────────────────────────────────────────
-                    Label { text: "Wheel zoom"; color: "#666" }
-                    SpinBox {
-                        id: zoomSpin
-                        from: 102; to: 300; stepSize: 5
-                        value: 125
-                        editable: true
-                        Layout.fillWidth: true
-                        textFromValue: function (v) { return (v / 100).toFixed(2) + "×" }
-                        valueFromText: function (t) { return Math.round(parseFloat(t) * 100) }
-                        onValueModified: {
-                            win.zoomStepUser = value / 100
-                            Julia.shell_set_zoom_step(win.zoomStepUser)
-                        }
-                    }
-                    Label {
-                        text: "per detent"
-                        color: "#888"
-                        font.pointSize: pt(baseFontPt - 2)
+                        Label { text: "°"; color: "#888" }
                     }
 
                     // No light/dark selector: the window pins a light palette (see the top of
@@ -889,25 +1057,13 @@ ApplicationWindow {
                     // become palette roles first — not a dropdown, so there is no dropdown.
                 }
 
-                // ── Folders ───────────────────────────────────────────────────
-                //
-                // Not appearance, but it belongs to the same file and the same button: this is
-                // the panel for "things this installation should remember about me".
-                RowLayout {
-                    Layout.fillWidth: true
-                    Label { text: "Folders"; font.bold: true }
-                    Item { Layout.fillWidth: true }
-                    Label {
-                        text: "where Open and Save start"
-                        color: "#888"
-                        font.pointSize: pt(baseFontPt - 2)
-                    }
-                }
+                // ── Files ─────────────────────────────────────────────────────
+                SettingsHeader { title: "Files"; note: "where Open and Save start" }
 
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: dp(8)
-                    Label { text: "Work directory"; color: "#666" }
+                    Label { text: "Work directory"; color: "#666"; Layout.preferredWidth: dp(120) }
                     TextField {
                         id: workDirField
                         Layout.fillWidth: true
@@ -915,6 +1071,8 @@ ApplicationWindow {
                         text: win.workDirectory
                         placeholderText: "unset — the shipped demo data is used"
                         font.pointSize: pt(baseFontPt - 1)
+                        ToolTip.visible: hovered && text.length > 0
+                        ToolTip.text: text
                         // Typed as well as browsed: a path pasted from a terminal is often the
                         // fastest way in, and on a machine where the folder is not mounted yet
                         // it is the only way.
@@ -952,7 +1110,13 @@ ApplicationWindow {
                             // out from the screen", which is the right thing to carry to a machine
                             // with a different one.
                             var path = Julia.shell_save_settings(
-                                [ "ui_scale\t"    + win.uiScaleUser,
+                                [ "ui_size\t"     + win.uiScaleUser,
+                                  "start_tab\t"   + win.startTab,
+                                  "start_fullscreen\t"  + (win.startFullscreen ? 1 : 0),
+                                  "remember_geometry\t" + (win.rememberGeometry ? 1 : 0),
+                                  "obs_time_system\t"   + observeTab.timeSystem,
+                                  "obs_elev_min\t"      + observeTab.altLimit,
+                                  "obs_elev_max\t"      + observeTab.altMax,
                                   "window_scale\t" + win.windowScaleUser,
                                   "ui_font\t"     + win.uiFontFamily,
                                   "controls_style\t" + win.controlsStyle,
@@ -985,6 +1149,15 @@ ApplicationWindow {
                             win.controlsStyle  = d.controlsStyle
                             uiFontBox.currentIndex        = 0
                             uiFontSizeSpin.value          = d.baseFontPt
+                            win.startTab         = d.startTab
+                            win.startFullscreen  = d.startFullscreen
+                            win.rememberGeometry = d.rememberGeometry
+                            win.setObserveTimeSystem(d.obsTimeSystem)
+                            observeTab.altLimit  = d.obsElevMin
+                            observeTab.altMax    = d.obsElevMax
+                            uiScaleSpin.value             = 100
+                            windowScaleSpin.value         = Math.round(win.windowScaleTarget * 100)
+                            win.refreshSettingsBoxes()
                             controlsStyleBox.currentIndex = Math.max(0, controlsStyleBox.model.indexOf(d.controlsStyle))
                             // The plot side is Julia's, and zero means "work it out from the
                             // screen" rather than "zero" -- so the setters go first and the boxes
@@ -1025,7 +1198,12 @@ ApplicationWindow {
                 Label {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignRight
-                    text: Julia.shell_version()
+                    // The graphics API Qt Quick runs on, as Qt reports it.
+                    readonly property string gfx: GraphicsInfo.api === GraphicsInfo.OpenGL
+                        ? "OpenGL " + GraphicsInfo.majorVersion + "." + GraphicsInfo.minorVersion
+                        : ""
+                    text: Julia.shell_version() + "  ·  " + Julia.shell_diagnostics()
+                          + (gfx.length > 0 ? "  ·  " + gfx : "")
                     color: "#888"
                     font.pointSize: pt(baseFontPt - 2)
                 }

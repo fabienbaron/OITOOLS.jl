@@ -3102,16 +3102,34 @@ end
 """
     shell_plot_scale() -> String
 
-`effective\tuser\tmarker\tzoom`: the plot scale actually in force, the user's override behind
-it (zero when it is computed rather than chosen), the marker size (zero for the per-view
-default) and the zoom factor per wheel detent.
+`effective\tuser\tmarker\tzoom\tzoomuser`: the plot scale actually in force, the user's
+override behind it (zero when it is computed rather than chosen), the marker size (zero for the
+per-view default), the zoom factor per wheel detent in force, and the user's zoom override
+(zero for the default).
 
 Two scale numbers rather than one because they answer different questions -- the panel opens
 showing what is being drawn, while "Save config" stores the override, so a scale that was
 computed from this screen's DPI is not pinned onto the next screen.
 """
 shell_plot_scale() = join((live_plot_scale(), PLOT_SCALE_USER[], MARKER_SIZE_USER[],
-                           zoom_per_detent()), '\t')
+                           zoom_per_detent(), ZOOM_STEP_USER[]), '\t')
+
+"The plots' font (`PLOT_FONT`), which Makie fixes when a figure is built."
+shell_plot_font() = PLOT_FONT
+
+"""
+    shell_diagnostics() -> String
+
+Julia's thread count, and the Mesa driver variables when any is set (`configure_graphics!`
+sets them under WSL), for the settings panel's version line.
+"""
+function shell_diagnostics()
+    parts = [string(Threads.nthreads(), Threads.nthreads() == 1 ? " thread" : " threads")]
+    for k in ("GALLIUM_DRIVER", "LIBGL_ALWAYS_SOFTWARE", "MESA_LOADER_DRIVER_OVERRIDE")
+        haskey(ENV, k) && push!(parts, k * "=" * ENV[k])
+    end
+    return join(parts, "  ·  ")
+end
 
 """
     shell_set_plot_scale(x)  -> String

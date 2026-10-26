@@ -110,14 +110,14 @@ Item {
     // bring it into view, and replacing the text sends the view back to the top. Only the
     // reader's own scrolling (a drag, the wheel, the scroll bar) decides whether to follow.
     function _follow() {
-        var f = scroller.contentItem
+        var f = scroller.contentItem as Flickable
         if (root.follow && root._atBottom)
             f.contentY = Math.max(0, f.contentHeight - f.height)
     }
     Connections {
         target: scroller.contentItem
         function onContentYChanged() {
-            var f = scroller.contentItem
+            var f = scroller.contentItem as Flickable
             if (f.moving || scroller.ScrollBar.vertical.pressed)
                 root._atBottom = f.contentY + f.height >= f.contentHeight - 4
         }

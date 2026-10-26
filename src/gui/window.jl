@@ -33,7 +33,8 @@ function __init__()
                      shell_save_settings, shell_load_settings, shell_reset_settings,
                      shell_settings_path,
                      shell_controls_styles, shell_default_controls_style,
-                     shell_ui_font_files, shell_panel_dpi, shell_window_scale, shell_plot_scale,
+                     shell_ui_font_files, shell_panel_dpi, shell_window_scale, shell_auto_window_scale,
+                     shell_plot_scale, shell_plot_font, shell_diagnostics,
                      shell_version,
                      shell_set_zoom_step,
                      shell_model_rows, shell_model_components, shell_model_inspection,
@@ -168,16 +169,29 @@ const TAB_NAMES = ("exploring", "observing", "modeling", "imaging", "tools")
 "The bare noun for each tab, accepted as well: nobody types the gerund from memory."
 const TAB_ALIASES = ("explore", "observe", "model", "image", "tool")
 
-"""
-Which perspective the window opens on, from `\$OITOOLSGUI_TAB` (default Explore).
+"A value from the saved settings (`gui_settings_file()`), or `default` when absent or unreadable."
+function _saved_setting(key, default)
+    try
+        path = gui_settings_file()
+        isfile(path) || return default
+        return get(TOML.parsefile(path), key, default)
+    catch
+        return default
+    end
+end
 
-Its reason for existing is testing: a tab that is never current is constructed but never laid
-out, so any layout warning it would emit never appears. Naming a tab is what makes an
-automated run render it. An unknown name is reported rather than silently ignored, since a
-typo would otherwise look like the setting having no effect.
+"""
+Which perspective the window opens on: `\$OITOOLSGUI_TAB`, else the saved `start_tab`, else
+Exploring.
+
+The variable is for testing: a tab that is never current is constructed but never laid out,
+so any layout warning it would emit never appears, and naming a tab is what makes an automated
+run render it. An unknown name is reported rather than silently ignored, since a typo would
+otherwise look like the setting having no effect.
 """
 function _initial_tab()
     want = lowercase(strip(get(ENV, "OITOOLSGUI_TAB", "")))
+    isempty(want) && (want = lowercase(strip(string(_saved_setting("start_tab", "")))))
     isempty(want) && return 0
     i = something(findfirst(==(want), TAB_NAMES), findfirst(==(want), TAB_ALIASES), nothing)
     if i === nothing
@@ -247,6 +261,9 @@ function shell_panel_dpi(w, h)
     d = panel_dpi(Float64(w), Float64(h))
     return d > 0 ? d : wsl_panel_dpi()
 end
+
+"The scale `configure_qt_scale!` chooses when none is saved (`auto_window_scale`)."
+shell_auto_window_scale() = first(auto_window_scale())
 
 "Qt's own scale in force, from `QT_SCALE_FACTOR` (`configure_qt_scale!`); 1 when unset."
 function shell_window_scale()
@@ -529,7 +546,8 @@ function OITOOLS.gui(session::Session = Session();
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,
                 initialFolder   = _initial_folder(session),
-                fullscreenOnStart = get(ENV, "OITOOLSGUI_FULLSCREEN", "") == "1",
+                fullscreenOnStart = get(ENV, "OITOOLSGUI_FULLSCREEN", "") == "1" ||
+                                    _saved_setting("start_fullscreen", 0) == 1,
                 walkDir         = get(ENV, "OITOOLSGUI_WALK", ""),
                 # The startup scale and settings lines are diagnostics, not news: they print on
                 # every launch and say nothing a working window has not already shown. Kept

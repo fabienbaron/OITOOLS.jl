@@ -294,6 +294,28 @@ function wsl_panel_dpi()
 end
 
 """
+    auto_window_scale() -> (scale, reason)
+
+The scale `configure_qt_scale!` sets when no `window_scale` is saved, and why: under WSL
+`window_scale_for(wsl_panel_dpi())`; on X11 `window_scale_for` of the panel's EDID density,
+divided by what `Xft.dpi` already applies. 1 outside Linux, on a Wayland session other than
+WSLg, and when the density is unknown.
+"""
+function auto_window_scale()
+    Sys.islinux() || return (1.0, "not Linux")
+    if is_wsl()
+        dpi = wsl_panel_dpi()
+        dpi > 0 || return (1.0, "WSL; Windows' display scale unreadable")
+        return (window_scale_for(dpi), "Windows' display scale")
+    end
+    x11 = lowercase(get(ENV, "QT_QPA_PLATFORM", "")) == "xcb" || !haskey(ENV, "WAYLAND_DISPLAY")
+    x11 || return (1.0, "Wayland session; the compositor scales Qt")
+    dpi = _one_dpi(panel_dpis())
+    dpi > 0 || return (1.0, "no single panel density from the EDID")
+    return (window_scale_for(dpi) / _x11_desktop_scale(), "from the panel's EDID")
+end
+
+"""
     configure_qt_scale!(; verbose = true) -> (; applied, reason, vars)
 
 Scale all of Qt on Linux, through `QT_SCALE_FACTOR`, when the desktop does not.
@@ -328,24 +350,10 @@ function configure_qt_scale!(; verbose::Bool = true)
     catch err
         @debug "could not read the saved window scale" err
     end
-    f = if saved > 0
-        clamp(saved, 0.5, 4.0)
-    elseif is_wsl()
-        dpi = wsl_panel_dpi()
-        dpi > 0 || return no("WSL; Windows' display scale unreadable")
-        window_scale_for(dpi)
-    else
-        x11 = lowercase(get(ENV, "QT_QPA_PLATFORM", "")) == "xcb" || !haskey(ENV, "WAYLAND_DISPLAY")
-        x11 || return no("Wayland session; the compositor scales Qt")
-        dpi = _one_dpi(panel_dpis())
-        dpi > 0 || return no("no single panel density from the EDID")
-        window_scale_for(dpi) / _x11_desktop_scale()
-    end
-    abs(f - 1) < 0.01 && return no("scale 1")
+    f, why = saved > 0 ? (clamp(saved, 0.5, 4.0), "saved window_scale") : auto_window_scale()
+    abs(f - 1) < 0.01 && return no("scale 1: " * why)
     vars["QT_SCALE_FACTOR"] = string(round(f; digits = 3))
     merge!(ENV, vars)
     verbose && @info "Qt scaled to match the panel" QT_SCALE_FACTOR = vars["QT_SCALE_FACTOR"]
-    return (applied = true, reason = (saved > 0 ? "saved window_scale" :
-                                  is_wsl() ? "Windows' display scale" : "from the panel's EDID"),
-            vars = vars)
+    return (applied = true, reason = why, vars = vars)
 end

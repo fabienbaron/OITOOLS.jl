@@ -314,10 +314,11 @@ ColumnLayout {
     }
 
     component Section: Button {
+        id: section
         property bool open: false
         flat: true
         Layout.fillWidth: true
-        contentItem: Label { text: (parent.open ? "▾ " : "▸ ") + parent.text; font.bold: true }
+        contentItem: Label { text: (section.open ? "▾ " : "▸ ") + section.text; font.bold: true }
         onClicked: open = !open
     }
 

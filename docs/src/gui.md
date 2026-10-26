@@ -27,7 +27,10 @@ julia --project=bin bin/oitoolsgui.jl [file.oifits]
 ```
 
 **?** (left of the Dataset box) shows the versions, licence and acknowledgements; **⚙** the
-appearance settings. The console at the bottom shows the OITOOLS call for each action.
+settings: UI scale and font, the start-up tab, window and Qt scale, plot text, symbols and zoom,
+the Observing time axis and elevation limits, and the work directory. **Save config** keeps them
+for the next launch; **Reset to defaults** deletes the saved file. The console at the bottom
+shows the OITOOLS call for each action.
 
 ## Choosing observables
 

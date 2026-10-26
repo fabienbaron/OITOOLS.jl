@@ -45,7 +45,11 @@ function start(name; data_dir = "", display = ":117", screen = "1920x1440x24", e
                wait = false)
     sleep(2)
     log = joinpath(out, "run.log")
-    env = ["DISPLAY" => display, "OITOOLSGUI_WALK" => io, "OITOOLSGUI_DATA_DIR" => data_dir, env...]
+    # A config directory of its own, so the user's saved settings (start tab, full screen,
+    # scales) do not reach the walk; `env` can name another.
+    cfg = joinpath(out, "config"); mkpath(cfg)
+    env = ["DISPLAY" => display, "OITOOLSGUI_WALK" => io, "OITOOLSGUI_DATA_DIR" => data_dir,
+           "XDG_CONFIG_HOME" => cfg, env...]
     gui = run(pipeline(addenv(`script -qfec $cmd $log`, env...); stdout = devnull, stderr = devnull);
               wait = false)
     wid = ""
