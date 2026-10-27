@@ -473,6 +473,30 @@
         @test parse_pop_plan_text(split(first(rows), "\t")[6]).minutes == pp.minutes
     end
 
+    @testset "a telescope regained soon after the first POPs is labelled after them" begin
+        # RA 345°, Dec +60°, W2 the reference: S1 out for the first 18 min, then back
+        ra, dec, d = 345.0, 60.0, DateTime(2026, 9, 15)
+        tels = facility_telescopes("CHARA")
+        cfg = telescope_config(["E1", "W2*", "W1", "S2", "S1", "E2"], tels)
+        pp = night_pop_plan("CHARA", ra, dec, d; config = cfg, max_changes = 2, max_drop = 1)
+        p = night_plan("CHARA", "t", ra, dec, d; use_delay = true, popplan = pp, config = cfg)
+        @test transition_label(p, 2) == "+S1"
+        geo = gantt_geometry(p)
+        (px, py, pt, _, _) = only(l for l in geo.poplabels if !l[5])
+        k = findfirst(l -> l[3] == "+S1", geo.seglabels)
+        @test geo.seglabels[k][2] ≈ py                  # lifted onto the POPs line ...
+        @test geo.segafter[k] == (px, pt)               # ... after the first POPs
+        # drawn one space after them, in pixels, from their start
+        fig = Makie.Figure(size = (1200, 400), fonts = GUI.PLOT_FONTS)
+        g = build_gantt(fig, Makie.Axis(fig[1, 1]))
+        update_gantt!(g, p; detailed = false)
+        font = Makie.to_font(g.segplot.fonts[], g.segplot.font[])
+        w(t) = Makie.widths(Makie.text_bb(t, font, Float32(9 * g.scale[])))[1]
+        @test g.segpos[][k][1] ≈ px
+        @test g.segoff[][k][1] - w("+S1") / 2 ≈ w(pt) + w(" ")
+        @test all(iszero, g.segoff[][setdiff(eachindex(geo.seglabels), k)])
+    end
+
     @testset "a night's POP timeline" begin
         ra, dec, d = 279.2347, 38.7837, DateTime(2026, 6, 21)
         f = read_facility_file("CHARA")

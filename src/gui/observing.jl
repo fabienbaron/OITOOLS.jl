@@ -1319,6 +1319,10 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     # A summary label sits at the az numbers' height, just above its bar, or clear above them
     # when one is under it. Widths are estimated from the character count, a character being
     # taken as 0.8% of the plotted span, on the generous side for the labels' 9 pt.
+    # `segafter` names, for a label lifted onto the POPs labels' line, the POPs label starting
+    # at or before it, `(x, text)`, so the renderer can set it after that label when it would
+    # cover it; `(NaN, "")` otherwise.
+    segafter = fill((NaN, ""), length(seglabels))
     if !detailed
         cw = 0.008 * span
         azs = [l for l in labels if l.kind === :az]
@@ -1326,7 +1330,13 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
             hw = cw * length(t) / 2
             under(l) = l.side === :start ? (l.x - hw < x < l.x + 4cw + hw) :
                                            (l.x - 4cw - hw < x < l.x + hw)
-            seglabels[k] = (x, az_label_y() + (any(under, azs) ? POP_LABEL_LIFT : 0.08), t, ch)
+            lifted = any(under, azs)
+            seglabels[k] = (x, az_label_y() + (lifted ? POP_LABEL_LIFT : 0.08), t, ch)
+            before = [l for l in poplabels if l[1] <= x]
+            if lifted && !isempty(before)
+                (px, _, pt, _, chg) = before[argmax([l[1] for l in before])]
+                segafter[k] = (px, chg ? "→ " * pt : pt)
+            end
         end
     end
 
@@ -1369,8 +1379,8 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
 
     return (; bars, labels, bands, softbars, midnight = mid, now = nowlst, transit, transits,
               xlim, target = p.name, rows, ymax, detailed, subtitle,
-              delay_applied = p.delay_applied, seglabels, poplabels, ellabels, marks, switches,
-              multi = is_multi_pop(p), stack = false)
+              delay_applied = p.delay_applied, seglabels, segafter, poplabels, ellabels, marks,
+              switches, multi = is_multi_pop(p), stack = false)
 end
 
 "Rows apart, in the chart's units, of the plans `gantt_stack_geometry` stacks: a bar with its
@@ -1398,7 +1408,7 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
     bars = GanttBar[]; tlabels = GanttLabel[]; softbars = GanttBar[]
     rows = Tuple{Float64,String}[]
     poplabels = Tuple{Float64,Float64,String,Vector{Bool},Bool}[]
-    seglabels = Tuple{Float64,Float64,String,Vector{Bool}}[]
+    seglabels = Tuple{Float64,Float64,String,Vector{Bool}}[]; segafter = Tuple{Float64,String}[]
     marks = Tuple{Float64,String,Symbol,Float64}[]
     ellabels = Tuple{Float64,Float64}[]; transits = Tuple{Float64,Float64}[]
     for (k, (p, g)) in enumerate(zip(plans, geos))
@@ -1413,6 +1423,7 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
             # its own POPs, changes and drops, as its summary row draws them
             append!(poplabels, [(x, sh(y, k), t, c, a) for (x, y, t, c, a) in g.poplabels])
             append!(seglabels, [(x, sh(y, k), t, c) for (x, y, t, c) in g.seglabels])
+            append!(segafter, g.segafter)
             append!(marks, [(x, t, sd, sh(y, k)) for (x, t, sd, y) in g.marks])
         elseif !isempty(idx)
             on = [i for i in p.display_order if i <= length(p.config) && p.config[i] > 0]
@@ -1426,7 +1437,7 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
     return (; bars, labels = tlabels, bands, softbars, midnight = g1.midnight, now = g1.now,
               transit = g1.transit, transits, xlim = g1.xlim, target = g1.target, rows, ymax,
               detailed = false, subtitle = String(title),
-              delay_applied = g1.delay_applied, seglabels,
+              delay_applied = g1.delay_applied, seglabels, segafter,
               poplabels, ellabels, marks,
               switches = Float64[], multi = false, stack = true)
 end

@@ -86,6 +86,7 @@ function build_gantt(fig, ax)
     # POPs where each setting starts. "EL" marks the stretches above the soft elevation limit.
     switchsegs   = Makie.Observable(Makie.Point2f[])
     segpos       = Makie.Observable(Makie.Point2f[]); segtxt = Makie.Observable(Any[])
+    segoff       = Makie.Observable(Makie.Vec2f[])
     poppos       = Makie.Observable(Makie.Point2f[]); poptxt = Makie.Observable(Any[])
     elpos        = Makie.Observable(Makie.Point2f[]); eltxt  = Makie.Observable(String[])
     markpos      = Makie.Observable(Makie.Point2f[]); marktxt = Makie.Observable(String[])
@@ -150,8 +151,10 @@ function build_gantt(fig, ax)
     # into the next day otherwise gives no clue which day a morning hour belongs to.
     Makie.text!(ax, datepos; text = datetxt, align = (:center, :bottom), fontsize = afs,
                 color = :black)
-    Makie.text!(ax, segpos; text = segtxt, align = (:center, :center), fontsize = fs,
-                color = :black)
+    # A transition set after a POPs label is anchored at that label's start and offset in
+    # pixels (`_draw_gantt!`), so it stays clear of it whatever the panel's width.
+    segplot = Makie.text!(ax, segpos; text = segtxt, align = (:center, :center), fontsize = fs,
+                          offset = segoff, color = :black)
     Makie.text!(ax, poppos; text = poptxt, align = (:left, :center), fontsize = fs,
                 color = :black)
     Makie.text!(ax, elpos; text = eltxt, rotation = Float32(π/2), align = (:center, :center),
@@ -188,7 +191,7 @@ function build_gantt(fig, ax)
     yspan = Ref((0.0, 10.0))
     g = (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
            softrects, gridsegs, midnightline, datepos, datetxt, transitpos,
-           switchsegs, segpos, segtxt, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
+           switchsegs, segpos, segtxt, segoff, segplot, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
            tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
            legpos, legtxt, legcols, yspan, scale)
     _gantt_restyle!(g)
@@ -393,7 +396,23 @@ function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
     g.softrects[] = [_rect(b) for b in geo.softbars]
     g.switchsegs[] = reduce(vcat, ([Makie.Point2f(x, -GANTT_FAR), Makie.Point2f(x, GANTT_FAR)]
                                    for x in geo.switches); init = Makie.Point2f[])
-    g.segpos[] = [Makie.Point2f(l[1], l[2]) for l in geo.seglabels]
+    # A transition lifted onto the POPs labels' line goes one space after the POPs label
+    # before it when it would cover it, the widths measured in the labels' font.
+    font = Makie.to_font(g.segplot.fonts[], g.segplot.font[])
+    pxfs = Float32(9 * g.scale[])
+    width(t) = Float64(Makie.widths(Makie.text_bb(t, font, pxfs))[1])
+    pxu = g.axis.scene.viewport[].widths[1] / (geo.xlim[2] - geo.xlim[1])
+    segpos = Makie.Point2f[]; segoff = Makie.Vec2f[]
+    for ((x, y, t, _), (px, pt)) in zip(geo.seglabels, geo.segafter)
+        dx = isempty(pt) ? 0.0 : width(pt) + width(" ") + width(t) / 2
+        if dx > 0 && (x - px) * pxu < dx
+            push!(segpos, Makie.Point2f(px, y)); push!(segoff, Makie.Vec2f(dx, 0))
+        else
+            push!(segpos, Makie.Point2f(x, y)); push!(segoff, Makie.Vec2f(0, 0))
+        end
+    end
+    g.segoff[] = segoff
+    g.segpos[] = segpos
     g.segtxt[] = Any[_segment_rich(l[3], l[4]) for l in geo.seglabels]
     g.poppos[] = [Makie.Point2f(l[1], l[2]) for l in geo.poplabels]
     g.poptxt[] = Any[l[5] ? Makie.rich(Makie.rich("→ "; color = GANTT_CHANGE_COLOR),
