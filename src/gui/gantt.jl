@@ -32,6 +32,9 @@ const GANTT_COLORS = Dict(
     "lightblue"      => Makie.RGBAf(0.678, 0.847, 0.902, 1.0),
     "blue"         => Makie.RGBAf(0.000, 0.000, 1.000, 1.0),
     "green"        => Makie.RGBAf(0.000, 0.502, 0.000, 1.0),
+    # a calibrator's bars, and its segments with a telescope dropped
+    "cal"          => Makie.RGBAf(0.800, 0.400, 0.000, 1.0),
+    "cal2"         => Makie.RGBAf(0.957, 0.643, 0.376, 1.0),
 )
 
 _gantt_color(name) = get(GANTT_COLORS, name, Makie.RGBAf(0.5, 0.5, 0.5, 1.0))
@@ -91,6 +94,7 @@ function build_gantt(fig, ax)
     elpos        = Makie.Observable(Makie.Point2f[]); eltxt  = Makie.Observable(String[])
     markpos      = Makie.Observable(Makie.Point2f[]); marktxt = Makie.Observable(String[])
     markepos     = Makie.Observable(Makie.Point2f[]); marketxt = Makie.Observable(String[])
+    markcolor    = Makie.Observable(GANTT_MARK_COLOR)
 
     # Bands first, then the time rules, then bars, then text.
     #
@@ -158,12 +162,12 @@ function build_gantt(fig, ax)
     Makie.text!(ax, poppos; text = poptxt, align = (:left, :center), fontsize = fs,
                 color = :black)
     Makie.text!(ax, elpos; text = eltxt, rotation = Float32(π/2), align = (:center, :center),
-                fontsize = fs, color = GANTT_MARK_COLOR)
+                fontsize = fs, color = markcolor)
     # "POP" just after where a change starts, the time it starts and "DROP" just before.
     Makie.text!(ax, markpos; text = marktxt, rotation = Float32(π/2), align = (:center, :center),
-                offset = off(0.75), fontsize = afs, color = GANTT_MARK_COLOR)
+                offset = off(0.75), fontsize = afs, color = markcolor)
     Makie.text!(ax, markepos; text = marketxt, rotation = Float32(π/2), align = (:center, :center),
-                offset = off(-0.75), fontsize = afs, color = GANTT_MARK_COLOR)
+                offset = off(-0.75), fontsize = afs, color = markcolor)
 
     # A hand-drawn legend, for the reason build_canvas has one: a Makie Legend fixes its entry
     # count at construction, and this chart's varies with which constraints apply.
@@ -191,7 +195,7 @@ function build_gantt(fig, ax)
     yspan = Ref((0.0, 10.0))
     g = (; figure = fig, axis = ax, bandrects, bandcols, barrects, barcols, midline,
            softrects, gridsegs, midnightline, datepos, datetxt, transitpos,
-           switchsegs, segpos, segtxt, segoff, segplot, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
+           switchsegs, segpos, segtxt, segoff, segplot, markcolor, poppos, poptxt, elpos, eltxt, markpos, marktxt, markepos, marketxt,
            tspos, tstxt, tepos, tetxt, azspos, azstxt, azepos, azetxt, altspos, altstxt, altepos, altetxt,
            legpos, legtxt, legcols, yspan, scale)
     _gantt_restyle!(g)
@@ -337,8 +341,10 @@ end
 # ("−W2") in dark red and regained ("+E1") in dark green.
 const GANTT_CHANGE_COLOR = Makie.RGBAf(0.55, 0.0, 0.0, 1.0)
 const GANTT_REGAIN_COLOR = Makie.RGBAf(0.0, 0.39, 0.0, 1.0)
-# "EL", "POP" and the time a telescope is lost, written vertically inside the bar.
+# "EL", "POP" and the time a telescope is lost, written vertically inside the bar; dark blue on
+# a calibrator's orange bar.
 const GANTT_MARK_COLOR = Makie.RGBAf(1.0, 0.55, 0.0, 1.0)
+const GANTT_CAL_MARK_COLOR = Makie.RGBAf(0.0, 0.0, 0.5, 1.0)
 function _segment_rich(t::AbstractString, changed::AbstractVector{Bool})
     drop, pops = startswith(t, "−") || startswith(t, "+") ? (t, "") : ("", t)
     parts = Any[]
@@ -356,23 +362,35 @@ function _segment_rich(t::AbstractString, changed::AbstractVector{Bool})
 end
 
 """
-    update_gantt!(g, plan; detailed = false, time_system = :lst)
+    update_gantt!(g, plan; detailed = false, time_system = :lst, cal = false)
 
-Draw one night. Allocates only the vectors handed to the Observables.
+Draw one night, a calibrator's with `cal`. Allocates only the vectors handed to the Observables.
 """
 function update_gantt!(g, p::NightPlan; detailed::Bool = false,
-                       time_system::Symbol = :lst)
-    return _draw_gantt!(g, p, gantt_geometry(p; detailed, time_system); time_system)
+                       time_system::Symbol = :lst, cal::Bool = false)
+    return _draw_gantt!(g, p, gantt_geometry(p; detailed, time_system, cal); time_system)
 end
 
 """
-    update_gantt_stack!(g, plans, labels[, title]; time_system = :lst)
+    update_gantt_stack!(g, plans, labels[, title]; time_system = :lst, cal = false)
 
 Draw several plans of one target as stacked rows, the first at the top
-(`gantt_stack_geometry`).
+(`gantt_stack_geometry`), a calibrator's with `cal`.
 """
-update_gantt_stack!(g, plans::AbstractVector{NightPlan}, labels, title...; time_system::Symbol = :lst) =
-    _draw_gantt!(g, first(plans), gantt_stack_geometry(plans, labels, title...; time_system); time_system)
+update_gantt_stack!(g, plans::AbstractVector{NightPlan}, labels, title...; time_system::Symbol = :lst,
+                    cal::Bool = false) =
+    _draw_gantt!(g, first(plans), gantt_stack_geometry(plans, labels, title...; time_system, cal);
+                 time_system)
+
+"""
+    update_gantt_targets!(g, plans, labels, cal, shared, config[, title]; time_system = :lst)
+
+Draw a list of targets under one shared POP plan (`gantt_targets_geometry`).
+"""
+update_gantt_targets!(g, plans::AbstractVector{NightPlan}, labels, cal, shared, config, title...;
+                      time_system::Symbol = :lst) =
+    _draw_gantt!(g, first(plans), gantt_targets_geometry(plans, labels, cal, shared, config, title...;
+                                                         time_system); time_system)
 
 # Draw a geometry, `p` giving the night (date, clock) the axis is labelled from.
 function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
@@ -412,6 +430,7 @@ function _draw_gantt!(g, p::NightPlan, geo; time_system::Symbol = :lst)
         end
     end
     g.segoff[] = segoff
+    g.markcolor[] = geo.cal ? GANTT_CAL_MARK_COLOR : GANTT_MARK_COLOR
     g.segpos[] = segpos
     g.segtxt[] = Any[_segment_rich(l[3], l[4]) for l in geo.seglabels]
     g.poppos[] = [Makie.Point2f(l[1], l[2]) for l in geo.poplabels]

@@ -21,8 +21,9 @@ function read_file_dataset!(s::Session, path::AbstractString, extra::AbstractDic
     data = OITOOLS.readoifits(p; ropts..., warn = false, verbose = false, binstats)
     data isa AbstractArray || throw(ArgumentError("readoifits returned nothing for $(basename(p))"))
     newname = _next_name(s.datasets, "data")
-    entry = DatasetEntry(newname, p, data, ropts, get(ropts, :spectralbin, nothing),
-                         get(ropts, :temporalbin, nothing), nothing, "", String[], String(label))
+    entry = DatasetEntry(; name = newname, path = p, data, readopts = ropts,
+                         spectralbin = get(ropts, :spectralbin, nothing),
+                         temporalbin = get(ropts, :temporalbin, nothing), label = String(label))
     push!(s.datasets, entry)
     kwstr = _kwargs(Pair{Symbol,Any}[k => v for (k, v) in sort(collect(ropts), by = first)];
                     defaults = _READOIFITS_DEFAULTS)
@@ -40,7 +41,7 @@ function _file_entry(path::AbstractString)
     c = FILE_READ[]
     (c !== nothing && c.path == p && c.mtime == mtime(p)) && return c.entry
     data = OITOOLS.readoifits(p; warn = false, verbose = false)
-    entry = DatasetEntry("file", p, data, Dict{Symbol,Any}(), nothing, nothing, nothing)
+    entry = DatasetEntry(; name = "file", path = p, data)
     FILE_READ[] = (; path = p, mtime = mtime(p), entry)
     return entry
 end

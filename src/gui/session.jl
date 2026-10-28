@@ -20,6 +20,9 @@ that shape deliberately. `readoifits` does not record the bin *definitions* anyw
 its own binning.
 
 `name` is the binding used in the exported script (`data1`, `data2`, …).
+
+Built with keywords, `DatasetEntry(; name, path, data, ...)`: the fields not given are those of
+a single file as read.
 """
 mutable struct DatasetEntry
     name        :: String
@@ -39,14 +42,11 @@ mutable struct DatasetEntry
     # "MIRCX", "2019-05-02", "binned ×10"…; empty for a file as read.
     label       :: String
 end
-DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from) =
-    DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, "", String[])
-DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec) =
+DatasetEntry(; name, path, data, readopts = Dict{Symbol,Any}(), spectralbin = nothing,
+             temporalbin = nothing, derived_from = nothing, filterspec = "", files = String[],
+             label = "") =
     DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec,
-                 String[])
-DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec, files) =
-    DatasetEntry(name, path, data, readopts, spectralbin, temporalbin, derived_from, filterspec,
-                 files, "")
+                 files, label)
 
 """What `readoifits` reads for this entry: its file, or its list of files."""
 sources(e::DatasetEntry) = isempty(e.files) ? e.path : e.files

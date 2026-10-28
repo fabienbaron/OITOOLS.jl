@@ -16,7 +16,7 @@ function __init__()
                      shell_console, shell_ready, shell_about, shell_reset_zoom, shell_pick_text,
                      shell_observables, shell_plot_kinds, shell_grouping_noun, shell_gantt_hover, shell_reconstruct, shell_imaging_summary,
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
-                     shell_facilities, shell_telescopes, shell_telescope_order, shell_central_telescope, shell_gantt, shell_pop_timeline, shell_plans_gantt, shell_best_pops, shell_pop_plans,
+                     shell_facilities, shell_telescopes, shell_telescope_order, shell_central_telescope, shell_gantt, shell_pop_timeline, shell_plans_gantt, shell_best_pops, shell_pop_plans, shell_gantt_targets, shell_pop_plans_targets,
                      shell_save_targets, shell_load_targets,
                      shell_shift_date, shell_sim_source, shell_simulate,
                      shell_model_image, shell_simbad, shell_ui_scale,

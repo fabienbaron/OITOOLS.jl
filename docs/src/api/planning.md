@@ -8,6 +8,10 @@
 | `pop_plan(facility, dec, ha, config; observable, reference, max_changes, max_drop, change_minutes)` | A night's sequence of POP settings and dropped telescopes, ranked by time with every telescope, then with fewer, then fewest changes |
 | `pop_plans(facility, dec, ha, config; …)` | The best `pop_plan` for each number of changes, from one search |
 | `print_pop_plan(facility, plan)` | Print a `pop_plan` result |
+| `pop_plan_targets(facility, targets, lst, config; observable, calibrators, bracket_minutes, max_changes, change_minutes)` | One sequence of POP settings shared by a list of targets, scored by the fraction of each science target's night observed with one of its calibrators within reach |
+| `pop_plans_targets(facility, targets, lst, config; …)` | The best `pop_plan_targets` for each number of changes, from one search |
+| `target_pop_plan(plan, j, ra, config)` | One target's part of a shared plan, as a `PopPlan` |
+| `print_pop_plan(facility, plan, targets)` | Print a `pop_plan_targets` result |
 | `unwrap_hour_angles(ha)` | A night's hour angles made continuous through ±12 h |
 | `obs_plan(target, facility, ra, dec, date, pop, config)` | Gantt chart of the night (needs PythonPlot) |
 | `chara_plan(target, facility, ra, dec, date, pop, config)` | Delay plot in the style of CHARA's planner (needs PythonPlot) |
@@ -31,6 +35,11 @@ pop_plans
 PopPlan
 PopSegment
 print_pop_plan
+pop_plan_targets
+pop_plans_targets
+TargetsPopPlan
+SharedSegment
+target_pop_plan
 unwrap_hour_angles
 obs_plan
 chara_plan

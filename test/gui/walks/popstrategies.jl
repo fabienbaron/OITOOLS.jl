@@ -77,10 +77,12 @@ try
     stage(w, "the strategy menu: section titles cannot be chosen") do
         before = locate(w, "popStrategyTab").current
         click(w, "popStrategyTab"; pause = 0.5)
-        for title in ("— single target", "— multiple targets", "POP changes on a single line, all targets")
+        for title in ("— single target", "— multiple targets")
             l = locate(w, "popup:" * title)
             check(w, "\"$title\" listed, not choosable (1=yes)", l.w > 0 && !l.enabled, 1; tol = 0)
         end
+        l = locate(w, "popup:POP changes on a single line, all targets")
+        check(w, "the list's strategy choosable (1=yes)", l.w > 0 && l.enabled, 1; tol = 0)
         press(w, "Escape")
         check(w, "unchanged (1=yes)", locate(w, "popStrategyTab").current == before, 1; tol = 0)
         choose(w, "popStrategyTab", "Three-row POP (time coverage)")

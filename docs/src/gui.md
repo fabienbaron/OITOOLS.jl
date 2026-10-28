@@ -50,8 +50,14 @@ shows the OITOOLS call for each action.
 
 **Enter** in a target's name resolves it on SIMBAD, as **SIMBAD** does, unless the row already
 holds SIMBAD's answer for that name (its dot is green). **Save…** writes the list as CSV
-(`name, ra, dec, V, J, H, K, simbad`, coordinates in degrees, `simbad` 1 for a row SIMBAD
-resolved); **Load…** reads it back, or a file of names alone, one per line, as unresolved targets.
+(`name, ra, dec, V, J, H, K, simbad, cal, for`, coordinates in degrees, an empty magnitude for
+one not known, `simbad` 1 for a row SIMBAD resolved, `cal` 1 for a calibrator, `for` the science
+targets a calibrator is for, `;` between them); **Load…** reads it
+back. A file with a header is read by column name, in any order, and its other columns are kept
+and written back on Save; one without is read in that order, and a file of names alone, one per
+line, loads as unresolved targets. An emptied magnitude field is a magnitude not known. **Cal**
+marks a target as a calibrator: the Gantt draws its bars in orange, and a field beside it takes
+the names of the science targets it is for.
 It opens on `demos/targets`, whose `bright_stars.csv` lists twelve bright stars across the year,
 resolved on SIMBAD.
 
@@ -64,8 +70,7 @@ largest distance to the others, projected on the equator, is smallest).
 
 **AutoPOPs** searches the POPs each time **Compute** runs, over the hours the target is above
 the elevation limits and the horizon, in astronomical night, clear of the moon. The menu under
-it chooses the search, in two sections, single target and multiple targets (the multiple-target
-strategy is listed and not yet available):
+it chooses the search, in two sections, single target and multiple targets:
 
 - **Single POPs**: one setting for the night (`best_pop`).
 - **POP changes on a single line**: up to **changes ≤** POP changes, each taking **change**
@@ -77,6 +82,16 @@ strategy is listed and not yet available):
   third of the observable hours, the single setting with the most time in delay over it, one
   row each (a setting best in several thirds once). **Show details** and the delay carts show
   the earliest.
+- **POP changes on a single line, all targets**: one sequence of POP settings for the whole
+  list, up to **changes ≤** changes (`pop_plan_targets`). It maximises the sum, over the science
+  targets, of the fraction of each one's observable hours kept, so a target up for an hour
+  counts as much as one up all night. A science target with calibrators counts at a minute
+  only when one of its own is in delay under the same POPs within **bracket ±** minutes;
+  unticking **needs cal** scores the science targets alone. A calibrator never up or never in
+  delay is left out (named in the console). The Gantt has a row per target, the calibrators in
+  orange, and a POPs row on top with each setting and a line through every row at each change;
+  clicking a target in the list picks the one **Show details** and the delay carts show.
+  Without **AutoPOPs** every target is charted under the POPs set by hand.
 
 Plans are ranked by the time with every selected telescope, then the time with one dropped
 (the reference last), then with two, then by the fewest changes, and last by the fewest POPs
@@ -93,12 +108,19 @@ line through every row at each change.
 
 **POP strategies** has the same strategy menu, a target menu (the target selected in the
 list) and, for the strategies with changes, the minutes a POP change takes (the POPs panel's
-**change**). A change of reference takes no time. **Search POPs** lists that target's candidates: for a multi-POP strategy the ranked
+**change**). A change of reference takes no time. Under them: **min stretch**, the shortest
+time a POP setting is held, and a telescope dropped or added back (15 minutes; a shorter drop
+takes its neighbour's telescopes where they are in delay); **night**, the part of the night
+used, from and to in UT (`H` or `H:MM`, empty for the start or the end), which narrows the
+astronomical night everywhere, the Gantt included; and for the list, **bracket ±** and
+**needs cal**. **Search POPs** lists that target's candidates: for a multi-POP strategy the ranked
 plans (the plan, its changes, the telescopes dropped, and the hours with every telescope and in
 all), for a single-setting one the best settings with their hour-angle and time ranges. The
 times in the tables are on the clock chosen under **Time** when the search ran. Under the
 tables a Gantt chart draws every candidate as a row, numbered as in the table. **Use** charts
-the target with a candidate in place of AutoPOPs; **in use** gives it back.
+the target with a candidate in place of AutoPOPs; **in use** gives it back. For the list, the
+table holds the shared plans (the POP sequence, its changes, its score, and the hours of the
+science targets and of all), and **Use** charts the list with one.
 
 **Timeline**, under the tables, gives the night of the row clicked, or of the chart after
 **Compute**, one row per step (`pop_plan_timeline`): each stretch observed with its POPs

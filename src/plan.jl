@@ -128,7 +128,7 @@ end
 
 """
     night_observability(facility, ra, dec, obsdate; alt_limit=30.0, alt_max=90.0,
-                        moon_min_sep=30.0, dark_offset=0.0, step_minutes=1)
+                        moon_min_sep=30.0, dark_offset=0.0, step_minutes=1, ut_window=nothing)
 
 Compute the observability grid for a target on a given night.
 Internally uses Float32 for LST, HA, alt, az arrays.
@@ -161,6 +161,9 @@ Arguments:
 - `moon_min_sep`: minimum Moon separation in degrees (default 30)
 - `dark_offset`: hours after sunset / before sunrise for deeper twilight (default 0)
 - `step_minutes`: time resolution in minutes (default 1)
+- `ut_window`: `(from, to)` in UT hours, the part of the night used (a half night, say);
+  `good_twilight` keeps only those hours. `from > to` runs through 0 h UT; `NaN` is the start
+  or the end of the night.
 """
 function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64,
                              obsdate::DateTime;
@@ -168,7 +171,8 @@ function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64
                              config::AbstractVector{<:Integer}=Int[],
                              moon_min_sep::Float64=30.0,
                              dark_offset::Float64=0.0,
-                             step_minutes::Int=1)
+                             step_minutes::Int=1,
+                             ut_window::Union{Nothing,Tuple{Real,Real}}=nothing)
     lat, lon = facility.lat, facility.lon
 
     # LST at the local midnight closing `obsdate`'s evening -- the same night the grid below
@@ -234,6 +238,13 @@ function night_observability(facility::FacilityConfig, ra::Float64, dec::Float64
     # discarded nearly two hours of genuinely dark sky every night.
     a_set, a_rise = night_window(obsdate, lat, lon; zenith = 108.0)
     good_twilight = findall(d -> a_set <= d <= a_rise, dates)
+    if ut_window !== nothing
+        w0, w1 = Float64(ut_window[1]), Float64(ut_window[2])
+        u0 = mod(isnan(w0) ? first(utc) : w0, 24)
+        u1 = mod(isnan(w1) ? last(utc) : w1, 24)
+        inwin(h) = u0 <= u1 ? u0 <= h <= u1 : (h >= u0 || h <= u1)
+        filter!(i -> inwin(mod(utc[i], 24)), good_twilight)
+    end
 
     return (utc=utc, lst=lst, ha=ha, alt=alt_vec, az=az_vec, horizon=horizon,
             lst_midnight=lst_midnight, good_alt=good_alt, good_alt_soft=good_alt_soft,
@@ -878,10 +889,54 @@ function unwrap_hour_angles(ha::AbstractVector{<:Real})
     return out
 end
 
+# For each point of `grid`, the index of the nearest sample of `hs` (any order).
+function _nearest_samples(hs::AbstractVector{Float64}, grid::AbstractVector{Float64})
+    order = sortperm(hs)
+    sorted = hs[order]
+    n = length(hs)
+    return map(grid) do h
+        j = searchsortedfirst(sorted, h)
+        a, b = order[clamp(j - 1, 1, n)], order[clamp(j, 1, n)]
+        abs(hs[a] - h) <= abs(hs[b] - h) ? a : b
+    end
+end
+
+# Each pair of the telescopes in `cfg1` (0/1), in delay or not at each hour angle of `hgrid`,
+# for every pair of POPs: `inD[b, pi, pj]`, `b` a baseline of `get_baselines(config = cfg1)`
+# with `pi` the POP of its first telescope. From the same closed-form intervals `best_pop`
+# intersects. Also the baselines' telescopes and the baseline of each ordered pair.
+function _pair_delay_table(facility::FacilityConfig, dec::Real, hgrid::AbstractVector{Float64},
+                           cfg1::Vector{Int}; delay_length = nothing, pop_array = nothing,
+                           airpath = nothing)
+    nbl, bxyz, bst, _ = get_baselines(facility; config = cfg1)
+    pairidx = Dict{Tuple{Int,Int},Int}()
+    for b in 1:nbl
+        pairidx[(bst[1, b], bst[2, b])] = b; pairidx[(bst[2, b], bst[1, b])] = b
+    end
+    pops = _pop_table(facility; pop_array)
+    path = _fixed_path(facility, cfg1; airpath)
+    dlens = _delay_spans(facility, delay_length)
+    npops = size(pops, 2)
+    l, δ = facility.lat * π / 180, Float64(dec) * π / 180
+    wrap(h) = mod(h + 12, 24) - 12
+    inD = Array{BitVector}(undef, nbl, npops, npops)
+    for b in 1:nbl
+        i1, i2 = bst[1, b], bst[2, b]
+        A, B, C = _w_coeffs(l, δ, bxyz[1, b], bxyz[2, b], bxyz[3, b])
+        dmax = min(dlens[i1], dlens[i2])
+        for pi in 1:npops, pj in 1:npops
+            off = (path[i2] - path[i1]) + Float64(pops[i2, pj]) - Float64(pops[i1, pi])
+            iv = _w_intervals(A, B, C, off - 2dmax, off + 2dmax, (-12.0, 12.0))
+            inD[b, pi, pj] = BitVector(any(x -> x[1] <= wrap(h) <= x[2], iv) for h in hgrid)
+        end
+    end
+    return inD, nbl, bst, pairidx
+end
+
 """
     pop_plan(facility, dec, ha, config; observable = trues(length(ha)), reference = 0,
              max_changes = 2, max_drop = 0, change_minutes = 10, min_minutes = 10,
-             delay_length = nothing, pop_array = nothing, airpath = nothing) -> PopPlan
+             min_stretch = 0, delay_length = nothing, pop_array = nothing, airpath = nothing) -> PopPlan
 
 The sequence of POP settings, and of telescopes dropped from `config`, that observes a target
 longest over the hour angles `ha` where `observable` is true.
@@ -902,6 +957,10 @@ for time with fewer telescopes.
 - `change_minutes`: the time a POP change takes, during which nothing is observed. Dropping or
   re-adding a telescope moves no POP and costs nothing.
 - `min_minutes`: POP settings observable for less than this are not considered.
+- `min_stretch`: minutes a POP setting is held at least, from the end of the change that sets it
+  to the start of the next (the last to the end of the night); a telescope dropped or added back
+  for fewer observed minutes takes its neighbour's telescopes instead when they are in delay
+  then, and is not observed otherwise.
 
 `ha` is the night's grid in time order. It is taken as continuous (`unwrap_hour_angles`), so a
 night through ±12 h gives segments with hour angles beyond 12 in magnitude, on the branch of
@@ -925,7 +984,7 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
                   observable::AbstractVector{Bool} = trues(length(ha)),
                   reference::Integer = something(findfirst(==(2), config), 0),
                   max_changes::Integer = 2, max_drop::Integer = 0,
-                  change_minutes::Real = 10, min_minutes::Real = 10,
+                  change_minutes::Real = 10, min_minutes::Real = 10, min_stretch::Real = 0,
                   delay_length::Union{Nothing,Float64} = nothing,
                   pop_array::Union{Nothing,Matrix{Float32}} = nothing,
                   airpath::Union{Nothing,Vector{Float32}} = nothing)
@@ -945,41 +1004,15 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
     lo, hi = minimum(hs[obs_i]), maximum(hs[obs_i])
     grid = collect(lo:1/60:hi)
     T = length(grid)
-    order = sortperm(hs)
-    sky = falses(T)
-    for (t, h) in enumerate(grid)
-        j = searchsortedfirst(view(hs, order), h)
-        cands = (order[clamp(j - 1, 1, length(hs))], order[clamp(j, 1, length(hs))])
-        k = abs(hs[cands[1]] - h) <= abs(hs[cands[2]] - h) ? cands[1] : cands[2]
-        sky[t] = observable[k]
-    end
+    sky = BitVector(observable[k] for k in _nearest_samples(hs, grid))
 
-    # Each pair's in-delay minutes for every POP pair, from the same closed-form intervals
-    # `best_pop` intersects. Every pair, whatever the reference: which of them constrain a
-    # minute depends on the telescopes kept and on which of them is the reference.
+    # Each pair's in-delay minutes for every POP pair. Every pair, whatever the reference: which
+    # of them constrain a minute depends on the telescopes kept and on which of them is the
+    # reference.
     cfg1 = Int.(cfg .> 0)
-    nbl, bxyz, bst, _ = get_baselines(facility; config = cfg1)
-    pairidx = Dict{Tuple{Int,Int},Int}()
-    for b in 1:nbl
-        pairidx[(bst[1, b], bst[2, b])] = b; pairidx[(bst[2, b], bst[1, b])] = b
-    end
-    pops = _pop_table(facility; pop_array)
-    path = _fixed_path(facility, cfg1; airpath)
-    dlens = _delay_spans(facility, delay_length)
-    npops = size(pops, 2)
-    l, δ = facility.lat * π / 180, Float64(dec) * π / 180
-    wrap(h) = mod(h + 12, 24) - 12
-    inD = Array{BitVector}(undef, nbl, npops, npops)
-    for b in 1:nbl
-        i1, i2 = bst[1, b], bst[2, b]
-        A, B, C = _w_coeffs(l, δ, bxyz[1, b], bxyz[2, b], bxyz[3, b])
-        dmax = min(dlens[i1], dlens[i2])
-        for pi in 1:npops, pj in 1:npops
-            off = (path[i2] - path[i1]) + Float64(pops[i2, pj]) - Float64(pops[i1, pi])
-            iv = _w_intervals(A, B, C, off - 2dmax, off + 2dmax, (-12.0, 12.0))
-            inD[b, pi, pj] = BitVector(any(x -> x[1] <= wrap(h) <= x[2], iv) for h in grid)
-        end
-    end
+    inD, nbl, bst, pairidx = _pair_delay_table(facility, dec, grid, cfg1;
+                                               delay_length, pop_array, airpath)
+    npops = size(inD, 2)
 
     # The drops allowed, in order of preference, with their tiers: none; one telescope other than
     # the reference; the reference; two without the reference; two with it. With a delay
@@ -1080,16 +1113,32 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
     tiers = [d[2] for d in drops]
     # one minute in tier `tr` (0: none)
     addmin(s, tr) = ntuple(i -> s[i] + (i == tr), Val(6))
-    # Only minutes t-1 and t-Δ-1 are read, so the scores live in a ring of Δ+2 rows; what is
-    # kept for every minute is how each state was entered and the two best states.
-    nring = Δ + 2
+    submin(s, tr) = ntuple(i -> s[i] - (i == tr), Val(6))
+    addtup(a, b) = ntuple(i -> a[i] + b[i], Val(6))
+    # A change may only leave a setting held for `L` minutes. Two scores per state: V, the best
+    # plan in s at t; H, the best of those that have held s since t-L+1 or earlier, which is
+    # max(H at t-1, V at t-L+1 plus the minutes of s from t-L+2 to t). A change at t reads H at
+    # t-Δ-1. V is read at t-1 and t-L+1, so it lives in a ring of L+1 rows; what is kept for
+    # every minute is how each score was reached and the two best H.
+    L = max(1, round(Int, min_stretch))
+    nring = L + 1
     ring = [fill(NEG, K, kmax + 1) for _ in 1:nring]
     row(t) = ring[mod1(t, nring)]
-    came = falses(T, kmax + 1, K)            # true: entered s at t by a change
-    top = zeros(Int, T, kmax + 1, 2)         # the two best states at (t, k)
+    hprev = fill(NEG, K, kmax + 1); hcur = similar(hprev)
+    win = fill((0, 0, 0, 0, 0, 0), K)       # the minutes of s from t-L+2 to t
+    came = falses(T, kmax + 1, K)            # true: V entered s at t by a change
+    held = falses(T, kmax + 1, K)            # true: H at t is V at t-L+1 held since
+    top = zeros(Int, T, kmax + 1, 2)         # the two best H at (t, k)
     topval = fill(NEG, T, kmax + 1, 2)
     for t in 1:T
         cur = row(t); prev = t > 1 ? row(t - 1) : cur
+        old = t - L + 1 >= 1 ? row(t - L + 1) : nothing
+        if L > 1
+            for s in 1:K
+                w = addmin(win[s], tiermat[s, t])
+                win[s] = t - L + 1 >= 1 ? submin(w, tiermat[s, t-L+1]) : w
+            end
+        end
         r = t - Δ - 1
         for k in 1:kmax+1
             a = b = 0
@@ -1110,49 +1159,80 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
                     addmin(stay, tr)
                 end
                 cur[s, k] = v
-                if a == 0 || v > topval[t, k, 1]
+                h = v                                # H is V when L is 1
+                if L > 1
+                    h = t > 1 ? addmin(hprev[s, k], tr) : NEG
+                    if old !== nothing
+                        hv = addtup(old[s, k], win[s])
+                        hv >= h && (h = hv; held[t, k, s] = true)
+                    end
+                    hcur[s, k] = h
+                end
+                if a == 0 || h > topval[t, k, 1]
                     b = a; topval[t, k, 2] = topval[t, k, 1]
-                    a = s; topval[t, k, 1] = v
-                elseif b == 0 || v > topval[t, k, 2]
-                    b = s; topval[t, k, 2] = v
+                    a = s; topval[t, k, 1] = h
+                elseif b == 0 || h > topval[t, k, 2]
+                    b = s; topval[t, k, 2] = h
                 end
             end
             top[t, k, 1] = a; top[t, k, 2] = b
         end
+        hprev, hcur = hcur, hprev
     end
 
-    # For each number of changes allowed, the best end and back to the start.
-    last_row = row(T)
+    # For each number of changes allowed, the best end with its last setting held (any end, on
+    # a night shorter than `L`), and back to the start.
+    endH = L > 1 && T >= L
+    last_row = endH ? hprev : row(T)
     plans = PopPlan[]
     for c in 0:kmax
         bs, bk = 1, 1
         for s in 1:K, k in 1:c+1
             last_row[s, k] > last_row[bs, bk] && ((bs, bk) = (s, k))
         end
-        push!(plans, _pop_plan_trace(bs, bk, T, Δ, came, top, state_members, tiermat, drops,
-                                     tiers, grid, cfg1, active))
+        push!(plans, _pop_plan_trace(bs, bk, endH, T, Δ, L, came, held, top, state_members,
+                                     tiermat, drops, tiers, grid, cfg1, active, inD, bst))
     end
     return plans
+end
+
+# The state at each minute (0 during a change) of the plan ending in state `bs` with `bk - 1`
+# changes at minute `T`, read back through the V and H scores of `pop_plans`' search (H is V
+# when `L` is 1): from H (`endH`, or after a change) either H a minute earlier or V `L - 1` minutes earlier with the
+# state held between; from V either V a minute earlier or a change from H at `t - Δ - 1`.
+function _held_path(bs, bk, endH, T, Δ, L, came, held, top)
+    path_s = zeros(Int, T)
+    t, s, k = T, bs, bk
+    inH = endH
+    while t >= 1
+        if inH
+            if held[t, k, s]
+                path_s[max(1, t - L + 2):t] .= s
+                t -= L - 1; inH = false
+            else
+                path_s[t] = s; t -= 1
+            end
+        else
+            path_s[t] = s
+            if came[t, k, s]
+                r = t - Δ - 1
+                s = top[r, k-1, 1] == s ? top[r, k-1, 2] : top[r, k-1, 1]
+                t, k, inH = r, k - 1, L > 1
+            else
+                t -= 1
+            end
+        end
+    end
+    return path_s
 end
 
 # Back from state `bs` with `bk - 1` changes at the last minute to the plan that reached it, then
 # the settings that move the fewest POPs over its changes. For each run of one state the
 # candidates are every setting observing that run's own minutes in the same tiers -- of any
 # state, as what a setting does outside the run does not matter to it.
-function _pop_plan_trace(bs, bk, T, Δ, came, top, state_members, tiermat, drops, tiers, grid,
-                         cfg1, active)
-    path_s = zeros(Int, T)                   # the state at each minute; 0 during a change
-    t, s, k = T, bs, bk
-    while t >= 1
-        path_s[t] = s
-        if came[t, k, s]
-            r = t - Δ - 1
-            src = top[r, k-1, 1] == s ? top[r, k-1, 2] : top[r, k-1, 1]
-            t, s, k = r, src, k - 1
-        else
-            t -= 1
-        end
-    end
+function _pop_plan_trace(bs, bk, endH, T, Δ, L, came, held, top, state_members, tiermat, drops,
+                         tiers, grid, cfg1, active, inD, bst)
+    path_s = _held_path(bs, bk, endH, T, Δ, L, came, held, top)
 
     # The plan's states in order, and for each the setting that moves the fewest POPs over all
     # its changes: a shortest path through the states' settings, the cost of a step being the
@@ -1202,25 +1282,61 @@ function _pop_plan_trace(bs, bk, T, Δ, came, top, state_members, tiermat, drops
         end
     end
 
+    # The drop observing each minute (0: none) and the run of one state it is in.
+    gsel = zeros(Int, T); blk = zeros(Int, T)
+    for (b, (_, t0, t1)) in enumerate(blocks), t in t0:t1
+        gsel[t] = Int(pick[t][2][t]); blk[t] = b
+    end
+    # A drop held for fewer than `L` observed minutes next to another drop under the same POPs
+    # takes that one's telescopes where they are in delay, and is not observed otherwise.
+    if L > 1
+        inl(g, pp, t0, t1) = all(t -> all(b -> inD[b, pp[bst[1, b]], pp[bst[2, b]]][t], drops[g][3]),
+                                 t0:t1)
+        while true
+            runs = Tuple{Int,Int}[]
+            t = 1
+            while t <= T
+                gsel[t] == 0 && (t += 1; continue)
+                u = t
+                while u < T && blk[u+1] == blk[t] && gsel[u+1] == gsel[t]
+                    u += 1
+                end
+                push!(runs, (t, u)); t = u + 1
+            end
+            done = true
+            for i in sortperm([u - t for (t, u) in runs])
+                t0, t1 = runs[i]
+                t1 - t0 + 1 >= L && break
+                nbs = [j for j in (i - 1, i + 1) if 1 <= j <= length(runs) &&
+                       blk[runs[j][1]] == blk[t0] && (runs[j][2] == t0 - 1 || runs[j][1] == t1 + 1)]
+                isempty(nbs) && continue
+                pp = pick[t0][1]
+                j = findfirst(j -> inl(gsel[runs[j][1]], pp, t0, t1), nbs)
+                gsel[t0:t1] .= j === nothing ? 0 : gsel[runs[nbs[j]][1]]
+                done = false
+                break
+            end
+            done && break
+        end
+    end
+
     # Segments: runs of one state and one drop, over the minutes something is observed.
     segs = PopSegment[]
     mins = zeros(Int, 5)
     t = 1
     while t <= T
-        s = path_s[t]
-        mem = s == 0 ? nothing : pick[t]
-        g = s == 0 ? 0 : Int(mem[2][t])
+        g = gsel[t]
         if g == 0
             t += 1; continue
         end
         u = t
-        while u < T && path_s[u+1] == s && pick[u+1] === mem && mem[2][u+1] == g
+        while u < T && blk[u+1] == blk[t] && gsel[u+1] == g
             u += 1
         end
         c = copy(cfg1)
         for d in drops[g][1]; c[d] = 0; end
         drops[g][4] > 0 && (c[drops[g][4]] = 2)
-        push!(segs, PopSegment(grid[t], grid[u], c, copy(mem[1]), tiers[g]))
+        push!(segs, PopSegment(grid[t], grid[u], c, copy(pick[t][1]), tiers[g]))
         mins[tiers[g]] += u - t + 1
         t = u + 1
     end
@@ -1244,6 +1360,433 @@ function print_pop_plan(facility::FacilityConfig, plan::PopPlan)
               "two dropped, reference among them")
     for (i, n) in enumerate(plan.minutes)
         n > 0 && println("  $(n) min with $(labels[i])")
+    end
+end
+
+# ─── POPs shared by a list of targets ────────────────────────────────────────
+
+"""
+    SharedSegment
+
+One stretch of a [`TargetsPopPlan`](@ref): local sidereal times `lst0`–`lst1` (hours, on the
+plan's 1-minute grid, continuous through 24 h) under the POPs `pop` (full length).
+"""
+struct SharedSegment
+    lst0 :: Float64
+    lst1 :: Float64
+    pop  :: Vector{Int}
+end
+
+"""
+    TargetsPopPlan
+
+The result of [`pop_plan_targets`](@ref): `segments` in time order; `lst`, the plan's 1-minute
+grid; `observed[t, j]`, target `j` observed at minute `t` under the plan (a science target with a
+calibrator of its own within reach, see [`pop_plan_targets`](@ref)); `minutes`, the count of each
+column; the number of POP `changes`; `score`, the sum over the scored targets of the fraction of
+their sky time observed; `ignored`, the calibrators left out.
+"""
+struct TargetsPopPlan
+    segments :: Vector{SharedSegment}
+    lst      :: Vector{Float64}
+    observed :: BitMatrix
+    minutes  :: Vector{Int}
+    changes  :: Int
+    score    :: Float64
+    ignored  :: Vector{Int}
+end
+
+"""
+    pop_plan_targets(facility, targets, lst, config; observable, calibrators = [],
+                     bracket_minutes = 30, max_changes = 2, change_minutes = 10,
+                     min_minutes = 10, min_stretch = 0, delay_length = nothing, pop_array = nothing,
+                     airpath = nothing) -> TargetsPopPlan
+
+One sequence of POP settings for the night, shared by every target of `targets` (each with
+`ra`, `dec` in degrees and `cal`, true for a calibrator), that observes the list best.
+
+`lst` is the night's local sidereal times in hours, in time order, and `observable[i, j]` is
+true when target `j` is up at `lst[i]` (sky only, no delay). `config` marks the telescopes used
+(0/1/2) as in [`pop_plan`](@ref); a telescope marked 2 is the delay reference, and a minute is
+then constrained by the baselines to it.
+
+A target is observed at a minute when it is up and every baseline is in delay for it under the
+setting in force. The score of a plan is the sum, over the science targets (`cal` false), of the
+fraction of each one's time up that is observed, so a target up for a short while counts as
+much as one up all night; ties go to the fewest changes.
+
+- `calibrators[j]`: the indices of science target `j`'s calibrators (empty, or an empty list,
+  for none). A minute of a science target with calibrators counts only when one of them is
+  observed under the same setting within `bracket_minutes` of it, the setting taken as held
+  over that time. A calibrator up at no minute of the night, or in delay under no setting at
+  any minute it is up, is ignored (listed in `ignored`); a science target whose calibrators are
+  all ignored is scored alone.
+- With no science target in the list, the calibrators are scored as science, alone.
+- `max_changes`, `change_minutes`, `min_minutes`, `min_stretch` and the delay keywords as in
+  [`pop_plan`](@ref); a setting is considered when it observes the scored targets for
+  `min_minutes` in all.
+
+[`pop_plans_targets`](@ref) gives the best plan for each number of changes from the same search;
+[`target_pop_plan`](@ref) turns a plan into one target's [`PopPlan`](@ref).
+"""
+pop_plan_targets(facility::FacilityConfig, targets::AbstractVector, lst::AbstractVector{<:Real},
+                 config::AbstractVector{<:Integer}; kwargs...) =
+    last(pop_plans_targets(facility, targets, lst, config; kwargs...))
+
+"""
+    pop_plans_targets(facility, targets, lst, config; kwargs...) -> Vector{TargetsPopPlan}
+
+The best shared plan with at most 0, 1, …, `max_changes` POP changes, in that order, from one
+search; the keywords are [`pop_plan_targets`](@ref)'s, whose result is the last of these.
+"""
+function pop_plans_targets(facility::FacilityConfig, targets::AbstractVector,
+                           lst::AbstractVector{<:Real}, config::AbstractVector{<:Integer};
+                           observable::AbstractMatrix{Bool},
+                           calibrators::AbstractVector = Vector{Int}[],
+                           bracket_minutes::Real = 30,
+                           max_changes::Integer = 2, change_minutes::Real = 10,
+                           min_minutes::Real = 10, min_stretch::Real = 0,
+                           delay_length::Union{Nothing,Float64} = nothing,
+                           pop_array::Union{Nothing,Matrix{Float32}} = nothing,
+                           airpath::Union{Nothing,Vector{Float32}} = nothing)
+    n = length(targets)
+    size(observable) == (length(lst), n) ||
+        throw(ArgumentError("observable is $(size(observable)) for $(length(lst)) times and $n targets"))
+    iscal = Bool[t.cal for t in targets]
+    cals = [Int.(j <= length(calibrators) ? calibrators[j] : Int[]) for j in 1:n]
+    for j in 1:n, k in cals[j]
+        (1 <= k <= n && iscal[k] && !iscal[j]) ||
+            throw(ArgumentError("calibrators[$j] lists $k: a calibrator of a science target is a target marked cal"))
+    end
+    cfg = Int.(config)
+    active = findall(>(0), cfg)
+    nactive = length(active)
+    kmax = max(0, Int(max_changes))
+    none = [TargetsPopPlan(SharedSegment[], Float64[], falses(0, n), zeros(Int, n), 0, 0.0, Int[])
+            for _ in 0:kmax]
+    (nactive < 2 || n == 0 || !any(observable)) && return none
+
+    # The 1-minute grid over the span any target is up, in continuous LST, and each target's
+    # sky on it from the nearest sample.
+    ls = unwrap_hour_angles(Float64.(lst))
+    ls[1] < 0 && (ls .+= 24)
+    rows = findall(vec(any(observable; dims = 2)))
+    grid = collect(minimum(ls[rows]):1/60:maximum(ls[rows]))
+    T = length(grid)
+    near = _nearest_samples(ls, grid)
+    sky = BitMatrix(undef, T, n)
+    for j in 1:n, t in 1:T
+        sky[t, j] = observable[near[t], j]
+    end
+    M = vec(count(sky; dims = 1))
+
+    # Each target's pair table on its own hour angles, and the pairs that constrain a minute.
+    cfg1 = Int.(cfg .> 0)
+    dref = something(findfirst(==(2), cfg), 0)
+    res = [_pair_delay_table(facility, targets[j].dec, grid .- Float64(targets[j].ra) / 15, cfg1;
+                             delay_length, pop_array, airpath) for j in 1:n]
+    tables = first.(res)
+    _, _, bst, pairidx = res[1]
+    bls = dref == 0 ? [pairidx[(a, b)] for a in active for b in active if a < b] :
+                      [pairidx[(dref, x)] for x in active if x != dref]
+    npops = size(first(tables), 2)
+    nst = npops^nactive
+    nst > 5^8 && throw(ArgumentError("pop_plan_targets: $(nactive) telescopes is more than the search handles"))
+    full = ones(Int, facility.ntel)
+    p = ones(Int, nactive)
+    function setting!(code)
+        c = code
+        for k in 1:nactive
+            p[k] = c % npops + 1; c ÷= npops
+        end
+        for (k, t) in enumerate(active); full[t] = p[k]; end
+        return full
+    end
+    # target j's minutes up and in delay under the POPs `pp`, into `m`
+    skycols = [BitVector(view(sky, :, j)) for j in 1:n]
+    function inmask!(m::BitVector, j, pp)
+        mc = m.chunks
+        copyto!(mc, skycols[j].chunks)
+        for b in bls
+            xc = tables[j][b, pp[bst[1, b]], pp[bst[2, b]]].chunks
+            @inbounds for i in eachindex(mc)
+                mc[i] &= xc[i]
+            end
+        end
+        return m
+    end
+
+    # Which targets are scored, and with which calibrators: those up at some minute and in delay
+    # under some setting then.
+    science = findall(!, iscal)
+    reach = falses(n)
+    m = falses(T)
+    for j in findall(iscal)
+        M[j] == 0 && continue
+        for code in 0:nst-1
+            if any(inmask!(m, j, setting!(code)))
+                reach[j] = true; break
+            end
+        end
+    end
+    ignored = [j for j in findall(iscal) if !reach[j]]
+    scored = [j for j in (isempty(science) ? (1:n) : science) if M[j] > 0]
+    uses = [isempty(science) ? Int[] : filter(k -> reach[k], cals[j]) for j in 1:n]
+    isempty(scored) && return none
+    needed = sort(unique(vcat(scored, uses[scored]...)))
+    B = max(0, round(Int, bracket_minutes))
+    # Integer weights, so equal scores are equal and the fewest changes break the tie: a target's
+    # whole sky time is worth 2^36 whatever its length.
+    w = [M[j] > 0 ? round(Int, 2.0^36 / M[j]) : 0 for j in 1:n]
+
+    raw = [falses(T) for _ in 1:n]
+    near_cal = falses(T); ucal = falses(T)
+    coupled = [falses(T) for _ in 1:n]
+    function coupled!(pp)
+        for j in needed
+            inmask!(raw[j], j, pp)
+        end
+        for j in scored
+            cj = coupled[j]
+            copyto!(cj.chunks, raw[j].chunks)
+            isempty(uses[j]) && continue
+            fill!(ucal, false)
+            for k in uses[j]
+                ucal.chunks .|= raw[k].chunks
+            end
+            _dilate!(near_cal, ucal, B)
+            cj.chunks .&= near_cal.chunks
+        end
+        return coupled
+    end
+
+    # States: settings that observe the scored targets at the same minutes are one; every
+    # setting of a state is kept for the choice of the fewest POPs moved.
+    seen = Dict{Vector{UInt64},Int}()
+    members = Vector{Vector{Int}}()
+    gains = Vector{Vector{Int}}()
+    nch = length(first(coupled).chunks)
+    key = Vector{UInt64}(undef, nch * length(scored))
+    for code in 0:nst-1
+        coupled!(setting!(code))
+        nobs = 0
+        for (i, j) in enumerate(scored)
+            copyto!(key, (i - 1) * nch + 1, coupled[j].chunks, 1, nch)
+            nobs += count(coupled[j])
+        end
+        nobs >= min_minutes || continue
+        s = get(seen, key, 0)
+        if s > 0
+            push!(members[s], code); continue
+        end
+        seen[copy(key)] = length(members) + 1
+        push!(members, [code])
+        g = zeros(Int, T)
+        for j in scored, t in findall(coupled[j])
+            g[t] += w[j]
+        end
+        push!(gains, g)
+    end
+    K = length(members)
+    K == 0 && return none
+    G = Matrix{Int}(undef, K, T)
+    for s in 1:K, t in 1:T
+        G[s, t] = gains[s][t]
+    end
+
+    # Dynamic programming over the minutes, as in `pop_plans` with one score, the gain times 64
+    # less the changes so that a change is made only for a gain, and with V and H the same.
+    Δ = max(0, round(Int, change_minutes))
+    L = max(1, round(Int, min_stretch))
+    NEG = typemin(Int) ÷ 4
+    nring = L + 1
+    ring = [fill(NEG, K, kmax + 1) for _ in 1:nring]
+    row(t) = ring[mod1(t, nring)]
+    hprev = fill(NEG, K, kmax + 1); hcur = similar(hprev)
+    win = zeros(Int, K)
+    came = falses(T, kmax + 1, K)
+    held = falses(T, kmax + 1, K)
+    top = zeros(Int, T, kmax + 1, 2)
+    topval = fill(NEG, T, kmax + 1, 2)
+    for t in 1:T
+        cur = row(t); prev = t > 1 ? row(t - 1) : cur
+        old = t - L + 1 >= 1 ? row(t - L + 1) : nothing
+        if L > 1
+            for s in 1:K
+                win[s] += 64 * G[s, t] - (t - L + 1 >= 1 ? 64 * G[s, t-L+1] : 0)
+            end
+        end
+        r = t - Δ - 1
+        for k in 1:kmax+1
+            a = b = 0
+            for s in 1:K
+                stay = t == 1 ? (k == 1 ? 0 : NEG) : prev[s, k]
+                sw = NEG
+                if k > 1 && r >= 1
+                    j = top[r, k-1, 1] == s ? 2 : 1
+                    top[r, k-1, j] > 0 && (sw = topval[r, k-1, j] - 1)
+                end
+                v = if sw > stay
+                    came[t, k, s] = true; sw
+                else
+                    stay
+                end
+                g = 64 * @inbounds G[s, t]
+                v += g
+                cur[s, k] = v
+                h = v
+                if L > 1
+                    h = t > 1 ? hprev[s, k] + g : NEG
+                    if old !== nothing
+                        hv = old[s, k] + win[s]
+                        hv >= h && (h = hv; held[t, k, s] = true)
+                    end
+                    hcur[s, k] = h
+                end
+                if a == 0 || h > topval[t, k, 1]
+                    b = a; topval[t, k, 2] = topval[t, k, 1]
+                    a = s; topval[t, k, 1] = h
+                elseif b == 0 || h > topval[t, k, 2]
+                    b = s; topval[t, k, 2] = h
+                end
+            end
+            top[t, k, 1] = a; top[t, k, 2] = b
+        end
+        hprev, hcur = hcur, hprev
+    end
+
+    endH = L > 1 && T >= L
+    last_row = endH ? hprev : row(T)
+    plans = TargetsPopPlan[]
+    for c in 0:kmax
+        bs, bk = 1, 1
+        for s in 1:K, k in 1:c+1
+            last_row[s, k] > last_row[bs, bk] && ((bs, bk) = (s, k))
+        end
+        path_s = _held_path(bs, bk, endH, T, Δ, L, came, held, top)
+        push!(plans, _targets_plan_trace(path_s, bk, T, members, grid, n, active,
+                                         setting!, coupled!, inmask!, raw, scored, needed, M, ignored))
+    end
+    return plans
+end
+
+# `out[t]`: some `x` within `B` of `t`.
+function _dilate!(out::BitVector, x::BitVector, B::Int)
+    fill!(out, false)
+    T = length(x)
+    i = findfirst(x)
+    while i !== nothing
+        e = something(findnext(!, x, i), T + 1) - 1
+        out[max(1, i - B):min(T, e + B)] .= true
+        i = e < T ? findnext(x, e + 1) : nothing
+    end
+    return out
+end
+
+# The plan of the states `path_s`: the setting of each run of one state chosen to move the
+# fewest POPs over the changes, and what each target observes under it.
+function _targets_plan_trace(path_s, bk, T, members, grid, n, active,
+                             setting!, coupled!, inmask!, raw, scored, needed, M, ignored)
+    spare = falses(T)
+    blocks = Tuple{Int,Int,Int}[]
+    for t in 1:T
+        st = path_s[t]
+        st == 0 && continue
+        if isempty(blocks) || last(blocks)[1] != st || path_s[t-1] == 0
+            push!(blocks, (st, t, t))
+        else
+            blocks[end] = (st, blocks[end][2], t)
+        end
+    end
+    pops = [[copy(setting!(c)) for c in members[st]] for (st, _, _) in blocks]
+    moved(a, b) = count(i -> a[i] != b[i], active)
+    choice = ones(Int, length(blocks))
+    if length(blocks) > 1
+        cost = [zeros(Int, length(pops[1]))]
+        back = [Int[]]
+        for b in 2:length(blocks)
+            cb = similar(pops[b], Int); bb = similar(pops[b], Int)
+            for (j, pj) in enumerate(pops[b])
+                best, arg = typemax(Int), 1
+                for (i, pi) in enumerate(pops[b-1])
+                    v = cost[b-1][i] + moved(pi, pj)
+                    v < best && ((best, arg) = (v, i))
+                end
+                cb[j] = best; bb[j] = arg
+            end
+            push!(cost, cb); push!(back, bb)
+        end
+        choice[end] = argmin(cost[end])
+        for b in length(blocks):-1:2
+            choice[b-1] = back[b][choice[b]]
+        end
+    end
+
+    observed = falses(T, n)
+    segs = SharedSegment[]
+    for (b, (_, t0, t1)) in enumerate(blocks)
+        pp = pops[b][choice[b]]
+        cp = coupled!(pp)
+        for j in 1:n
+            col = j in scored ? cp[j] : j in needed ? raw[j] : inmask!(spare, j, pp)
+            for t in t0:t1
+                observed[t, j] = col[t]
+            end
+        end
+        hit = findall(t -> any(view(observed, t, :)), t0:t1)
+        isempty(hit) && continue
+        push!(segs, SharedSegment(grid[t0+first(hit)-1], grid[t0+last(hit)-1], pp))
+    end
+    minutes = vec(count(observed; dims = 1))
+    score = sum(j -> minutes[j] / M[j], scored)
+    return TargetsPopPlan(segs, grid, observed, minutes, bk - 1, score, ignored)
+end
+
+"""
+    target_pop_plan(plan, j, ra, config; ha_start = nothing) -> PopPlan
+
+Target `j`'s part of a [`TargetsPopPlan`](@ref) as a [`PopPlan`](@ref) for the Observing
+panel's `night_plan`: a segment per stretch the target is observed under one setting, in hour
+angle (`ra` in degrees), with every telescope of `config` and tier 1. The hour angles are
+continuous from `ha_start` (the night's first, as `unwrap_hour_angles` gives it), by default from
+the plan's first minute wrapped to [-12, 12).
+"""
+function target_pop_plan(plan::TargetsPopPlan, j::Integer, ra::Real,
+                         config::AbstractVector{<:Integer}; ha_start = nothing)
+    cfg1 = Int.(config .> 0)
+    isempty(plan.lst) && return PopPlan(PopSegment[], (0, 0, 0, 0, 0), plan.changes)
+    h1 = plan.lst[1] - ra / 15
+    h0 = ha_start === nothing ? mod(h1 + 12, 24) - 12 : Float64(ha_start)
+    tol = 1 / 120
+    ha(lst) = h0 + mod(lst - ra / 15 - h0 + tol, 24) - tol
+    segs = PopSegment[]
+    t0 = plan.lst[1]
+    for sg in plan.segments
+        i0 = round(Int, (sg.lst0 - t0) * 60) + 1
+        i1 = round(Int, (sg.lst1 - t0) * 60) + 1
+        for (a, b) in index_runs(findall(view(plan.observed, i0:i1, j)))
+            push!(segs, PopSegment(ha(plan.lst[i0+a-1]), ha(plan.lst[i0+b-1]), copy(cfg1),
+                                   copy(sg.pop), 1))
+        end
+    end
+    return PopPlan(segs, (plan.minutes[j], 0, 0, 0, 0), plan.changes)
+end
+
+"""
+    print_pop_plan(facility, plan::TargetsPopPlan, targets)
+
+Pretty-print a [`TargetsPopPlan`](@ref): one line per segment, then each target's minutes.
+"""
+function print_pop_plan(facility::FacilityConfig, plan::TargetsPopPlan, targets::AbstractVector)
+    println("─── Shared POP plan: $(length(plan.segments)) segments, $(plan.changes) POP changes ───")
+    for sg in plan.segments
+        pop_str = join(["$(facility.sta_names[i])-POP$(sg.pop[i])" for i in eachindex(sg.pop)], "  ")
+        @printf("  LST %5.2f … %5.2f h  (%3d min):  %s\n", mod(sg.lst0, 24), mod(sg.lst1, 24),
+                round(Int, (sg.lst1 - sg.lst0) * 60) + 1, pop_str)
+    end
+    for (j, t) in enumerate(targets)
+        println("  ", get(t, :name, "target $j"), t.cal ? " (cal)" : "", ": ", plan.minutes[j], " min",
+                j in plan.ignored ? ", ignored" : "")
     end
 end
 

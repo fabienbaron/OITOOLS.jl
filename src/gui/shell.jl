@@ -125,6 +125,8 @@ const SHELL = Ref{Union{Nothing,ShellState}}(nothing)
 # chart in a second figure, and a saved image labelled in a different clock from the one on
 # screen is a bug report waiting to happen. The panel sends it on every draw regardless.
 const GANTT_TIME_SYSTEM = Ref{Symbol}(:lst)
+# Whether the Gantt's target is a calibrator, for the same reason.
+const GANTT_CAL = Ref(false)
 
 _shell() = SHELL[] === nothing ? error("no GUI running") : SHELL[]
 
@@ -2967,15 +2969,24 @@ function _frac_literal(f::FractionalNoise)
     return "FractionalNoise(" * join(kw, ", ") * ")"
 end
 
+# The target list's own columns, in the panel's order.
+const TARGET_COLUMNS = ["name", "ra", "dec", "V", "J", "H", "K", "simbad", "cal", "for"]
+
 """
     shell_save_targets(path, rows) -> String
     shell_load_targets(path) -> String
 
-The Observing panel's target list as a CSV file, one target per row: `name, ra, dec, V, J, H,
-K, simbad`, coordinates in decimal degrees, an empty magnitude for one not known, `simbad` `1`
-for a row whose values are SIMBAD's. `rows` and the result are the panel's own form, one target
-per line with the same fields tab-separated. A file of names alone, one per line, loads as
-unresolved targets. Each returns `""` or a message beginning with `!`, the loader its rows.
+The Observing panel's target list as a CSV file, one target per row, with a header naming the
+columns: `name, ra, dec, V, J, H, K, simbad, cal, for`, coordinates in decimal degrees, an empty
+magnitude for one not known, `simbad` `1` for a row whose values are SIMBAD's, `cal` `1` for a
+calibrator, `for` the names of the science targets a calibrator is for, `;`-separated. `rows` and
+the result are the panel's own form, one target per line with those ten fields tab-separated,
+followed by one `column=value` field for each other column the file has, which is written back.
+A row of eight fields is not a calibrator, one of nine is for no target.
+
+A file with a header is read by column name, in any order and case; one without is read by
+position in that order, and a file of names alone, one per line, loads as unresolved targets.
+Each returns `""` or a message beginning with `!`, the loader its rows.
 """
 function shell_save_targets(path::AbstractString, rows::AbstractString)
     sh = SHELL[]
@@ -2983,13 +2994,21 @@ function shell_save_targets(path::AbstractString, rows::AbstractString)
     isempty(p) && return "! no file name"
     endswith(lowercase(p), ".csv") || (p *= ".csv")
     q(x) = occursin(r"[\",]", x) ? "\"" * replace(x, "\"" => "\"\"") * "\"" : x
+    lines = [split(l, '\t') for l in split(String(rows), '\n'; keepempty = false)]
+    filter!(f -> length(f) >= 8, lines)
+    cal(f) = length(f) >= 9 && f[9] == "1" ? "1" : "0"
+    calfor(f) = length(f) >= 10 ? String(f[10]) : ""
+    # the other columns, in the order first met
+    extra(f) = [String(first(split(x, '=', limit = 2))) => String(last(split(x, '=', limit = 2)))
+                for x in f[11:end] if occursin('=', x)]
+    keys_ = unique(k for f in lines for (k, _) in extra(f))
     try
         open(p, "w") do io
-            println(io, "name,ra,dec,V,J,H,K,simbad")
-            for line in split(String(rows), '\n'; keepempty = false)
-                f = split(line, '\t')
-                length(f) >= 8 || continue
-                println(io, join([q(String(f[1])); String.(f[2:8])], ","))
+            println(io, join([TARGET_COLUMNS; q.(keys_)], ","))
+            for f in lines
+                ex = Dict(extra(f))
+                println(io, join([q(String(f[1])); String.(f[2:8]); cal(f); q(calfor(f));
+                                  [q(get(ex, k, "")) for k in keys_]], ","))
             end
         end
     catch err
@@ -3029,19 +3048,33 @@ function shell_load_targets(path::AbstractString)
             i = nextind(l, i)
         end
         push!(out, String(take!(buf)))
-        return strip.(out)
+        return String.(strip.(out))
+    end
+    data = [fields(strip(l)) for l in lines if !(isempty(strip(l)) || startswith(strip(l), "#"))]
+    isempty(data) && return "! no targets in " * p
+    # A header is a first line with a `name` column. Each own column's position in the file
+    # (0 when absent); the others are carried as `column=value`.
+    head = lowercase.(first(data))
+    if "name" in head
+        col = [something(findfirst(==(lowercase(c)), head), 0) for c in TARGET_COLUMNS]
+        others = [k for k in eachindex(head) if !(head[k] in lowercase.(TARGET_COLUMNS))]
+        names = first(data)
+        data = data[2:end]
+    else
+        col = collect(eachindex(TARGET_COLUMNS)); others = Int[]; names = String[]
     end
     rows = String[]
-    for l in lines
-        s = strip(l)
-        (isempty(s) || startswith(s, "#")) && continue
-        f = fields(s)
-        lowercase(f[1]) == "name" && continue            # the header
-        num(i) = i <= length(f) && tryparse(Float64, f[i]) !== nothing ? f[i] : ""
+    for f in data
+        val(c) = 0 < col[c] <= length(f) ? f[col[c]] : ""
+        num(c) = tryparse(Float64, val(c)) !== nothing ? val(c) : ""
+        name = val(1)
+        isempty(name) && continue
         ra, dec = num(2), num(3)
-        simbad = length(f) >= 8 && f[8] == "1" && !isempty(ra) && !isempty(dec) ? "1" : "0"
-        push!(rows, join((f[1], isempty(ra) ? "0" : ra, isempty(dec) ? "0" : dec,
-                          num(4), num(5), num(6), num(7), simbad), "\t"))
+        simbad = val(8) == "1" && !isempty(ra) && !isempty(dec) ? "1" : "0"
+        ex = [names[k] * "=" * (k <= length(f) ? f[k] : "") for k in others]
+        push!(rows, join([name, isempty(ra) ? "0" : ra, isempty(dec) ? "0" : dec,
+                          num(4), num(5), num(6), num(7), simbad, val(9) == "1" ? "1" : "0",
+                          val(10), ex...], "\t"))
     end
     isempty(rows) && return "! no targets in " * p
     sh = SHELL[]
@@ -5459,10 +5492,21 @@ function _time_system(name::AbstractString)
     return t in (:lst, :utc, :local) ? t : :lst
 end
 
+# The part of the night the panel uses, from its `"from-to"` UT text (`"3:30-8"`, `"3:30-"`):
+# an empty side is the start or the end of the night (NaN), an empty text the whole night.
+function _ut_window(night::AbstractString)
+    t = strip(String(night))
+    (isempty(t) || t == "-") && return nothing
+    hours(x) = isempty(strip(x)) ? NaN :
+               (f = split(strip(x), ':'); parse(Int, f[1]) + (length(f) > 1 ? parse(Int, f[2]) / 60 : 0.0))
+    a, b = split(t, '-')
+    return (hours(a), hours(b))
+end
+
 # The night the Observe panel draws, from its controls: `(; plan, date, config)`, or a message
 # beginning with `!`. `plan_text` is a multi-POP plan as `pop_plan_text`; empty, the POPs `pops`.
 function _night_plan_for(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
-                         alt_limit, alt_max, plan_text, change_minutes)
+                         alt_limit, alt_max, plan_text, change_minutes; ut_window = nothing)
     date = try
         DateTime(String(dateiso))
     catch
@@ -5478,7 +5522,7 @@ function _night_plan_for(facility, name, ra, dec, dateiso, telescopes, pops, use
         (; plan = night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
                              config = cfg, pop = pp, use_delay = use_delay, popplan = plan,
                              change_minutes = Float64(change_minutes),
-                             alt_limit = Float64(alt_limit), alt_max = Float64(alt_max)),
+                             alt_limit = Float64(alt_limit), alt_max = Float64(alt_max), ut_window),
            date, config = cfg)
     catch err
         "! " * _cause(err)
@@ -5487,30 +5531,39 @@ end
 
 """
     shell_gantt(facility, name, ra, dec, dateiso, telescopes, pops, use_delay, detailed,
-                alt_limit, alt_max, time_system) -> String
+                alt_limit, alt_max, time_system, plan_text, change_minutes, stack_mode, cal,
+                night = "") -> String
 
 Compute one night and draw it on the Observe canvas. Returns a one-line summary.
 
 `ra` and `dec` are DEGREES, `telescopes` and `pops` are space-separated. `use_delay` is opt-in
 because an unsearched POP configuration reports far less time than is really available — see
 [`night_plan`](@ref). `time_system` is `"lst"`, `"utc"` or `"local"` and labels the x axis;
-the bars do not move, only the ticks.
+the bars do not move, only the ticks. `cal` draws a calibrator's bars in the calibrator colours.
+`night` is the part of the night used, `"from-to"` in UT hours (`"3:30-8"`); empty, all of it.
 """
 function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, dec::Real,
                      dateiso::AbstractString, telescopes::AbstractString,
                      pops::AbstractString, use_delay::Bool, detailed::Bool,
                      alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
                      time_system::AbstractString = "lst", plan_text::AbstractString = "",
-                     change_minutes::Real = 10, stack_mode::AbstractString = "")
+                     change_minutes::Real = 10, stack_mode::AbstractString = "",
+                     cal::Bool = false, night::AbstractString = "")
     sh = _shell()
+    uw = try
+        _ut_window(night)
+    catch
+        return "! night: not from-to UT hours: $(night)"
+    end
     np = _night_plan_for(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
-                         alt_limit, alt_max, plan_text, change_minutes)
+                         alt_limit, alt_max, plan_text, change_minutes; ut_window = uw)
     np isa String && (startswith(np, "! not a date") || console!(sh, np); return np)
     p, date, cfg = np.plan, np.date, np.config
 
     tsys = Symbol(lowercase(String(time_system)))
     tsys in (:lst, :utc, :local) || (tsys = :lst)
     GANTT_TIME_SYSTEM[] = tsys
+    GANTT_CAL[] = cal
     # With `stack_mode` "coverage", the single POP settings best over the earliest, middle and
     # latest third of the observable hours, one row each, in the summary view. `p` becomes the
     # first, which the delay chart shows; the detailed view shows `p` as given.
@@ -5519,25 +5572,27 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
     if mode == "coverage" && use_delay && !detailed && isempty(strip(String(plan_text)))
         stack, labels = try
             f = read_facility_file(String(facility))
-            ha, ok = _night_sky(f, ra, dec, date, cfg; alt_limit, alt_max)
+            ha, ok = _night_sky(f, ra, dec, date, cfg; alt_limit, alt_max, ut_window = uw)
             res = any(ok) ? coverage_pops(f, Float64(dec), ha[ok], cfg) : []
             console!(sh, "> coverage_pops(facility, $(round(Float64(dec); digits=4)), ha, $(cfg))")
             ([night_plan(String(facility), String(name), Float64(ra), Float64(dec), date;
                          config = cfg, pop = Int.(r.pop), use_delay = true,
-                         alt_limit = Float64(alt_limit), alt_max = Float64(alt_max)) for r in res],
+                         alt_limit = Float64(alt_limit), alt_max = Float64(alt_max),
+                         ut_window = uw) for r in res],
              [string(name, " ", r.part) for r in res])
         catch err
             console!(sh, "! POP rows: " * _cause(err)); (NightPlan[], String[])
         end
         if !isempty(stack)
             p = first(stack)
-            GANTT_STACK[] = (stack, labels, "best time coverage POPs")
+            GANTT_STACK[] = (; kind = :coverage, plans = stack, labels,
+                               title = "best time coverage POPs")
         end
     end
     if sh.gantt !== nothing
         GANTT_STACK[] !== nothing ?
-            update_gantt_stack!(sh.gantt, GANTT_STACK[]...; time_system = tsys) :
-            update_gantt!(sh.gantt, p; detailed, time_system = tsys)
+            draw_gantt_stack!(sh.gantt, GANTT_STACK[]; time_system = tsys, cal) :
+            update_gantt!(sh.gantt, p; detailed, time_system = tsys, cal)
     end
     # The delay chart is drawn from the same plan, so both views are always of one night.
     sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p; time_system = tsys)
@@ -5573,7 +5628,7 @@ end
 """
     shell_pop_timeline(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
                        alt_limit, alt_max, time_system, plan_text, change_minutes,
-                       as_text = false) -> String
+                       as_text = false, night = "") -> String
 
 The night `shell_gantt` draws for the same arguments, as its POP timeline
 ([`pop_plan_timeline`](@ref)): one line per row, `from \t to \t kind \t pops \t ha \t time \t
@@ -5586,9 +5641,15 @@ function shell_pop_timeline(facility::AbstractString, name::AbstractString, ra::
                             pops::AbstractString, use_delay::Bool,
                             alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
                             time_system::AbstractString = "lst", plan_text::AbstractString = "",
-                            change_minutes::Real = 10, as_text::Bool = false)
+                            change_minutes::Real = 10, as_text::Bool = false,
+                            night::AbstractString = "")
+    uw = try
+        _ut_window(night)
+    catch
+        return "! night: not from-to UT hours: $(night)"
+    end
     np = _night_plan_for(facility, name, ra, dec, dateiso, telescopes, pops, use_delay,
-                         alt_limit, alt_max, plan_text, change_minutes)
+                         alt_limit, alt_max, plan_text, change_minutes; ut_window = uw)
     np isa String && return np
     tsys = _time_system(time_system)
     rows = pop_plan_timeline(np.plan; system = tsys)
@@ -5596,12 +5657,240 @@ function shell_pop_timeline(facility::AbstractString, name::AbstractString, ra::
     return join((join(timeline_fields(r, np.plan), "\t") for r in rows), "\n")
 end
 
+# A list of targets from the panel, `name \t ra \t dec \t cal \t for` per line, on one night:
+# `(; f, date, cfg, uw, targets, cals, obs, lst, sky)` with each target's
+# `night_observability` and where it is observable (`sky`, samples × targets), or a message
+# beginning with `!`. `for` names the science targets a calibrator is for, `;`-separated; with
+# `needs_cal` false no calibrator is tied to a target.
+function _targets_night(facility, rows, dateiso, telescopes, alt_limit, alt_max, night, needs_cal)
+    date = try
+        DateTime(String(dateiso))
+    catch
+        return "! not a date: $(dateiso)"
+    end
+    uw = try
+        _ut_window(night)
+    catch
+        return "! night: not from-to UT hours: $(night)"
+    end
+    f = read_facility_file(String(facility))
+    tels = facility_telescopes(String(facility))
+    sel = filter(!isempty, String.(split(String(telescopes))))
+    cfg = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
+    targets = NamedTuple{(:name, :ra, :dec, :cal),Tuple{String,Float64,Float64,Bool}}[]
+    fors = Vector{String}[]
+    for line in split(String(rows), '\n'; keepempty = false)
+        x = split(line, '\t')
+        length(x) >= 3 || continue
+        ra, dec = tryparse(Float64, x[2]), tryparse(Float64, x[3])
+        (isempty(strip(x[1])) || ra === nothing || dec === nothing) && continue
+        push!(targets, (; name = String(strip(x[1])), ra, dec, cal = length(x) >= 4 && x[4] in ("1", "true")))
+        push!(fors, length(x) >= 5 ? filter(!isempty, String.(strip.(split(x[5], ';')))) : String[])
+    end
+    isempty(targets) && return "! no targets"
+    cals = [Int[] for _ in targets]
+    if needs_cal
+        for (j, t) in enumerate(targets), nm in fors[j]
+            t.cal || continue
+            i = findfirst(s -> s.name == nm && !s.cal, targets)
+            i === nothing || push!(cals[i], j)
+        end
+    end
+    obs = [night_observability(f, t.ra, t.dec, date; alt_limit = Float64(alt_limit),
+                               alt_max = Float64(alt_max), config = cfg, ut_window = uw)
+           for t in targets]
+    sky = falses(length(first(obs).lst), length(targets))
+    for (j, o) in enumerate(obs)
+        sky[intersect(o.good_alt, o.good_twilight, o.good_moon), j] .= true
+    end
+    return (; f, date, cfg, uw, targets, cals, obs, lst = first(obs).lst, sky)
+end
+
+# A shared plan as text, `lst0 lst1 config 1 POPs` per segment, `;`-separated: the form
+# `pop_plan_text` gives a target's plan, so the panel reads the first POPs the same way.
+_shared_plan_text(plan::TargetsPopPlan, cfg) =
+    join((@sprintf("%.4f %.4f %s 1 %s", sg.lst0, sg.lst1, join(string.(Int.(cfg .> 0))),
+                   join(string.(sg.pop), " ")) for sg in plan.segments), ";")
+
+# The POP sequence of a shared plan in the panel's telescope order, `→` before each change and
+# the time it starts on the clock `clock` (LST hours → hours).
+function _shared_plan_summary(plan::TargetsPopPlan, f, cfg, clock)
+    on = [i for i in telescope_display_order(f) if i <= length(cfg) && cfg[i] > 0]
+    pops(sg) = join((_pop_text(sg.pop, cfg, i) for i in on), " ")
+    isempty(plan.segments) && return ""
+    out = pops(plan.segments[1])
+    for k in 2:length(plan.segments)
+        a, b = plan.segments[k-1], plan.segments[k]
+        a.pop == b.pop && continue
+        out *= " → " * pops(b) * " " * _hhmm(clock(a.lst1 + 1 / 60))
+    end
+    return out
+end
+
+"""
+    shell_gantt_targets(facility, rows, dateiso, telescopes, autopops, pops, max_changes,
+                        change_minutes, min_stretch, bracket_minutes, needs_cal, alt_limit,
+                        alt_max, time_system, selected, detailed, night = "",
+                        plan_text = "") -> String
+
+A list of targets on one night under one shared POP plan, drawn on the Observe canvas: a row per
+target, calibrators in the calibrator colours, and the POPs row on top
+(`gantt_targets_geometry`). `rows` is one target per line, `name \\t ra \\t dec \\t cal \\t for`
+(degrees; `cal` `1` for a calibrator; `for` the science targets it is for, `;`-separated).
+With `autopops` the plan is `pop_plan_targets`' with at most `max_changes` changes (each
+`change_minutes`), settings held `min_stretch` minutes, and calibrators within
+`bracket_minutes` of their targets when `needs_cal`; `plan_text`, one of
+`shell_pop_plans_targets`' plans, is drawn instead when the same search still gives it. Without
+`autopops`, every target under the POPs `pops`. `selected` (1-based in `rows`) is the target
+the detailed view and the delay chart show. `night` as in [`shell_gantt`](@ref).
+
+Returns `summary \\t dark window \\t the selected target's plan (pop_plan_text) \\t its first
+POPs`, or a message beginning with `!`.
+"""
+function shell_gantt_targets(facility::AbstractString, rows::AbstractString,
+                             dateiso::AbstractString, telescopes::AbstractString, autopops::Bool,
+                             pops::AbstractString, max_changes::Integer, change_minutes::Real,
+                             min_stretch::Real, bracket_minutes::Real, needs_cal::Bool,
+                             alt_limit::Real, alt_max::Real, time_system::AbstractString,
+                             selected::Integer, detailed::Bool, night::AbstractString = "",
+                             plan_text::AbstractString = "")
+    sh = _shell()
+    tn = try
+        _targets_night(facility, rows, dateiso, telescopes, alt_limit, alt_max, night, needs_cal)
+    catch err
+        "! " * _cause(err)
+    end
+    tn isa String && (console!(sh, tn); return tn)
+    f, cfg, targets = tn.f, tn.cfg, tn.targets
+    n = length(targets)
+    tsys = _time_system(time_system)
+    shared = try
+        if autopops
+            console!(sh, "> pop_plans_targets(facility, targets, lst, $(cfg); observable, " *
+                         "calibrators = $(tn.cals), bracket_minutes = $(bracket_minutes), " *
+                         "max_changes = $(max_changes), change_minutes = $(change_minutes), " *
+                         "min_stretch = $(min_stretch))")
+            ps = pop_plans_targets(f, targets, tn.lst, cfg; observable = tn.sky,
+                                   calibrators = tn.cals, bracket_minutes,
+                                   max_changes = max(0, Int(max_changes)), change_minutes,
+                                   min_stretch)
+            k = findfirst(p -> _shared_plan_text(p, cfg) == String(plan_text), ps)
+            ps[something(k, length(ps))]
+        else
+            nothing
+        end
+    catch err
+        msg = "! POPs for the list: " * _cause(err)
+        console!(sh, msg); return msg
+    end
+    pp = isempty(strip(String(pops))) ? ones(Int, length(cfg)) : [parse(Int, x) for x in split(String(pops))]
+    plans = NightPlan[]
+    for (k, t) in enumerate(targets)
+        popplan = shared === nothing ? nothing :
+                  target_pop_plan(shared, k, t.ra, cfg; ha_start = unwrap_hour_angles(tn.obs[k].ha)[1])
+        push!(plans, night_plan(f, t.name, t.ra, t.dec, tn.date; config = cfg,
+                                pop = shared === nothing || isempty(shared.segments) ? pp :
+                                      first(shared.segments).pop,
+                                popplan, use_delay = true, change_minutes = Float64(change_minutes),
+                                alt_limit = Float64(alt_limit), alt_max = Float64(alt_max),
+                                ut_window = tn.uw))
+    end
+    if shared === nothing
+        # one setting for the whole night, as a plan of one segment
+        x = unwrap_lst(first(plans).lst)
+        shared = TargetsPopPlan([SharedSegment(first(x), last(x), pp)], x, falses(length(x), n),
+                                [round(Int, observable_hours(p) * 60) for p in plans], 0, 0.0, Int[])
+    end
+    sel = clamp(Int(selected), 1, n)
+    p = plans[sel]
+    labels = [t.cal ? t.name * " Cal" : t.name for t in targets]
+    cal = [t.cal for t in targets]
+    title = string(n, " targets · ", shared.changes, shared.changes == 1 ? " change" : " changes",
+                   autopops ? @sprintf(" · score %.2f", shared.score) : "")
+    GANTT_TIME_SYSTEM[] = tsys
+    GANTT_CAL[] = cal[sel]
+    GANTT_STACK[] = detailed ? nothing :
+                    (; kind = :targets, plans, labels, cal, shared, config = cfg, title)
+    if sh.gantt !== nothing
+        detailed ? update_gantt!(sh.gantt, p; detailed = true, time_system = tsys, cal = cal[sel]) :
+                   draw_gantt_stack!(sh.gantt, GANTT_STACK[]; time_system = tsys)
+    end
+    sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p; time_system = tsys)
+    sh.plan = p
+    hours = join((@sprintf("%s %.1f", t.name, observable_hours(q)) for (t, q) in zip(targets, plans)), " · ")
+    line = string(title, ": ", hours)
+    console!(sh, "  " * line)
+    isempty(shared.ignored) ||
+        console!(sh, "  calibrators not used: " * join((targets[j].name for j in shared.ignored), ", "))
+    dark = isempty(p.good_twilight) ? "no astronomical night" :
+           string(_hhmm(p.lst[first(p.good_twilight)]), " – ", _hhmm(p.lst[last(p.good_twilight)]), " LST")
+    ptext = autopops ? pop_plan_text(target_pop_plan(shared, sel, targets[sel].ra, cfg;
+                                                     ha_start = unwrap_hour_angles(tn.obs[sel].ha)[1])) : ""
+    first_pops = isempty(shared.segments) ? pp : first(shared.segments).pop
+    return join((line, dark, ptext, join(string.(first_pops), " ")), "\t")
+end
+
+"""
+    shell_pop_plans_targets(facility, rows, dateiso, telescopes, max_changes, change_minutes,
+                            min_stretch, bracket_minutes, needs_cal, alt_limit, alt_max,
+                            time_system, night = "") -> String
+
+The POP strategies tab's shared plans for a list of targets (`rows` as in
+[`shell_gantt_targets`](@ref)): the best with at most 0 … `max_changes` changes, each distinct
+plan once, best first. One row per plan, `summary \\t changes \\t score \\t hours of the science
+targets \\t hours of all \\t plan`, the summary being the POP sequence with each change's time on
+the clock `time_system`, `plan` the text `shell_gantt_targets` takes. `""` when no plan observes
+anything; a message beginning with `!` on failure.
+"""
+function shell_pop_plans_targets(facility::AbstractString, rows::AbstractString,
+                                 dateiso::AbstractString, telescopes::AbstractString,
+                                 max_changes::Integer, change_minutes::Real, min_stretch::Real,
+                                 bracket_minutes::Real, needs_cal::Bool, alt_limit::Real,
+                                 alt_max::Real, time_system::AbstractString,
+                                 night::AbstractString = "")
+    sh = SHELL[]
+    say(t) = sh === nothing ? nothing : console!(sh, t)
+    try
+        tn = _targets_night(facility, rows, dateiso, telescopes, alt_limit, alt_max, night, needs_cal)
+        tn isa String && (say(tn); return tn)
+        f, cfg, targets = tn.f, tn.cfg, tn.targets
+        say("> pop_plans_targets(facility, targets, lst, $(cfg); observable, calibrators = $(tn.cals), " *
+            "bracket_minutes = $(bracket_minutes), max_changes = $(max_changes), " *
+            "change_minutes = $(change_minutes), min_stretch = $(min_stretch))")
+        ps = pop_plans_targets(f, targets, tn.lst, cfg; observable = tn.sky, calibrators = tn.cals,
+                               bracket_minutes, max_changes = max(0, Int(max_changes)),
+                               change_minutes, min_stretch)
+        filter!(p -> !isempty(p.segments), ps)
+        unique!(p -> _shared_plan_text(p, cfg), ps)
+        isempty(ps) && (say("  no POP plan observes these targets"); return "")
+        sort!(ps; by = p -> (p.score, -p.changes), rev = true)
+        tsys = _time_system(time_system)
+        p0 = night_plan(f, "", 0.0, 0.0, tn.date; config = cfg,
+                        alt_limit = Float64(alt_limit), alt_max = Float64(alt_max))
+        clock(x) = tsys === :lst ? mod(x, 24) : hour_angle_clock(p0, x; system = tsys)
+        sci = findall(t -> !t.cal, targets)
+        isempty(sci) && (sci = collect(eachindex(targets)))
+        out = String[]
+        for p in ps
+            push!(out, join((_shared_plan_summary(p, f, cfg, clock), string(p.changes),
+                             @sprintf("%.2f", p.score), @sprintf("%.1f", sum(p.minutes[sci]) / 60),
+                             @sprintf("%.1f", sum(p.minutes) / 60), _shared_plan_text(p, cfg)), "\t"))
+        end
+        say("  best: " * _shared_plan_summary(first(ps), f, cfg, clock))
+        return join(out, "\n")
+    catch err
+        msg = "! POP plans for the list: " * _cause(err)
+        say(msg)
+        return msg
+    end
+end
+
 "The POP strategies tab's candidate plans, drawn as stacked Gantt rows (`shell_plans_gantt`)."
 const PLANS_GANTT = Ref{Any}(nothing)
 
 """
     shell_plans_gantt(facility, name, ra, dec, dateiso, telescopes, rows, use_delay,
-                      alt_limit, alt_max, time_system, change_minutes) -> String
+                      alt_limit, alt_max, time_system, change_minutes, night = "") -> String
 
 Draw candidate plans of one target as stacked Gantt rows on the POP strategies tab's chart, the
 first at the top. `rows` is one candidate per line, `label \t pops \t plan_text`: a single
@@ -5613,14 +5902,21 @@ function shell_plans_gantt(facility::AbstractString, name::AbstractString, ra::R
                            dateiso::AbstractString, telescopes::AbstractString,
                            rows::AbstractString, use_delay::Bool,
                            alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
-                           time_system::AbstractString = "lst", change_minutes::Real = 10)
+                           time_system::AbstractString = "lst", change_minutes::Real = 10,
+                           night::AbstractString = "")
     g = PLANS_GANTT[]
+    uw = try
+        _ut_window(night)
+    catch
+        return "! night: not from-to UT hours: $(night)"
+    end
     plans = NightPlan[]; labels = String[]
     for line in split(String(rows), '\n'; keepempty = false)
         f = split(line, '\t')
         length(f) >= 2 || continue
         np = _night_plan_for(facility, name, ra, dec, dateiso, telescopes, f[2], use_delay,
-                             alt_limit, alt_max, length(f) >= 3 ? f[3] : "", change_minutes)
+                             alt_limit, alt_max, length(f) >= 3 ? f[3] : "", change_minutes;
+                             ut_window = uw)
         np isa String && return np
         push!(plans, np.plan); push!(labels, String(f[1]))
     end
@@ -5635,20 +5931,23 @@ end
 
 """
     shell_pop_plans(facility, dec, dateiso, ra, telescopes, reference, max_changes, max_drop,
-                    change_minutes, alt_limit, alt_max, time_system = "lst") -> String
+                    change_minutes, alt_limit, alt_max, time_system = "lst", min_stretch = 0,
+                    night = "") -> String
 
 The POP strategies tab's plans for one target, best first: the best with at most 0 … `max_changes` POP
 changes and 0 … `max_drop` telescopes dropped, each distinct plan once, ranked as `pop_plan`
 ranks them. One row per plan, `summary \t changes \t dropped \t hours with every telescope
 \t hours in all \t plan`, `plan` being the `pop_plan_text` that `shell_gantt` takes.
 `reference` is the telescope protected from being dropped (a name, or empty). The summary's
-times are on the clock `time_system`. `""` when no plan observes anything.
+times are on the clock `time_system`. `min_stretch` as in `pop_plan`; `night` as in
+[`shell_gantt`](@ref). `""` when no plan observes anything.
 """
 function shell_pop_plans(facility::AbstractString, dec::Real, dateiso::AbstractString,
                          ra::Real, telescopes::AbstractString, reference::AbstractString,
                          max_changes::Integer, max_drop::Integer, change_minutes::Real,
                          alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
-                         time_system::AbstractString = "lst")
+                         time_system::AbstractString = "lst", min_stretch::Real = 0,
+                         night::AbstractString = "")
     sh = SHELL[]
     say(t) = sh === nothing ? nothing : console!(sh, t)
     date = try
@@ -5663,14 +5962,15 @@ function shell_pop_plans(facility::AbstractString, dec::Real, dateiso::AbstractS
         sel  = filter(!isempty, String.(split(String(telescopes))))
         cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
         ref  = something(findfirst(==(String(reference)), tels), 0)
-        ha, ok = _night_sky(f, ra, dec, date, cfg; alt_limit, alt_max)
+        ha, ok = _night_sky(f, ra, dec, date, cfg; alt_limit, alt_max, ut_window = _ut_window(night))
         kc, kd = max(0, Int(max_changes)), max(0, Int(max_drop))
         say("> pop_plans(facility, $(round(Float64(dec); digits=4)), ha, $(cfg); observable, " *
-            "reference = $(ref), max_changes = $(kc), max_drop = 0:$(kd), change_minutes = $(change_minutes))")
+            "reference = $(ref), max_changes = $(kc), max_drop = 0:$(kd), change_minutes = $(change_minutes), " *
+            "min_stretch = $(min_stretch))")
         plans = PopPlan[]
         for d in 0:kd
             for pl in pop_plans(f, Float64(dec), ha, cfg; observable = ok, reference = ref,
-                                max_changes = kc, max_drop = d, change_minutes)
+                                max_changes = kc, max_drop = d, change_minutes, min_stretch)
                 isempty(pl.segments) && continue
                 t = pop_plan_text(pl)
                 any(q -> pop_plan_text(q) == t, plans) || push!(plans, pl)
@@ -5704,17 +6004,18 @@ end
 """
     shell_best_pops(facility, dec, dateiso, ra, telescopes, n = 5,
                     alt_limit = DEFAULT_ALT_LIMIT, alt_max = DEFAULT_ALT_MAX,
-                    time_system = "lst") -> String
+                    time_system = "lst", night = "") -> String
 
 The best POP configurations for this target and night, as `pop\tscore\thaRange\ttimeRange`
 rows, the time range on the clock `time_system`. They are
 scored over the hours the target is observable: above `alt_limit` and the horizon, below
-`alt_max`, in astronomical night, clear of the moon.
+`alt_max`, in astronomical night (within `night`, as in [`shell_gantt`](@ref)), clear of the
+moon.
 """
 function shell_best_pops(facility::AbstractString, dec::Real, dateiso::AbstractString,
                          ra::Real, telescopes::AbstractString, n::Integer = 5,
                          alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
-                         time_system::AbstractString = "lst")
+                         time_system::AbstractString = "lst", night::AbstractString = "")
     sh = SHELL[]
     say(t) = sh === nothing ? nothing : console!(sh, t)
     date = try
@@ -5729,7 +6030,7 @@ function shell_best_pops(facility::AbstractString, dec::Real, dateiso::AbstractS
         cfg  = isempty(sel) ? ones(Int, length(tels)) : telescope_config(sel, tels)
         obs = night_observability(f, Float64(ra), Float64(dec), date;
                                   alt_limit = Float64(alt_limit), alt_max = Float64(alt_max),
-                                  config = cfg)
+                                  config = cfg, ut_window = _ut_window(night))
         ha = obs.ha[intersect(obs.good_alt, obs.good_twilight, obs.good_moon)]
         if isempty(ha)
             say("  POP search: the target is not observable this night")
@@ -6212,9 +6513,27 @@ end
 shell_imaging_summary() =
     _shell().imaging === nothing ? "" : sprint(show, _shell().imaging)
 
-# The plans the Gantt shows as stacked rows (`stack_mode`), with their row labels and title;
-# `nothing` when it shows one plan.
+# The plans the Gantt shows as stacked rows, `(; kind, plans, labels, title, …)`: `kind`
+# `:coverage` for one target's best settings over the night's thirds (`stack_mode`), `:targets`
+# for a list of targets under one shared POP plan, with `cal`, `shared` (the
+# `TargetsPopPlan`) and `config`; `nothing` when it shows one plan.
 const GANTT_STACK = Ref{Any}(nothing)
+
+# Draw a `GANTT_STACK` value on a Gantt.
+function draw_gantt_stack!(g, st; time_system::Symbol = :lst, cal::Bool = false)
+    st.kind === :coverage && return update_gantt_stack!(g, st.plans, st.labels, st.title; time_system, cal)
+    st.kind === :targets && return update_gantt_targets!(g, st.plans, st.labels, st.cal, st.shared,
+                                                         st.config, st.title; time_system)
+    error("unknown Gantt stack: $(st.kind)")
+end
+
+# The geometry of a `GANTT_STACK` value, for the hover.
+function _stack_geometry(st)
+    st.kind === :coverage && return gantt_stack_geometry(st.plans, st.labels, st.title)
+    st.kind === :targets && return gantt_targets_geometry(st.plans, st.labels, st.cal, st.shared,
+                                                          st.config, st.title)
+    error("unknown Gantt stack: $(st.kind)")
+end
 
 """
     shell_gantt_hover() -> String
@@ -6245,13 +6564,29 @@ function shell_gantt_hover()
 
     # Summary geometry: the rows are what the hover needs to name, and in the detailed view
     # the extra rows are baselines whose own labels are already on the y axis.
-    geo = stack === nothing ? gantt_geometry(p) : gantt_stack_geometry(stack...)
+    geo = stack === nothing ? gantt_geometry(p) : _stack_geometry(stack)
     # Which row: the nearest, and only if the pointer is actually within half a row of it.
     isempty(geo.rows) && return ""
     _, k = findmin(r -> abs(r[1] - y), geo.rows)
     row = geo.rows[k]
     abs(row[1] - y) > 0.6 && return ""
-    stack === nothing || (p = stack[1][k])
+    # the shared POPs row of a list: the segment under the cursor
+    if stack !== nothing && k > length(stack.plans)
+        sp = stack.shared
+        x0 = unwrap_lst(first(stack.plans).lst)[1]
+        onx(l) = l + 24 * ceil((x0 - 2 - l) / 24)
+        j = findfirst(sg -> onx(sg.lst0) <= x <= onx(sg.lst0) + (sg.lst1 - sg.lst0), sp.segments)
+        out = ["POPs", @sprintf("%d changes · score %.2f", sp.changes, sp.score)]
+        if j !== nothing
+            sg = sp.segments[j]
+            on = [i for i in first(stack.plans).display_order if stack.config[i] > 0]
+            push!(out, @sprintf("segment %d of %d: %s", j, length(sp.segments),
+                                join((_pop_text(sg.pop, stack.config, i) for i in on), " ")))
+            push!(out, string("LST ", _hhmm(mod(sg.lst0, 24)), " – ", _hhmm(mod(sg.lst1, 24))))
+        end
+        return join(out, "\n")
+    end
+    stack === nothing || (p = stack.plans[k])
 
     # Nearest sample in time. The grid is regular, so this is the instant under the cursor.
     isempty(p.lst) && return ""

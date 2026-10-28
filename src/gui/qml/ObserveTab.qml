@@ -311,7 +311,7 @@ Item {
         // One northern seed, so the panel is never empty on a first run and never carries a
         // target nobody asked for. "+ target" and SIMBAD add the rest. Its values are SIMBAD's,
         // so it counts as resolved.
-        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: true; resolving: false }
+        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: true; resolving: false; cal: false; calFor: ""; extra: "" }
     }
 
     function refreshTargets() {
@@ -321,7 +321,7 @@ Item {
             var t = targetModel.get(i)
             out.push({ name: t.name, ra: t.ra, dec: t.dec,
                        magV: t.magV, magJ: t.magJ, magH: t.magH, magK: t.magK,
-                       cached: t.cached })
+                       cached: t.cached, cal: t.cal, calFor: t.calFor })
             if (t.cached) nc += 1
         }
         root.targets = out
@@ -362,7 +362,7 @@ Item {
     // Set `simMag` from the current target's magnitude in the instrument's band.
     //
     // Does nothing when the user has typed a magnitude, when there is no target, or when the
-    // band is one SIMBAD gave us no magnitude for -- SPICA works in G_rp, and the target rows
+    // target has no magnitude in the band (NaN) -- SPICA works in G_rp, and the target rows
     // carry V, J, H and K only. Leaving the previous value in place is the honest answer there;
     // inventing one from a neighbouring band would be a silent error in the noise model.
     function magForBand() {
@@ -375,16 +375,24 @@ Item {
         var t = targetModel.get(root.currentTargetIndex)
         var m = root.simBand === "V" ? t.magV : root.simBand === "J" ? t.magJ :
                 root.simBand === "H" ? t.magH : root.simBand === "K" ? t.magK : NaN
-        if (!isNaN(m) && m !== 0.0) root.simMag = m
+        if (!isNaN(m)) root.simMag = m
+    }
+
+    // A magnitude as its field shows it: empty when not known (NaN). An emptied field is a
+    // magnitude no longer known.
+    function magText(m) { return isNaN(m) ? "" : m.toFixed(2) }
+    property RegularExpressionValidator magValidator: RegularExpressionValidator {
+        regularExpression: /^(-?\d*\.?\d{0,3})?$/
     }
 
     onSpectralSetupChanged: magForBand()
-    onCurrentTargetIndexChanged: magForBand()
+    // in a list's chart the selected target is the one the delay chart and the detailed view show
+    onCurrentTargetIndexChanged: { magForBand(); if (root.multiTarget && root.hasPlan) computePlan() }
 
     function addTarget() {
         targetModel.append({ name: "", ra: 0.0, dec: 0.0,
-                             magV: 0.0, magJ: 0.0, magH: 0.0, magK: 0.0, cached: false,
-                             resolving: false })
+                             magV: NaN, magJ: NaN, magH: NaN, magK: NaN, cached: false,
+                             resolving: false, cal: false, calFor: "", extra: "" })
         root.currentTargetIndex = targetModel.count - 1
         refreshTargets()
     }
@@ -406,6 +414,10 @@ Item {
         if (key === "name" || key === "ra" || key === "dec") patch["cached"] = false
         targetModel.set(i, patch)
         refreshTargets()
+        // the chart's bar takes the calibrator colour; a list's plan follows its calibrators
+        if (root.hasPlan && ((key === "cal" && (i === root.currentTargetIndex || root.multiTarget)) ||
+                             (key === "calFor" && root.multiTarget)))
+            root.computePlan()
     }
 
     // Applies one shell_simbad reply to one row. A magnitude SIMBAD does not publish comes
@@ -485,12 +497,18 @@ Item {
 
     // The target list to and from a CSV file (`shell_save_targets`, `shell_load_targets`): every
     // field, and whether SIMBAD resolved the row, so a loaded list need not be resolved again.
+    // A row's `calFor` names the science targets it calibrates, `;`-separated; its `extra` holds
+    // the file's other columns as `column=value` fields, written back.
     function saveTargets(path) {
         var rows = []
         for (var i = 0; i < targetModel.count; ++i) {
             var t = targetModel.get(i)
             if (!t.name || t.name.length === 0) continue
-            rows.push([t.name, t.ra, t.dec, t.magV, t.magJ, t.magH, t.magK, t.cached ? 1 : 0].join("\t"))
+            var mag = function (m) { return isNaN(m) ? "" : m }
+            var f = [t.name, t.ra, t.dec, mag(t.magV), mag(t.magJ), mag(t.magH), mag(t.magK),
+                     t.cached ? 1 : 0, t.cal ? 1 : 0, t.calFor]
+            if (t.extra.length > 0) f.push(t.extra)
+            rows.push(f.join("\t"))
         }
         var r = Julia.shell_save_targets(path, rows.join("\n"))
         root.statusText = r.length > 0 ? r : "saved " + rows.length + " targets"
@@ -504,11 +522,12 @@ Item {
         targetModel.clear()
         for (var i = 0; i < lines.length; ++i) {
             var f = lines[i].split("\t")
-            if (f.length < 8) continue
-            var num = function (v) { return v.length > 0 ? parseFloat(v) : 0.0 }
-            targetModel.append({ name: f[0], ra: num(f[1]), dec: num(f[2]),
+            if (f.length < 10) continue
+            var num = function (v) { return v.length > 0 ? parseFloat(v) : NaN }
+            targetModel.append({ name: f[0], ra: parseFloat(f[1]), dec: parseFloat(f[2]),
                                  magV: num(f[3]), magJ: num(f[4]), magH: num(f[5]), magK: num(f[6]),
-                                 cached: f[7] === "1", resolving: false })
+                                 cached: f[7] === "1", resolving: false, cal: f[8] === "1",
+                                 calFor: f[9], extra: f.slice(10).join("\t") })
         }
         root.currentTargetIndex = 0
         refreshTargets()
@@ -621,6 +640,8 @@ Item {
                                         required property real magK
                                         required property bool cached
                                         required property bool resolving
+                                        required property bool cal
+                                        required property string calFor
 
                                         Layout.fillWidth: true
                                         implicitHeight: targetRowColumn.implicitHeight + dp(10)
@@ -675,6 +696,26 @@ Item {
                                                             root.resolveTarget(targetRow.index)
                                                     }
                                                 }
+                                                CheckBox {
+                                                    objectName: "obsTargetCal:" + targetRow.index
+                                                    text: "Cal"
+                                                    padding: 0
+                                                    spacing: dp(3)
+                                                    checked: targetRow.cal
+                                                    onToggled: root.setTargetField(targetRow.index, "cal", checked)
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: "A calibrator"
+                                                }
+                                                TextField {
+                                                    objectName: "obsTargetFor:" + targetRow.index
+                                                    visible: targetRow.cal
+                                                    Layout.preferredWidth: dp(90)
+                                                    text: targetRow.calFor
+                                                    placeholderText: "for"
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "calFor", text.trim())
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: "science targets, ; between"
+                                                }
                                                 Button {
                                                     text: "SIMBAD"
                                                     enabled: targetRow.name.length > 0
@@ -724,29 +765,33 @@ Item {
                                                 Label { text: "V"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                                 TextField {
                                                     Layout.fillWidth: true
-                                                    text: targetRow.magV.toFixed(2)
-                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    objectName: "obsTargetMagV:" + targetRow.index
+                                                    text: root.magText(targetRow.magV)
+                                                    validator: root.magValidator
                                                     onEditingFinished: root.setTargetField(targetRow.index, "magV", parseFloat(text))
                                                 }
                                                 Label { text: "J"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                                 TextField {
                                                     Layout.fillWidth: true
-                                                    text: targetRow.magJ.toFixed(2)
-                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    objectName: "obsTargetMagJ:" + targetRow.index
+                                                    text: root.magText(targetRow.magJ)
+                                                    validator: root.magValidator
                                                     onEditingFinished: root.setTargetField(targetRow.index, "magJ", parseFloat(text))
                                                 }
                                                 Label { text: "H"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                                 TextField {
                                                     Layout.fillWidth: true
-                                                    text: targetRow.magH.toFixed(2)
-                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    objectName: "obsTargetMagH:" + targetRow.index
+                                                    text: root.magText(targetRow.magH)
+                                                    validator: root.magValidator
                                                     onEditingFinished: root.setTargetField(targetRow.index, "magH", parseFloat(text))
                                                 }
                                                 Label { text: "K"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                                 TextField {
                                                     Layout.fillWidth: true
-                                                    text: targetRow.magK.toFixed(2)
-                                                    validator: DoubleValidator { decimals: 3; notation: DoubleValidator.StandardNotation }
+                                                    objectName: "obsTargetMagK:" + targetRow.index
+                                                    text: root.magText(targetRow.magK)
+                                                    validator: root.magValidator
                                                     onEditingFinished: root.setTargetField(targetRow.index, "magK", parseFloat(text))
                                                 }
                                             }
@@ -840,6 +885,7 @@ Item {
                                     Label { text: "Spectral setup"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                                     ComboBox {
                                         id: setupBox
+                                        objectName: "obsSetup"
                                         Layout.fillWidth: true
                                         model: root.spectralSetups
                                         // Filtered by combiner, not merely sorted: the `combiner` key
@@ -1727,7 +1773,7 @@ Item {
                             Button {
                                 objectName: "popSearch"
                                 text: "Search POPs"
-                                enabled: root.nSelectedTelescopes >= 2 && root.nNamedTargets > 0 && !root.multiTarget
+                                enabled: root.nSelectedTelescopes >= 2 && root.nNamedTargets > 0
                                 // CHARA_POP_ARRAY and CHARA_AIRPATH are the defaults inside
                                 // best_pop, which is the other half of why this tab is CHARA-only.
                                 // The best result is adopted rather than merely listed: leaving
@@ -1763,6 +1809,69 @@ Item {
                                 color: "#888"; font.pointSize: pt(baseFontPt - 2)
                                 elide: Text.ElideRight
                             }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: dp(4); Layout.rightMargin: dp(4)
+                            spacing: dp(8)
+                            Label { text: "min stretch"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: !root.singlePops }
+                            SpinBox {
+                                objectName: "popMinStretch"
+                                Layout.preferredWidth: dp(78)
+                                visible: !root.singlePops
+                                from: 0; to: 240; editable: true
+                                value: root.minStretch
+                                onValueModified: root.setSearchOption("minStretch", value)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "shortest stretch, minutes"
+                            }
+                            Label { text: "night"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                            TextField {
+                                objectName: "popNightFrom"
+                                Layout.preferredWidth: dp(56)
+                                placeholderText: "start"
+                                text: root.nightFrom
+                                validator: RegularExpressionValidator { regularExpression: /^(([01]?\d|2[0-3])(:[0-5]\d)?)?$/ }
+                                onEditingFinished: root.setSearchOption("nightFrom", text)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "from, UT"
+                            }
+                            Label { text: "–"; color: "#666" }
+                            TextField {
+                                objectName: "popNightTo"
+                                Layout.preferredWidth: dp(56)
+                                placeholderText: "end"
+                                text: root.nightTo
+                                validator: RegularExpressionValidator { regularExpression: /^(([01]?\d|2[0-3])(:[0-5]\d)?)?$/ }
+                                onEditingFinished: root.setSearchOption("nightTo", text)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "to, UT"
+                            }
+                            Label { text: "UT"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                            Label { text: "bracket ±"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: root.multiTarget }
+                            SpinBox {
+                                objectName: "popBracket"
+                                Layout.preferredWidth: dp(78)
+                                visible: root.multiTarget
+                                from: 0; to: 600; editable: true
+                                value: root.bracketMinutes
+                                onValueModified: root.setSearchOption("bracketMinutes", value)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "calibrator within, minutes"
+                            }
+                            CheckBox {
+                                objectName: "popNeedsCal"
+                                visible: root.multiTarget
+                                text: "needs cal"
+                                checked: root.needsCal
+                                onToggled: root.setSearchOption("needsCal", checked)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "score science with a calibrator"
+                            }
+                            Item { Layout.fillWidth: true }
                         }
 
                         // The tables on top, the timeline of the selected row below.
@@ -1896,9 +2005,11 @@ Item {
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Label { Layout.preferredWidth: root.planColNum; text: "changes"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
-                                    Label { Layout.preferredWidth: root.planColNum; text: "dropped"
+                                    Label { Layout.preferredWidth: root.planColNum
+                                            text: root.multiTarget ? "score" : "dropped"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
-                                    Label { Layout.preferredWidth: root.planColHours; text: "h, all / total"
+                                    Label { Layout.preferredWidth: root.planColHours
+                                            text: root.multiTarget ? "h, science / all" : "h, all / total"
                                             font.bold: true; font.pointSize: pt(baseFontPt - 2) }
                                     Item { Layout.preferredWidth: root.popColUse }
                                 }
@@ -1922,7 +2033,9 @@ Item {
                                         required property string total
                                         required property string plan
                                         readonly property bool inUse: plan.length > 0 &&
-                                                                      root.targetPlans[target] === plan
+                                                                      (root.multiTarget && target === root.listKey
+                                                                       ? root.sharedPlanText === plan
+                                                                       : root.targetPlans[target] === plan)
                                         readonly property bool picked: root.selectedRow === "plan:" + target + ":" + rank
                                         width: planList.width
                                         height: implicitHeight
@@ -2149,6 +2262,7 @@ Item {
                     }
                     TextField {
                         id: simMagField
+                        objectName: "simMag"
                         Layout.preferredWidth: dp(70)
                         text: root.simMag.toFixed(2)
                         // An override is remembered so that changing instrument does not undo it.
@@ -2561,6 +2675,7 @@ Item {
     }
 
     function computePlan() {
+        if (root.multiTarget) { computeTargetsPlan(); return }
         var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
         if (t === null) { planText = "no target"; return }
         var tels = root.telescopesArg()
@@ -2583,7 +2698,8 @@ Item {
                                       tels, root.popString, root.useDelay, root.detailed,
                                       root.altLimit, root.altMax,
                                       root.timeSystem.toLowerCase(), plan, root.changeMinutes,
-                                      plan.length > 0 || root.popStrategy !== 3 ? "" : "coverage")
+                                      plan.length > 0 || root.popStrategy !== 3 ? "" : "coverage",
+                                      t.cal === true, root.nightArg())
         // `summary \t dark window`. The summary is not shown here: it is long, it overflowed
         // the strip it sat in, and the console already keeps it. The chart itself is the
         // answer, and hovering a bar gives the numbers.
@@ -2591,6 +2707,46 @@ Item {
         planText = f[0]
         if (f.length > 1 && f[1].length > 0) root.darkWindowText = f[1]
         hasPlan = planText.indexOf("!") !== 0
+        ganttArea.update()
+        delayArea.update()
+        root.selectedRow = ""
+        refreshTimeline()
+        root.consoleChanged()
+    }
+
+    // The list's named targets for Julia, `name \t ra \t dec \t cal \t for` per line, and the
+    // selected one's place among them (1-based).
+    function targetRows() {
+        var rows = [], sel = 1
+        for (var i = 0; i < targetModel.count; ++i) {
+            var t = targetModel.get(i)
+            if (!t.name || t.name.length === 0) continue
+            rows.push([t.name, t.ra, t.dec, t.cal ? 1 : 0, t.calFor].join("\t"))
+            if (i === root.currentTargetIndex) sel = rows.length
+        }
+        return { rows: rows.join("\n"), selected: sel }
+    }
+
+    // Compute for the whole list under one shared POP plan: a row per target, the POPs on top.
+    function computeTargetsPlan() {
+        var tr = targetRows()
+        if (tr.rows.length === 0) { planText = "no target"; return }
+        var reply = Julia.shell_gantt_targets(root.facility, tr.rows, root.dateISO,
+                                              root.telescopesArg(), root.autoPops && root.useDelay,
+                                              root.popString, root.maxChanges, root.changeMinutes,
+                                              root.minStretch, root.bracketMinutes, root.needsCal,
+                                              root.altLimit, root.altMax, root.timeSystem.toLowerCase(),
+                                              tr.selected, root.detailed, root.nightArg(),
+                                              root.sharedPlanText)
+        var f = reply.split("\t")
+        planText = f[0]
+        if (f.length > 1 && f[1].length > 0) root.darkWindowText = f[1]
+        hasPlan = planText.indexOf("!") !== 0
+        // "5 targets · 1 change · score 2.35"; the hours per target are in the console
+        root.statusText = hasPlan ? f[0].split(":")[0] : planText
+        // the selected target's part of the plan, for the timeline and the POPs dropdowns
+        root.popPlanText = f.length > 2 ? f[2] : ""
+        if (f.length > 3 && f[3].length > 0 && root.autoPops) root.popString = f[3]
         ganttArea.update()
         delayArea.update()
         root.selectedRow = ""
@@ -2608,7 +2764,8 @@ Item {
     // zero observable hours rather than as an error here.
     function searchAndAdoptPops(t, tels) {
         var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra, tels, 3,
-                                         root.altLimit, root.altMax, root.timeSystem.toLowerCase())
+                                         root.altLimit, root.altMax, root.timeSystem.toLowerCase(),
+                                         root.nightArg())
         if (!rows || rows.length === 0) return false
         var best = rows.split("\n")[0].split("\t")[0]
         if (!best || best.length === 0) return false
@@ -2693,7 +2850,8 @@ Item {
         root.tableClock = root.timeSystem
         var rows = Julia.shell_best_pops(root.facility, t.dec, root.dateISO, t.ra,
                                          root.telescopesArg(), nBestBox.value,
-                                         root.altLimit, root.altMax, root.timeSystem.toLowerCase())
+                                         root.altLimit, root.altMax, root.timeSystem.toLowerCase(),
+                                         root.nightArg())
         root.consoleChanged()
         if (rows.length === 0) return
         var lines = rows.split("\n")
@@ -2717,7 +2875,7 @@ Item {
     // of the Gantt (3). A change takes `changeMinutes`.
     property int popStrategy: 0
     readonly property bool singlePops: popStrategy === 0 || popStrategy === 3
-    // One POP timeline shared by every target (PLAN_MultiTargetPOP.md); listed, not yet chosen.
+    // One POP timeline shared by every target of the list (4).
     readonly property bool multiTarget: popStrategy === 4
     readonly property var strategyRows: [
         { text: "— single target", strategy: -1 },
@@ -2726,7 +2884,7 @@ Item {
         { text: "POP changes && Telescope Drops on a single line", strategy: 2 },
         { text: "Three-row POP (time coverage)", strategy: 3 },
         { text: "— multiple targets", strategy: -1 },
-        { text: "POP changes on a single line, all targets", strategy: 4, off: true }
+        { text: "POP changes on a single line, all targets", strategy: 4 }
     ]
     // The minutes a POP change takes: the night and the candidates are computed again with it.
     function setChangeMinutes(v) {
@@ -2739,6 +2897,7 @@ Item {
     function setStrategy(st) {
         if (st === root.popStrategy) return
         root.popStrategy = st
+        root.sharedPlanText = ""
         root.selectedRow = ""
         if (root.hasPlan && root.autoPops) root.computePlan()
         else refreshTimeline()
@@ -2747,8 +2906,33 @@ Item {
     property int maxChanges: 2
     property int maxDrop: 1
     property int changeMinutes: 10
+    // The shortest time a POP setting is held, and a telescope dropped or added back, minutes.
+    property int minStretch: 15
+    // The part of the night used, UT "H:MM" or "H" each, empty for the start or the end.
+    property string nightFrom: ""
+    property string nightTo: ""
+    // Multiple targets: how close in time a calibrator must be, and whether one is needed.
+    property int bracketMinutes: 30
+    property bool needsCal: true
+    function nightArg() {
+        return root.nightFrom.length > 0 || root.nightTo.length > 0
+            ? root.nightFrom + "-" + root.nightTo : ""
+    }
+    // A search setting of the POP strategies tab: the night and the candidates follow it.
+    function setSearchOption(name, v) {
+        if (root[name] === v) return
+        root[name] = v
+        // the candidates first, so that the chart's line is the one left in the status bar
+        if (popModel.count > 0 || planModel.count > 0) runSearch()
+        if (root.hasPlan) root.computePlan()
+        else refreshTimeline()
+    }
     // The multi-POP plan the chart was computed with, as `pop_plan_text`; empty for one setting.
     property string popPlanText: ""
+    // The shared plan of the list chosen with Use; empty, the best AutoPOPs finds.
+    property string sharedPlanText: ""
+    // The plans table's key for the list's shared plans.
+    readonly property string listKey: "all"
     // Plans chosen with Use in the POPs tab, by target name. Reassigned, never mutated in place,
     // so the bindings that read it see the change.
     property var targetPlans: ({})
@@ -2778,7 +2962,8 @@ Item {
                                          root.referenceTelescope, root.maxChanges,
                                          root.popStrategy === 2 ? root.maxDrop : 0,
                                          root.changeMinutes, root.altLimit, root.altMax,
-                                         root.timeSystem.toLowerCase())
+                                         root.timeSystem.toLowerCase(), root.minStretch,
+                                         root.nightArg())
         if (!rows || rows.length === 0) return ""
         var f = rows.split("\n")[0].split("\t")
         if (f.length < 6) return ""
@@ -2786,9 +2971,11 @@ Item {
         return f[5]
     }
 
-    // Search POPs with a multi-POP strategy: every named target's plans, ranked, in one table.
+    // Search POPs with a multi-POP strategy: every named target's plans, ranked, in one table;
+    // for the list, its shared plans.
     function findPlans() {
         planModel.clear()
+        if (root.multiTarget) { findSharedPlans(); return }
         root.tableClock = root.timeSystem
         var tels = root.telescopesArg()
         for (var i = Math.max(0, currentTargetIndex); i <= Math.max(0, currentTargetIndex) && i < targetModel.count; ++i) {
@@ -2798,7 +2985,8 @@ Item {
                                              root.referenceTelescope, root.maxChanges,
                                              root.popStrategy === 2 ? root.maxDrop : 0,
                                              root.changeMinutes, root.altLimit, root.altMax,
-                                             root.timeSystem.toLowerCase())
+                                             root.timeSystem.toLowerCase(), root.minStretch,
+                                             root.nightArg())
             if (!rows || rows.length === 0) {
                 planModel.append({ target: t.name, rank: 0, summary: "no plan observes it",
                                    changes: "", dropped: "", full: "", total: "", plan: "" })
@@ -2815,10 +3003,41 @@ Item {
         root.consoleChanged()
     }
 
+    function findSharedPlans() {
+        root.tableClock = root.timeSystem
+        var tr = targetRows()
+        var rows = Julia.shell_pop_plans_targets(root.facility, tr.rows, root.dateISO,
+                                                 root.telescopesArg(), root.maxChanges,
+                                                 root.changeMinutes, root.minStretch,
+                                                 root.bracketMinutes, root.needsCal,
+                                                 root.altLimit, root.altMax,
+                                                 root.timeSystem.toLowerCase(), root.nightArg())
+        root.consoleChanged()
+        if (rows.length === 0 || rows.charAt(0) === "!") {
+            planModel.append({ target: root.listKey, rank: 0,
+                               summary: rows.length > 0 ? rows : "no plan observes the list",
+                               changes: "", dropped: "", full: "", total: "", plan: "" })
+            return
+        }
+        var lines = rows.split("\n")
+        for (var j = 0; j < lines.length; ++j) {
+            var f = lines[j].split("\t")
+            if (f.length < 6) continue
+            // `dropped` holds the score, `full` / `total` the science and all hours
+            planModel.append({ target: root.listKey, rank: j + 1, summary: f[0], changes: f[1],
+                               dropped: f[2], full: f[3], total: f[4], plan: f[5] })
+        }
+    }
+
     // Use in the plans table: that target's chart is computed with this plan from now on, in
     // place of what AutoPOPs would choose; the other targets keep AutoPOPs. An empty plan
     // gives the target back to AutoPOPs.
     function adoptPlan(name, plan) {
+        if (root.multiTarget && name === root.listKey) {
+            root.sharedPlanText = plan
+            computePlan()
+            return
+        }
         setTargetPlan(name, plan)
         var t = targetModel.count > 0 ? targetModel.get(Math.max(0, currentTargetIndex)) : null
         if (t !== null && t.name === name) {
@@ -2870,7 +3089,7 @@ Item {
         return Julia.shell_pop_timeline(root.facility, src.t.name, src.t.ra, src.t.dec, root.dateISO,
                                         root.telescopesArg(), src.pops, root.useDelay,
                                         root.altLimit, root.altMax, root.timeSystem.toLowerCase(),
-                                        src.plan, root.changeMinutes, asText)
+                                        src.plan, root.changeMinutes, asText, root.nightArg())
     }
 
     function refreshTimeline() {
@@ -2937,7 +3156,8 @@ Item {
         var reply = Julia.shell_plans_gantt(root.facility, t.name, t.ra, t.dec, root.dateISO,
                                             root.telescopesArg(), rows.join("\n"),
                                             root.useDelay, root.altLimit, root.altMax,
-                                            root.timeSystem.toLowerCase(), root.changeMinutes)
+                                            root.timeSystem.toLowerCase(), root.changeMinutes,
+                                            root.nightArg())
         root.hasCandidates = reply.length > 0 && reply.charAt(0) !== "!"
         if (root.hasCandidates) root.plansGanttHeight = parseInt(reply)
         else root.statusText = reply

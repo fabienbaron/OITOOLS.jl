@@ -254,6 +254,10 @@ A panel that applied it by default would report every target as unobservable and
 broken. So `use_delay = false` leaves `good_delay` covering the whole night and records
 `delay_applied = false`, which the UI must say out loud rather than let pass for a constraint
 that was met.
+
+`ut_window = (from, to)`, in UT hours, keeps only that part of the night (see
+`night_observability`). With `use_delay` and a `popplan` (a `PopPlan`), the target is in delay
+over the plan's segments, and nowhere when it has none.
 """
 function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::DateTime;
                     config        = nothing,
@@ -266,7 +270,8 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
                     moon_min_sep  ::Real = 30.0,
                     dark_offset   ::Real = 0.0,
                     step_minutes  ::Integer = 1,
-                    delay_length  = nothing)
+                    delay_length  = nothing,
+                    ut_window     = nothing)
     f = facility isa AbstractString ? read_facility_file(String(facility)) : facility
 
     # The horizon is the max over the telescopes IN USE, so the selection has to reach the
@@ -277,7 +282,7 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
                               config = cfg0,
                               moon_min_sep = Float64(moon_min_sep),
                               dark_offset = Float64(dark_offset),
-                              step_minutes = Int(step_minutes))
+                              step_minutes = Int(step_minutes), ut_window)
 
     cfg = config === nothing ? ones(Int, f.ntel) : Int.(config)
     pp  = pop === nothing ? ones(Int, f.ntel) : Int.(pop)
@@ -291,6 +296,9 @@ function night_plan(facility, name::AbstractString, ra::Real, dec::Real, date::D
         pp = first(settings)
         (sort(unique(reduce(vcat, [collect(sg.i0:sg.i1) for sg in segments]))), true,
          _piecewise_baselines(f, Float64(dec), obs.ha, cfg, settings, inforce; delay_length))
+    elseif use_delay && popplan isa PopPlan
+        # a plan that observes nothing: no time in delay, the baselines under `pop`
+        (Int[], true, baseline_delay_windows(f, Float64(dec), obs.ha, cfg, pp; delay_length))
     elseif use_delay
         try
             (Int.(in_delay(f, Float64(dec), obs.ha, cfg, pp; delay_length).good_delay), true,
@@ -482,7 +490,7 @@ end
 """
     night_pop_plan(facility, ra, dec, date; config, reference = 0, max_changes = 2,
                    max_drop = 0, change_minutes = 10, alt_limit, alt_max, moon_min_sep = 30,
-                   dark_offset = 0) -> PopPlan
+                   dark_offset = 0, min_stretch = 0, ut_window = nothing) -> PopPlan
 
 `pop_plan` over the hours `night_plan` counts as observable for these settings: above the
 elevation limits and the horizon, in astronomical night, clear of the moon. Pass `night_plan`
@@ -493,22 +501,24 @@ function night_pop_plan(facility, ra::Real, dec::Real, date::DateTime;
                         max_drop::Integer = 0, change_minutes::Real = 10,
                         alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
                         moon_min_sep::Real = 30.0, dark_offset::Real = 0.0,
-                        delay_length = nothing)
+                        delay_length = nothing, min_stretch::Real = 0, ut_window = nothing)
     f = facility isa AbstractString ? read_facility_file(String(facility)) : facility
     cfg = config === nothing ? ones(Int, f.ntel) : Int.(config)
-    ha, ok = _night_sky(f, ra, dec, date, cfg; alt_limit, alt_max, moon_min_sep, dark_offset)
+    ha, ok = _night_sky(f, ra, dec, date, cfg; alt_limit, alt_max, moon_min_sep, dark_offset,
+                        ut_window)
     ref = reference > 0 ? Int(reference) : something(findfirst(==(2), cfg), 0)
     return pop_plan(f, Float64(dec), ha, cfg; observable = ok, reference = ref,
-                    max_changes, max_drop, change_minutes, delay_length)
+                    max_changes, max_drop, change_minutes, delay_length, min_stretch)
 end
 
 # The night's hour angles and where `night_plan` counts the target as observable.
 function _night_sky(f, ra, dec, date, cfg; alt_limit = DEFAULT_ALT_LIMIT,
-                    alt_max = DEFAULT_ALT_MAX, moon_min_sep = 30.0, dark_offset = 0.0)
+                    alt_max = DEFAULT_ALT_MAX, moon_min_sep = 30.0, dark_offset = 0.0,
+                    ut_window = nothing)
     obs = night_observability(f, Float64(ra), Float64(dec), date;
                               alt_limit = Float64(alt_limit), alt_max = Float64(alt_max),
                               config = cfg, moon_min_sep = Float64(moon_min_sep),
-                              dark_offset = Float64(dark_offset))
+                              dark_offset = Float64(dark_offset), ut_window)
     ok = falses(length(obs.ha))
     ok[intersect(obs.good_alt, obs.good_twilight, obs.good_moon)] .= true
     return obs.ha, ok
@@ -1077,9 +1087,11 @@ function gantt_time_label(system::Symbol, facility = nothing)
 end
 
 """
-    gantt_geometry(plan; detailed = false) -> (; bars, labels, bands, softbars, rows, midnight, now, transit, xlim, ymax)
+    gantt_geometry(plan; detailed = false, cal = false) -> (; bars, labels, bands, softbars, rows, midnight, now, transit, xlim, ymax)
 
 The whole chart as data: background bands, one bar per contiguous run, and the annotations.
+`cal` draws a calibrator's summary bars in the calibrator colours (`"cal"`, `"cal2"` where a
+telescope is dropped).
 
 `detailed` changes what is drawn, not merely how, and summary is the default because it answers
 the question that gets asked first: when can I observe this, at all.
@@ -1089,7 +1101,7 @@ is the view worth having when the answer is "you can't", because the summary can
 a single baseline out of fifteen closes the whole night, and only a per-baseline row names it.
 """
 function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing,
-                        time_system::Symbol = :lst)
+                        time_system::Symbol = :lst, cal::Bool = false)
     # `show_alt` was the old name for this switch, and it defaulted the other way.
     detailed = show_alt === nothing ? detailed : Bool(show_alt)
     lst = unwrap_lst(p.lst)
@@ -1226,8 +1238,8 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
         # between them. The summary view labels each segment above its bar.
         for (k, sg) in enumerate(p.segments)
             idx = intersect(show_idx, sg.i0:sg.i1)
-            col = sg.tier == 1 ? (detailed ? "green" : "blue") :
-                                 (detailed ? "yellowgreen" : "dodgerblue")
+            col = sg.tier == 1 ? (detailed ? "green" : cal ? "cal" : "blue") :
+                                 (detailed ? "yellowgreen" : cal ? "cal2" : "dodgerblue")
             nb = length(bars)
             add!(idx, 2.0, TARGET_BAR_HEIGHT, col, k == 1 ? lbl : "")
             if touches(k) && length(bars) > nb && sg.i1 in idx
@@ -1274,7 +1286,7 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
             end
         end
     elseif !isempty(show_idx)
-        add!(show_idx, 2.0, TARGET_BAR_HEIGHT, detailed ? "green" : "blue", lbl)
+        add!(show_idx, 2.0, TARGET_BAR_HEIGHT, detailed ? "green" : cal ? "cal" : "blue", lbl)
     end
     if !isempty(show_idx)
         # Every run is annotated, not just the outermost pair: each is one observing block, and
@@ -1380,7 +1392,7 @@ function gantt_geometry(p::NightPlan; detailed::Bool = false, show_alt = nothing
     return (; bars, labels, bands, softbars, midnight = mid, now = nowlst, transit, transits,
               xlim, target = p.name, rows, ymax, detailed, subtitle,
               delay_applied = p.delay_applied, seglabels, segafter, poplabels, ellabels, marks,
-              switches, multi = is_multi_pop(p), stack = false)
+              switches, multi = is_multi_pop(p), stack = false, cal = cal && !detailed)
 end
 
 "Rows apart, in the chart's units, of the plans `gantt_stack_geometry` stacks: a bar with its
@@ -1388,19 +1400,19 @@ numbers below and its POPs above."
 const STACK_ROW_STEP = 1.6
 
 """
-    gantt_stack_geometry(plans, labels, title = ""; time_system = :lst) -> geometry
+    gantt_stack_geometry(plans, labels, title = ""; time_system = :lst, cal = false) -> geometry
 
 Several plans of one target on one night, each a summary row as `gantt_geometry` draws it, the
 first at the top: the chart comparing single POP settings (`coverage_pops`), or the candidate
 plans of the POP strategies tab. Each row's tick is its entry of `labels`; a single setting's
 POPs are written above its bar, in the panel's telescope order, and a multi-POP plan's row
-carries its own POPs, changes and drops.
+carries its own POPs, changes and drops. `cal` as for `gantt_geometry`.
 """
 function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::AbstractVector{<:AbstractString},
                               title::AbstractString = "";
-                              time_system::Symbol = :lst)
+                              time_system::Symbol = :lst, cal::Bool = false)
     n = length(plans)
-    geos = [gantt_geometry(p; time_system) for p in plans]
+    geos = [gantt_geometry(p; time_system, cal) for p in plans]
     g1 = first(geos)
     # The renderer fits its view round the rows, so the chart is only as tall as they are.
     ymax = (n - 1) * STACK_ROW_STEP + 4.0
@@ -1439,7 +1451,70 @@ function gantt_stack_geometry(plans::AbstractVector{NightPlan}, labels::Abstract
               detailed = false, subtitle = String(title),
               delay_applied = g1.delay_applied, seglabels, segafter,
               poplabels, ellabels, marks,
-              switches = Float64[], multi = false, stack = true)
+              switches = Float64[], multi = false, stack = true, cal)
+end
+
+"""
+    gantt_targets_geometry(plans, labels, cal, shared, config, title = ""; time_system = :lst)
+        -> geometry
+
+A list of targets under one shared POP plan (`pop_plan_targets`) on one night: a summary row per
+target, the first at the top, its bars in the calibrator colours where `cal` is true, and above
+them a POPs row with a block per shared segment labelled with its POPs (in the panel's telescope
+order, `config` marking the telescopes used). Each POP change is a line through every row.
+`plans` are the targets' `NightPlan`s, each made with its part of the shared plan
+(`target_pop_plan`).
+"""
+function gantt_targets_geometry(plans::AbstractVector{NightPlan}, labels::AbstractVector{<:AbstractString},
+                                cal::AbstractVector{Bool}, shared::TargetsPopPlan,
+                                config::AbstractVector{<:Integer}, title::AbstractString = "";
+                                time_system::Symbol = :lst)
+    n = length(plans)
+    geos = [gantt_geometry(p; time_system, cal = cal[k]) for (k, p) in enumerate(plans)]
+    g1 = first(geos)
+    sh(y, k) = y + (n - k) * STACK_ROW_STEP
+    ypops = sh(TARGET_ROW, 1) + STACK_ROW_STEP
+    ymax = ypops + 2.0
+    bars = GanttBar[]; tlabels = GanttLabel[]; softbars = GanttBar[]
+    rows = Tuple{Float64,String}[]
+    ellabels = Tuple{Float64,Float64}[]; transits = Tuple{Float64,Float64}[]
+    for (k, g) in enumerate(geos)
+        append!(bars, [GanttBar(b.x0, b.x1, sh(b.y, k), b.height, b.color, b.label) for b in g.bars])
+        append!(softbars, [GanttBar(b.x0, b.x1, sh(b.y, k), b.height, b.color, b.label) for b in g.softbars])
+        append!(tlabels, [GanttLabel(l.x, sh(l.y, k), l.text, l.kind, l.side) for l in g.labels])
+        append!(ellabels, [(x, sh(y, k)) for (x, y) in g.ellabels])
+        append!(transits, [(x, sh(y, k)) for (x, y) in g.transits])
+        push!(rows, (sh(TARGET_ROW, k), labels[k]))
+    end
+    # The shared segments on the POPs row, on the targets' LST axis (the plan's grid is in the
+    # same turn of LST as the night's first sample).
+    x0 = isempty(first(plans).lst) ? 0.0 : unwrap_lst(first(plans).lst)[1]
+    onx(l) = l + 24 * ceil((x0 - 2 - l) / 24)
+    order = [i for i in first(plans).display_order if i <= length(config) && config[i] > 0]
+    seglabels = Tuple{Float64,Float64,String,Vector{Bool}}[]
+    switches = Float64[]
+    prev = Int[]
+    for (k, sg) in enumerate(shared.segments)
+        a, b = onx(sg.lst0), onx(sg.lst0) + (sg.lst1 - sg.lst0)
+        push!(bars, GanttBar(a, b, ypops, 0.9, "lightsteelblue", ""))
+        changed = isempty(prev) ? falses(length(order)) : [sg.pop[i] != prev[i] for i in order]
+        push!(seglabels, ((a + b) / 2, ypops, join((_pop_text(sg.pop, config, i) for i in order), " "),
+                          collect(changed)))
+        if k > 1 && sg.pop != prev
+            push!(switches, onx(shared.segments[k-1].lst1) + 1 / 60)
+        end
+        prev = sg.pop
+    end
+    push!(rows, (ypops, "POPs"))
+    bands = [GanttBar(b.x0, b.x1, ymax / 2, ymax, b.color, b.label) for b in g1.bands]
+    return (; bars, labels = tlabels, bands, softbars, midnight = g1.midnight, now = g1.now,
+              transit = g1.transit, transits, xlim = g1.xlim, target = g1.target, rows, ymax,
+              detailed = false, subtitle = String(title),
+              delay_applied = g1.delay_applied, seglabels,
+              segafter = fill((NaN, ""), length(seglabels)),
+              poplabels = Tuple{Float64,Float64,String,Vector{Bool},Bool}[], ellabels,
+              marks = Tuple{Float64,String,Symbol,Float64}[],
+              switches, multi = false, stack = true, cal = false)
 end
 
 "LST hours as `H:M`, matching the annotation format of the matplotlib original."

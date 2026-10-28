@@ -198,6 +198,32 @@
         @test startswith(rows, "1 1 4 4 1 5\t")
     end
 
+    @testset "part of the night: a UT window" begin
+        @test GUI._ut_window("") === nothing && GUI._ut_window("-") === nothing
+        @test GUI._ut_window("3:30-8") == (3.5, 8.0)
+        w = GUI._ut_window("-8:15"); @test isnan(w[1]) && w[2] == 8.25
+        w = GUI._ut_window("22-"); @test w[1] == 22.0 && isnan(w[2])
+        whole = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE)
+        half  = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE; ut_window = (6.0, NaN))
+        utc(p, i) = mod(p.utc[i], 24)
+        @test !isempty(half.good_twilight) && length(half.good_twilight) < length(whole.good_twilight)
+        @test all(i -> 6 <= utc(half, i) <= utc(whole, last(whole.good_twilight)), half.good_twilight)
+        @test last(half.good_twilight) == last(whole.good_twilight)
+        # through 0 h UT: the window 22–3 is the start of a CHARA night (local evening)
+        early = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE; ut_window = (22.0, 6.0))
+        @test first(early.good_twilight) == first(whole.good_twilight)
+        @test all(i -> utc(early, i) <= 6 || utc(early, i) >= 22, early.good_twilight)
+        # the shell's searches score only that part
+        full = GUI.shell_best_pops("CHARA", VEGA_DEC, "2026-06-21T00:00:00", VEGA_RA, "S1 S2 E1 E2 W1 W2", 1)
+        part = GUI.shell_best_pops("CHARA", VEGA_DEC, "2026-06-21T00:00:00", VEGA_RA, "S1 S2 E1 E2 W1 W2", 1,
+                                   GUI.DEFAULT_ALT_LIMIT, GUI.DEFAULT_ALT_MAX, "lst", "6-")
+        score(r) = parse(Int, split(r, '\t')[2])
+        @test 0 < score(part) < score(full)
+        @test startswith(GUI.shell_pop_timeline("CHARA", "Vega", VEGA_RA, VEGA_DEC, "2026-06-21T00:00:00",
+                                                "", "", false, GUI.DEFAULT_ALT_LIMIT, GUI.DEFAULT_ALT_MAX,
+                                                "lst", "", 10, false, "x-y"), "! night")
+    end
+
     @testset "Vega is a summer target from CHARA, and not a winter one" begin
         june = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, JUNE)
         dec  = night_plan("CHARA", "Vega", VEGA_RA, VEGA_DEC, DECEMBER)
@@ -401,6 +427,20 @@
 
         geo = gantt_geometry(p)
         @test geo.multi
+        # a calibrator: the same bars in its colours; the detailed view keeps the baselines'
+        cgeo = gantt_geometry(p; cal = true)
+        recol = Dict("blue" => "cal", "dodgerblue" => "cal2")
+        @test [get(recol, b.color, b.color) for b in geo.bars] == [b.color for b in cgeo.bars]
+        @test any(b -> b.color == "cal", cgeo.bars) && any(b -> b.color == "cal2", cgeo.bars)
+        @test [b.color for b in gantt_geometry(p; detailed = true, cal = true).bars] ==
+              [b.color for b in gantt_geometry(p; detailed = true).bars]
+        # its marks ("EL", "POP", "DROP") in dark blue, readable on the orange
+        cfig = Makie.Figure()
+        cg = build_gantt(cfig, Makie.Axis(cfig[1, 1]))
+        update_gantt!(cg, p; cal = true)
+        @test cg.markcolor[] == GUI.GANTT_CAL_MARK_COLOR
+        update_gantt!(cg, p)
+        @test cg.markcolor[] == GUI.GANTT_MARK_COLOR
         # the first setting where it starts, the change as "→" where it starts
         @test length(geo.poplabels) == 2 && !geo.poplabels[1][5] && geo.poplabels[2][5]
         @test geo.poplabels[2][1] ≈ unwrap_lst(p.lst)[first(only(p.changes))]
@@ -439,6 +479,7 @@
         @test pop_label(p1) == "E1:P2 W2:P5 W1:P1 S2:P1 S1:P1 E2:P3"     # the panel's order
         g1geo = gantt_geometry(p1)
         @test !g1geo.multi && isempty(g1geo.poplabels) && isempty(g1geo.seglabels)
+        @test all(b -> b.color == "cal", gantt_geometry(p1; cal = true).bars)
     end
 
     @testset "POP plans as text, as a summary, and ranked for the POP strategies tab" begin
@@ -708,6 +749,16 @@
         plans = [night_plan("CHARA", "Vega", ra, dec, d; pop = c.pop, use_delay = true) for c in cov]
         geo = gantt_stack_geometry(plans, ["early", "middle", "late"], "best time coverage POPs")
         @test geo.subtitle == "best time coverage POPs" && [r[2] for r in geo.rows] == ["early", "middle", "late"]
+        # the stack as the Gantt holds it, tagged, draws as these rows
+        st = (; kind = :coverage, plans, labels = ["early", "middle", "late"],
+              title = "best time coverage POPs")
+        fig = Makie.Figure()
+        g1 = build_gantt(fig, Makie.Axis(fig[1, 1])); g2 = build_gantt(fig, Makie.Axis(fig[1, 2]))
+        GUI.draw_gantt_stack!(g1, st)
+        update_gantt_stack!(g2, plans, st.labels, st.title)
+        @test g1.barrects[] == g2.barrects[] && g1.poptxt[] == g2.poptxt[] &&
+              g1.axis.yticks[] == g2.axis.yticks[] && g1.axis.title[] == g2.axis.title[]
+        @test_throws ErrorException GUI.draw_gantt_stack!(g1, (; st..., kind = :other))
         @test isempty(coverage_pops(f, dec, Float32[], ones(Int, 6)))
         # each pick is a best setting for its third, and among the ties the picks move the
         # fewest POPs from third to third: W2 stays on POP 5 throughout
@@ -722,23 +773,92 @@
 
     @testset "a target list to and from CSV" begin
         tmp = mktempdir()
-        rows = join(["Vega\t279.234735\t38.783689\t0.03\t-0.18\t-0.03\t0.13\t1",
-                     "HD 217357, \"GJ 884\"\t345.067176\t-22.524347\t7.869\t\t\t4.478\t0"], "\n")
+        rows = join(["Vega\t279.234735\t38.783689\t0.03\t-0.18\t-0.03\t0.13\t1\t0\t",
+                     "HD 217357, \"GJ 884\"\t345.067176\t-22.524347\t7.869\t\t\t4.478\t0\t1\tVega;Altair, b"], "\n")
         p = joinpath(tmp, "targets")
         @test GUI.shell_save_targets(p, rows) == ""
         @test isfile(p * ".csv")
+        @test first(readlines(p * ".csv")) == "name,ra,dec,V,J,H,K,simbad,cal,for"
         back = split(GUI.shell_load_targets(p * ".csv"), "\n")
         @test length(back) == 2
         f1, f2 = split(back[1], "\t"), split(back[2], "\t")
         @test f1[1] == "Vega" && f1[8] == "1" && parse(Float64, f1[2]) == 279.234735
         # a name with a comma and quotes survives; unknown magnitudes stay unknown
         @test f2[1] == "HD 217357, \"GJ 884\"" && f2[5] == "" && f2[8] == "0"
-        # names alone: unresolved targets
+        # the calibrator flag, both ways, and the targets it is for
+        @test f1[9] == "0" && f2[9] == "1"
+        @test f1[10] == "" && f2[10] == "Vega;Altair, b"
+        # names alone: unresolved targets, not calibrators
         write(joinpath(tmp, "names.txt"), "Altair\n# a comment\nDeneb\n")
         nm = split(GUI.shell_load_targets(joinpath(tmp, "names.txt")), "\n")
         @test [split(r, "\t")[1] for r in nm] == ["Altair", "Deneb"]
-        @test all(r -> split(r, "\t")[8] == "0", nm)
+        @test all(r -> split(r, "\t")[8:9] == ["0", "0"], nm)
         @test startswith(GUI.shell_load_targets(joinpath(tmp, "none.csv")), "!")
+        # by column name, in any order and case; a column of the user's own carried and kept
+        write(joinpath(tmp, "named.csv"),
+              "Dec,NAME,ra,k,notes,Simbad,CAL\n-22.524347,HD 217357,345.067176,4.478,\"M dwarf, flare\",1,1\n")
+        f3 = split(GUI.shell_load_targets(joinpath(tmp, "named.csv")), "\t")
+        @test f3[1:10] == ["HD 217357", "345.067176", "-22.524347", "", "", "", "4.478", "1", "1", ""]
+        @test f3[11:end] == ["notes=M dwarf, flare"]
+        @test GUI.shell_save_targets(joinpath(tmp, "named2"), join(f3, "\t")) == ""
+        @test readlines(joinpath(tmp, "named2.csv")) ==
+              ["name,ra,dec,V,J,H,K,simbad,cal,for,notes",
+               "HD 217357,345.067176,-22.524347,,,,4.478,1,1,,\"M dwarf, flare\""]
+        # columns met in some rows only: every row gets every column
+        two = join(["A\t1\t2\t\t\t\t\t0\t0\t\tnotes=x", "B\t3\t4\t\t\t\t\t0\t1\tA\tsim=ud"], "\n")
+        @test GUI.shell_save_targets(joinpath(tmp, "two"), two) == ""
+        @test readlines(joinpath(tmp, "two.csv")) ==
+              ["name,ra,dec,V,J,H,K,simbad,cal,for,notes,sim", "A,1,2,,,,,0,0,,x,", "B,3,4,,,,,0,1,A,,ud"]
+        back2 = split(GUI.shell_load_targets(joinpath(tmp, "two.csv")), "\n")
+        @test split(back2[2], "\t")[10:12] == ["A", "notes=", "sim=ud"]
+        # no header: by position, the eight columns without `cal` read as no calibrator
+        write(joinpath(tmp, "pos.csv"), "Vega,279.234735,38.783689,0.03,-0.18,-0.03,0.13,1\n")
+        @test GUI.shell_load_targets(joinpath(tmp, "pos.csv")) ==
+              "Vega\t279.234735\t38.783689\t0.03\t-0.18\t-0.03\t0.13\t1\t0\t"
+        # a header without `cal` (the shipped lists): no calibrators
+        bright = joinpath(@__DIR__, "..", "..", "demos", "targets", "bright_stars.csv")
+        @test all(r -> split(r, "\t")[9] == "0", split(GUI.shell_load_targets(bright), "\n"))
+    end
+
+    @testset "a list under one shared POP plan" begin
+        rows = join(["A\t330.0\t20.0\t0\t", "B\t60.0\t20.0\t0\t", "C\t333.0\t22.0\t1\tA; nobody"], "\n")
+        tels = "S1 S2 E1 E2 W1 W2"
+        date = "2026-10-26T00:00:00"
+        # `for` ties C to A only; an unknown name is skipped; without `needs_cal`, nothing tied
+        tn = GUI._targets_night("CHARA", rows, date, tels, 25, 80, "", true)
+        @test tn.cals == [[3], Int[], Int[]] && [t.cal for t in tn.targets] == [false, false, true]
+        @test GUI._targets_night("CHARA", rows, date, tels, 25, 80, "", false).cals == [Int[], Int[], Int[]]
+        @test startswith(GUI._targets_night("CHARA", rows, "nope", tels, 25, 80, "", true), "!")
+        # the tab's plans: 0, 1 and 2 changes, best first, each with its text
+        out = split(GUI.shell_pop_plans_targets("CHARA", rows, date, tels, 2, 10, 15, 30, true,
+                                                25, 80, "lst"), "\n")
+        f = [split(r, "\t") for r in out]
+        @test all(x -> length(x) == 6, f)
+        @test issorted([parse(Float64, x[3]) for x in f]; rev = true)
+        @test parse(Float64, f[1][4]) <= parse(Float64, f[1][5])
+        @test count("→", f[1][1]) == parse(Int, f[1][2])
+        # the Gantt of the list: a row per target and the POPs row on top
+        fac = read_facility_file("CHARA")
+        cfg = ones(Int, 6)
+        shared = pop_plan_targets(fac, tn.targets, tn.lst, cfg; observable = tn.sky,
+                                  calibrators = tn.cals, max_changes = 1, min_stretch = 15)
+        plans = [night_plan(fac, t.name, t.ra, t.dec, tn.date; config = cfg, use_delay = true,
+                            popplan = target_pop_plan(shared, k, t.ra, cfg;
+                                                      ha_start = unwrap_hour_angles(tn.obs[k].ha)[1]))
+                 for (k, t) in enumerate(tn.targets)]
+        @test [round(Int, observable_hours(p) * 60) for p in plans] == shared.minutes
+        geo = GUI.gantt_targets_geometry(plans, ["A", "B", "C Cal"], [false, false, true], shared, cfg)
+        @test [r[2] for r in geo.rows] == ["A", "B", "C Cal", "POPs"]
+        @test issorted([r[1] for r in geo.rows])  == false && geo.rows[end][1] > geo.rows[1][1]
+        cy = geo.rows[3][1]
+        @test all(b -> b.color in ("cal", "cal2"), filter(b -> abs(b.y - cy) < 0.5, geo.bars))
+        @test count(b -> b.color == "lightsteelblue", geo.bars) == length(shared.segments)
+        @test length(geo.switches) == shared.changes
+        # every target bar lies within the shared segment its POPs are from
+        pb = filter(b -> b.color == "lightsteelblue", geo.bars)
+        for b in filter(b -> b.color in ("blue", "dodgerblue", "cal", "cal2"), geo.bars)
+            @test any(s -> s.x0 - 1/60 <= b.x0 && b.x1 <= s.x1 + 1/60, pb)
+        end
     end
 
     @testset "the facility's display order" begin

@@ -39,9 +39,10 @@ function load_dataset!(s::Session, path::Union{AbstractString,AbstractVector{<:A
     data isa AbstractArray || throw(ArgumentError("readoifits did not return data for $(repr(path))"))
 
     name = _next_name(s.datasets, "data")
-    entry = DatasetEntry(name, files[1], data, kw,
-                         get(kw, :spectralbin, nothing), get(kw, :temporalbin, nothing), nothing,
-                         "", length(files) == 1 ? String[] : files)
+    entry = DatasetEntry(; name, path = files[1], data, readopts = kw,
+                         spectralbin = get(kw, :spectralbin, nothing),
+                         temporalbin = get(kw, :temporalbin, nothing),
+                         files = length(files) == 1 ? String[] : files)
     push!(s.datasets, entry)
 
     # `Pair{Symbol,Any}[...]`, not a bare comprehension: over an EMPTY `kw` the comprehension
@@ -91,8 +92,9 @@ function filter_dataset!(s::Session, name::AbstractString;
     isempty(prep) || foreach(d -> OITOOLS.oifits_prep(d; prep...), out)
 
     newname = _next_name(s.datasets, "data")
-    entry = DatasetEntry(newname, src.path, out, ropts, src.spectralbin, src.temporalbin,
-                         src.name, String(spec), src.files)
+    entry = DatasetEntry(; name = newname, path = src.path, data = out, readopts = ropts,
+                         spectralbin = src.spectralbin, temporalbin = src.temporalbin,
+                         derived_from = src.name, filterspec = String(spec), files = src.files)
     push!(s.datasets, entry)
 
     # Typed: over an empty dict a bare comprehension is a `Vector{Any}`, which `_kwargs` refuses.

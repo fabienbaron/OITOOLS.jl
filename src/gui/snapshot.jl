@@ -244,8 +244,8 @@ function _snapshot_figure(sh::ShellState, which::AbstractString, size, detailed:
             g = build_gantt(fig, ax)
             # the stacked rows when the panel shows them, as `shell_gantt` drew it
             GANTT_STACK[] !== nothing && !detailed ?
-                update_gantt_stack!(g, GANTT_STACK[]...; time_system = GANTT_TIME_SYSTEM[]) :
-                update_gantt!(g, sh.plan; detailed, time_system = GANTT_TIME_SYSTEM[])
+                draw_gantt_stack!(g, GANTT_STACK[]; time_system = GANTT_TIME_SYSTEM[], cal = GANTT_CAL[]) :
+                update_gantt!(g, sh.plan; detailed, time_system = GANTT_TIME_SYSTEM[], cal = GANTT_CAL[])
         else
             isempty(sh.plan.baselines) && return nothing
             update_delay_plot!(build_delay_plot(fig, ax), sh.plan; time_system = GANTT_TIME_SYSTEM[])
