@@ -512,6 +512,16 @@
         @test first(tot) == maximum(tot)
         # the plan column is what shell_gantt takes
         @test parse_pop_plan_text(split(first(rows), "\t")[6]).minutes == pp.minutes
+        # Precise: 5 minutes more per POP moved, carts at 0.05 m/s; no plan does better
+        prec = split(GUI.shell_pop_plans("CHARA", dec, "2026-06-21T00:00:00", ra,
+                                         "S1 S2 E1 E2 W1 W2", "W2", 2, 1, 10, GUI.DEFAULT_ALT_LIMIT,
+                                         GUI.DEFAULT_ALT_MAX, "lst", 0, "", 5, 0.05), "\n")
+        @test all(r -> length(split(r, "\t")) == 6, prec)
+        @test parse(Float64, split(first(prec), "\t")[4]) <= first(f6)
+        # an unset cart speed and no time per POP: the search as before
+        @test GUI.shell_pop_plans("CHARA", dec, "2026-06-21T00:00:00", ra, "S1 S2 E1 E2 W1 W2", "W2",
+                                  2, 1, 10, GUI.DEFAULT_ALT_LIMIT, GUI.DEFAULT_ALT_MAX, "lst", 0, "",
+                                  0, -1) == join(rows, "\n")
     end
 
     @testset "a telescope regained soon after the first POPs is labelled after them" begin

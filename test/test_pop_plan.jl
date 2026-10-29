@@ -230,6 +230,68 @@ using OITOOLS, Test, Dates
         @test segments_in_delay(p60, vega[2], ones(Int, 6))
     end
 
+    @testset "change times: POPs moved and cart travel" begin
+        o, ok = sky(vega...)
+        cfg = ones(Int, 6)
+        # carts so fast that every change takes `change_minutes`: the plans of the fast search
+        for md in (0, 1), L in (0, 30)
+            a = pop_plans(f, vega[2], o.ha, cfg; observable = ok, max_drop = md, min_stretch = L)
+            b = pop_plans(f, vega[2], o.ha, cfg; observable = ok, max_drop = md, min_stretch = L,
+                          cart_speed = 1e9)
+            @test [(p.minutes, p.changes, [(sg.ha0, sg.pop, sg.config) for sg in p.segments]) for p in a] ==
+                  [(p.minutes, p.changes, [(sg.ha0, sg.pop, sg.config) for sg in p.segments]) for p in b]
+        end
+        # each change leaves the time it takes between the last minute before and the first after
+        pops = OITOOLS._pop_table(f)
+        fast = pop_plan(f, vega[2], o.ha, cfg; observable = ok, max_drop = 1)
+        for (pm, v) in ((5, Inf), (0, 0.05), (5, 0.05))
+            p = pop_plan(f, vega[2], o.ha, cfg; observable = ok, max_drop = 1, pop_minutes = pm,
+                         cart_speed = v)
+            @test p.minutes <= fast.minutes && segments_in_delay(p, vega[2], cfg)
+            for (x, y) in zip(p.segments[1:end-1], p.segments[2:end])
+                x.pop == y.pop && continue
+                need = OITOOLS._change_minutes(x.pop, y.pop, findall(>(0), cfg), 0, pops, 10, pm, v)
+                @test round(Int, (y.ha0 - x.ha1) * 60) - 1 >= need
+            end
+        end
+        # the cart time: W2 from POP 5 to 1 moves its cart 71.5 m, 24 minutes at 0.05 m/s
+        @test OITOOLS._change_minutes([1, 1, 1, 1, 1, 5], [1, 1, 1, 1, 1, 1], 1:6, 0, pops, 10, 0, 0.05) ==
+              ceil(Int, 0.5 * 143.055 / 2 / 0.05 / 60)
+        @test OITOOLS._change_minutes([1, 1, 1, 1, 1, 5], [1, 1, 1, 1, 1, 1], 1:6, 6, pops, 10, 0, 0.05) ==
+              ceil(Int, 0.5 * 143.055 / 0.05 / 60)
+        @test OITOOLS._change_minutes([1, 1, 1, 1, 1, 5], [2, 1, 1, 1, 1, 1], 1:6, 6, pops, 10, 3, Inf) == 16
+        # one change at most, three telescopes: the best by brute force over every pair of
+        # settings and every minute the change can start
+        c3 = [1, 1, 0, 0, 0, 2]
+        on = findall(>(0), c3)
+        o3, ok3 = sky(vega...; cfg = c3)
+        p1 = pop_plan(f, vega[2], o3.ha, c3; observable = ok3, max_changes = 1, min_minutes = 0,
+                      pop_minutes = 4, cart_speed = 0.03)
+        hs = unwrap_hour_angles(Float64.(o3.ha))
+        lo, hi = extrema(hs[ok3])
+        grid = collect(lo:1/60:hi)
+        sky3 = [ok3[argmin(abs.(hs .- h))] for h in grid]
+        sets = vec([[a, b, 1, 1, 1, c] for a in 1:5, b in 1:5, c in 1:5])
+        wrap(h) = mod(h + 12, 24) - 12
+        mask = map(sets) do pp
+            iv = delay_ha_intervals(f, vega[2], c3, pp)
+            [sky3[i] && any(x -> x[1] <= wrap(h) <= x[2], iv) for (i, h) in enumerate(grid)]
+        end
+        T = length(grid)
+        best = maximum(sum, mask)
+        pre = [cumsum(m) for m in mask]
+        suf = [reverse(cumsum(reverse(m))) for m in mask]
+        for i in eachindex(sets), j in eachindex(sets)
+            i == j && continue
+            c = OITOOLS._change_minutes(sets[i], sets[j], on, 6, pops, 10, 4, 0.03)
+            a, b = pre[i], suf[j]
+            for t in 1:T-c-1
+                best = max(best, a[t] + b[t+c+1])
+            end
+        end
+        @test p1.minutes[1] == best
+    end
+
     @testset "degenerate input" begin
         o, ok = sky(vega...)
         @test isempty(pop_plan(f, vega[2], o.ha, [1, 0, 0, 0, 0, 0]; observable = ok).segments)

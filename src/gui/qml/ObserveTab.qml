@@ -706,16 +706,6 @@ Item {
                                                     ToolTip.visible: hovered
                                                     ToolTip.text: "A calibrator"
                                                 }
-                                                TextField {
-                                                    objectName: "obsTargetFor:" + targetRow.index
-                                                    visible: targetRow.cal
-                                                    Layout.preferredWidth: dp(90)
-                                                    text: targetRow.calFor
-                                                    placeholderText: "for"
-                                                    onEditingFinished: root.setTargetField(targetRow.index, "calFor", text.trim())
-                                                    ToolTip.visible: hovered
-                                                    ToolTip.text: "science targets, ; between"
-                                                }
                                                 Button {
                                                     text: "SIMBAD"
                                                     enabled: targetRow.name.length > 0
@@ -725,6 +715,21 @@ Item {
                                                     text: "−"
                                                     enabled: targetModel.count > 1
                                                     onClicked: root.removeTarget(targetRow.index)
+                                                }
+                                            }
+
+                                            // a calibrator's science targets
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                visible: targetRow.cal
+                                                spacing: dp(4)
+                                                Label { text: "for"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                TextField {
+                                                    objectName: "obsTargetFor:" + targetRow.index
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.calFor
+                                                    placeholderText: "science targets, ; between"
+                                                    onEditingFinished: root.setTargetField(targetRow.index, "calFor", text.trim())
                                                 }
                                             }
 
@@ -1779,7 +1784,7 @@ Item {
                                 // The best result is adopted rather than merely listed: leaving
                                 // the user to copy it is how the searched POPs get forgotten and
                                 // the delay check reports a third of the real window.
-                                onClicked: root.runSearch()
+                                onClicked: root.runSearch(false)
                             }
                             // the same value as the POPs panel's "change … min"
                             Label { text: "POP change"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
@@ -1826,6 +1831,42 @@ Item {
                                 onValueModified: root.setSearchOption("minStretch", value)
                                 ToolTip.visible: hovered
                                 ToolTip.text: "shortest stretch, minutes"
+                            }
+                            Label { text: "+"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: !root.singlePops && !root.multiTarget }
+                            SpinBox {
+                                objectName: "popPerPop"
+                                Layout.preferredWidth: dp(70)
+                                visible: !root.singlePops && !root.multiTarget
+                                from: 0; to: 30; editable: true
+                                value: root.popMinutes
+                                onValueModified: root.popMinutes = value
+                                ToolTip.visible: hovered
+                                ToolTip.text: "minutes per POP moved"
+                            }
+                            Label { text: "min/POP  cart"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: !root.singlePops && !root.multiTarget }
+                            TextField {
+                                objectName: "popCartSpeed"
+                                Layout.preferredWidth: dp(52)
+                                visible: !root.singlePops && !root.multiTarget
+                                placeholderText: "—"
+                                text: root.cartSpeed
+                                validator: RegularExpressionValidator { regularExpression: /^(\d*\.?\d*)?$/ }
+                                onEditingFinished: root.cartSpeed = text
+                                ToolTip.visible: hovered
+                                ToolTip.text: "cart speed; empty, no time"
+                            }
+                            Label { text: "m/s"; color: "#666"; font.pointSize: pt(baseFontPt - 2)
+                                    visible: !root.singlePops && !root.multiTarget }
+                            Button {
+                                objectName: "popPrecise"
+                                text: "Precise"
+                                visible: !root.singlePops && !root.multiTarget
+                                enabled: root.nSelectedTelescopes >= 2 && root.nNamedTargets > 0
+                                onClicked: root.runSearch(true)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "search with these change times"
                             }
                             Label { text: "night"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
                             TextField {
@@ -2911,6 +2952,11 @@ Item {
     // The part of the night used, UT "H:MM" or "H" each, empty for the start or the end.
     property string nightFrom: ""
     property string nightTo: ""
+    // Precise: minutes a change takes per POP moved, and the carts' speed in m/s ("" for none).
+    property int popMinutes: 0
+    property string cartSpeed: ""
+    // Whether the candidates in the tables came from Precise.
+    property bool lastPrecise: false
     // Multiple targets: how close in time a calibrator must be, and whether one is needed.
     property int bracketMinutes: 30
     property bool needsCal: true
@@ -2972,10 +3018,11 @@ Item {
     }
 
     // Search POPs with a multi-POP strategy: every named target's plans, ranked, in one table;
-    // for the list, its shared plans.
-    function findPlans() {
+    // for the list, its shared plans. `precise`: with the change times per POP and of the carts.
+    function findPlans(precise) {
         planModel.clear()
         if (root.multiTarget) { findSharedPlans(); return }
+        var speed = parseFloat(root.cartSpeed)
         root.tableClock = root.timeSystem
         var tels = root.telescopesArg()
         for (var i = Math.max(0, currentTargetIndex); i <= Math.max(0, currentTargetIndex) && i < targetModel.count; ++i) {
@@ -2986,7 +3033,8 @@ Item {
                                              root.popStrategy === 2 ? root.maxDrop : 0,
                                              root.changeMinutes, root.altLimit, root.altMax,
                                              root.timeSystem.toLowerCase(), root.minStretch,
-                                             root.nightArg())
+                                             root.nightArg(), precise ? root.popMinutes : 0,
+                                             precise && speed > 0 ? speed : -1)
             if (!rows || rows.length === 0) {
                 planModel.append({ target: t.name, rank: 0, summary: "no plan observes it",
                                    changes: "", dropped: "", full: "", total: "", plan: "" })
@@ -3123,7 +3171,9 @@ Item {
     property int plansGanttHeight: dp(240)
 
     // The selected target's candidates for the strategy chosen, into the tables and the chart.
-    function runSearch() {
+    // `precise`: Precise (true) or Search POPs (false); left out, the kind of the last search.
+    function runSearch(precise) {
+        if (precise !== undefined) root.lastPrecise = precise && !root.singlePops && !root.multiTarget
         root.selectedRow = ""
         if (root.singlePops) {
             planModel.clear()
@@ -3132,8 +3182,8 @@ Item {
                                                  : "no POP configuration found"
         } else {
             popModel.clear()
-            findPlans()
-            root.statusText = planModel.count + " plans"
+            findPlans(root.lastPrecise)
+            root.statusText = planModel.count + (root.lastPrecise ? " plans, precise" : " plans")
         }
         refreshPlansGantt()
         refreshTimeline()

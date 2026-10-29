@@ -936,7 +936,8 @@ end
 """
     pop_plan(facility, dec, ha, config; observable = trues(length(ha)), reference = 0,
              max_changes = 2, max_drop = 0, change_minutes = 10, min_minutes = 10,
-             min_stretch = 0, delay_length = nothing, pop_array = nothing, airpath = nothing) -> PopPlan
+             min_stretch = 0, pop_minutes = 0, cart_speed = Inf, delay_length = nothing,
+             pop_array = nothing, airpath = nothing) -> PopPlan
 
 The sequence of POP settings, and of telescopes dropped from `config`, that observes a target
 longest over the hour angles `ha` where `observable` is true.
@@ -957,6 +958,12 @@ for time with fewer telescopes.
 - `change_minutes`: the time a POP change takes, during which nothing is observed. Dropping or
   re-adding a telescope moves no POP and costs nothing.
 - `min_minutes`: POP settings observable for less than this are not considered.
+- `pop_minutes`, `cart_speed`: a change then takes the longer of `change_minutes +
+  pop_minutes ×` the POPs it moves and the time the delay carts take to reach their new
+  positions at `cart_speed` m/s (half the change of each baseline's POP offsets, the delay
+  reference's cart held; with none, the carts centred on their mean move), rounded up to the
+  minute. The default, `0` and `Inf`, is `change_minutes` for every change. A search with
+  them is slower: the change times are between every two states.
 - `min_stretch`: minutes a POP setting is held at least, from the end of the change that sets it
   to the start of the next (the last to the end of the night); a telescope dropped or added back
   for fewer observed minutes takes its neighbour's telescopes instead when they are in delay
@@ -985,6 +992,7 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
                   reference::Integer = something(findfirst(==(2), config), 0),
                   max_changes::Integer = 2, max_drop::Integer = 0,
                   change_minutes::Real = 10, min_minutes::Real = 10, min_stretch::Real = 0,
+                  pop_minutes::Real = 0, cart_speed::Real = Inf,
                   delay_length::Union{Nothing,Float64} = nothing,
                   pop_array::Union{Nothing,Matrix{Float32}} = nothing,
                   airpath::Union{Nothing,Vector{Float32}} = nothing)
@@ -1103,6 +1111,12 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
         tiermat[s, t] = state_tier[s][t]
     end
 
+    # Change times that depend on the change: the search of `_timed_paths`.
+    (pop_minutes > 0 || isfinite(cart_speed)) &&
+        return _timed_pop_plans(facility, pop_array, state_members, tiermat, drops, grid, cfg1,
+                                active, dref, inD, bst, change_minutes, pop_minutes, cart_speed,
+                                min_stretch, max_changes)
+
     # Dynamic programming over the minutes. A score is (minutes per tier..., -changes), compared
     # lexicographically, which adding a minute or a change preserves. Being in state s at minute
     # t comes either from s at t-1, or from another state at t-Δ-1 through a change occupying
@@ -1190,10 +1204,223 @@ function pop_plans(facility::FacilityConfig, dec::Real, ha::AbstractVector{<:Rea
         for s in 1:K, k in 1:c+1
             last_row[s, k] > last_row[bs, bk] && ((bs, bk) = (s, k))
         end
-        push!(plans, _pop_plan_trace(bs, bk, endH, T, Δ, L, came, held, top, state_members,
-                                     tiermat, drops, tiers, grid, cfg1, active, inD, bst))
+        push!(plans, _pop_plan_trace(_held_path(bs, bk, endH, T, Δ, L, came, held, top), bk, T, L,
+                                     state_members, tiermat, drops, tiers, grid, cfg1, active,
+                                     inD, bst))
     end
     return plans
+end
+
+# Minutes to change from the POPs `a` to `b`: the longer of the alignment, `fixed + perpop ×`
+# the POPs moved, and the carts' travel at `speed` m/s, each cart moving half its telescope's
+# change of POP offset (`pops`, metres of path), measured from the reference's cart (`dref`),
+# or with none from the middle of the moves.
+function _change_minutes(a, b, active, dref, pops, fixed, perpop, speed)
+    d = 0; lo = Inf; hi = -Inf
+    shift(i) = 0.5 * (Float64(pops[i, b[i]]) - Float64(pops[i, a[i]]))
+    for i in active
+        a[i] != b[i] && (d += 1)
+        x = shift(i)
+        lo = min(lo, x); hi = max(hi, x)
+    end
+    travel = dref > 0 ? maximum(i -> abs(shift(i) - shift(dref)), active) : (hi - lo) / 2
+    cart = isfinite(speed) && speed > 0 ? ceil(Int, travel / speed / 60 - 1e-9) : 0
+    return max(round(Int, fixed + perpop * d), cart)
+end
+
+# `pop_plans`' plans when a change takes `_change_minutes`.
+function _timed_pop_plans(facility, pop_array, state_members, tiermat, drops, grid, cfg1, active,
+                          dref, inD, bst, change_minutes, pop_minutes, cart_speed, min_stretch,
+                          max_changes)
+    pops = _pop_table(facility; pop_array)
+    chg(a, b) = _change_minutes(a, b, active, dref, pops, change_minutes, pop_minutes, cart_speed)
+    D = _state_change_minutes(state_members, active, dref, pops, change_minutes, pop_minutes,
+                              cart_speed)
+    T = size(tiermat, 2)
+    L = max(1, round(Int, min_stretch))
+    tiers = [d[2] for d in drops]
+    return [_pop_plan_trace(path, bk, T, L, state_members, tiermat, drops, tiers, grid, cfg1,
+                            active, inD, bst; chg)
+            for (path, bk) in _timed_paths(tiermat, D, T, Int(max_changes), L)]
+end
+
+# Between two states, the quickest change between their settings, in minutes, as
+# `_change_minutes` gives it: each setting's POPs and its carts' offsets (half its POP offsets,
+# from the reference's) are tabled once, and a pair of states is left as soon as one of their
+# pairs changes in the least time any change can take.
+function _state_change_minutes(state_members, active, dref, pops, fixed, perpop, speed)
+    K = length(state_members)
+    na = length(active)
+    # every setting, its state's settings contiguous
+    first_m = zeros(Int, K + 1); first_m[1] = 1
+    for s in 1:K
+        first_m[s+1] = first_m[s] + length(state_members[s])
+    end
+    nm = first_m[K+1] - 1
+    P = Matrix{UInt8}(undef, na, nm)
+    Y = Matrix{Float64}(undef, na, nm)
+    m = 0
+    for s in 1:K, (pp, _) in state_members[s]
+        m += 1
+        y0 = dref > 0 ? 0.5 * Float64(pops[dref, pp[dref]]) : 0.0
+        for (k, i) in enumerate(active)
+            P[k, m] = pp[i]
+            Y[k, m] = 0.5 * Float64(pops[i, pp[i]]) - y0
+        end
+    end
+    carts = isfinite(speed) && speed > 0
+    align = [round(Int, fixed + perpop * d) for d in 0:na]
+    # the cart travel each alignment time covers, beyond which the carts take longer
+    reach = [carts ? speed * 60 * a : Inf for a in align]
+    least = align[2]
+    D = zeros(Int16, K, K)
+    for i in 1:K, j in 1:K
+        i == j && continue
+        best = typemax(Int)
+        for a in first_m[i]:first_m[i+1]-1
+            for b in first_m[j]:first_m[j+1]-1
+                d = 0; lo = Inf; hi = -Inf
+                @inbounds for k in 1:na
+                    d += P[k, a] != P[k, b]
+                    x = Y[k, b] - Y[k, a]
+                    lo = min(lo, x); hi = max(hi, x)
+                end
+                # from the reference's cart, which moved by 0 in these offsets; with none, the
+                # carts centred on their mean move
+                travel = dref > 0 ? max(hi, -lo, 0.0) : (hi - lo) / 2
+                c = travel <= reach[d+1] ? align[d+1] : ceil(Int, travel / speed / 60 - 1e-9)
+                c < best && (best = c)
+            end
+            best <= least && break
+        end
+        D[i, j] = Int16(best)
+    end
+    return D
+end
+
+# `pop_plans`' search when a change from state `i` to `j` takes `D[i, j]` minutes, with the
+# scores V and H of `pop_plans` (`L` the minutes a setting is held). A change into `s` at `t`
+# leaves a state `s'` at `r = t - δ - 1` for `δ` among the change times, with `D[s', s] <= δ`:
+# a change quicker than `δ` then waits. Each `δ` is answered from the `M` best H at `r` and,
+# when none of those can change to `s` in time, from every state; as the best H at `r` only
+# falls with `δ`, the times are tried from the shortest and left once they cannot do better.
+# Returns, for 0 … `kmax` changes, the state at each minute (0 during a change) and the number
+# of changes plus one.
+function _timed_paths(tiermat, D, T, kmax, L; M = 128)
+    K = size(tiermat, 1)
+    NEG = (typemin(Int) ÷ 4, 0, 0, 0, 0, 0)
+    ZERO = (0, 0, 0, 0, 0, 0)
+    addmin(x, tr) = ntuple(i -> x[i] + (i == tr), Val(6))
+    submin(x, tr) = ntuple(i -> x[i] - (i == tr), Val(6))
+    addtup(a, b) = ntuple(i -> a[i] + b[i], Val(6))
+    dec(v) = (v[1], v[2], v[3], v[4], v[5], v[6] - 1)
+    δs = sort(unique(D[i, j] for i in 1:K for j in 1:K if i != j))
+    maxδ = isempty(δs) ? 0 : Int(last(δs))
+    M = min(M, K)
+    nring = L + 1
+    ring = [fill(NEG, K, kmax + 1) for _ in 1:nring]
+    row(t) = ring[mod1(t, nring)]
+    nH = maxδ + 2
+    hring = [fill(NEG, K, kmax + 1) for _ in 1:nH]
+    hrow(t) = hring[mod1(t, nH)]
+    win = fill(ZERO, K)
+    src = zeros(Int32, kmax + 1, K, T)       # the state a change into s at t left (0: none)
+    srcr = zeros(Int32, kmax + 1, K, T)      # ...and the minute it left it
+    held = falses(T, kmax + 1, K)
+    topI = zeros(Int32, M, kmax + 1, T)      # the M best H at (t, k), best first
+    topV = fill(NEG, M, kmax + 1, T)
+    idx = collect(1:K)
+    for t in 1:T
+        cur = row(t); prev = t > 1 ? row(t - 1) : cur
+        old = t - L + 1 >= 1 ? row(t - L + 1) : nothing
+        hc = hrow(t); hp = hrow(t - 1)
+        if L > 1
+            for s in 1:K
+                w = addmin(win[s], tiermat[s, t])
+                win[s] = t - L + 1 >= 1 ? submin(w, tiermat[s, t-L+1]) : w
+            end
+        end
+        for k in 1:kmax+1
+            for s in 1:K
+                best = t == 1 ? (k == 1 ? ZERO : NEG) : prev[s, k]
+                if k > 1
+                    for δ in δs
+                        r = t - δ - 1
+                        r < 1 && break
+                        dec(topV[1, k-1, r]) <= best && break
+                        found = false
+                        for j in 1:M
+                            s2 = topI[j, k-1, r]
+                            v = dec(topV[j, k-1, r])
+                            if s2 == 0 || v <= best
+                                found = true; break
+                            end
+                            if s2 != s && D[s2, s] <= δ
+                                best = v; src[k, s, t] = s2; srcr[k, s, t] = r
+                                found = true; break
+                            end
+                        end
+                        if !found
+                            hr = hrow(r)
+                            for s2 in 1:K
+                                (s2 == s || D[s2, s] > δ) && continue
+                                v = dec(hr[s2, k-1])
+                                v > best && (best = v; src[k, s, t] = s2; srcr[k, s, t] = r)
+                            end
+                        end
+                    end
+                end
+                tr = @inbounds tiermat[s, t]
+                v = addmin(best, tr)
+                cur[s, k] = v
+                h = v
+                if L > 1
+                    h = t > 1 ? addmin(hp[s, k], tr) : NEG
+                    if old !== nothing
+                        hv = addtup(old[s, k], win[s])
+                        hv >= h && (h = hv; held[t, k, s] = true)
+                    end
+                end
+                hc[s, k] = h
+            end
+            col = view(hc, :, k)
+            partialsortperm!(idx, col, 1:M; rev = true)
+            for j in 1:M
+                topI[j, k, t] = idx[j]; topV[j, k, t] = col[idx[j]]
+            end
+        end
+    end
+
+    endH = L > 1 && T >= L
+    last_row = endH ? hrow(T) : row(T)
+    out = Tuple{Vector{Int},Int}[]
+    for c in 0:kmax
+        bs, bk = 1, 1
+        for s in 1:K, k in 1:c+1
+            last_row[s, k] > last_row[bs, bk] && ((bs, bk) = (s, k))
+        end
+        path = zeros(Int, T)
+        t, s, k, inH = T, bs, bk, endH
+        while t >= 1
+            if inH
+                if held[t, k, s]
+                    path[max(1, t - L + 2):t] .= s
+                    t -= L - 1; inH = false
+                else
+                    path[t] = s; t -= 1
+                end
+            else
+                path[t] = s
+                if src[k, s, t] > 0
+                    t, s, k, inH = Int(srcr[k, s, t]), Int(src[k, s, t]), k - 1, L > 1
+                else
+                    t -= 1
+                end
+            end
+        end
+        push!(out, (path, bk))
+    end
+    return out
 end
 
 # The state at each minute (0 during a change) of the plan ending in state `bs` with `bk - 1`
@@ -1230,13 +1457,13 @@ end
 # the settings that move the fewest POPs over its changes. For each run of one state the
 # candidates are every setting observing that run's own minutes in the same tiers -- of any
 # state, as what a setting does outside the run does not matter to it.
-function _pop_plan_trace(bs, bk, endH, T, Δ, L, came, held, top, state_members, tiermat, drops,
-                         tiers, grid, cfg1, active, inD, bst)
-    path_s = _held_path(bs, bk, endH, T, Δ, L, came, held, top)
+function _pop_plan_trace(path_s, bk, T, L, state_members, tiermat, drops, tiers, grid, cfg1,
+                         active, inD, bst; chg = nothing)
 
     # The plan's states in order, and for each the setting that moves the fewest POPs over all
     # its changes: a shortest path through the states' settings, the cost of a step being the
-    # POPs that differ.
+    # POPs that differ. With change times (`chg`, minutes from one setting to another), a step
+    # whose change does not fit between the two runs is avoided wherever another fits.
     blocks = Tuple{Int,Int,Int}[]            # (state, first minute, last minute)
     for t in 1:T
         st = path_s[t]
@@ -1261,11 +1488,13 @@ function _pop_plan_trace(bs, bk, endH, T, Δ, L, came, held, top, state_members,
         back = [Int[]]
         for b in 2:nb
             prevm, curm = cands[b-1], cands[b]
+            gap = blocks[b][2] - blocks[b-1][3] - 1
             cb = Vector{Int}(undef, length(curm)); bb = Vector{Int}(undef, length(curm))
             for (j, (pj, _)) in enumerate(curm)
                 best, arg = typemax(Int), 1
                 for (i, (pi, _)) in enumerate(prevm)
-                    v = cost[b-1][i] + moved(pi, pj)
+                    v = cost[b-1][i] + moved(pi, pj) +
+                        (chg !== nothing && pi != pj && chg(pi, pj) > gap ? 1000 : 0)
                     v < best && ((best, arg) = (v, i))
                 end
                 cb[j] = best; bb[j] = arg

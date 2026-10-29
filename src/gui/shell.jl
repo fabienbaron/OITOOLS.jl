@@ -5932,22 +5932,23 @@ end
 """
     shell_pop_plans(facility, dec, dateiso, ra, telescopes, reference, max_changes, max_drop,
                     change_minutes, alt_limit, alt_max, time_system = "lst", min_stretch = 0,
-                    night = "") -> String
+                    night = "", pop_minutes = 0, cart_speed = -1) -> String
 
 The POP strategies tab's plans for one target, best first: the best with at most 0 … `max_changes` POP
 changes and 0 … `max_drop` telescopes dropped, each distinct plan once, ranked as `pop_plan`
 ranks them. One row per plan, `summary \t changes \t dropped \t hours with every telescope
 \t hours in all \t plan`, `plan` being the `pop_plan_text` that `shell_gantt` takes.
 `reference` is the telescope protected from being dropped (a name, or empty). The summary's
-times are on the clock `time_system`. `min_stretch` as in `pop_plan`; `night` as in
-[`shell_gantt`](@ref). `""` when no plan observes anything.
+times are on the clock `time_system`. `min_stretch`, `pop_minutes` and `cart_speed` (m/s; `≤ 0`
+for carts taking no time) as in `pop_plan`; `night` as in [`shell_gantt`](@ref). `""` when no
+plan observes anything.
 """
 function shell_pop_plans(facility::AbstractString, dec::Real, dateiso::AbstractString,
                          ra::Real, telescopes::AbstractString, reference::AbstractString,
                          max_changes::Integer, max_drop::Integer, change_minutes::Real,
                          alt_limit::Real = DEFAULT_ALT_LIMIT, alt_max::Real = DEFAULT_ALT_MAX,
                          time_system::AbstractString = "lst", min_stretch::Real = 0,
-                         night::AbstractString = "")
+                         night::AbstractString = "", pop_minutes::Real = 0, cart_speed::Real = -1)
     sh = SHELL[]
     say(t) = sh === nothing ? nothing : console!(sh, t)
     date = try
@@ -5966,11 +5967,15 @@ function shell_pop_plans(facility::AbstractString, dec::Real, dateiso::AbstractS
         kc, kd = max(0, Int(max_changes)), max(0, Int(max_drop))
         say("> pop_plans(facility, $(round(Float64(dec); digits=4)), ha, $(cfg); observable, " *
             "reference = $(ref), max_changes = $(kc), max_drop = 0:$(kd), change_minutes = $(change_minutes), " *
-            "min_stretch = $(min_stretch))")
+            "min_stretch = $(min_stretch)" *
+            (pop_minutes > 0 ? ", pop_minutes = $(pop_minutes)" : "") *
+            (cart_speed > 0 ? ", cart_speed = $(cart_speed)" : "") * ")")
+        speed = cart_speed > 0 ? Float64(cart_speed) : Inf
         plans = PopPlan[]
         for d in 0:kd
             for pl in pop_plans(f, Float64(dec), ha, cfg; observable = ok, reference = ref,
-                                max_changes = kc, max_drop = d, change_minutes, min_stretch)
+                                max_changes = kc, max_drop = d, change_minutes, min_stretch,
+                                pop_minutes, cart_speed = speed)
                 isempty(pl.segments) && continue
                 t = pop_plan_text(pl)
                 any(q -> pop_plan_text(q) == t, plans) || push!(plans, pl)

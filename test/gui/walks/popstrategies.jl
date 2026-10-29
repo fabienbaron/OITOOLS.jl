@@ -17,6 +17,8 @@ function timeline(w)
     return out
 end
 clockrow(w, k) = value(w, "tlFrom:$k")
+# the rows of the plans table
+count_plans(w) = count(k -> (try locate(w, "planRank:Vega:$k"; timeout = 1).w > 0 catch; false end), 1:20)
 
 w = start("popstrategies")
 try
@@ -128,6 +130,23 @@ try
         shot(w, "09-vega-reference-timeline")
         click(w, "text:Gantt"; pause = 3)
         shot(w, "10-vega-reference-gantt")
+    end
+    stage(w, "Precise: change times per POP and of the carts") do
+        click(w, "text:POP strategies"; pause = 2)
+        choose(w, "popStrategyTab", "POP changes on a single line"; pause = 3)
+        click(w, "popSearch"; pause = 6)
+        spin(w, "popPerPop", 5)
+        typein(w, "popCartSpeed", "0.05"; pause = 1)
+        click(w, "popPrecise"; pause = 8)
+        check(w, "the tables say precise (1=yes)", endswith(value(w, "obsStatus"), "plans, precise"), 1; tol = 0)
+        check(w, "a first plan (1=yes)", locate(w, "planRank:Vega:1").w > 0, 1; tol = 0)
+        shot(w, "11-precise")
+        click(w, "planUse:Vega:1"; pause = 4)
+        check(w, "used (1=yes)", value(w, "planUse:Vega:1") == "in use", 1; tol = 0)
+        click(w, "planUse:Vega:1"; pause = 3)
+        click(w, "popSearch"; pause = 6)
+        check(w, "Search POPs is the fast search again (1=yes)",
+              value(w, "obsStatus") == "$(count_plans(w)) plans", 1; tol = 0)
     end
 catch e
     println("walk stopped: ", sprint(showerror, e))

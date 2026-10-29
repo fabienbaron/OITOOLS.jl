@@ -57,7 +57,7 @@ back. A file with a header is read by column name, in any order, and its other c
 and written back on Save; one without is read in that order, and a file of names alone, one per
 line, loads as unresolved targets. An emptied magnitude field is a magnitude not known. **Cal**
 marks a target as a calibrator: the Gantt draws its bars in orange, and a field beside it takes
-the names of the science targets it is for.
+the names of the science targets it is for, on a line under it.
 It opens on `demos/targets`, whose `bright_stars.csv` lists twelve bright stars across the year,
 resolved on SIMBAD.
 
@@ -113,7 +113,11 @@ time a POP setting is held, and a telescope dropped or added back (15 minutes; a
 takes its neighbour's telescopes where they are in delay); **night**, the part of the night
 used, from and to in UT (`H` or `H:MM`, empty for the start or the end), which narrows the
 astronomical night everywhere, the Gantt included; and for the list, **bracket ±** and
-**needs cal**. **Search POPs** lists that target's candidates: for a multi-POP strategy the ranked
+**needs cal**. For a single target's changes, **+ … min/POP** and **cart … m/s** set how long a
+change takes: the longer of the POP change time plus the minutes per POP moved, and the delay
+carts' travel to their new positions at that speed (empty, no time). **Precise** lists the plans
+searched with them, about a second's search; **Search POPs**, **Compute** and AutoPOPs use the
+POP change time alone. **Search POPs** lists that target's candidates: for a multi-POP strategy the ranked
 plans (the plan, its changes, the telescopes dropped, and the hours with every telescope and in
 all), for a single-setting one the best settings with their hour-angle and time ranges. The
 times in the tables are on the clock chosen under **Time** when the search ran. Under the
