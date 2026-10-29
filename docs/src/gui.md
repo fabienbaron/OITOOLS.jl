@@ -189,6 +189,16 @@ New datasets appear in the Dataset box and are rebuilt by the exported script.
 The Modeling perspective edits the model dictionary (`"component,parameter"` keys); a model
 written in a script behaves the same.
 
+The session holds several models. The **Model** box at the top lists them and selects one; typing
+a name there and pressing Enter renames the selected model (a name another model has is
+refused). A dot beside the box marks unsaved edits. **+** adds an empty `model k`, **Copy**
+duplicates the selected model (parameters, free list, bounds, constraints and priors), **−**
+removes it (asking first when it has unsaved edits). **Open…** and **Import PMOIRED…** add the
+model to the list and select it, or fill the selected model when it is empty and unedited; the
+model is named after its file. **Save…** names a `model k` after the file and keeps a name given
+by hand. Each model keeps its own constraints and priors. New, Open and Import keep the
+bandwidth smearing in force when the model does not set it.
+
 Each parameter is in one of three modes, set in the **mode** column of its row:
 
 | mode | the row holds | fitted |
@@ -389,7 +399,11 @@ Views under the fits table:
   `$WL`.
 - **Orbit**: the relative orbit on the sky with the dataset's epochs, and the radial velocities
   against phase.
-- **Adopt** writes the selected fit's values into the table.
+- **Adopt** writes the selected fit's values into the table, when that fit was made on the
+  selected model.
+
+The fits table holds every fit of the session; with more than one model, each row names the
+model it was made on.
 
 Residuals are shown in Exploring (Compare › residuals). Each view has **Save PNG**.
 

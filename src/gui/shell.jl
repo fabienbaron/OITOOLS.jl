@@ -1317,7 +1317,7 @@ function finish_fit!(sh::ShellState, res)
     sigma = haskey(f, :sigma) ? f.sigma : _result_sigma(r)
     push!(sh.fits, (; result = r, optimiser = f.optimiser, seconds = f.seconds,
                       free = f.free, map = f.map, chi2_start = f.chi2_start, sigma,
-                      boot = get(f, :boot, nothing)))
+                      boot = get(f, :boot, nothing), model = _model(sh)))
     for (j, (k, v)) in enumerate(zip(r.list_free_params, r.x_opt))
         console!(sh, sigma === nothing || !isfinite(sigma[j]) ?
                      @sprintf("    %-22s = %.6g", k, v) :
@@ -1419,6 +1419,12 @@ function shell_fit_values()
     sh = _shell()
     isempty(sh.fits) && return ""
     f = last(sh.fits)
+    m = get(f, :model, nothing)
+    if m isa ModelEntry && m !== _model(sh)
+        msg = "! the latest fit is of " * m.name * ": select it to adopt"
+        console!(sh, msg; kind = :err)
+        return msg
+    end
     r = f.result
     kv = [string(k, "=", v) for (k, v) in zip(r.list_free_params, r.x_opt)]
     if f.map isa MultiStartResult && !isempty(f.map.held)
@@ -2095,7 +2101,9 @@ end
     shell_fit_rows() -> String
 
 Completed fits as
-`label\toptimiser\tchi2r_start\tchi2r\twork\tndof\tnfree\tparams` rows, newest first.
+`label\toptimiser\tchi2r_start\tchi2r\twork\tndof\tnfree\tparams\tmodel` rows, newest first.
+`model` is the name of the model the fit was made on when the session has more than one, else
+`""`: the history is the window's, so fits of competing models sit side by side.
 
 `chi2r_start` is the model as it stood when the fit was launched, measured with the fit's own
 weights and divided by the fit's own `ndof`, so the two chi2r columns are the same quantity and
@@ -2118,6 +2126,7 @@ comparison to be made with the worse one.
 function shell_fit_rows()
     sh = _shell()
     rows = String[]
+    several = length(sh.session.models) > 1
     for (i, f) in enumerate(reverse(sh.fits))
         r = f.result
         k = length(f.free)
@@ -2134,25 +2143,178 @@ function shell_fit_rows()
         push!(rows, join((string("fit ", length(sh.fits) - i + 1), f.optimiser,
                           _numv(start), string(round(r.chi2r; digits = 4)),
                           work, string(r.ndof), string(k),
-                          _fit_params(r, f.sigma)), "\t"))
+                          _fit_params(r, f.sigma), several ? _fit_model_name(f) : ""), "\t"))
     end
     return join(rows, "\n")
 end
 
+# The name of the model a fits entry was made on, `""` when it does not say.
+_fit_model_name(f) = (m = get(f, :model, nothing); m isa ModelEntry ? m.name : "")
+
 # ── the live model ───────────────────────────────────────────────────────────
 #
-# ONE model, owned by the session, which the panel reads and edits through these calls. It
-# replaces a round trip through text: the table used to serialise itself to `key=value` lines
-# that the fitter re-parsed, so the dict the inspector described and the dict the fitter saw
-# were two different objects that merely tended to agree. They cannot disagree now.
+# The session holds a list of models and the panel reads and edits the selected one through
+# these calls. The dict the inspector describes is the dict the fitter sees. The fit history
+# (`sh.fits`) is the window's: each entry names the model it was made on.
 
-"The model the panel is editing, created empty on first use so there is always one."
+"""
+The model the panel is editing: the selected entry of `session.models`, with `model 1` created
+empty on first use so there is always one.
+"""
 function _model(sh::ShellState = _shell())
-    isempty(sh.session.models) &&
-        push!(sh.session.models, ModelEntry("untitled", Dict{String,Any}(), String[],
-                                            Dict{String,Float64}(), Dict{String,Float64}(), Any[]))
-    return sh.session.models[end]
+    s = sh.session
+    if isempty(s.models)
+        push!(s.models, ModelEntry("model 1"))
+        s.model = 1
+    end
+    return s.models[clamp(s.model, 1, length(s.models))]
 end
+
+# `stem`, or `stem 2`, `stem 3`, … : the first not taken by another entry than `self`.
+function _unique_model_name(s::Session, stem::AbstractString; self = nothing)
+    taken(n) = any(m -> m !== self && m.name == n, s.models)
+    taken(stem) || return String(stem)
+    k = 2
+    while taken(string(stem, " ", k)); k += 1; end
+    return string(stem, " ", k)
+end
+
+# The default name of a new model: `model k`, the first k not taken.
+function _new_model_name(s::Session)
+    k = length(s.models) + 1
+    while any(m -> m.name == string("model ", k), s.models); k += 1; end
+    return string("model ", k)
+end
+
+# Whether a name is one `_new_model_name` gave, so a Save may replace it by the file's.
+_default_model_name(n::AbstractString) = occursin(r"^model \d+$", n)
+
+# Select entry `i`; an Explore view drawn from the model is redrawn.
+function _select_model!(sh::ShellState, i::Integer)
+    sh.session.model = i
+    (sh.overlay === :model || sh.residual === :model) && (sh.status = refresh_plot!(sh))
+    return sh.session.models[i]
+end
+
+# A new entry selected, or the current one reused when it is empty and has no edits: what Open
+# and Import fill. The smearing of the model selected before is returned for `_keep_smearing!`.
+function _model_for_open!(sh::ShellState)
+    cur = _model(sh)
+    (isempty(cur.dict) && !cur.dirty) && return cur, cur.dict
+    s = sh.session
+    push!(s.models, ModelEntry(_new_model_name(s)))
+    _select_model!(sh, length(s.models))
+    return s.models[end], cur.dict
+end
+
+"""
+    shell_model_names() -> String
+
+The session's models, one `name<TAB>dirty<TAB>path<TAB>selected` line each in list order, with
+`dirty` and `selected` as `1` or `0`.
+"""
+function shell_model_names()
+    sh = _shell(); cur = _model(sh)
+    return join((join((m.name, m.dirty ? "1" : "0", m.path, m === cur ? "1" : "0"), "\t")
+                 for m in sh.session.models), "\n")
+end
+
+"""
+    shell_select_model(i) -> String
+    shell_new_model() -> String
+    shell_duplicate_model() -> String
+    shell_rename_model(name) -> String
+    shell_remove_model(i) -> String
+    shell_set_model_dirty(dirty) -> String
+
+The model list. `i` counts from 1. Select, New, Duplicate and Remove are refused while a fit
+runs, since the fit is recorded as the selected model's. New adds an empty `model k`,
+Duplicate a copy of the selected model's dict, free list, bounds, constraints and priors named
+`<name> copy`; both select it, and New keeps the smearing in force as Open does. Rename refuses an empty name or one another
+model has. Remove keeps at least one model and selects the next one when the selected model
+goes. Each returns `""` (New and Duplicate: the name) or a message beginning `!`.
+"""
+function shell_select_model(i::Integer)
+    sh = _shell(); s = sh.session; _model(sh)
+    1 <= i <= length(s.models) || return "! no model $i"
+    i == s.model && return ""
+    sh.job === nothing || return "! a fit is running"
+    _select_model!(sh, i)
+    console!(sh, "model \"" * s.models[i].name * "\" selected")
+    return ""
+end
+
+function shell_new_model()
+    sh = _shell(); s = sh.session; cur = _model(sh)
+    sh.job === nothing || return "! a fit is running"
+    push!(s.models, ModelEntry(_new_model_name(s)))
+    _select_model!(sh, length(s.models))
+    console!(sh, "model \"" * s.models[end].name * "\" added")
+    _keep_smearing!(sh, cur.dict, s.models[end].dict)
+    return s.models[end].name
+end
+
+function shell_duplicate_model()
+    sh = _shell(); s = sh.session; cur = _model(sh)
+    sh.job === nothing || return "! a fit is running"
+    m = ModelEntry(_unique_model_name(s, cur.name * " copy"))
+    m.dict = deepcopy(cur.dict); m.free = copy(cur.free)
+    m.lb = copy(cur.lb); m.ub = copy(cur.ub)
+    m.constraints = cur.constraints; m.priors = cur.priors
+    m.dirty = !isempty(m.dict)
+    push!(s.models, m)
+    _select_model!(sh, length(s.models))
+    console!(sh, "model \"" * m.name * "\" copied from \"" * cur.name * "\"")
+    return m.name
+end
+
+function shell_rename_model(name::AbstractString)
+    sh = _shell(); m = _model(sh)
+    n = strip(String(name))
+    msg = isempty(n) ? "! a model needs a name" :
+          any(e -> e !== m && e.name == n, sh.session.models) ? "! \"$n\" is taken" : ""
+    isempty(msg) || (console!(sh, msg; kind = :err); return msg)
+    n == m.name && return ""
+    console!(sh, "model \"" * m.name * "\" renamed \"" * n * "\"")
+    m.name = n
+    return ""
+end
+
+function shell_remove_model(i::Integer)
+    sh = _shell(); s = sh.session; _model(sh)
+    1 <= i <= length(s.models) || return "! no model $i"
+    length(s.models) == 1 && return "! the only model"
+    sh.job === nothing || return "! a fit is running"
+    name = s.models[i].name
+    if i == s.model
+        _select_model!(sh, i < length(s.models) ? i + 1 : i - 1)
+    end
+    deleteat!(s.models, i)
+    i < s.model && (s.model -= 1)
+    console!(sh, "model \"" * name * "\" removed")
+    return ""
+end
+
+function shell_set_model_dirty(dirty::Bool)
+    _model().dirty = dirty
+    return ""
+end
+
+"""
+    shell_set_model_fit_rows(constraints, priors) -> String
+    shell_model_constraints() -> String
+    shell_model_priors() -> String
+
+The fit panel's constraint and prior rows of the selected model, as the lines the panel's
+`constraintsAsLines` and `priorsAsLines` write: kept with the model when another is selected.
+"""
+function shell_set_model_fit_rows(constraints::AbstractString, priors::AbstractString)
+    m = _model()
+    m.constraints = String(constraints); m.priors = String(priors)
+    return ""
+end
+shell_model_constraints() = _model().constraints
+shell_model_priors() = _model().priors
 
 """
     _display_wl_mjd() -> (wl, mjd)
@@ -2560,6 +2722,11 @@ Model files. TOML carries the model, the free list, the bounds, the constraints 
 together; PMOIRED carries the model alone, and export warns about what it cannot represent
 rather than writing something that means a different thing on the other side. Opening or
 importing a model that does not set bandwidth smearing keeps the smearing in force.
+
+Open and Import add a model to the list and select it, or fill the selected one when it is
+empty and has no edits or fits. The model is named after the file, without its extension
+(` 2`, ` 3` added to a name another model has). Save names a `model k` after the file and
+keeps a name given by hand. Open and Import return the name.
 """
 function shell_open_model(path::AbstractString)
     sh = _shell()
@@ -2568,17 +2735,21 @@ function shell_open_model(path::AbstractString)
     catch err
         msg = "! could not read model: " * _cause(err); console!(sh, msg; kind = :err); return msg
     end
-    m = _model(sh)
-    old = m.dict
+    sh.job === nothing || return "! a fit is running"
+    m, old = _model_for_open!(sh)
     m.dict = r.model; m.free = collect(r.free)
     m.lb = Dict{String,Float64}(r.lb); m.ub = Dict{String,Float64}(r.ub)
-    m.name = basename(String(path))
+    m.name = _unique_model_name(sh.session, _model_stem(path); self = m)
+    m.path = String(path); m.dirty = false
     console!(sh, "> read_model_file(\"" * String(path) * "\")")
     console!(sh, "  $(m.name): $(length(m.dict)) keys, $(length(m.free)) free" *
                  (isempty(r.name) ? "" : ", named in the file \"" * r.name * "\""))
     _keep_smearing!(sh, old, m.dict)
     return m.name
 end
+
+# A model's name from its file: the file name without its extension.
+_model_stem(path::AbstractString) = first(splitext(basename(String(path))))
 
 # Smearing is chosen for the data as much as for the model, and a model file or a PMOIRED
 # import usually does not set it: one that does not keeps the smearing in force, rather than
@@ -2603,7 +2774,9 @@ function shell_save_model(path::AbstractString)
     catch err
         msg = "! could not write model: " * _cause(err); console!(sh, msg; kind = :err); return msg
     end
-    m.name = basename(String(path))
+    _default_model_name(m.name) &&
+        (m.name = _unique_model_name(sh.session, _model_stem(path); self = m))
+    m.path = String(path); m.dirty = false
     console!(sh, "> write_model_file(\"" * String(path) * "\", model; free = $(m.free))")
     return ""
 end
@@ -2614,7 +2787,7 @@ function shell_import_pmoired(path::AbstractString)
     catch err
         msg = "! PMOIRED import: " * _cause(err); console!(_shell(), msg; kind = :err); return msg
     end
-    return _import_pmoired!(src, basename(String(path)),
+    return _import_pmoired!(src, _model_stem(path),
                             "pmoired_to_dict(read(\"" * String(path) * "\", String))")
 end
 
@@ -2622,7 +2795,7 @@ end
     shell_import_pmoired_text(text) -> String
 
 Import a PMOIRED `param` dict pasted from a notebook, as [`shell_import_pmoired`](@ref) imports a
-`.py` file: the model is replaced, and the name is returned, or a message beginning `!`. The
+`.py` file: the model is added, and the name is returned, or a message beginning `!`. The
 console line holds the text as a raw string, so a `\$WL` in it stays a `\$WL` when the script
 runs.
 """
@@ -2640,10 +2813,11 @@ function _import_pmoired!(src::String, name::String, call::String)
     catch err
         msg = "! PMOIRED import: " * _cause(err); console!(sh, msg; kind = :err); return msg
     end
-    m = _model(sh)
-    old = m.dict
+    sh.job === nothing || return "! a fit is running"
+    m, old = _model_for_open!(sh)
     m.dict = md; m.free = String[]; empty!(m.lb); empty!(m.ub)
-    m.name = name
+    m.name = _unique_model_name(sh.session, name; self = m)
+    m.path = ""; m.dirty = false
     console!(sh, "> " * call)
     _keep_smearing!(sh, old, m.dict)
     # Import is a transpiler, not a validator, so say at once what the parser made of it.

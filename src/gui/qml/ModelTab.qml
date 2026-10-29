@@ -91,12 +91,19 @@ Item {
     // position in `list_free_params`, and therefore the index into every `x` an optimiser
     // touches and every `x_opt` a result reports — showing it is what makes an exported
     // script legible.
-    property string modelName: "untitled"
+    property string modelName: "model 1"
     // The model as `name: kind` per component, from `shell_model_description`, refreshed with
     // the table: what Save writes as the file's name.
     property string modelDescription: ""
     property bool   modelDirty: false
     property string modelPath: ""
+    // The session's models in list order, and the selected one's index.
+    property var    modelNames: ["model 1"]
+    property int    modelIndex: 0
+    // Every edit marks the model unsaved here; Julia keeps the mark with the model.
+    onModelDirtyChanged: Julia.shell_set_model_dirty(modelDirty)
+    // A model added, removed, renamed or selected.
+    signal modelsChanged()
 
     // Starts empty. A model invented by the interface is a model the user did not write, and
     // there is no way to tell it apart from one they did once it is on screen -- the fitted
@@ -474,6 +481,7 @@ Item {
     }
 
     Component.onCompleted: {
+        refreshModelList()
         var nb = Julia.shell_nested_backend().split("\t")
         root.nestedBackend = nb[0]
         root.nestedLabel   = nb.length > 1 ? nb[1] : ""
@@ -835,15 +843,15 @@ Item {
         if (rows.length === 0) return
         var lines = rows.split("\n")
         for (var i = 0; i < lines.length; ++i) {
-            // The eight fields of `shell_fit_rows`, in its order.
+            // The nine fields of `shell_fit_rows`, in its order.
             var f = lines[i].split("\t")
-            if (f.length === 8)
+            if (f.length === 9)
                 fitModel.append({ label: f[0], optimiser: f[1],
                                   chi2rStart: parseFloat(f[2]), chi2r: parseFloat(f[3]),
                                   work: f[4],
                                   ndof: parseInt(f[5]), nfree: parseInt(f[6]),
                                   ret: "", chi2: 0.0,
-                                  params: f[7] })
+                                  params: f[7], ofModel: f[8] })
         }
     }
 
@@ -855,6 +863,7 @@ Item {
     function adoptFit() {
         var vals = Julia.shell_fit_values()
         if (vals.length === 0) return
+        if (vals.charAt(0) === "!") { root.fitText = vals; consoleChanged(); return }
         var lines = vals.split("\n")
         for (var i = 0; i < lines.length; ++i) {
             var j = lines[i].lastIndexOf("=")
@@ -969,7 +978,7 @@ Item {
     ListModel {
         id: fitModel
         // roles: label, optimiser, chi2, chi2rStart, chi2r, work, ndof, nfree, ret,
-        //        params. Roles are defined by the first append, so every
+        //        params, ofModel. Roles are defined by the first append, so every
         //        append must carry all of them.
         // One row per completed fit, so competing models compare side by side.
     }
@@ -1025,11 +1034,57 @@ Item {
             spacing: dp(6)
 
             Label { text: "Model"; font.bold: true }
+            // The session's models: pick one, or type a new name and press Enter to rename it.
+            ComboBox {
+                id: modelSelect
+                objectName: "modelSelect"
+                editable: true
+                model: root.modelNames
+                currentIndex: root.modelIndex
+                Layout.preferredWidth: dp(200)
+                // A pick from the list selects; Enter on a typed name that matches another model
+                // also emits `activated`, and is a rename (refused), not a switch.
+                onActivated: function (i) {
+                    if (popup.visible) root.selectModel(i)
+                    else Qt.callLater(root.refreshModelList)
+                }
+                onAccepted: root.renameModel(editText)
+                ToolTip.visible: hovered && !popup.visible
+                ToolTip.text: "the model; type to rename"
+            }
             Label {
-                text: root.modelName + (root.modelDirty ? " •" : "")
-                color: root.modelDirty ? root.cWarn : "#444"
-                elide: Text.ElideMiddle
-                Layout.maximumWidth: dp(220)
+                objectName: "modelDirtyMark"
+                visible: root.modelDirty
+                text: "•"
+                color: root.cWarn
+                ToolTip.visible: dirtyHover.hovered
+                ToolTip.text: "not saved"
+                HoverHandler { id: dirtyHover }
+            }
+            Button {
+                objectName: "modelNew"
+                text: "+"
+                enabled: !root.running
+                onClicked: root.modelAction(function () { return Julia.shell_new_model() })
+                ToolTip.visible: hovered; ToolTip.text: "new model"
+            }
+            Button {
+                objectName: "modelDuplicate"
+                text: "Copy"
+                enabled: !root.running
+                onClicked: root.modelAction(function () { return Julia.shell_duplicate_model() })
+                ToolTip.visible: hovered; ToolTip.text: "duplicate"
+            }
+            Button {
+                objectName: "modelRemove"
+                text: "−"
+                enabled: !root.running && root.modelNames.length > 1
+                onClicked: root.unlessUnsaved(function () {
+                    root.modelAction(function () {
+                        return Julia.shell_remove_model(root.modelIndex + 1)
+                    })
+                }, "Discard them and remove the model?")
+                ToolTip.visible: hovered; ToolTip.text: "remove"
             }
             Label {
                 visible: root.modelDescription.length > 0
@@ -1051,10 +1106,8 @@ Item {
                 // Open where the models are, not where the last dialog happened to be: the
                 // shipped starting points live in demos/models, and a model file is what this
                 // button is for. A path already in use wins, so re-opening returns to it.
-                onClicked: root.unlessUnsaved(function () {
-                    openModelDialog.openAt(root.modelPath.length > 0 ? root.modelPath
-                                           : Julia.picker_examples("model"))
-                })
+                onClicked: openModelDialog.openAt(root.modelPath.length > 0 ? root.modelPath
+                                                  : Julia.picker_examples("model"))
             }
             Button {
                 text: "Save…"
@@ -1067,7 +1120,7 @@ Item {
 
             Button {
                 text: "Import PMOIRED…"
-                onClicked: root.unlessUnsaved(function () { pmoiredPasteDialog.open() })
+                onClicked: pmoiredPasteDialog.open()
             }
             Button {
                 text: "Export PMOIRED…"
@@ -3458,8 +3511,13 @@ Item {
                                         // parameter of every fit is on screen.
                                         height: Math.max(root.dp(22), fitParamLabel.implicitHeight + root.dp(4))
                                         spacing: root.dp(6)
-                                        Label { Layout.preferredWidth: root.dp(140); text: model.label
-                                                leftPadding: root.dp(6); elide: Text.ElideRight }
+                                        Label { Layout.preferredWidth: root.dp(140)
+                                                objectName: "fit:" + model.label + ":label"
+                                                text: model.label + (model.ofModel.length > 0 ? " · " + model.ofModel : "")
+                                                leftPadding: root.dp(6); elide: Text.ElideRight
+                                                ToolTip.visible: fitLabelHover.hovered && truncated
+                                                ToolTip.text: text
+                                                HoverHandler { id: fitLabelHover } }
                                         Label {
                                             Layout.preferredWidth: root.dp(130); text: model.optimiser
                                             color: "#666"; elide: Text.ElideRight
@@ -5452,14 +5510,11 @@ Item {
         filters: [{ label: "Model files (*.toml)", patterns: "*.toml" },
                   { label: "All files", patterns: "*" }]
         onAccepted: function (path) {
+            root.stashFitRows()
             var name = Julia.shell_open_model(path)
             root.consoleChanged()
             if (name.length === 0 || name.charAt(0) === "!") { root.fitText = name; return }
-            root.modelPath = path
-            root.modelName = name
-            root.modelDirty = false
-            root.selectedComponent = ""
-            root.refreshModel()
+            root.afterModelSwitch()
         }
     }
 
@@ -5475,9 +5530,8 @@ Item {
             var err = Julia.shell_save_model(path)
             root.consoleChanged()
             if (err.length > 0) { root.fitText = err; return }
-            root.modelPath = path
-            root.modelName = path.replace(/^.*[\\/]/, "")
-            root.modelDirty = false
+            root.refreshModelList()
+            root.modelsChanged()
         }
     }
 
@@ -5496,6 +5550,7 @@ Item {
         // panel describing something no longer there.
         onAccepted: function (path) {
             root.pmoiredFolder = Julia.picker_parent(path)
+            root.stashFitRows()
             var name = Julia.shell_import_pmoired(path)
             root.consoleChanged()
             if (name.length === 0 || name.charAt(0) === "!") { root.fitText = name; return }
@@ -5505,21 +5560,97 @@ Item {
 
     // Where the last .py came from: the next "From file…" opens there, not at the examples.
     property string pmoiredFolder: ""
+    // An imported model is unedited (the .py or the notebook still holds it) and has no file to
+    // save back to.
     function pmoiredImported(name) {
-        root.modelPath = ""          // a .py is not a model file we can save back to
-        root.modelName = name
-        // Unedited: the .py or the notebook still holds it. Marked unsaved here, the next
-        // Open or Import would ask about a model nobody had touched.
-        root.modelDirty = false
-        root.selectedComponent = ""
-        root.refreshModel()
+        root.afterModelSwitch()
     }
 
-    // Open and Import replace the model. With unsaved edits they ask first, before the picker
-    // or the paste box opens, so nothing is chosen only to be thrown away.
-    function unlessUnsaved(action) {
+    // ── the model list ───────────────────────────────────────────────────────
+    function refreshModelList() {
+        var t = Julia.shell_model_names()
+        var names = [], sel = 0
+        var lines = t.length > 0 ? t.split("\n") : []
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f.length !== 4) continue
+            names.push(f[0])
+            if (f[3] === "1") {
+                sel = names.length - 1
+                root.modelName = f[0]
+                root.modelPath = f[2]
+                root.modelDirty = (f[1] === "1")
+            }
+        }
+        root.modelNames = names
+        root.modelIndex = sel
+        modelSelect.currentIndex = sel
+    }
+    // The constraint and prior rows belong to the model: kept with it before another is shown.
+    function stashFitRows() {
+        Julia.shell_set_model_fit_rows(constraintsAsLines(), priorsAsLines())
+    }
+    function loadFitRows() {
+        constraintModel.clear()
+        var c = Julia.shell_model_constraints()
+        var cl = c.length > 0 ? c.split("\n") : []
+        for (var i = 0; i < cl.length; ++i) {
+            var f = cl[i].split("\t")
+            if (f.length === 4)
+                constraintModel.append({ lhs: f[0], op: f[1], rhs: f[2], tol: parseFloat(f[3]),
+                                         satisfied: true })
+        }
+        priorModel.clear()
+        var p = Julia.shell_model_priors()
+        var pl = p.length > 0 ? p.split("\n") : []
+        for (var k = 0; k < pl.length; ++k) {
+            var g = pl[k].split("\t")
+            if (g.length === 3)
+                priorModel.append({ expr: g[0], target: parseFloat(g[1]), sigma: parseFloat(g[2]) })
+        }
+    }
+    // Everything the panel shows of the selected model, after a switch.
+    function afterModelSwitch() {
+        root.selectedComponent = ""
+        refreshModelList()
+        loadFitRows()
+        refreshModel()
+        refreshFits()
+        root.sedText = ""; root.orbitText = ""
+        if (root.diagView === "sed" || root.diagView === "orbit") root.diagView = "chi2map"
+        root.fitText = ""
+        if (root.hasRender) renderModel()
+        root.modelsChanged()
+    }
+    // New, Duplicate, Remove: `call` returns a name or `""`, or a message beginning `!`.
+    function modelAction(call) {
+        stashFitRows()
+        var r = call()
+        root.consoleChanged()
+        if (r.length > 0 && r.charAt(0) === "!") { root.fitText = r; return }
+        afterModelSwitch()
+    }
+    function selectModel(i) {
+        if (i === root.modelIndex) return
+        stashFitRows()
+        var r = Julia.shell_select_model(i + 1)
+        root.consoleChanged()
+        if (r.length > 0) { root.fitText = r; refreshModelList(); return }
+        afterModelSwitch()
+    }
+    function renameModel(name) {
+        var r = Julia.shell_rename_model(name)
+        root.consoleChanged()
+        if (r.length > 0) root.fitText = r
+        refreshModelList()
+        if (r.length === 0) root.modelsChanged()
+    }
+
+    // Remove asks first when the model has unsaved edits.
+    function unlessUnsaved(action, question) {
         if (!root.modelDirty) { action(); return }
         discardDialog.pending = action
+        discardDialog.question = question
         discardDialog.open()
     }
     Dialog {
@@ -5528,6 +5659,7 @@ Item {
         modal: true
         anchors.centerIn: Overlay.overlay
         property var pending: null
+        property string question: ""
         onClosed: pending = null
         // Fixed widths on both the Dialog and its wrapped Label, neither read from the other. A
         // Dialog sized from its content chases its header and footer (a binding loop on
@@ -5537,7 +5669,7 @@ Item {
         Label {
             width: root.dp(340)
             wrapMode: Text.WordWrap
-            text: root.modelName + " has changes that are not saved. Discard them and replace the model?"
+            text: root.modelName + " has changes that are not saved. " + discardDialog.question
         }
         footer: DialogButtonBox {
             Button { text: "Discard"; DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole }
@@ -5605,6 +5737,7 @@ Item {
                     highlighted: true
                     enabled: pasteArea.text.trim().length > 0
                     onClicked: {
+                        root.stashFitRows()
                         var name = Julia.shell_import_pmoired_text(pasteArea.text)
                         root.consoleChanged()
                         if (name.length === 0 || name.charAt(0) === "!") {

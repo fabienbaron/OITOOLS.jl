@@ -64,16 +64,30 @@ end
 
 A parametric model plus whatever has been fitted with it. `dict` and `free` are the OITOOLS
 model dictionary and free-parameter list; `results` accumulates fit results so competing fits
-can be compared side by side (§3.9 of the design).
+can be compared side by side (§3.9 of the design). `path` is the file it was opened from or
+saved to (`""` for none), `dirty` whether it has edits not saved, and `constraints` and
+`priors` the fit panel's rows for it, as the lines `constraintsAsLines` and `priorsAsLines`
+write.
+
+    ModelEntry(name)
+
+An empty model.
 """
 mutable struct ModelEntry
-    name    :: String
-    dict    :: Dict{String,Any}
-    free    :: Vector{String}
-    lb      :: Dict{String,Float64}
-    ub      :: Dict{String,Float64}
-    results :: Vector{Any}
+    name        :: String
+    dict        :: Dict{String,Any}
+    free        :: Vector{String}
+    lb          :: Dict{String,Float64}
+    ub          :: Dict{String,Float64}
+    results     :: Vector{Any}
+    path        :: String
+    dirty       :: Bool
+    constraints :: String
+    priors      :: String
 end
+ModelEntry(name::AbstractString) =
+    ModelEntry(String(name), Dict{String,Any}(), String[], Dict{String,Float64}(),
+               Dict{String,Float64}(), Any[], "", false, "", "")
 
 """
     ImageEntry
@@ -122,6 +136,7 @@ mutable struct Session
     configs   :: Any                        # the NamedTuple from OITOOLS.list_configs()
     log       :: Vector{LogEntry}
     selection :: Selection
+    model     :: Int                        # index of the selected model, 0 = none yet
 end
 
 function Session()
@@ -132,7 +147,7 @@ function Session()
         (; facilities = String[], combiners = String[], wavelengths = String[],
            targets = String[], unknown = String[], wave_combiner = Dict{String,String}())
     end
-    Session(DatasetEntry[], ModelEntry[], ImageEntry[], cfg, LogEntry[], Selection())
+    Session(DatasetEntry[], ModelEntry[], ImageEntry[], cfg, LogEntry[], Selection(), 0)
 end
 
 function Base.show(io::IO, s::Session)

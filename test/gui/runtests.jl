@@ -1679,8 +1679,8 @@ end
             @test s.free == ["star,ud", "companion,f"]
             @test hypot(s.best.x - 6.23, s.best.y + 28.49) <= s.x[2] - s.x[1]   # one grid step
             @test s.nsigma > 5
-            # Eight fields per row: `refreshFits()` in ModelTab.qml appends only rows of that length.
-            @test all(length(split(l, '\t')) == 8 for l in split(G.shell_fit_rows(), '\n'))
+            # Nine fields per row: `refreshFits()` in ModelTab.qml appends only rows of that length.
+            @test all(length(split(l, '\t')) == 9 for l in split(G.shell_fit_rows(), '\n'))
             info = split(G.shell_chi2_map_info(), '\t')
             @test length(info) == 6 && info[6] == "companion"
             @test sh.chi2map.axis.xreversed[] && sh.chi2map.best[] == [Makie.Point2f(s.best.x, s.best.y)]
@@ -2189,7 +2189,7 @@ end
         out = tempname() * ".toml"
         try
             f = joinpath(pkgdir(OITOOLS), "demos", "models", "Limb_Darkened_Disk_Claret4.toml")
-            @test G.shell_open_model(f) == "Limb_Darkened_Disk_Claret4.toml"
+            @test G.shell_open_model(f) == "Limb_Darkened_Disk_Claret4"
             @test occursin("named in the file \"Claret four-parameter limb-darkened disk\"",
                            sh.console[end])
             @test G.shell_model_description() == "star: four-parameter disc"
@@ -2199,7 +2199,97 @@ end
             @test G.shell_model_description() == "sun: power law disc"
             @test G.shell_save_model(out) == ""
             @test read_model_file(out).name == "sun: power law disc"
-            @test G._model(sh).name == basename(out)
+            @test G._model(sh).name == "Limb_Darkened_Disk_Claret4"   # a name of its own is kept
+            @test G._model(sh).path == out && !G._model(sh).dirty
+        finally
+            rm(out; force = true)
+            G.SHELL[] = prev
+        end
+    end
+
+    @testset "several models: open, select, rename, duplicate, remove, fits" begin
+        G = GUI
+        prev = G.SHELL[]
+        sess = Session()
+        load_dataset!(sess, joinpath(pkgdir(OITOOLS), "demos", "data", "AlphaCenA.oifits");
+                      warn = false, verbose = false)
+        sh = G.ShellState(sess, nothing, nothing, nothing, String[], Any[], 1,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        G.SHELL[] = sh
+        names() = [split(l, '\t') for l in split(G.shell_model_names(), '\n')]
+        selected() = only(findall(f -> f[4] == "1", names()))
+        dir = joinpath(pkgdir(OITOOLS), "demos", "models")
+        out = tempname() * ".toml"
+        try
+            @test names() == [["model 1", "0", "", "1"]]
+            # The empty, unedited first model is filled; an edited one is kept beside the next.
+            @test G.shell_open_model(joinpath(dir, "Uniform_Disk.toml")) == "Uniform_Disk"
+            @test length(sess.models) == 1
+            G.shell_set_model_dirty(true)
+            @test G.shell_open_model(joinpath(dir, "Limb_Darkened_Disk_Claret4.toml")) ==
+                  "Limb_Darkened_Disk_Claret4"
+            @test [f[1] for f in names()] == ["Uniform_Disk", "Limb_Darkened_Disk_Claret4"]
+            @test selected() == 2 && names()[1][2] == "1" && names()[2][2] == "0"
+            @test names()[2][3] == joinpath(dir, "Limb_Darkened_Disk_Claret4.toml")
+            @test G.shell_open_model(joinpath(dir, "Uniform_Disk.toml")) == "Uniform_Disk 2"
+            @test G.shell_remove_model(3) == ""
+
+            # The fit history is the window's, each fit naming its model; Adopt takes a fit of
+            # the selected model only. The fit panel's rows belong to the model.
+            ld = copy(G._model(sh).dict)
+            d = sess.datasets[1].data[1, 1]
+            r = fit_model_lsqfit(Dict{String,Any}("star,ud" => 6.0, "star,f" => 1.0), ["star,ud"], d)
+            push!(sh.fits, (; result = r, optimiser = "lsqfit", seconds = 0.0, free = ["star,ud"],
+                              map = nothing, chi2_start = NaN, sigma = nothing, boot = nothing,
+                              model = G._model(sh)))
+            G.shell_set_model_fit_rows("star,ud\t>\t1\t0.001", "star,ud\t8\t0.5")
+            @test startswith(G.shell_fit_values(), "star,ud=")
+            @test G.shell_select_model(1) == ""
+            @test split(G.shell_fit_rows(), '\t')[9] == "Limb_Darkened_Disk_Claret4"
+            @test startswith(G.shell_fit_values(), "! the latest fit is of Limb_Darkened")
+            @test G.shell_model_constraints() == "" && G.shell_model_priors() == ""
+            @test G._model(sh).dirty && G._model(sh).dict != ld
+            @test G.shell_select_model(2) == ""
+            @test startswith(G.shell_fit_values(), "star,ud=")
+            @test G.shell_model_constraints() == "star,ud\t>\t1\t0.001"
+            @test G.shell_model_priors() == "star,ud\t8\t0.5"
+            @test G._model(sh).dict == ld
+
+            # Rename: not empty, not another model's name.
+            @test startswith(G.shell_rename_model("  "), "!")
+            @test startswith(G.shell_rename_model("Uniform_Disk"), "!")
+            @test G.shell_rename_model("LD") == "" && names()[2][1] == "LD"
+            @test split(G.shell_fit_rows(), '\t')[9] == "LD"                # the fit follows
+
+            # Duplicate: the model and its rows; New: an empty `model k`.
+            @test G.shell_duplicate_model() == "LD copy"
+            @test selected() == 3 && G._model(sh).dict == ld && G._model(sh).dict !== ld
+            @test G.shell_model_constraints() == "star,ud\t>\t1\t0.001"
+            @test G.shell_new_model() == "model 4"
+            @test isempty(G._model(sh).dict) && selected() == 4
+
+            # A `model k` saved takes the file's name.
+            G._model(sh).dict = Dict{String,Any}("s,ud" => 1.0, "s,f" => 1.0)
+            @test G.shell_save_model(out) == ""
+            @test names()[4][1] == first(splitext(basename(out))) && names()[4][2] == "0"
+
+            # Nothing switches while a fit runs.
+            sh.job = :running
+            @test startswith(G.shell_select_model(1), "!")
+            @test startswith(G.shell_new_model(), "!")
+            @test startswith(G.shell_remove_model(1), "!")
+            @test startswith(G.shell_open_model(joinpath(dir, "Uniform_Disk.toml")), "!")
+            sh.job = nothing
+            @test selected() == 4 && length(sess.models) == 4
+
+            # Remove: the selected one goes to its neighbour; an earlier one keeps the selection.
+            @test G.shell_remove_model(4) == "" && selected() == 3
+            @test G.shell_remove_model(1) == "" && selected() == 2 && names()[2][1] == "LD copy"
+            @test G.shell_remove_model(1) == "" && G.shell_remove_model(1) |> startswith("!")
+            @test names() == [["LD copy", "1", "", "1"]]
+            @test split(G.shell_fit_rows(), '\t')[9] == ""                  # one model: no name
         finally
             rm(out; force = true)
             G.SHELL[] = prev
@@ -2262,7 +2352,7 @@ end
                               free = ["star,ud"], map = nothing, chi2_start = NaN,
                               sigma = nothing, boot = nothing))
             rows = split(G.shell_fit_rows(), '\n')
-            @test all(length(split(l, '\t')) == 8 for l in rows)
+            @test all(length(split(l, '\t')) == 9 for l in rows)
             @test endswith(split(rows[1], '\t')[5], " · on a bound: star,ud")
             @test !occursin("not converged", rows[2])              # newest first: 200 iterations
             @test endswith(split(rows[3], '\t')[5], " · not converged")
@@ -2292,7 +2382,7 @@ end
         try
             write(py, """{'rim,diamin': 10., 'rim,diamout': 20., 'rim,profile': 'doughnut',
                           'rim,f': 1.0}""")
-            @test G.shell_import_pmoired(py) == basename(py)
+            @test G.shell_import_pmoired(py) == first(splitext(basename(py)))
             @test occursin("\$RMIN", G._model(sh).dict["rim,profile"])
             g = split(G.shell_profile_grid("rim"), '\t')
             @test parse(Float64, g[2]) == 5.0 && parse(Float64, g[3]) == 10.0
