@@ -53,6 +53,9 @@ function __init__()
                      shell_profile_templates, shell_profile_template,
                      shell_component_geometry, shell_set_component_geometry,
                      shell_ld_laws, shell_ld_law, shell_set_ld_law,
+                     shell_ld_free, shell_set_ld_free,
+                     shell_ldvi_discs, shell_ldvi_start, shell_ldvi_draw, shell_ldvi_summary,
+                     shell_ldvi_adopt, shell_ldvi_save,
                      shell_kind_labels, shell_model_description,
                      shell_az_modes, shell_add_az_mode, shell_remove_az_mode,
                      shell_model_residuals, shell_model_sed, shell_model_depends,
@@ -498,6 +501,12 @@ function OITOOLS.gui(session::Session = Session();
     style_axis!(orbsky); style_axis!(orbrv)
     ORBIT_CANVAS[] = build_orbit_view(orbfig, orbsky, orbrv)
 
+    # And one for the free-form profile by variational inference: I(μ) and its band.
+    ldvifig = Makie.Figure(fonts = PLOT_FONTS)
+    ldviax = Makie.Axis(ldvifig[1, 1])
+    style_axis!(ldviax)
+    LDVI_CANVAS[] = build_ldvi_view(ldvifig, ldviax)
+
     # And one for the Tools cube viewer, drawn by `show_image!` as the reconstruction is.
     cfig = Makie.Figure(fonts = PLOT_FONTS)
     cax  = Makie.Axis(cfig[1, 1]; xlabel = "α (mas)", ylabel = "δ (mas)", title = "cube")
@@ -553,6 +562,7 @@ function OITOOLS.gui(session::Session = Session();
                 cubeTilesPlot   = tfig,
                 oitableModel    = oitable,
                 orbitPlot       = orbfig,
+                ldviPlot        = ldvifig,
                 autoQuitMs      = Int(autoquit_ms),
                 initialTab      = _initial_tab(),
                 uiScaleOverride = uiscale.scale,

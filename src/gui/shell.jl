@@ -3713,6 +3713,9 @@ const DISC_LAWS = [
      note = "I(μ) = μ^α  (Hestroffer)"),
     (key = "ldclaret4", label = "four-parameter", coeffs = ["c1", "c2", "c3", "c4"],
      note = "I(μ) = 1 − Σₖ cₖ(1 − μ^{k/2})  (Claret)"),
+    # The nodes are the coefficients; how many is the disc's own setting (`shell_ld_free`).
+    (key = "ldspline",  label = "free-form",      coeffs = String[],
+     note = "I(μ) through N nodes, I(1) = 1"),
 ]
 
 """
@@ -3724,7 +3727,9 @@ here: its law names it, from `DISC_LAWS`. Written so it cannot be taken for a ke
 const KIND_LABELS = Dict{String,String}(
     "point" => "point", "gaussian" => "Gaussian", "ring" => "ring",
     "gaussian_ring" => "Gaussian ring", "crescent" => "crescent", "hankel" => "written profile",
-    "image" => "image", "visfunc" => "visibility function", "resolved" => "resolved flux")
+    "image" => "image", "visfunc" => "visibility function", "resolved" => "resolved flux",
+    # the free-form disc's straight-line basis, which `DISC_LAWS` lists under `ldspline`
+    "ldpiecewise" => "free-form disc")
 
 """
     shell_kind_labels() -> String
@@ -3946,6 +3951,16 @@ function shell_add_component(name, kind)
         return ""
     end
 
+    if k === :ldspline
+        # A uniform disc made free-form: five flat nodes, the diameter free.
+        m.dict[pre * "ud"] = _component_seed("ud")
+        m.dict[pre * "f"]  = _share_flux!(m, pre * "f")
+        push!(m.free, pre * "ud")
+        ld_free!(m.dict, m.free, nm; n = 5, lb = m.lb, ub = m.ub)
+        console!(sh, "  added $(nm): free-form disc, keys $(pre)ldspline, $(pre)ld1 … " *
+                     "$(pre)ld4 (I at μ = 0, 0.25, 0.5, 0.75; I(1) = 1); all free")
+        return ""
+    end
     gk = get(_KIND_GEOMETRY, k, "")
     suffixes = copy(_ANALYTIC_PARAM_SUFFIXES[k])
     isempty(gk) || gk in suffixes || pushfirst!(suffixes, gk)
@@ -4708,9 +4723,15 @@ The law a component currently uses, as `key\tlabel`, or `""` when it is not a di
 """
 function shell_ld_law(component::AbstractString)
     m = _model(); cn = String(component)
-    i = findfirst(l -> haskey(m.dict, cn * "," * l.key), DISC_LAWS)
+    i = _disc_law_index(cn, m.dict)
     i === nothing && return ""
     return string(DISC_LAWS[i].key, '\t', DISC_LAWS[i].label)
+end
+
+# The `DISC_LAWS` entry a disc wears; both free-form bases are the `ldspline` entry.
+function _disc_law_index(cn::AbstractString, d::AbstractDict)
+    haskey(d, cn * ",ldpiecewise") && return findfirst(l -> l.key == "ldspline", DISC_LAWS)
+    return findfirst(l -> haskey(d, cn * "," * l.key), DISC_LAWS)
 end
 
 """
@@ -4729,17 +4750,25 @@ function shell_set_ld_law(component::AbstractString, law::AbstractString)
     cn = String(component); want = String(law)
     j = findfirst(l -> l.key == want, DISC_LAWS)
     j === nothing && return "! unknown disc law: " * want
-    i = findfirst(l -> haskey(m.dict, cn * "," * l.key), DISC_LAWS)
+    i = _disc_law_index(cn, m.dict)
     i === nothing && return "! " * cn * " is not a disc"
     old, new = DISC_LAWS[i], DISC_LAWS[j]
     old.key == want && return ""
+    if new.key == "ldspline"
+        # The nodes take the profile the disc had, so the law it wore is where a fit resumes.
+        ld_free!(m.dict, m.free, cn; n = 5, lb = m.lb, ub = m.ub)
+        console!(sh, "  " * cn * ": " * old.label * " → free-form, 5 nodes from the " *
+                     old.label * " profile; ld_free!(model, free, \"" * cn * "\"; n = 5)")
+        return ""
+    end
 
-    dkey = cn * "," * old.key
+    lawkeys = OITOOLS._ld_law_keys(cn, m.dict)
+    dkey = cn * "," * lawkeys[1]
     diam = m.dict[dkey]
     wasfree = dkey in m.free
     lb = get(m.lb, dkey, nothing); ub = get(m.ub, dkey, nothing)
 
-    for k in vcat([old.key], old.coeffs)
+    for k in lawkeys
         kk = cn * "," * k
         delete!(m.dict, kk); delete!(m.lb, kk); delete!(m.ub, kk)
         filter!(!=(kk), m.free)
@@ -4755,6 +4784,46 @@ function shell_set_ld_law(component::AbstractString, law::AbstractString)
     end
     console!(sh, "  " * cn * ": " * old.label * " → " * new.label *
                  "; diameter kept at " * string(diam) * ", coefficients reseeded")
+    return ""
+end
+
+"""
+    shell_ld_free(component) -> String
+
+A free-form disc's settings, as `nodes\tbasis\tmonotonic`: the node count with the one at
+μ = 1, `spline` or `piecewise`, and `1` when the free parameters are the ratios `ldq<k>`.
+`""` for any other component.
+"""
+function shell_ld_free(component::AbstractString)
+    m = _model(); cn = String(component)
+    basis = haskey(m.dict, cn * ",ldspline") ? "spline" :
+            haskey(m.dict, cn * ",ldpiecewise") ? "piecewise" : return ""
+    n = length(OITOOLS._ld_node_suffixes(cn, m.dict)) + 1
+    mono = haskey(m.dict, cn * ",ldq1")
+    return string(n, '\t', basis, '\t', mono ? "1" : "0")
+end
+
+"""
+    shell_set_ld_free(component, n, basis, monotonic) -> String
+
+Set a free-form disc's node count, basis (`spline` or `piecewise`) and whether it is held
+monotonic, with [`ld_free!`](@ref): the nodes take the current profile, the diameter is kept.
+Returns `""` or a message beginning with `!`.
+"""
+function shell_set_ld_free(component::AbstractString, n, basis::AbstractString, monotonic)
+    sh = _shell(); m = _model(sh); cn = String(component)
+    b = String(basis)
+    b in ("spline", "piecewise") || return "! unknown basis: " * b
+    nn = n isa Integer ? Int(n) : round(Int, Float64(n))
+    2 <= nn <= 20 || return "! between 2 and 20 nodes"
+    try
+        ld_free!(m.dict, m.free, cn; n = nn, basis = Symbol(b), monotonic = Bool(monotonic),
+                 lb = m.lb, ub = m.ub)
+    catch err
+        return "! " * sprint(showerror, err)
+    end
+    console!(sh, "  ld_free!(model, free, \"" * cn * "\"; n = " * string(nn) * ", basis = :" * b *
+                 ", monotonic = " * string(Bool(monotonic)) * ")")
     return ""
 end
 
@@ -5287,7 +5356,8 @@ function shell_job_poll()
         console!(sh, "  " * line)
     else
         line = kind === :image  ? finish_reconstruct!(sh, res) :
-               kind === :epochs ? finish_epochs!(sh, res)      : finish_fit!(sh, res)
+               kind === :epochs ? finish_epochs!(sh, res)      :
+               kind === :ldvi   ? finish_ldvi!(sh, res)        : finish_fit!(sh, res)
     end
     return "done\t" * line
 end
@@ -5337,7 +5407,7 @@ documents. `stop` is a flag the GUI sets and the finish path reads.
 """
 mutable struct GuiJob
     task      :: Task
-    kind      :: Symbol           # :image, :fit or :epochs — decides what `job_finish!` does with it
+    kind      :: Symbol           # :image, :fit, :epochs or :ldvi — decides what `job_finish!` does with it
     path      :: String           # capture file, read while it grows
     io        :: Base.Filesystem.File
     saved     :: Any              # the `Base.stdout` to put back

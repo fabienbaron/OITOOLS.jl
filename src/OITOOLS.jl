@@ -36,6 +36,7 @@ include("orbit.jl")             # binary orbits (PMOIRED's definition): position
 include("lines.jl")             # spectral lines on a component's flux (PMOIRED's line_<n>_*)
 include("resolvers.jl")          # SharedUtils, RGF, HandRolled, Symbolic
 include("hankel.jl")             # Hankel transform + chainrules + profile compiler
+include("limb_free.jl")          # free-form limb-darkened disc: I(μ) through N nodes
 include("parse_model.jl")        # FlatModel, eval_model, eval_model_grad
 include("model_jacobian.jl")     # eval_model_jac!: the Jacobian from the closed-form kernels
 include("radial_velocity.jl")    # radial velocities fitted with the interferometry (orbits)
@@ -212,7 +213,8 @@ export set_oiplot_defaults, uvplot, plot_v2, plot_t3phi, plot_t3amp,
 # ── Model fitting (flat-dict interface) ──────────────────────────────────────
 export companion_search, companion_grid, CompanionSearch, companion_flux_map, detection_sigma
 export FlatModel, dict_to_model, parse_model, eval_model, model_flux, eval_model_grad, eval_model_grad_ad,
-       eval_model_jac, eval_model_jac!, ModelJacWorkspace, ModelJacCache, eval_model_sub, smear_samples, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS
+       eval_model_jac, eval_model_jac!, ModelJacWorkspace, ModelJacCache, eval_model_sub, smear_samples, display_model, default_bounds, max_angular_scale, DEFAULT_MAX_SIZE_MAS,
+       ld_free!, ld_profile, ld_nodes, fit_ld_profile_vi, LDProfileVIResult
 export fit_model, fit_model_lsqfit, fit_model_nested, fit_model_ultranest
 export fit_model_ensemble, fit_model_pigeons, SamplerResult, ensemble_slice
 export RVData, read_rv, orbit_x, orbit_y, orbit_rv, orbit_a, orbit_semiamplitudes, kepler_E

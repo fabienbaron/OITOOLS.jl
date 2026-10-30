@@ -445,8 +445,9 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 function _dollarify(expr::String)
-    # the suffixes of `_REF_PATTERN`, an azimuthal mode's key among them
-    replace(expr, r"\b([A-Za-z_][A-Za-z0-9_]*,(?:az (?:amp|projang)[0-9]+|[A-Za-z_][A-Za-z0-9_]*))\b" => s"$\1")
+    # the suffixes of `_REF_PATTERN`, an azimuthal mode's key among them; a reference already
+    # written with its `$` is left as it is
+    replace(expr, r"(?<!\$)\b([A-Za-z_][A-Za-z0-9_]*,(?:az (?:amp|projang)[0-9]+|[A-Za-z_][A-Za-z0-9_]*))\b" => s"$\1")
 end
 
 

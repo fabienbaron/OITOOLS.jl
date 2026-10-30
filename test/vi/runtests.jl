@@ -24,7 +24,8 @@ if !_HAVE_VARINF
     @test true
 else
     for f in ("test_core.jl", "test_precision.jl", "test_diffphase.jl", "test_pointsource.jl",
-              "test_protocol_smoke.jl", "test_protocol_reconstruct.jl", "test_protocol_e2e.jl")
+              "test_protocol_smoke.jl", "test_protocol_reconstruct.jl", "test_protocol_e2e.jl",
+              "test_ldprofile.jl")
         # Each suite in its own module. They came from separate `julia test/x.jl` runs and
         # each defines its own `const oifitsfile`, `const data` and so on at top level;
         # included into one namespace the second definition is an error, not a shadow.

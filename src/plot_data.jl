@@ -134,7 +134,7 @@ const PLOT_GLYPHS = Char[
     (' ':'~')...,
     # the Greek and typographic characters the axis labels, titles and readouts use
     'λ', 'μ', 'α', 'δ', 'χ', 'Δ', 'θ', 'σ', 'π',
-    '°', '²', '³', '±', '×', '·', '—', '–', '…', '≤', '≥', '≈', '→',
+    '°', '²', '³', '±', '×', '·', '—', '–', '…', '≤', '≥', '≈', '→', '⟨', '⟩',
     'ᵣ', '₀', '₁', '₂', '\u2212',                    # subscripts and the Unicode MINUS SIGN
 ]
 

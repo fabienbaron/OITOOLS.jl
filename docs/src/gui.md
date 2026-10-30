@@ -251,10 +251,40 @@ later under **Limb darkening**:
 | square root | `1 - u(1-μ) - w(1-√μ)` | `u`, `w` |
 | power law | `μ^α` (Hestroffer) | `alpha` |
 | four-parameter | `1 - Σₖ cₖ(1 - μ^{k/2})` (Claret) | `c1`…`c4` |
+| free-form | I(μ) through N nodes, `I(1) = 1` | `ld1`…`ld<N-1>` |
 
 Changing the law keeps the diameter (value, bounds, free or fixed) and resets the coefficients
 to the new law's defaults. Coefficients are not comparable between laws: `u` of the quadratic and
 of the square-root law differ, and tabulated coefficients (e.g. Claret's) are per law.
+
+**Free-form** starts from the profile the disc had: its nodes are that law's I(μ) at
+μ = 0, 1/(N-1), …, so a fit resumes where the law's fit ended. Under the law menu:
+
+- **nodes**: N, 5 by default, evenly spaced in μ. Changing it re-samples the current profile.
+- **spline** or **straight lines** between the nodes (`ldspline` or `ldpiecewise`).
+- **monotonic**: the free parameters become the ratios `ldq<k>` = I(μ_k)/I(μ_k+1) in [0, 1],
+  and the nodes are their products, so I(μ) does not rise toward the limb at the nodes.
+
+Visibilities measure few profile shapes: about one with data in the first lobe, two to three
+into the second, four to five past the third null. More free nodes than that leave some
+undetermined; **monotonic** or fewer nodes keep the fit meaningful.
+
+**Free-form profile** (Model Optimization, shown when the model has a disc; needs VarInf) runs
+`fit_ld_profile_vi` on the disc chosen there: I(μ) on a grid of nodes with a Gaussian-process
+prior about the disc's current law, and a band from the posterior samples.
+
+- **nodes**: the grid (24 by default).
+- **GP length** (in μ) and **σ** (in log I): the Matérn-3/2 kernel of the prior.
+- **geoVI** or **MGVI**, **samples**: antithetic pairs drawn for the band.
+- **scale errors**: multiply the error bars by √χ²r when the profile's best fit has χ²r > 1.
+- **bootstrap**: bagged VI, the run repeated on this many bootstrap replicates of the data
+  (configurations drawn with replacement), their samples pooled; 0 for a single run.
+- **Run** uses V² and T3amp of the ticked observables; closure phases are left out.
+
+The result is the **Profile** view under the fits table: the band (16–84 %), the posterior
+mean and the starting law (dashed), normalised to I(1) = 1 or ⟨I⟩ = 1. **Adopt** makes the disc
+this profile (a straight-line free-form disc on the grid, nodes fixed); **Save profile…**
+writes μ, r/R and both normalisations with their bands as CSV.
 
 ## Flux fractions
 

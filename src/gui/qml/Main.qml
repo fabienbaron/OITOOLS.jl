@@ -416,7 +416,8 @@ ApplicationWindow {
         var eng = Julia.shell_optional_engines().split(",")
         for (let i = 0; i < eng.length; ++i) {
             let kv = eng[i].split("=")
-            if (kv[0] === "vi")        imageTab.oiviAvailable    = (kv[1] === "1")
+            if (kv[0] === "vi")        { imageTab.oiviAvailable  = (kv[1] === "1")
+                                         modelTab.viAvailable    = (kv[1] === "1") }
             if (kv[0] === "tempering") { imageTab.pigeonsAvailable = (kv[1] === "1")
                                          modelTab.pigeonsAvailable = (kv[1] === "1") }
             if (kv[0] === "corner")    modelTab.cornerAvailable  = (kv[1] === "1")

@@ -41,8 +41,8 @@ const _GUI_OPTIONAL = (
     # OITOOLSVarInfExt -- an extension needs its trigger package loaded, not merely installed,
     # and the Image tab's "Variational inference" entry greys itself on exactly that check.
     ("VarInf",    "cd771066-68b7-4d72-889c-da7b55f139d5",
-     "variational inference: the Image tab's \"Variational inference\" entry, which is " *
-     "greyed without it",
+     "variational inference: the Image tab's \"Variational inference\" entry and the Model " *
+     "tab's free-form profile, which are greyed without it",
      :path),
     ("PairPlots", "43a3c2be-4208-490b-832a-a21dcd55d7da",
      "corner plots: the Model tab's \"Corner\" view of a bootstrap or nested fit, and " *

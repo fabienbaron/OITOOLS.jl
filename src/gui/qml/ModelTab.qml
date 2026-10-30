@@ -285,6 +285,11 @@ Item {
     property string ldLawKey: ""
     property string ldLawLabel: ""
 
+    // A free-form disc's settings: nodes (with the one at μ = 1), basis, monotonic.
+    property int    ldFreeN: 5
+    property string ldFreeBasis: "spline"
+    property bool   ldFreeMono: false
+
     function refreshLdLaw() {
         root.ldLawKey = ""; root.ldLawLabel = ""
         if (root.selectedComponent.length === 0) return
@@ -292,6 +297,18 @@ Item {
         if (r.length === 0) return
         var f = r.split("\t")
         root.ldLawKey = f[0]; root.ldLawLabel = f.length > 1 ? f[1] : f[0]
+        var g = Julia.shell_ld_free(root.selectedComponent).split("\t")
+        if (g.length === 3) {
+            root.ldFreeN = parseInt(g[0]); root.ldFreeBasis = g[1]; root.ldFreeMono = g[2] === "1"
+        }
+    }
+    function setLdFree(n, basis, mono) {
+        var e = Julia.shell_set_ld_free(root.selectedComponent, n, basis, mono)
+        root.consoleChanged()
+        if (e.length > 0 && e.charAt(0) === "!") { root.fitText = e; root.refreshLdLaw(); return }
+        root.modelDirty = true
+        root.refreshModel()
+        root.refreshLdLaw()
     }
 
     // Rows in `expr` mode. The Resolution view draws a DAG of $-references, and with no derived
@@ -2079,9 +2096,42 @@ Item {
                                                     return ""
                                                 }
                                             }
+                                            // The free-form disc's own settings; each change
+                                            // keeps the diameter and the profile (`ld_free!`).
+                                            RowLayout {
+                                                visible: root.ldLawKey === "ldspline"
+                                                Layout.fillWidth: true
+                                                spacing: root.dp(6)
+                                                Label { text: "nodes"; color: "#666" }
+                                                SpinBox {
+                                                    objectName: "ldNodes"
+                                                    from: 2; to: 20; editable: true
+                                                    Layout.preferredWidth: root.dp(100)
+                                                    value: root.ldFreeN
+                                                    onValueModified: root.setLdFree(value, root.ldFreeBasis, root.ldFreeMono)
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: "N, evenly spaced in μ"
+                                                }
+                                                ComboBox {
+                                                    objectName: "ldBasis"
+                                                    Layout.fillWidth: true
+                                                    model: ["spline", "straight lines"]
+                                                    currentIndex: root.ldFreeBasis === "piecewise" ? 1 : 0
+                                                    onActivated: root.setLdFree(root.ldFreeN, currentIndex === 1 ? "piecewise" : "spline", root.ldFreeMono)
+                                                }
+                                            }
+                                            CheckBox {
+                                                objectName: "ldMonotonic"
+                                                visible: root.ldLawKey === "ldspline"
+                                                text: "monotonic"
+                                                checked: root.ldFreeMono
+                                                onToggled: root.setLdFree(root.ldFreeN, root.ldFreeBasis, checked)
+                                                ToolTip.visible: hovered
+                                                ToolTip.text: "I never rises toward the limb (fits ratios ldq ∈ [0, 1])"
+                                            }
                                             // The diameter is the same quantity in every law and
                                             // is kept; the coefficients are not and are reseeded.
-                                            InfoTip { tip: "Changing the law keeps the diameter and reseeds the coefficients: a value fitted under one law is not a value under another." }
+                                            InfoTip { tip: "Changing the law keeps the diameter and reseeds the coefficients: a value fitted under one law is not a value under another. Free-form starts from the previous law's profile." }
                                         }
                                     }
 
@@ -3300,6 +3350,92 @@ Item {
                                     Item { Layout.fillWidth: true }
                                 }
 
+                                // The free-form profile by variational inference: its own run,
+                                // beside Fit rather than one of its optimisers, since it fits a
+                                // disc's I(μ) on a grid with a Gaussian-process prior and returns
+                                // the profile's band rather than a row of the fits table.
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    visible: root.ldviDiscs.length > 0
+                                    spacing: root.dp(6)
+                                    Label { text: "Free-form profile"; font.bold: true }
+                                    ComboBox {
+                                        id: ldviDiscBox
+                                        objectName: "ldviDisc"
+                                        Layout.preferredWidth: root.dp(110)
+                                        model: root.ldviDiscs
+                                    }
+                                    Label { text: "nodes"; color: "#666" }
+                                    SpinBox {
+                                        objectName: "ldviNodes"
+                                        from: 5; to: 64; value: root.ldviNodes; editable: true
+                                        Layout.preferredWidth: root.dp(90)
+                                        onValueModified: root.ldviNodes = value
+                                        ToolTip.visible: hovered; ToolTip.text: "grid in μ, straight lines between"
+                                    }
+                                    // The prior is a Gaussian process with a fixed Matérn-3/2 kernel: the
+                                    // one whose bands were calibrated (the learned spectrum was not).
+                                    Label { text: "GP length"; color: "#666" }
+                                    TextField {
+                                        objectName: "ldviLength"
+                                        Layout.preferredWidth: root.dp(56)
+                                        text: String(root.ldviLength)
+                                        validator: DoubleValidator { bottom: 0.01 }
+                                        onEditingFinished: { var v = parseFloat(text); if (v > 0) root.ldviLength = v }
+                                        ToolTip.visible: hovered; ToolTip.text: "correlation length, in μ"
+                                    }
+                                    Label { text: "σ"; color: "#666" }
+                                    TextField {
+                                        objectName: "ldviAmp"
+                                        Layout.preferredWidth: root.dp(56)
+                                        text: String(root.ldviAmp)
+                                        validator: DoubleValidator { bottom: 0.001 }
+                                        onEditingFinished: { var v = parseFloat(text); if (v > 0) root.ldviAmp = v }
+                                        ToolTip.visible: hovered; ToolTip.text: "prior spread of log I about the disc's law"
+                                    }
+                                    ComboBox {
+                                        objectName: "ldviMethod"
+                                        Layout.preferredWidth: root.dp(90)
+                                        model: ["geoVI", "MGVI"]
+                                        currentIndex: root.ldviMethod === "mgvi" ? 1 : 0
+                                        onActivated: function (index) { root.ldviMethod = index === 1 ? "mgvi" : "geovi" }
+                                    }
+                                    Label { text: "samples"; color: "#666" }
+                                    SpinBox {
+                                        objectName: "ldviDraws"
+                                        from: 5; to: 500; stepSize: 5; value: root.ldviDraws; editable: true
+                                        Layout.preferredWidth: root.dp(90)
+                                        onValueModified: root.ldviDraws = value
+                                        ToolTip.visible: hovered; ToolTip.text: "antithetic pairs for the band"
+                                    }
+                                    CheckBox {
+                                        objectName: "ldviScale"
+                                        text: "scale errors"
+                                        checked: root.ldviScale
+                                        onToggled: root.ldviScale = checked
+                                        ToolTip.visible: hovered; ToolTip.text: "× √χ²r when the profile's best fit has χ²r > 1"
+                                    }
+                                    Label { text: "bootstrap"; color: "#666" }
+                                    SpinBox {
+                                        objectName: "ldviBoot"
+                                        from: 0; to: 200; stepSize: 10; value: root.ldviBoot; editable: true
+                                        Layout.preferredWidth: root.dp(90)
+                                        onValueModified: root.ldviBoot = value
+                                        ToolTip.visible: hovered; ToolTip.text: "bagged VI: replicates, 0 = off"
+                                    }
+                                    Button {
+                                        objectName: "ldviRun"
+                                        text: root.ldviPending ? "…" : "Run"
+                                        enabled: root.viAvailable && root.hasDataset && !root.running && root.anyObservable
+                                        onClicked: root.startLdvi()
+                                    }
+                                    InfoTip {
+                                        visible: !root.viAvailable
+                                        tip: "Needs VarInf: start Julia with `using VarInf`."
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                }
+
                                 // Bootstrap settings, shown only when bootstrap is the choice.
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -3438,6 +3574,14 @@ Item {
                                                 ? "corner plots need PairPlots, which this build does not load"
                                                 : "the latest fit's bootstrap replicates or posterior, the best fit marked"
                                             onClicked: root.showCorner()
+                                        }
+                                        Button {
+                                            text: "Profile"; implicitHeight: root.dp(20)
+                                            objectName: "ldviView"
+                                            enabled: root.ldviSummary.length > 0
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: "the free-form profile and its band"
+                                            onClicked: { root.diagView = "ldvi"; ldviArea.update() }
                                         }
                                         // Only for a model that varies with wavelength. One that
                                         // does not has an SED of flat lines, which is a control
@@ -3645,6 +3789,63 @@ Item {
                                 scene: orbitPlot
                             }
 
+                            MakieArea {
+                                id: ldviArea
+                                anchors.fill: parent
+                                anchors.margins: root.dp(1)
+                                visible: root.diagView === "ldvi"
+                                scene: ldviPlot
+                            }
+                            RowLayout {
+                                visible: root.diagView === "ldvi"
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.margins: root.dp(6)
+                                z: 2
+                                spacing: root.dp(6)
+                                Label {
+                                    objectName: "ldviText"
+                                    text: {
+                                        var f = root.ldviSummary.split("\t")
+                                        return f.length < 8 ? "" : f[0] + ": θ = " + f[1] + " ± " + f[2] +
+                                               " mas, χ²r " + f[3] +
+                                               (parseFloat(f[7]) !== 1 ? ", errors × " + parseFloat(f[7]).toFixed(2) : "") +
+                                               (f.length > 8 && f[8] !== "0" ? ", bagged × " + f[8] : "")
+                                    }
+                                    color: "#333"
+                                }
+                                ComboBox {
+                                    objectName: "ldviNorm"
+                                    Layout.preferredWidth: root.dp(100)
+                                    model: ["I(1) = 1", "⟨I⟩ = 1"]
+                                    currentIndex: root.ldviNorm === "mean" ? 1 : 0
+                                    onActivated: function (index) {
+                                        root.ldviNorm = index === 1 ? "mean" : "centre"
+                                        Julia.shell_ldvi_draw(root.ldviNorm)
+                                        ldviArea.update()
+                                    }
+                                }
+                                Button {
+                                    objectName: "ldviAdopt"
+                                    text: "Adopt"
+                                    enabled: !root.running
+                                    ToolTip.visible: hovered; ToolTip.text: "the disc becomes this profile (nodes fixed)"
+                                    onClicked: {
+                                        var e = Julia.shell_ldvi_adopt()
+                                        root.consoleChanged()
+                                        if (e.length > 0) { root.fitText = e; return }
+                                        root.modelDirty = true
+                                        root.refreshModel()
+                                        root.refreshLdLaw()
+                                    }
+                                }
+                                Button {
+                                    objectName: "ldviSave"
+                                    text: "Save profile…"
+                                    onClicked: ldviSaveDialog.openAt("")
+                                }
+                            }
+
                                 // ── Save PNG ──────────────────────────────────
                                 //
                                 // Overlaid on the plot rather than placed in a toolbar, so every
@@ -3661,7 +3862,8 @@ Item {
                                     // Saves whichever plot is on screen. One button in
                                     // the corner every other plot area puts one in, rather than
                                     // a second that appears and disappears with the view.
-                                    visible: root.diagView !== "correlations" && root.diagView !== "orbit"
+                                    visible: root.diagView !== "correlations" && root.diagView !== "orbit" &&
+                                             root.diagView !== "ldvi"
                                     enabled: root.diagView === "sed" ? root.sedText.length > 0
                                            : root.diagView === "corner" ? root.cornerPath.length > 0
                                                                         : root.chi2MapP1.length > 0
@@ -3903,6 +4105,7 @@ Item {
     readonly property var sizeLabels: ({ "ud": "diameter", "ldlin": "diameter",
                                          "ldquad": "diameter", "ldsqrt": "diameter",
                                          "ldpow": "diameter", "ldclaret4": "diameter",
+                                         "ldspline": "diameter", "ldpiecewise": "diameter",
                                          "fwhm": "FWHM" })
     // `componentModel.count` is read first so that a binding calling this follows the model.
     function sizeKeyOf(comp) {
@@ -3996,6 +4199,7 @@ Item {
 
     function refreshModel() {
         root.modelDescription = Julia.shell_model_description()
+        root.ldviDiscs = Julia.shell_ldvi_discs().split("\n").filter(function (n) { return n.length > 0 })
         root.orbitComponent = Julia.shell_orbit_component()
         root.rvSummary = Julia.shell_rv_summary()
         paramModel.clear()
@@ -4104,6 +4308,55 @@ Item {
     // The corner plot of the latest fit's samples (a bootstrap's replicates or a posterior), a
     // PNG drawn offscreen by PairPlots: no Makie plot is created once the window exists.
     property bool cornerAvailable: false          // set from `shell_optional_engines`
+
+    // The free-form profile by variational inference: VarInf loaded (`shell_optional_engines`),
+    // the model's discs, the settings, the last run.
+    property bool viAvailable: false
+    property var ldviDiscs: []
+    property int ldviNodes: 24
+    property real ldviLength: 0.3
+    property real ldviAmp: 0.3
+    property string ldviMethod: "geovi"
+    property int ldviDraws: 50
+    property bool ldviScale: true
+    property int ldviBoot: 0
+    property bool ldviPending: false
+    property string ldviSummary: ""
+    property string ldviNorm: "centre"
+    function startLdvi() {
+        var e = Julia.shell_ldvi_start(ldviDiscBox.currentText, root.ldviNodes, "fixed",
+                                       root.ldviLength, root.ldviAmp, root.ldviAmp,
+                                       root.ldviMethod, root.ldviDraws,
+                                       root.useV2, root.useT3amp, root.useT3phi, root.ldviScale,
+                                       root.ldviBoot)
+        root.consoleChanged()
+        if (e.length > 0) { root.fitText = e; return }
+        root.running = true
+        root.ldviPending = true
+        root.fitOutput = ""
+        root.fitText = "free-form profile…"
+        ldviJobTimer.start()
+    }
+    Timer {
+        id: ldviJobTimer
+        interval: 250; repeat: true; running: false
+        onTriggered: {
+            var f = Julia.shell_job_poll().split("\t")
+            if (f[0] === "running") { root.fitOutput = f[1]; return }
+            stop()
+            root.running = false
+            root.ldviPending = false
+            root.fitOutput = Julia.shell_fit_output()
+            if (f[0] === "done") root.fitText = f[1]
+            root.ldviSummary = Julia.shell_ldvi_summary()
+            if (root.ldviSummary.length > 0) {
+                root.ldviNorm = "centre"
+                root.diagView = "ldvi"
+                ldviArea.update()
+            }
+            root.consoleChanged()
+        }
+    }
     property string cornerPath: ""
     property string cornerMsg: ""
     function showCorner() {
@@ -5516,6 +5769,20 @@ Item {
             root.consoleChanged()
             if (name.length === 0 || name.charAt(0) === "!") { root.fitText = name; return }
             root.afterModelSwitch()
+        }
+    }
+
+    FilePicker {
+        id: ldviSaveDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        title: "Save the free-form profile"
+        saveMode: true
+        defaultSuffix: "csv"
+        filters: [{ label: "CSV (*.csv)", patterns: "*.csv" }, { label: "All files", patterns: "*" }]
+        onAccepted: function (path) {
+            var e = Julia.shell_ldvi_save(path)
+            root.consoleChanged()
+            if (e.length > 0) root.fitText = e
         }
     }
 

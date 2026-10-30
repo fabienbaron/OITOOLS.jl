@@ -77,6 +77,7 @@ BLAS.set_num_threads(1)
     include("test_companion_search.jl")  # AX Cir companion search against PMOIRED/CANDID
     include("test_model_typed.jl")       # J1: the resolver typed, eval_model inferred
     include("test_model_kernels.jl")     # J2: component kernels and their closed-form derivatives
+    include("test_limb_free.jl")         # the free-form limb-darkened disc: tables, derivatives, ld_free!
     include("test_model_jacobian.jl")    # J3: the closed-form Jacobian against ForwardDiff
     include("test_lm.jl")                # Levenberg-Marquardt: bounds held, not clipped, against LsqFit
     include("test_hankel_quadrature.jl") # written profiles: closed forms, steps, kinks, the node count

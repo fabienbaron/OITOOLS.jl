@@ -28,6 +28,11 @@ try
     @eval using Pigeons
 catch
 end
+# VarInf, for the free-form profile by variational inference (OITOOLSVarInfExt), when installed
+try
+    @eval using VarInf
+catch
+end
 const GUI = Base.get_extension(OITOOLS, :OITOOLSGUIExt)
 GUI === nothing && error("OITOOLSGUIExt did not load; the GUI tests cannot run")
 using .GUI
@@ -1804,6 +1809,82 @@ end
 
     # The Uncertainty selector decides the ± in the fits table: LM's own σ, none, or a
     # bootstrap run after the fit -- whose σ must be the library's for the same call.
+    @testset "the free-form profile by variational inference runs from the Model panel" begin
+        G = GUI
+        if !G.vi_available()
+            @info "VarInf not loaded: the free-form profile's panel test is skipped"
+            @test true
+        else
+        prev = G.SHELL[]
+        sess = Session()
+        load_dataset!(sess, joinpath(pkgdir(OITOOLS), "demos", "data", "AlphaCenA.oifits");
+                      warn = false, verbose = false)
+        sh = G.ShellState(sess, nothing, nothing, nothing, String[], Any[], 1,
+                          :uv, :baseline, false, :none, :none, false, "", String[], nothing,
+                          "", nothing, nothing, nothing, nothing, nothing, nothing, nothing,
+                          Any[], nothing, nothing, nothing, nothing, "", "", nothing)
+        lfig = Makie.Figure(); lax = Makie.Axis(lfig[1, 1])
+        prevcanvas = G.LDVI_CANVAS[]
+        G.LDVI_CANVAS[] = G.build_ldvi_view(lfig, lax)
+        G.SHELL[] = sh
+        try
+            G.shell_open_model(joinpath(pkgdir(OITOOLS), "demos", "models",
+                                        "Limb_Darkened_Disk_Linear.toml"))
+            m = G._model(sh)
+            @test G.shell_ldvi_discs() == "star"
+            @test startswith(G.shell_ldvi_start("nope", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+                                                true, true, true), "! nope is not a disc")
+            @test startswith(G.shell_ldvi_start("star", 2, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+                                                true, true, true), "! between")
+            @test startswith(G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+                                                false, false, true), "! the free-form profile needs")
+            @test startswith(G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+                                                true, true, false, true, 1), "! bootstrap")
+            @test G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+                                     true, true, true, true, 4) == ""
+            @test occursin("closure phases left out", join(sh.console, "\n"))
+            @test startswith(G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+                                                true, true, false), "! something is already running")
+            line = ""
+            for _ in 1:2400
+                r = G.shell_job_poll()
+                startswith(r, "running") || (line = r; break)
+                sleep(0.25)
+            end
+            @test startswith(line, "done\tstar: diameter")
+            f = split(G.shell_ldvi_summary(), '\t')
+            @test f[1] == "star" && f[5] == "geovi" && f[6] == "fixed" && f[7] == "32" && f[9] == "4"
+            @test parse(Float64, f[8]) > 1.5            # α Cen A's error bars are too small
+            @test 8.0 < parse(Float64, f[2]) < 8.8 && 0 < parse(Float64, f[3]) < 0.5
+            c = G.LDVI_CANVAS[]
+            @test length(c.μ[]) == 12 && all(c.lo[] .<= c.m[] .<= c.hi[]) && c.m[][end] ≈ 1
+            @test G.shell_ldvi_draw("mean") == "" && c.axis.ylabel[] == "I(μ)/⟨I⟩"
+            # drawn after the window is up, so only from the glyphs rasterised before it
+            @test all(ch -> ch in G.PLOT_GLYPHS, c.axis.ylabel[] * c.axis.xlabel[] * "I(μ)/I(1)")
+            @test G.shell_ldvi_draw("centre") == "" && c.axis.ylabel[] == "I(μ)/I(1)"
+
+            csv = tempname() * ".csv"
+            @test G.shell_ldvi_save(csv) == ""
+            rows = readlines(csv)
+            @test startswith(rows[1], "# star: diameter") && endswith(rows[1], "bagged over 4 replicates")
+            @test length(rows) == 14
+            @test startswith(rows[2], "mu,r_over_R,I,")
+
+            @test G.shell_ldvi_adopt() == ""
+            @test haskey(m.dict, "star,ldpiecewise") && !haskey(m.dict, "star,ldlin") &&
+                  !haskey(m.dict, "star,u")
+            @test all(haskey(m.dict, "star,ld$k") for k in 1:11) && !haskey(m.dict, "star,ld12")
+            @test "star,ldpiecewise" in m.free && !any(k -> startswith(k, "star,ld") &&
+                                                         k != "star,ldpiecewise", m.free)
+            @test G.shell_ld_free("star") == "12\tpiecewise\t0"
+        finally
+            G.SHELL[] = prev
+            G.LDVI_CANVAS[] = prevcanvas
+        end
+        end
+    end
+
+
     @testset "the Uncertainty selector reaches the fit" begin
         G = GUI
         prev = G.SHELL[]
@@ -2006,6 +2087,30 @@ end
             # the add-component dialog offers the same laws, in the same order
             kinds = split.(split(G.shell_component_kinds(), '\n'), '\t')
             @test [k[3] for k in kinds if k[1] == "disc"] == [l.key for l in G.DISC_LAWS]
+
+            # Free-form: the nodes take the law's profile; nodes, basis and monotonic are the
+            # disc's settings; back to a law drops every node and ratio.
+            @test G.shell_set_ld_law("star", "ldlin") == ""
+            m.dict["star,u"] = 0.4
+            @test G.shell_set_ld_law("star", "ldspline") == ""
+            @test G.shell_ld_law("star") == "ldspline\tfree-form"
+            @test G.shell_ld_free("star") == "5\tspline\t0"
+            @test m.dict["star,ldspline"] == 8.3 && "star,ldspline" in m.free
+            @test [m.dict["star,ld$k"] for k in 1:4] ≈ [0.6, 0.7, 0.8, 0.9]
+            @test runs(m.dict)
+            @test G.shell_set_ld_free("star", 3, "piecewise", true) == ""
+            @test G.shell_ld_free("star") == "3\tpiecewise\t1"
+            @test G.shell_ld_law("star") == "ldspline\tfree-form"
+            @test "star,ldq1" in m.free && !("star,ld1" in m.free) && !haskey(m.dict, "star,ld3")
+            @test runs(m.dict)
+            @test startswith(G.shell_set_ld_free("star", 1, "spline", false), "!")
+            @test G.shell_set_ld_law("star", "ldquad") == ""
+            @test !any(k -> occursin(r"^star,ldq?\d", k), keys(m.dict))
+            @test m.dict["star,ldquad"] == 8.3 && "star,ldquad" in m.free
+            @test G.shell_ld_free("star") == ""
+            @test G.shell_remove_component("star") == ""
+            @test G.shell_add_component("star", "ldspline") == ""
+            @test G.shell_ld_free("star") == "5\tspline\t0" && runs(m.dict)
             @test G.shell_remove_component("star") == ""
 
             # The visibility function's own seed checks clean, `$BL` included, and its palette

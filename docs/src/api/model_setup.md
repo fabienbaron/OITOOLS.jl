@@ -137,3 +137,83 @@ OITOOLS.vis_ldsqrt
 OITOOLS.vis_ldclaret4
 OITOOLS.vis_ldpow
 ```
+
+### Free-form limb darkening
+
+A disc whose I(μ) is set by its values at N nodes μ_k = (k-1)/(N-1):
+
+```julia
+md = Dict{String,Any}("star,ldspline" => 8.4,         # diameter, mas
+                      "star,ld1" => 0.60, "star,ld2" => 0.70,
+                      "star,ld3" => 0.80, "star,ld4" => 0.90,   # I(μ_k)/I(1); I(1) = 1
+                      "star,f" => 1.0)
+```
+
+`ldspline` interpolates a natural cubic spline in μ through the nodes, `ldpiecewise` straight
+lines. N is the number of `ld<k>` keys plus one. The visibility is exact for any node values:
+the Hankel transform of each basis function is tabulated once per (basis, N), with its
+derivative, so the cost and the Jacobian are those of a closed-form law. A linear law is
+represented exactly by either basis.
+
+| Function | Description |
+|----------|-------------|
+| `ld_free!(model_dict, free, comp; n, basis, monotonic, lb, ub)` | Make a disc free-form, its nodes taken from its current profile; `monotonic` fits the ratios `ldq<k>` ∈ [0, 1] |
+| `ld_profile(model_dict, comp, μ)` | I(μ)/I(1) of any disc law or free-form disc |
+| `ld_nodes(n)` | The node positions in μ |
+
+```@docs
+ld_free!
+ld_profile
+ld_nodes
+```
+
+### Error bars on the profile
+
+`fit_ld_profile_vi` (needs `using VarInf`) returns I(μ) with a band. The disc's profile is put
+on `ngrid` nodes (24) joined by straight lines, log I = log I₀ + f with I₀ the disc's current
+profile and f a Gaussian process (Matérn-3/2, length 0.3 in μ, amplitude 0.3 in log I); the
+diameter is log-normal about its current value with a 10 % width. The run starts at the
+posterior's maximum, found from a scan of the diameter over ±22 %, and draws its samples with
+geoVI (or MGVI).
+
+```julia
+using OITOOLS, VarInf
+m = Dict{String,Any}("star,ldlin" => 8.4, "star,u" => 0.3, "star,f" => 1.0)
+r0 = fit_model_lsqfit(m, ["star,ldlin", "star,u"], data)
+m["star,ldlin"], m["star,u"] = r0.x_opt
+r = fit_ld_profile_vi(m, "star", data; scale_errors = true)
+r.μ, r.I_mean, r.I_lo, r.I_hi          # I/I(1) and its 16–84 % band
+r.diameter, r.diameter_std
+```
+
+- Start from a law fitted to the same data. The profile's prior is centred on that law.
+- Visibilities past the first null leave several minima in the diameter. The scan covers
+  ±22 % of the starting value. `chi2r` far above `chi2r_map` in the result means the run did
+  not converge.
+- The band assumes the error bars. With `scale_errors = true`, they are multiplied by √χ²r when
+  the free-form profile's best fit has χ²r > 1 (`error_scale` in the result).
+- `bootstrap = n` (n ≥ 2) is bagged VI: the run is repeated on n block-bootstrap replicates
+  of the data (configurations drawn with replacement) and their samples pooled. The band then
+  holds the spread of the profile between replicates as well, which error bars or a model
+  that do not describe the data widen. `single` in the result is the run on the full data.
+  The replicates run on all threads; 20 replicates take about 3 s on 4 threads for α Cen A.
+- Closure phases are not used by default: those of a symmetric disc are 0 or 180°, which V²
+  already gives.
+- Calibration, on data simulated with α Cen A's uv coverage and noise (σ(V²) = 2.5 %·V² +
+  3.5e-4): with profiles drawn from the prior, the truth lies in the 16–84 % band at 66–68 % of
+  the nodes for a disc resolved into the third lobe, and at 57 % with data in the first lobe
+  only; against Hamiltonian Monte Carlo on the same posterior the band is 1.0–1.13 times as
+  wide and the mean within 0.25σ. For profiles from the usual laws the band is conservative
+  (90–98 %). Bagged over 20 replicates, the band holds the truth at 69–73 % of the nodes in
+  both cases (⟨z²⟩ 0.88–0.93), and at 96–100 % for the usual laws. On α Cen A, whose error
+  bars are too small by 2.2, the bagged band without `scale_errors` is 1.25 times the band of
+  a single run with it.
+- MGVI is faster; geoVI follows the curved posterior that the diameter and the limb
+  intensity make together.
+- `prior = :learned` infers the Gaussian process's spectrum (VarInf's correlated field)
+  instead of fixing it. Its bands were not calibrated in the same tests (36–39 % coverage).
+
+```@docs
+fit_ld_profile_vi
+LDProfileVIResult
+```

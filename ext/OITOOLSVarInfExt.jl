@@ -17,10 +17,12 @@ using FFTW
 using LinearAlgebra
 using Printf
 using Statistics
+using Random
 
 using OITOOLS
 using OITOOLS: OIdata, FlatModel, NFFTCell, DFTCell, mod360, ft_eltype,
-               scatter_obs_cotangent!, _pad_weights, _chi2_terms
+               scatter_obs_cotangent!, _pad_weights, _chi2_terms,
+               LDProfileVIResult, residuals_flat, residuals_flat_jac!
 
 using VarInf
 using VarInf: _nifty_cg, _nifty_newton_cg, _spectral_latent_size
@@ -41,6 +43,7 @@ include(joinpath(VIDIR, "observe.jl"))      # image -> visibilities -> observabl
 include(joinpath(VIDIR, "pointsource.jl"))  # analytic point sources and their geoVI problem
 include(joinpath(VIDIR, "problem.jl"))      # likelihood energy + the VarInf protocol wrappers
 include(joinpath(VIDIR, "reconstruct.jl"))  # MAP / MGVI / geoVI / hybrid entry points
+include(joinpath(VIDIR, "ldprofile.jl"))    # error bars on a free-form limb-darkening profile
 
 export harmonic_smooth, make_smoothing_kernel
 export CorrFieldConfig, FourierGridInfo, fourier_mode_distributor, amplitude_spectrum

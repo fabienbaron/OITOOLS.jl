@@ -56,7 +56,7 @@ const _MAS2RAD_PM = 2.0626480624709636e8    # 1 radian in milli-arcseconds
 
 const _GEOMETRY_KEYS = ["image", "visfunc", "profile", "diamin", "fwhmin", "crin",
                        "ud", "fwhm", "ldlin", "ldquad", "ldsqrt", "ldclaret4",
-                       "ldpow", "resolved"]
+                       "ldpow", "ldspline", "ldpiecewise", "resolved"]
 
 const _KIND_GEOMETRY = Dict{Symbol,String}(
     :image         => "image",        # a FITS image or cube (image_component.jl)
@@ -72,6 +72,8 @@ const _KIND_GEOMETRY = Dict{Symbol,String}(
     :ldsqrt        => "ldsqrt",       # square-root law
     :ldclaret4     => "ldclaret4",    # Claret four-parameter law
     :ldpow         => "ldpow",
+    :ldspline      => "ldspline",     # free-form: spline in μ through `ld<k>` nodes
+    :ldpiecewise   => "ldpiecewise",  # free-form: straight lines between the nodes
     :resolved      => "resolved",     # fully resolved (V=1 at B=0, 0 at B>0), e.g. halo
     :point         => "",             # no geometry key — unresolved point
 )
@@ -91,6 +93,9 @@ const _ANALYTIC_PARAM_SUFFIXES = Dict{Symbol,Vector{String}}(
     :ldsqrt        => ["ldsqrt", "u", "w"],
     :ldclaret4     => ["ldclaret4", "c1", "c2", "c3", "c4"],
     :ldpow         => ["ldpow", "alpha"],   # diameter, alpha
+    # diameter, then the nodes ld1 … ld<N-1>, as many as the component has (`_analytic_suffixes`)
+    :ldspline      => ["ldspline"],
+    :ldpiecewise   => ["ldpiecewise"],
     :resolved      => [],                   # fully resolved: no geometry params
     :point         => [],
 )
@@ -109,6 +114,7 @@ Upper bound on an angular size, in mas, used by [`default_bounds`](@ref) without
 const DEFAULT_MAX_SIZE_MAS = 100.0
 
 const _SIZE_KEYS = ("ud", "fwhm", "ldlin", "ldquad", "ldsqrt", "ldclaret4", "ldpow",
+                    "ldspline", "ldpiecewise",
                     "diamin", "diamout", "diam",
                     "fwhmin", "fwhmout", "crin", "crout", "udout", "r_max", "spatial_kernel")
 const _OFFSET_KEYS = ("x", "y", "croff")
@@ -205,6 +211,10 @@ function default_bounds(model_dict::Dict{String}, list_free_params::AbstractVect
                 (-smax, smax)
             elseif haskey(_DEFAULT_PARAM_BOUNDS, suffix)
                 _DEFAULT_PARAM_BOUNDS[suffix]
+            elseif occursin(_LD_NODE_KEY, suffix)
+                (0.0, 2.0)
+            elseif occursin(_LD_RATIO_KEY, suffix)
+                (0.0, 1.0)
             elseif startswith(suffix, "az amp")
                 (0.0, 1.0)
             elseif startswith(suffix, "az projang")
@@ -359,6 +369,8 @@ const _ANALYTIC_VIS = Dict{Symbol, Function}(
     :ldlin         => _vis_ldlin,
     :ldquad        => _vis_ldquad,
     :ldpow         => _vis_ldpow,
+    :ldspline      => _vis_ldspline,
+    :ldpiecewise   => _vis_ldpiecewise,
     :resolved      => _vis_resolved,
     :point         => _vis_point,
 )
@@ -552,6 +564,7 @@ function _identify_kind(comp_name::String, model_dict::Dict{String})::Symbol
                  "ldsqrt"=>:ldsqrt, "ldclaret4"=>:ldclaret4,
                  "crin"=>:crescent, "ud"=>:ud, "fwhm"=>:gaussian,
                  "ldlin"=>:ldlin, "ldquad"=>:ldquad, "ldpow"=>:ldpow,
+                 "ldspline"=>:ldspline, "ldpiecewise"=>:ldpiecewise,
                  "resolved"=>:resolved), gk, :unknown)
     end
     # No geometry key — must have f, treat as unresolved point
@@ -735,6 +748,13 @@ const _SUGAR_SUFFIXES     = Set(["diam", "thick", "spectrum"])
 const _HANKEL_SUFFIXES    = Set(["profile", "r_max", "nr", "udout", "diamin", "diamout"])
 const _IMAGE_SUFFIXES     = Set(["image", "pixsize", "norm"])
 
+# The parameter suffixes of an analytic component, in its kernel's order: the table's, and for
+# a free-form disc its nodes ld1 … ld<N-1> after the diameter.
+_analytic_suffixes(kind::Symbol, cn::AbstractString, pd::AbstractDict) =
+    kind === :ldspline || kind === :ldpiecewise ?
+        vcat(_ANALYTIC_PARAM_SUFFIXES[kind], _ld_node_suffixes(cn, pd)) :
+        get(_ANALYTIC_PARAM_SUFFIXES, kind, String[])
+
 """
     reserved_suffix(suffix) -> Bool
 
@@ -750,7 +770,8 @@ reserved_suffix(suffix::AbstractString) =
     suffix in _IMAGE_SUFFIXES || suffix in _GEOMETRY_KEYS ||
     any(s -> suffix in s, values(_ANALYTIC_PARAM_SUFFIXES)) ||
     startswith(suffix, "az amp") || startswith(suffix, "az projang") ||
-    startswith(suffix, "orb ") || suffix == "ftotal" || occursin(_LINE_KEY, suffix)
+    startswith(suffix, "orb ") || suffix == "ftotal" || occursin(_LINE_KEY, suffix) ||
+    occursin(_LD_NODE_KEY, suffix) || occursin(_LD_RATIO_KEY, suffix)
 
 """
 Warn about `component,key` pairs the parser never consumes.
@@ -776,7 +797,7 @@ function _warn_unrecognised_keys(pd::Dict{String})
     for cn in _component_names(pd)
         kind = _identify_kind(cn, pd)
         ok = union(_UNIVERSAL_SUFFIXES, _SUGAR_SUFFIXES,
-                   Set{String}(get(_ANALYTIC_PARAM_SUFFIXES, kind, String[])))
+                   Set{String}(_analytic_suffixes(kind, cn, pd)))
         kind === :hankel && union!(ok, _HANKEL_SUFFIXES)
         kind === :image  && union!(ok, _IMAGE_SUFFIXES)
         gk = get(_KIND_GEOMETRY, kind, "")
@@ -1018,7 +1039,7 @@ function dict_to_model(model_dict::Dict{String},
 
         else
             # Analytic component (ud, gaussian, ring, gaussian_ring, ldlin, etc.)
-            suffixes  = _ANALYTIC_PARAM_SUFFIXES[kind]
+            suffixes  = _analytic_suffixes(kind, cn, pd)
             param_idx = map(suffixes) do s
                 k = "$cn,$s"
                 haskey(n2i, k) ||

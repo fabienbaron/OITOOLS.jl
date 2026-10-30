@@ -501,4 +501,11 @@ end
     @test occursin("on a bound: rim,diamin", sprint(show, r))
 end
 
+# A prior or constraint expression may name a parameter with or without its `$`.
+@testset "expressions with and without \$" begin
+    @test OITOOLS._dollarify("star,i0 - 2*star,i1") == "\$star,i0 - 2*\$star,i1"
+    @test OITOOLS._dollarify("\$star,i0 - 2*star,i1") == "\$star,i0 - 2*\$star,i1"
+    @test OITOOLS._dollarify("\$star,az amp1 + star,az amp2") == "\$star,az amp1 + \$star,az amp2"
+end
+
 end
