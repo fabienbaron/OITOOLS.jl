@@ -348,7 +348,7 @@ function repair_oifits(path::AbstractString, out::AbstractString; targetname::Ab
     end
     d = readoifits(path; T = Float64, warn = false, verbose = false, targetname,
                    redundance_remove = false)
-    return write_oifits(out, d; template = path, overwrite)
+    return write_oifits(out, d; template = path, targetname, overwrite)
 end
 
 # Splitting a dataset into parts: by time, by instrument (from the points' table tags, so no
@@ -421,6 +421,31 @@ its OI_TARGET table.
 """
 split_by_target(path::AbstractString; kwargs...) =
     [String(n) => readoifits(path; targetname = n, kwargs...) for n in list_oifits_targets(path)]
+
+"""
+    join_targets(files, out; overwrite = false) -> out
+
+Write the OIFITS files `files` into one file `out`: one OI_TARGET listing every target, each
+renumbered, and each data table kept with its rows pointing at its target. Tables of the same
+name (OI_ARRAY, OI_WAVELENGTH, OI_CORR) are written once, and must be identical across the
+files. A target named in several files is one target. `out` may not be one of `files`.
+"""
+function join_targets(files::AbstractVector{<:AbstractString}, out::AbstractString;
+                      overwrite::Bool = false)
+    isempty(files) && throw(ArgumentError("no file to join"))
+    any(f -> _same_file(out, f), files) && throw(ArgumentError("$(out) is one of the files to join"))
+    !overwrite && isfile(out) && throw(ArgumentError("$(out) exists (overwrite = true to replace it)"))
+    ds = OIFITS.OIDataSet()
+    for f in files
+        x = load_oifits(f)
+        for db in (x.target, x.array..., x.instr..., x.correl..., x.inspol..., x.vis..., x.vis2...,
+                   x.t3..., x.flux...)
+            push!(ds, db)
+        end
+    end
+    OIFITS.write(out, ds; overwrite = true)
+    return String(out)
+end
 
 # OI_TARGET's TARGET_ID and OI_ARRAY's STA_INDEX columns as the file stores them, with each table's
 # OI_REVN: `(table, column, what is numbered, values, revn)`. A ZIP archive's FITS file is read.

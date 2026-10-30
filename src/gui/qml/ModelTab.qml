@@ -104,6 +104,7 @@ Item {
     onModelDirtyChanged: Julia.shell_set_model_dirty(modelDirty)
     // A model added, removed, renamed or selected.
     signal modelsChanged()
+    signal modelRenamed(string oldName, string newName)
 
     // Starts empty. A model invented by the interface is a model the user did not write, and
     // there is no way to tell it apart from one they did once it is on screen -- the fitted
@@ -5639,10 +5640,12 @@ Item {
         afterModelSwitch()
     }
     function renameModel(name) {
+        var old = root.modelName
         var r = Julia.shell_rename_model(name)
         root.consoleChanged()
         if (r.length > 0) root.fitText = r
         refreshModelList()
+        if (r.length === 0 && old !== root.modelName) root.modelRenamed(old, root.modelName)
         if (r.length === 0) root.modelsChanged()
     }
 

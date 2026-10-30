@@ -101,7 +101,10 @@ Item {
     readonly property int currentView: viewTabs.currentIndex
     // ── simulation output ─────────────────────────────────────────────────────
     property string outputFile: ""
-    property string lastSimulatedFile: ""
+    // the files the last Simulate wrote, in the targets' order
+    property var    lastSimulatedFiles: []
+    // one file per target, else every target in the output file
+    property bool   simFilePerTarget: true
     // The band the chosen spectral setup actually observes in, and the mean wavelength that
     // decided it. Read from Julia rather than guessed from the setup's name: MIRCX_LOWJ's
     // channels sit at 1.44 µm, which is H, so the name would give the wrong band.
@@ -141,37 +144,6 @@ Item {
     // has to be readable here rather than discovered when Simulate is pressed.
     property int    datasetCount: 0
 
-    // ── what the simulation is OF ────────────────────────────────────────────
-    //
-    // `simulate` takes a sky, and the two kinds are genuinely different arguments rather than
-    // one argument with a flag: an image (2-D grey, or 3-D one plane per channel) goes in as
-    // `image` with a `pixsize`, a model goes in as `flat_model` plus its current `flat_params`.
-    // So the panel has to know which it holds before it can say Simulate is possible.
-    property string simSource: "image"          // image (a FITS file, any dimension) | model
-    // the channels of the image (or the model's image cube) instead of the spectral setup
-    property bool   simImageChannels: false
-    property string simImagePath: ""
-    property string simModelPath: ""            // empty ⇒ the Modeling perspective's model
-    property real   simPixsize: 0.1             // mas, images only; a model carries its own scale
-    property string simSourceText: "no file chosen"
-    property bool   simSourceOk: false
-
-    function refreshSimSource() {
-        var path = simSource === "model" ? simModelPath : simImagePath
-        var r = Julia.shell_sim_source(simSource, path)
-        var f = r.split("\t")
-        simSourceOk   = f[0] === "ok"
-        simSourceText = f.length > 1 ? f[1] : r
-        // The file's own pixel size, when its header carries one. Taken rather than offered:
-        // a truth image knows its scale, and a retyped one is how a simulation ends up being
-        // of a source a different size than the image it was made from.
-        var px = f.length > 2 ? parseFloat(f[2]) : 0
-        if (simSourceOk && !isNaN(px) && px > 0) simPixsize = px
-    }
-    onSimSourceChanged:    refreshSimSource()
-    onSimImagePathChanged: refreshSimSource()
-    onSimModelPathChanged: refreshSimSource()
-
     property string statusText: "ready"
 
     // ── derived state the controls enable on ──────────────────────────────────
@@ -192,6 +164,16 @@ Item {
             if (telescopeConfig[displayOrder[k]] > 0) out.push(telescopeNames[displayOrder[k]])
         return out
     }
+    // The targets Simulate observes: the named ones with a model that reads.
+    readonly property int nModelled: {
+        var n = 0
+        for (var i = 0; i < targets.length; ++i)
+            if (targets[i].name && targets[i].name.length > 0 && (targets[i].simKind || "").length > 0 &&
+                targets[i].simOk) n += 1
+        return n
+    }
+    // Each target observed at the samples the Gantt shows it observable, when it shows it.
+    property bool simPlanEpochs: false
     readonly property int nNamedTargets: {
         var n = 0
         for (var i = 0; i < targets.length; ++i)
@@ -205,15 +187,13 @@ Item {
     // output file, and having a file to copy.
     readonly property string blockReason:
         simCopyStructure           ? (datasetCount === 0 ? "no dataset loaded to copy" :
-                                      !simSourceOk       ? "no source: " + simSourceText :
+                                      nModelled === 0    ? "no target has a model" :
                                       outputFile.length === 0 ? "no output file" : "") :
         nNamedTargets === 0        ? "no target" :
         nSelectedTelescopes < 3    ? "select at least 3 telescopes" :
         combiner.length === 0      ? "no combiner" :
         spectralSetup.length === 0 ? "no spectral setup" :
-        // A simulation is OF something. Without a usable sky there is nothing to observe, and
-        // that is as much a blocker as having no combiner.
-        !simSourceOk               ? "no source: " + simSourceText :
+        nModelled === 0            ? "no target has a model" :
         outputFile.length === 0    ? "no output file" : ""
     readonly property bool canSimulate: blockReason.length === 0
 
@@ -311,7 +291,7 @@ Item {
         // One northern seed, so the panel is never empty on a first run and never carries a
         // target nobody asked for. "+ target" and SIMBAD add the rest. Its values are SIMBAD's,
         // so it counts as resolved.
-        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: true; resolving: false; cal: false; calFor: ""; extra: "" }
+        ListElement { name: "Vega"; ra: 279.234735; dec: 38.783689; magV: 0.03; magJ: -0.18; magH: -0.03; magK: 0.13; cached: true; resolving: false; cal: false; calFor: ""; extra: ""; simKind: ""; simRef: ""; simPixsize: 0.0; simChannels: false; simDiam: 0.0; simText: ""; simOk: true }
     }
 
     function refreshTargets() {
@@ -321,7 +301,8 @@ Item {
             var t = targetModel.get(i)
             out.push({ name: t.name, ra: t.ra, dec: t.dec,
                        magV: t.magV, magJ: t.magJ, magH: t.magH, magK: t.magK,
-                       cached: t.cached, cal: t.cal, calFor: t.calFor })
+                       cached: t.cached, cal: t.cal, calFor: t.calFor,
+                       simKind: t.simKind, simOk: t.simOk })
             if (t.cached) nc += 1
         }
         root.targets = out
@@ -334,10 +315,6 @@ Item {
     function simulateOptions() {
         var o = []
         function put(k, v) { o.push(k + "\t" + v) }
-        put("source", simSource)
-        put("path", simSource === "model" ? simModelPath : simImagePath)
-        if (simSource !== "model") put("pixsize", simPixsize)
-        if (simImageChannels && !simCopyStructure) put("image_channels", 1)
         put("noise", simNoiseMode === "photon" ? 1 : simNoiseMode === "fractional" ? "fractional" : 0)
         if (simNoiseMode === "fractional")
             for (var k in simFrac) put("frac_" + k, simFrac[k])
@@ -355,6 +332,8 @@ Item {
             put("n_samples", simNSamples)
             put("observability", simObservability ? 1 : 0)
             put("alt_limit", altLimit); put("alt_max", altMax)
+            if (simPlanEpochs && hasPlan) put("plan_epochs", 1)
+            if (!simFilePerTarget) put("combine", 1)
         }
         return o.join("\n")
     }
@@ -392,9 +371,68 @@ Item {
     function addTarget() {
         targetModel.append({ name: "", ra: 0.0, dec: 0.0,
                              magV: NaN, magJ: NaN, magH: NaN, magK: NaN, cached: false,
-                             resolving: false, cal: false, calFor: "", extra: "" })
+                             resolving: false, cal: false, calFor: "", extra: "",
+                             simKind: "", simRef: "", simPixsize: 0.0, simChannels: false,
+                             simDiam: 0.0, simText: "", simOk: true })
         root.currentTargetIndex = targetModel.count - 1
         refreshTargets()
+    }
+
+    // ── a source per target ──────────────────────────────────────────────────
+    // The models held in the Modeling tab, by name.
+    function sessionModelNames() {
+        var t = Julia.shell_model_names()
+        return t.length > 0 ? t.split("\n").map(function (l) { return l.split("\t")[0] }) : []
+    }
+    // A row's source as its label shows it, and whether Simulate can read it.
+    function checkSimSource(i) {
+        var t = targetModel.get(i)
+        if (t.simKind.length === 0) { targetModel.set(i, { simText: "", simOk: true }); return }
+        var f = Julia.shell_sim_source(t.simKind, t.simKind === "ud" ? String(t.simDiam) : t.simRef).split("\t")
+        var label = t.simKind === "ud" ? "UD " + t.simDiam + " mas" :
+                    t.simKind === "session" ? t.simRef : t.simRef.replace(/^.*[\\/]/, "")
+        targetModel.set(i, { simText: label, simOk: f[0] === "ok" })
+    }
+    function checkSimSources() {
+        for (var i = 0; i < targetModel.count; ++i) checkSimSource(i)
+        refreshTargets()
+    }
+    // A model renamed in the Modeling tab: the targets simulated from it follow.
+    function renameSimModel(oldName, newName) {
+        for (var i = 0; i < targetModel.count; ++i) {
+            var t = targetModel.get(i)
+            if (t.simKind === "session" && t.simRef === oldName) targetModel.set(i, { simRef: newName })
+        }
+        checkSimSources()
+    }
+    function openSimDialog(i) {
+        var t = targetModel.get(i)
+        simSourceDialog.openFor(i, t.name, t.simKind, t.simRef, t.simPixsize, t.simChannels,
+                                t.simDiam, sessionModelNames())
+    }
+    function setSimSource(i, kind, ref, pixsize, channels, diam) {
+        targetModel.set(i, { simKind: kind, simRef: ref, simPixsize: pixsize,
+                             simChannels: channels, simDiam: diam })
+        checkSimSource(i)
+        refreshTargets()
+    }
+    // A row's magnitude in the setup's band, or "" when it has none (the panel's then).
+    function magOfRow(t) {
+        var m = root.simBand === "V" ? t.magV : root.simBand === "J" ? t.magJ :
+                root.simBand === "H" ? t.magH : root.simBand === "K" ? t.magK : NaN
+        return root.simMagUserSet || isNaN(m) ? "" : m
+    }
+    // The list for `shell_simulate_targets`, one line per named target with a model.
+    function simulateRows() {
+        var rows = []
+        for (var i = 0; i < targetModel.count; ++i) {
+            var t = targetModel.get(i)
+            if (!t.name || t.name.length === 0 || t.simKind.length === 0 || !t.simOk) continue
+            rows.push([t.name, t.ra, t.dec, magOfRow(t), "", t.cal ? 1 : 0, t.simKind,
+                       t.simKind === "ud" ? "" : t.simRef, t.simPixsize, t.simChannels ? 1 : 0,
+                       t.simKind === "ud" ? t.simDiam : ""].join("\t"))
+        }
+        return rows.join("\n")
     }
 
     function removeTarget(i) {
@@ -497,8 +535,9 @@ Item {
 
     // The target list to and from a CSV file (`shell_save_targets`, `shell_load_targets`): every
     // field, and whether SIMBAD resolved the row, so a loaded list need not be resolved again.
-    // A row's `calFor` names the science targets it calibrates, `;`-separated; its `extra` holds
-    // the file's other columns as `column=value` fields, written back.
+    // A row's `calFor` names the science targets it calibrates, `;`-separated; its source is
+    // written as the `sim_kind`, `sim_path`, `sim_pixsize`, `sim_channels` and `sim_diam` columns,
+    // and its `extra` holds the file's other columns as `column=value` fields, written back.
     function saveTargets(path) {
         var rows = []
         for (var i = 0; i < targetModel.count; ++i) {
@@ -508,6 +547,11 @@ Item {
             var f = [t.name, t.ra, t.dec, mag(t.magV), mag(t.magJ), mag(t.magH), mag(t.magK),
                      t.cached ? 1 : 0, t.cal ? 1 : 0, t.calFor]
             if (t.extra.length > 0) f.push(t.extra)
+            if (t.simKind.length > 0)
+                f.push("sim_kind=" + t.simKind, "sim_path=" + t.simRef,
+                       "sim_pixsize=" + (t.simPixsize > 0 ? t.simPixsize : ""),
+                       "sim_channels=" + (t.simChannels ? 1 : 0),
+                       "sim_diam=" + (t.simDiam > 0 ? t.simDiam : ""))
             rows.push(f.join("\t"))
         }
         var r = Julia.shell_save_targets(path, rows.join("\n"))
@@ -524,14 +568,31 @@ Item {
             var f = lines[i].split("\t")
             if (f.length < 10) continue
             var num = function (v) { return v.length > 0 ? parseFloat(v) : NaN }
+            // the sim_* columns are the row's source; the other columns are kept as they are
+            var sim = {}, rest = []
+            var ex = f.slice(10)
+            for (var e = 0; e < ex.length; ++e) {
+                var k = ex[e].indexOf("=")
+                var key = k > 0 ? ex[e].substring(0, k) : ""
+                if (key.indexOf("sim_") === 0) sim[key] = ex[e].substring(k + 1)
+                else rest.push(ex[e])
+            }
+            var sk = sim["sim_kind"] || ""
             targetModel.append({ name: f[0], ra: parseFloat(f[1]), dec: parseFloat(f[2]),
                                  magV: num(f[3]), magJ: num(f[4]), magH: num(f[5]), magK: num(f[6]),
                                  cached: f[7] === "1", resolving: false, cal: f[8] === "1",
-                                 calFor: f[9], extra: f.slice(10).join("\t") })
+                                 calFor: f[9], extra: rest.join("\t"),
+                                 simKind: ["session", "modelfile", "image", "ud"].indexOf(sk) >= 0 ? sk : "",
+                                 simRef: sim["sim_path"] || "",
+                                 simPixsize: parseFloat(sim["sim_pixsize"]) > 0 ? parseFloat(sim["sim_pixsize"]) : 0.0,
+                                 simChannels: sim["sim_channels"] === "1",
+                                 simDiam: parseFloat(sim["sim_diam"]) > 0 ? parseFloat(sim["sim_diam"]) : 0.0,
+                                 simText: "", simOk: true })
         }
         root.currentTargetIndex = 0
         refreshTargets()
         magForBand()
+        checkSimSources()
         root.statusText = "loaded " + targetModel.count + " targets"
     }
 
@@ -642,6 +703,9 @@ Item {
                                         required property bool resolving
                                         required property bool cal
                                         required property string calFor
+                                        required property string simKind
+                                        required property string simText
+                                        required property bool simOk
 
                                         Layout.fillWidth: true
                                         implicitHeight: targetRowColumn.implicitHeight + dp(10)
@@ -707,14 +771,51 @@ Item {
                                                     ToolTip.text: "A calibrator"
                                                 }
                                                 Button {
+                                                    objectName: "obsTargetSim:" + targetRow.index
+                                                    text: "Model"
+                                                    implicitWidth: implicitContentWidth + dp(16)
+                                                    enabled: targetRow.name.length > 0
+                                                    onClicked: root.openSimDialog(targetRow.index)
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: "what this target is simulated from"
+                                                }
+                                                // ✓ simulated, ○ no model, ✗ a model that does not read
+                                                Label {
+                                                    objectName: "obsTargetModelMark:" + targetRow.index
+                                                    Layout.preferredWidth: dp(16)
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    text: targetRow.simKind.length === 0 ? "○" : targetRow.simOk ? "✓" : "✗"
+                                                    color: targetRow.simKind.length === 0 ? "#999" : targetRow.simOk ? "#2e7d32" : "#b00000"
+                                                    font.bold: targetRow.simKind.length > 0
+                                                    font.pointSize: pt(baseFontPt + 2)
+                                                }
+                                                Button {
                                                     text: "SIMBAD"
+                                                    implicitWidth: implicitContentWidth + dp(16)
                                                     enabled: targetRow.name.length > 0
                                                     onClicked: root.resolveTarget(targetRow.index)
                                                 }
                                                 Button {
                                                     text: "−"
+                                                    implicitWidth: implicitContentWidth + dp(16)
                                                     enabled: targetModel.count > 1
                                                     onClicked: root.removeTarget(targetRow.index)
+                                                }
+                                            }
+
+                                            // the target's model
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                visible: targetRow.simKind.length > 0
+                                                spacing: dp(4)
+                                                Label { text: "model"; color: "#666"; font.pointSize: pt(baseFontPt - 2) }
+                                                Label {
+                                                    objectName: "obsTargetSimText:" + targetRow.index
+                                                    Layout.fillWidth: true
+                                                    text: targetRow.simText
+                                                    color: targetRow.simOk ? "#2e7d32" : "#b00000"
+                                                    elide: Text.ElideMiddle
+                                                    font.pointSize: pt(baseFontPt - 1)
                                                 }
                                             }
 
@@ -2291,7 +2392,12 @@ Item {
                     spacing: dp(8)
 
                     Label {
-                        text: root.simBand.length > 0 ? "mag (" + root.simBand + ")" : "mag"
+                        text: {
+                            var p = []
+                            if (root.simBand.length > 0) p.push(root.simBand)
+                            p.push("fallback")
+                            return p.length > 0 ? "mag (" + p.join(", ") + ")" : "mag"
+                        }
                         color: "#666"; font.pointSize: pt(baseFontPt - 2)
                         ToolTip.visible: hovered && root.simBandLam > 0
                         ToolTip.text: root.simBand + " band, from the setup's mean wavelength " +
@@ -2443,79 +2549,6 @@ Item {
                     Item { Layout.fillWidth: true }
                 }
 
-                // ── source ───────────────────────────────────────────────────
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: dp(8)
-
-                    Label { text: "Source"; font.bold: true }
-                    ComboBox {
-                        Layout.preferredWidth: dp(140)
-                        objectName: "simSourceBox"
-                        model: ["Image", "Model"]
-                        currentIndex: root.simSource === "model" ? 1 : 0
-                        onActivated: root.simSource = ["image", "model"][currentIndex]
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Image: a FITS image or cube, any dimension · Model: a model, SPARCO included"
-                    }
-
-                    Button {
-                        text: root.simSource === "model" ? "Model file…" : "FITS…"
-                        onClicked: root.simSource === "model" ? simModelDialog.openAt("")
-                                                             : simImageDialog.openAt("")
-                    }
-                    Button {
-                        visible: root.simSource === "model"
-                        text: "From Modeling tab"
-                        // The model being edited next door, at its current values — no file, no
-                        // round trip. `simulate` wants `flat_model` and `flat_params`, which is
-                        // exactly what that perspective already holds.
-                        onClicked: { root.simModelPath = ""; root.refreshSimSource() }
-                    }
-
-                    Label { text: "pixel size"; visible: root.simSource !== "model"; color: "#666" }
-                    // A plain TextField, as everywhere else in this file: `NumField` is an
-                    // inline component of ImageTab and inline components are private to the
-                    // file that declares them.
-                    TextField {
-                        id: simPixField
-                        visible: root.simSource !== "model"
-                        Layout.preferredWidth: dp(80)
-                        text: root.simPixsize.toFixed(4)
-                        horizontalAlignment: Text.AlignRight
-                        onEditingFinished: {
-                            var v = parseFloat(text)
-                            if (!isNaN(v) && v > 0) root.simPixsize = v
-                            else text = root.simPixsize.toFixed(4)
-                        }
-                    }
-                    Label { text: "mas"; visible: root.simSource !== "model"; color: "#666"
-                            font.pointSize: pt(baseFontPt - 2) }
-
-                    CheckBox {
-                        objectName: "simImageChannels"
-                        text: "Image's channels"
-                        checked: root.simImageChannels
-                        enabled: !root.simCopyStructure
-                        onToggled: root.simImageChannels = checked
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Observe at the cube's wavelengths (the image, or the model's image cube) instead of the spectral setup"
-                    }
-
-                    // The sky's status either way — a simulation is OF something in both
-                    // modes — with the coverage's provenance appended when it is not the
-                    // array's, since that is what makes the HA range and the magnitudes idle.
-                    Label {
-                        objectName: "simSourceText"
-                        Layout.fillWidth: true
-                        text: root.simSourceText +
-                              (root.simCopyStructure ? "   ·   uv + SNR from the loaded file" : "")
-                        color: root.simSourceOk ? "#2e7d32" : "#b00000"
-                        elide: Text.ElideMiddle
-                        font.pointSize: pt(baseFontPt - 1)
-                    }
-                }
-
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: dp(8)
@@ -2526,13 +2559,21 @@ Item {
                         enabled: root.canSimulate
                         onClicked: simulateTimer.restart()
                     }
+                    Label {
+                        objectName: "simModelCount"
+                        text: root.nModelled + " of " + root.nNamedTargets + " targets"
+                        color: root.nModelled > 0 ? "#2e7d32" : "#888"
+                        ToolTip.visible: modelCountHover.hovered
+                        ToolTip.text: "targets with a model (✓)"
+                        HoverHandler { id: modelCountHover }
+                    }
                     Button {
                         id: openInExploreButton
                         text: "Open in Explore"
                         // Cross-tab moves are explicit verbs, never implicit state changes, so this
                         // stays a button and stays disabled until there is a file to carry across.
-                        enabled: root.lastSimulatedFile.length > 0
-                        onClicked: root.openRequested(root.lastSimulatedFile)
+                        enabled: root.lastSimulatedFiles.length > 0
+                        onClicked: root.openRequested(root.lastSimulatedFiles.join("\n"))
                     }
                     // The loaded dataset's uv points and SNR in place of an observation computed
                     // from the array and the night.
@@ -2545,22 +2586,43 @@ Item {
                         ToolTip.visible: hovered
                         ToolTip.text: "uv and SNR of the loaded dataset"
                     }
+                    CheckBox {
+                        objectName: "simPlanEpochs"
+                        text: "epochs from the plan"
+                        checked: root.simPlanEpochs
+                        enabled: !root.simCopyStructure
+                        onToggled: root.simPlanEpochs = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "the Gantt's observable times, in place of the HA range"
+                    }
+                    CheckBox {
+                        objectName: "simFilePerTarget"
+                        text: "one file per target"
+                        checked: root.simFilePerTarget || root.simCopyStructure
+                        enabled: !root.simCopyStructure
+                        onToggled: root.simFilePerTarget = checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: "unticked: every target in the output file"
+                    }
                     Button {
                         text: "Output file…"
                         onClicked: outputDialog.openAt("")
                     }
                     Label {
+                        objectName: "simOutputText"
                         Layout.fillWidth: true
-                        text: root.outputFile.length > 0 ? root.outputFile : "no output file chosen"
+                        text: root.outputFile.length === 0 ? "no output file chosen" :
+                              root.nModelled > 1 && (root.simFilePerTarget || root.simCopyStructure)
+                              ? root.outputFile.replace(/(\.[^.\/\\]*)?$/, "_<target>$1") : root.outputFile
                         color: root.outputFile.length > 0 ? "#000" : "#888"
                         font.family: "monospace"
                         elide: Text.ElideMiddle
                     }
-                    // What blocks Simulate, unless it is the source, which the Source row
-                    // already shows in red.
+                    // What blocks Simulate, unless it is the output file, which the label beside
+                    // the button already shows.
                     Label {
                         objectName: "simBlockReason"
-                        visible: !root.canSimulate && root.blockReason.indexOf("no source") !== 0
+                        visible: !root.canSimulate && root.blockReason !== "no output file"
                         text: root.blockReason
                         color: "#b00000"
                         font.pointSize: pt(baseFontPt - 2)
@@ -2600,25 +2662,15 @@ Item {
 
     // POP search results. Empty until a search runs; the first append fixes the roles, which are
     // pops, score and haRange.
-    FilePicker {
-        id: simImageDialog
-        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
-        title: "Image or cube for the simulation"
-        filters: [{ label: "FITS files (*.fits *.fit)", patterns: "*.fits,*.fit" },
-                  { label: "All files", patterns: "*" }]
-        onAccepted: function (path) { root.simImagePath = path }
-    }
-
-    FilePicker {
-        id: simModelDialog
-        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
-        title: "Model file for the simulation"
-        filters: [{ label: "Model files (*.toml)", patterns: "*.toml" },
-                  { label: "All files", patterns: "*" }]
-        onAccepted: function (path) { root.simModelPath = path }
-    }
-
     ListModel { id: popModel }
+
+    SimSourceDialog {
+        id: simSourceDialog
+        uiScale: root.uiScale; fontScale: root.fontScale; baseFontPt: root.baseFontPt
+        onChosen: function (i, kind, ref, pixsize, channels, diam) {
+            root.setSimSource(i, kind, ref, pixsize, channels, diam)
+        }
+    }
 
     FilePicker {
         id: targetsLoadDialog
@@ -2658,23 +2710,31 @@ Item {
         onTriggered: {
             // A timer, not a direct call: `simulate` runs on Qt's thread and the window does
             // not repaint during it, so "simulating…" has to be on screen BEFORE it starts.
-            var t = root.targets[root.currentTargetIndex]
-            var line = Julia.shell_simulate(
-                root.outputFile, root.facility, root.telescopeConfig.join(" "),
-                root.combiner, root.spectralSetup,
-                t ? t.name : "", t ? t.ra : 0.0, t ? t.dec : 0.0,
-                root.dateISO, root.haMin, root.haMax, root.stepMinutes,
-                root.simulateOptions())
-            root.consoleChanged()
-            if (line.length > 0 && line.charAt(0) === "!") { root.statusText = line; return }
-            var f = line.split("\t")
-            if (f[0] === "ok") {
-                root.lastSimulatedFile = f[1]
-                root.statusText = "wrote " + f[1] + " — " + (f.length > 2 ? f[2] : "")
-            } else {
-                root.statusText = line
-            }
+            root.simulateList()
         }
+    }
+
+    // Every target with a model: one file, one file per target, or all in the output file.
+    function simulateList() {
+        var r = Julia.shell_simulate_targets(
+            root.outputFile, root.facility, root.telescopeConfig.join(" "), root.combiner,
+            root.spectralSetup, root.simulateRows(), root.dateISO, root.haMin, root.haMax,
+            root.stepMinutes, root.simulateOptions())
+        root.consoleChanged()
+        if (r.charAt(0) === "!" && r.indexOf("\n") < 0 && r.indexOf(":") < 0) { root.statusText = r; return }
+        var lines = r.split("\n"), ok = [], failed = [], files = []
+        for (var i = 0; i < lines.length; ++i) {
+            var f = lines[i].split("\t")
+            if (f[0] === "ok") {
+                ok.push(f)
+                if (files.indexOf(f[2]) < 0) files.push(f[2])
+            } else if (lines[i].length > 0) failed.push(lines[i].substring(2))
+        }
+        root.lastSimulatedFiles = files
+        root.statusText = (ok.length === 1 ? "wrote " + ok[0][2] + " — " + (ok[0].length > 3 ? ok[0][3] : "")
+                                           : ok.length + " simulated" +
+                                             (files.length === 1 && ok.length > 1 ? " into " + files[0] : "")) +
+                          (failed.length > 0 ? " · " + failed.join(" · ") : "")
     }
 
     // ── computing a night ────────────────────────────────────────────────────
@@ -3278,6 +3338,7 @@ Item {
     signal consoleChanged()
     // Carrying a simulated file into Exploring is a cross-tab move, so it is a request the
     // WINDOW acts on: this panel owns neither the dataset list nor the tab bar.
-    signal openRequested(string path)
+    // the simulated files, one per line
+    signal openRequested(string paths)
 
 }

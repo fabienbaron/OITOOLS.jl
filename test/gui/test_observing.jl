@@ -830,6 +830,89 @@
         @test all(r -> split(r, "\t")[9] == "0", split(GUI.shell_load_targets(bright), "\n"))
     end
 
+    @testset "a list simulated, each target from its own sky" begin
+        tmp = mktempdir()
+        prev = GUI.SHELL[]
+        sfig = Makie.Figure(); sax = Makie.Axis(sfig[1, 1])
+        GUI.SHELL[] = GUI.ShellState(Session(), sfig, sax, nothing, String[], Any[], 0,
+                          :uv, :baseline, false, :none, :none, false, "", String[],
+                          GUI.build_canvas(sfig, sax), "",
+                          nothing, nothing, nothing, nothing, nothing, nothing, nothing, Any[],
+                          nothing, nothing, nothing, nothing, "", "", nothing)
+        sh = GUI._shell()
+        # a model held in Modeling, by name; a FITS disc; a uniform disc; a calibrator
+        GUI._model(sh).dict = Dict{String,Any}("s,ud" => 0.8, "s,f" => 1.0)
+        GUI.shell_rename_model("disc")
+        @test GUI.shell_new_model() == "model 2"                  # selected, and empty
+        @test startswith(GUI.shell_sim_source("session", "disc"), "ok\tdisc")
+        @test startswith(GUI.shell_sim_source("session", "model 2"), "bad")
+        @test startswith(GUI.shell_sim_source("session", "nobody"), "bad\tno model")
+        @test GUI.shell_sim_source("ud", "0.8") == "ok\tUD 0.8 mas\t0"
+        @test startswith(GUI.shell_sim_source("ud", "0"), "bad")
+        @test startswith(GUI.shell_sim_source("modelfile", ""), "bad\tno file chosen")
+        disc = joinpath(tmp, "disc.fits")
+        writefits([hypot(i - 17, j - 17) < 4 ? 1.0 : 0.0 for i in 1:33, j in 1:33], disc; pixsize = 0.1)
+        rows = join(["A\t279.2347\t38.7837\t3\t3\t0\tsession\tdisc\t0\t0\t",
+                     "B\t280.0\t39.0\t\t\t0\timage\t$(disc)\t0\t0\t",
+                     "C Cal\t281.0\t37.0\t4\t4\t1\tud\t0.8\t0\t0\t0.8",
+                     "D\t282.0\t38.0\t4\t4\t0\t\t\t0\t0\t"], "\n")
+        # D has no model: not simulated
+        opts = join(["mag\t5", "mag_ao\t5", "seed\t7", "n_samples\t20"], "\n")
+        out = joinpath(tmp, "night.oifits")
+        r = split(GUI.shell_simulate_targets(out, "CHARA", "", "MIRCX", "MIRCX_LOWH", rows,
+                                             "2026-06-21", -1.0, 1.0, 30.0, opts), "\n")
+        @test length(r) == 4 && r[1] == "! D: no model"
+        f = [split(l, "\t") for l in r[2:4]]
+        @test all(x -> x[1] == "ok", f) && [x[2] for x in f] == ["A", "B", "C Cal"]
+        @test [x[3] for x in f] == joinpath.(tmp, ["night_A.oifits", "night_B.oifits", "night_C_Cal.oifits"])
+        @test all(isfile, joinpath.(tmp, ["night_A.oifits", "night_B.oifits", "night_C_Cal.oifits"]))
+        cat_of(p) = OITOOLS.load_oifits(p).target.list[1].category
+        @test cat_of(joinpath(tmp, "night_C_Cal.oifits")) == "CAL"
+        @test cat_of(joinpath(tmp, "night_A.oifits")) == "SCI"
+        log = join(sh.console, "\n")
+        @test occursin("category = \"CAL\"", log)
+        # every target in one file, one dataset each when opened
+        both = joinpath(tmp, "both.oifits")
+        r = split(GUI.shell_simulate_targets(both, "CHARA", "", "MIRCX", "MIRCX_LOWH", rows,
+                                             "2026-06-21", -1.0, 1.0, 30.0, opts * "\ncombine\t1"), "\n")
+        @test count(startswith("ok"), r) == 3 && all(l -> split(l, "\t")[3] == both, filter(startswith("ok"), r))
+        @test list_oifits_targets(both) == ["A", "B", "C Cal"]
+        @test [t.category for t in OITOOLS.load_oifits(both).target.list] == ["SCI", "SCI", "CAL"]
+        @test occursin("join_targets(", join(sh.console, "\n"))
+        n0 = length(sh.session.datasets)
+        GUI.shell_open_simulated(both * "\n" * joinpath(tmp, "night_A.oifits"))
+        @test length(sh.session.datasets) == n0 + 4 && sh.current == n0 + 1
+        @test [get(e.readopts, :targetname, "") for e in sh.session.datasets[n0+1:end]] == ["A", "B", "C Cal", ""]
+        @test startswith(GUI.shell_simulate_targets(both, "CHARA", "", "MIRCX", "MIRCX_LOWH", rows,
+                                                    "2026-06-21", -1.0, 1.0, 30.0,
+                                                    opts * "\ncombine\t1\ncopy\t1"), "!")
+        # the uniform disc, noiseless: V² is the disc's at each uv point; one target, the output file
+        opts0 = join(["noise\t0", "mag\t4", "mag_ao\t4"], "\n")
+        GUI.shell_simulate_targets(out, "CHARA", "", "MIRCX", "MIRCX_LOWH",
+                                   "U\t279.2347\t38.7837\t\t\t0\tud\t0.8\t0\t0\t0.8",
+                                   "2026-06-21", -1.0, 1.0, 30.0, opts0)
+        d = readoifits(out; T = Float64, warn = false, verbose = false,
+                       filter_bad_data = false)[1, 1]
+        x = π * (0.8 / 206264806.247) * d.v2_baseline[1]
+        @test d.v2[1] ≈ (2 * OITOOLS.besselj1(x) / x)^2 rtol = 1e-3
+        # epochs from the plan: the observable samples of the night the Gantt shows
+        p = night_plan(read_facility_file("CHARA"), "A", 279.2347, 38.7837, DateTime(2026, 6, 21);
+                       use_delay = false)
+        GUI.NIGHT_PLANS["A"] = p
+        ep = GUI.plan_epochs(p, 30.0)
+        @test !isempty(ep) && all(diff(ep) .>= Minute(30) - Second(1))
+        r = GUI.shell_simulate_targets(out, "CHARA", "", "MIRCX", "MIRCX_LOWH",
+                                       "A\t279.2347\t38.7837\t3\t3\t0\tsession\tdisc\t0\t0\t",
+                                       "2026-06-21", -1.0, 1.0, 30.0, opts0 * "\nplan_epochs\t1")
+        @test endswith(split(r, "\n")[1], "epochs from the plan")
+        d = readoifits(out; T = Float64, warn = false, verbose = false,
+                       filter_bad_data = false)[1, 1]
+        @test length(unique(round.(d.v2_mjd; digits = 6))) == length(ep)
+        empty!(GUI.NIGHT_PLANS)
+        GUI.SHELL[] = prev
+        rm(tmp; recursive = true, force = true)
+    end
+
     @testset "a list under one shared POP plan" begin
         rows = join(["A\t330.0\t20.0\t0\t", "B\t60.0\t20.0\t0\t", "C\t333.0\t22.0\t1\tA; nobody"], "\n")
         tels = "S1 S2 E1 E2 W1 W2"

@@ -962,12 +962,14 @@ function shell_export_oifits(path::AbstractString)
     p = strip_file_url(path)
     any(f -> OITOOLS._same_file(p, f), [e.path; e.files]) &&
         return "! that is a file the dataset was read from; choose another name"
+    tn = String(get(e.readopts, :targetname, ""))
     try
-        write_oifits(p, e.data; overwrite = true)
+        write_oifits(p, e.data; targetname = tn, overwrite = true)
     catch err
         msg = "! could not write OIFITS: " * _cause(err); console!(sh, msg; kind = :err); return msg
     end
-    console!(sh, "> write_oifits(\"" * p * "\", " * e.name * ".data; overwrite = true)")
+    console!(sh, "> write_oifits(\"" * p * "\", " * e.name * ".data; " *
+                 (isempty(tn) ? "" : "targetname = " * _literal(tn) * ", ") * "overwrite = true)")
     return "saved " * basename(p)
 end
 
@@ -2880,6 +2882,9 @@ end
     shell_sim_source(kind, path) -> String
 
 Validate the sky a simulation would use: `"ok\t<summary>\t<pixsize>"` or `"bad\t<why>\t0"`.
+`kind` is `image` or `model` (`path` a file, or empty for the Modeling tab's selected model),
+`modelfile` (a model file), `session` (`path` the name of a model in the Modeling tab) or `ud`
+(`path` a uniform disc's diameter in mas).
 
 Checked when the file is chosen rather than when Simulate is pressed, so a 3-D cube picked as a
 grey image is caught before an observation is computed from it.
@@ -2889,7 +2894,21 @@ none — the panel fills its box with it rather than making the user retype a nu
 already carries. A model has no pixel size and reports `0` too.
 """
 function shell_sim_source(kind::AbstractString, path::AbstractString)
-    i = simulate_source_info(String(kind), String(path))
+    k = String(kind); p = String(path)
+    if k == "session"
+        sh = _shell()
+        m = findfirst(e -> e.name == p, sh.session.models)
+        m === nothing && return "bad\tno model \"$p\" in Modeling\t0"
+        sky = _simulate_sky(sh, Dict("source" => "session", "path" => p))
+        sky isa String && return "bad\t" * sky[3:end] * "\t0"
+        return "ok\t" * p * "\t0"
+    elseif k == "ud"
+        d = tryparse(Float64, p)
+        (d === nothing || !(d > 0)) && return "bad\tno disc diameter\t0"
+        return "ok\tUD " * _g(d) * " mas\t0"
+    end
+    k == "modelfile" && (isempty(p) ? (return "bad\tno file chosen\t0") : (k = "model"))
+    i = simulate_source_info(k, p)
     return (i.ok ? "ok\t" : "bad\t") * i.summary * "\t" * string(i.pixsize)
 end
 
@@ -2937,17 +2956,26 @@ both take: `(; image, pixsize)` for a FITS file, `(; flat_model, flat_params)` f
 One resolver for both entry points, so "Use existing OIFITS as template" changes the COVERAGE
 and nothing else — the sky the two produce cannot differ.
 
-An empty model path means the model the Modeling perspective is holding, which is the whole
-point of the "From Modeling tab" button: no file, no round trip, and what is simulated is what
-is on screen next door.
+An empty model path means the model the Modeling perspective has selected: no file, and what is
+simulated is what is on screen next door. `source = "session"` names one of the Modeling tab's models by `path`,
+and `source = "ud"` is a uniform disc of diameter `diam` (mas).
 """
 function _simulate_sky(sh::ShellState, o::AbstractDict)
     kind = String(get(o, "source", "image"))
     path = String(get(o, "path", ""))
 
-    if kind == "model"
-        dict, free, value = if isempty(path)
-            m = _model(sh)
+    if kind == "ud"
+        d = _optreal(o, "diam", 0.0)
+        d > 0 || return "! no disc diameter"
+        return (; flat_model = parse_model(Dict{String,Any}("star,ud" => d, "star,f" => 1.0),
+                                           String[]; nB_workspace = 1),
+                  flat_params = Float64[])
+    end
+    if kind == "model" || kind == "session"
+        dict, free, value = if kind == "session" || isempty(path)
+            j = findfirst(e -> e.name == path, sh.session.models)
+            m = kind == "model" ? _model(sh) : j === nothing ? nothing : sh.session.models[j]
+            m === nothing && return "! no model \"$(path)\" in Modeling"
             (Dict{String,Any}(String(k) => v for (k, v) in m.dict), String.(m.free),
              k -> _row_value(m, k))
         else
@@ -2998,14 +3026,18 @@ TWO simulators behind one button, chosen by the `copy` option:
 (image | model; `cube` is read as image), `path`, `pixsize`, `image_channels` (1: the channels
 of the image, or of the model's image cube, instead of the spectral setup — `wave_from_image`),
 `mag`, `mag_ao`, `noise`, `debias`, `n_samples`, `seed`, `observability`, `alt_limit`,
-`alt_max`, `copy`, `copy_mode`.
+`alt_max`, `copy`, `copy_mode`, `category` (`CAL` for a calibrator, written to `OI_TARGET`),
+`plan_epochs` (1: when the Gantt shows this target, its observable samples as the epochs,
+[`plan_epochs`](@ref)), and the sky options of [`_simulate_sky`](@ref). `dates`, when given, are
+the epochs in place of the hour-angle range.
 """
 function shell_simulate(outfile::AbstractString, facility::AbstractString,
                         telescopes::AbstractString, combiner::AbstractString,
                         wavelength::AbstractString, name::AbstractString,
                         ra::Real, dec::Real, dateiso::AbstractString,
                         ha_min::Real, ha_max::Real, step_minutes::Real,
-                        options::AbstractString = "")
+                        options::AbstractString = "";
+                        dates::Union{Nothing,Vector{DateTime}} = nothing)
     sh = _shell()
     out = String(strip(String(outfile)))
     isempty(out) && return "! no output file"
@@ -3024,6 +3056,7 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
     end
 
     o = _parse_options(options)
+    fromplan = false
 
     sky = _simulate_sky(sh, o)
     sky isa String && (console!(sh, sky; kind = :err); return sky)
@@ -3083,12 +3116,18 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
         end
         tgt = read_obs_file("default_obs")
         tgt.target = String(name); tgt.raep0 = Float64(ra); tgt.decep0 = Float64(dec)
-        dates = try
+        fromplan = dates === nothing && _optbool(o, "plan_epochs", false) &&
+                   haskey(NIGHT_PLANS, String(name))
+        fromplan && (dates = plan_epochs(NIGHT_PLANS[String(name)], Float64(step_minutes)))
+        dates = dates !== nothing ? dates : try
             epochs_for_hour_angles(f, Float64(ra), date, Float64(ha_min), Float64(ha_max),
                                    Float64(step_minutes))
         catch err
             msg = "! " * _cause(err); console!(sh, msg; kind = :err); return msg
         end
+        isempty(dates) && (msg = "! no epochs to observe $(name)"; console!(sh, msg; kind = :err);
+                           return msg)
+        category = get(o, "category", "SCI") == "CAL" ? "CAL" : "SCI"
         obs = _optbool(o, "observability", false) ?
               (; min_elevation = _optreal(o, "alt_limit", DEFAULT_ALT_LIMIT),
                  max_elevation = _optreal(o, "alt_max", DEFAULT_ALT_MAX)) : nothing
@@ -3107,7 +3146,7 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
                      noise = something(frac, noise), debias = _optbool(o, "debias", true),
                      systematics = systematics, fringe_tracker = ftrack,
                      n_samples = _optint(o, "n_samples", 100), seed = seed,
-                     observability = obs, sky...)
+                     observability = obs, category, sky...)
         catch err
             msg = "! simulation failed: " * _cause(err)
             console!(sh, msg; kind = :err); return msg
@@ -3120,6 +3159,7 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
         systematics || push!(kw, "systematics = false")
         ftrack      || push!(kw, "fringe_tracker = false")
         obs === nothing || push!(kw, "observability = $(obs)")
+        category == "CAL" && push!(kw, "category = \"CAL\"")
         console!(sh, "simulate(facility, target, combiner, " * (imgch ? ":image" : "wavelength") *
                      ", dates, \"$(out)\"" *
                      (isempty(kw) ? "" : "; " * join(kw, ", ")) * ")   # $(length(dates)) epochs, " *
@@ -3133,6 +3173,7 @@ function shell_simulate(outfile::AbstractString, facility::AbstractString,
         return "! wrote $(out) but it does not read back: " * _cause(err)
     end
     console!(sh, @sprintf("  wrote %s — %s, %.1f s", out, summary, time() - t0))
+    fromplan && (summary *= " · epochs from the plan")
     return "ok\t" * out * "\t" * summary
 end
 
@@ -3141,6 +3182,139 @@ function _frac_literal(f::FractionalNoise)
     d = FractionalNoise()
     kw = ["$(k) = $(_g(getfield(f, k)))" for k in fieldnames(FractionalNoise) if getfield(f, k) != getfield(d, k)]
     return "FractionalNoise(" * join(kw, ", ") * ")"
+end
+
+# A target's own output file: `<stem>_<name><ext>` beside `out`.
+function _target_file(out::AbstractString, name::AbstractString)
+    stem, ext = splitext(String(out))
+    return string(stem, "_", replace(String(name), r"[^A-Za-z0-9._+-]" => "_"),
+                  isempty(ext) ? ".oifits" : ext)
+end
+
+"""
+    shell_simulate_targets(outfile, facility, telescopes, combiner, wavelength, rows,
+                           dateiso, ha_min, ha_max, step_minutes, options) -> String
+
+Simulate each target of a list with [`shell_simulate`](@ref). `rows` are
+`name\tra\tdec\tmag\tmag_ao\tcal\tkind\tref\tpixsize\tchannels\tdiam` lines: `kind` is the
+target's sky (`session`, `modelfile`, `image` or `ud`), `ref` its model name or file, `pixsize`
+an image's scale (0: the header's), `channels` `1` to observe at the image's channels, `diam` a
+uniform disc's diameter (mas). An empty magnitude takes the option's. The k-th target is seeded
+`seed + k - 1`, and a calibrator (`cal` `1`) is written with `CATEGORY = "CAL"`. With the option
+`plan_epochs` `1`, a target the Gantt shows is observed at its observable samples, the others
+over the hour-angle range.
+
+One target is written to `outfile`; several to one file each, `<stem>_<name><ext>` beside it, or,
+with the option `combine` `1`, all to `outfile` ([`join_targets`](@ref)). `combine` does not
+apply to `copy`, where every file holds the template's target.
+
+One line per target, `ok\tname\tpath\tsummary` or `! name: why`.
+"""
+function shell_simulate_targets(outfile::AbstractString, facility::AbstractString,
+                                telescopes::AbstractString, combiner::AbstractString,
+                                wavelength::AbstractString, rows::AbstractString,
+                                dateiso::AbstractString, ha_min::Real, ha_max::Real,
+                                step_minutes::Real, options::AbstractString = "")
+    sh = _shell()
+    out = String(strip(String(outfile)))
+    isempty(out) && return "! no output file"
+    base = _parse_options(options)
+    seed = _optint(base, "seed", 1)
+    copy_mode = _optbool(base, "copy", false)
+    combine = _optbool(base, "combine", false)
+    combine && copy_mode && return "! one file for every target does not apply to a template's copies"
+    for x in ("combine", "source", "path", "pixsize", "image_channels", "diam"); delete!(base, x); end
+    lines = String[]
+    todo = Tuple{String,Float64,Float64,Dict{String,String}}[]
+    for (k, l) in enumerate(split(String(rows), '\n'; keepempty = false))
+        f = split(l, '\t')
+        length(f) >= 11 || continue
+        name = String(f[1])
+        kind, ref = String(f[7]), String(f[8])
+        isempty(kind) && (push!(lines, "! " * name * ": no model"); continue)
+        o = copy(base)
+        o["seed"] = string(seed + k - 1)
+        isempty(f[4]) || (o["mag"] = String(f[4]))
+        isempty(f[5]) || (o["mag_ao"] = String(f[5]))
+        o["category"] = f[6] == "1" ? "CAL" : "SCI"
+        o["source"] = kind == "modelfile" ? "model" : kind
+        kind == "ud" ? (o["diam"] = isempty(f[11]) ? ref : String(f[11])) : (o["path"] = ref)
+        (px = tryparse(Float64, f[9])) !== nothing && px > 0 && (o["pixsize"] = String(f[9]))
+        f[10] == "1" && (o["image_channels"] = "1")
+        sky = _simulate_sky(sh, o)
+        sky isa String && (push!(lines, "! " * name * ": " * sky[3:end]); continue)
+        if kind == "image" && !haskey(o, "pixsize")
+            px = simulate_source_info("image", ref).pixsize
+            o["pixsize"] = string(px > 0 ? px : 0.1)
+        end
+        push!(todo, (name, parse(Float64, f[2]), parse(Float64, f[3]), o))
+    end
+    tmp = combine && length(todo) > 1 ? mktempdir() : ""
+    file(name) = length(todo) == 1 ? out : !isempty(tmp) ? _target_file(joinpath(tmp, basename(out)), name) :
+                 _target_file(out, name)
+    done = String[]
+    for (name, ra, dec, o) in todo
+        r = shell_simulate(file(name), facility, telescopes, combiner, wavelength, name, ra, dec,
+                           dateiso, ha_min, ha_max, step_minutes,
+                           join((string(a, "\t", b) for (a, b) in o), "\n"))
+        startswith(r, "!") && (push!(lines, "! " * name * ": " * r[3:end]); continue)
+        push!(lines, "ok\t" * name * "\t" * r[4:end])
+        push!(done, file(name))
+    end
+    if !isempty(tmp)
+        try
+            isempty(done) || join_targets(done, out; overwrite = true)
+            isempty(done) || console!(sh, "join_targets($(_literal(done)), $(_literal(out)); overwrite = true)";
+                                      kind = :cmd)
+            # each line's path is the joined file
+            for (i, l) in enumerate(lines)
+                startswith(l, "ok\t") || continue
+                f = split(l, '\t')
+                lines[i] = join([f[1], f[2], out, f[4:end]...], "\t")
+            end
+        catch err
+            msg = "! joining the targets into $(basename(out)): " * _cause(err)
+            console!(sh, msg; kind = :err)
+            lines = [msg]
+        finally
+            rm(tmp; recursive = true, force = true)
+        end
+    end
+    return join(lines, "\n")
+end
+
+"""
+    shell_open_simulated(paths) -> String
+
+Open simulated files in Exploring, one path per line: each file a dataset, and a file holding
+several targets one dataset per target (read with `targetname`, labelled with the target's
+name). The first is selected.
+"""
+function shell_open_simulated(paths::AbstractString)
+    sh = _shell()
+    ps = [strip_file_url(String(l)) for l in split(paths, '\n') if !isempty(strip(l))]
+    isempty(ps) && return "! no file chosen"
+    first_new = length(sh.session.datasets) + 1
+    try
+        for p in ps
+            names = OITOOLS.list_oifits_targets(p)
+            for n in (length(names) > 1 ? names : [""])
+                console!(sh, "load_dataset!(session, $(_literal(p))" *
+                             (isempty(n) ? "" : "; targetname = $(_literal(String(n)))") * ")"; kind = :cmd)
+                isempty(n) ? load_dataset!(sh.session, p; warn = false, verbose = false) :
+                             (load_dataset!(sh.session, p; targetname = String(n), warn = false,
+                                            verbose = false).label = String(n))
+            end
+        end
+    catch err
+        sh.status = "could not load the simulated files: " * _cause(err)
+        console!(sh, sh.status; kind = :err)
+        length(sh.session.datasets) >= first_new || return sh.status
+    end
+    sh.current = first_new
+    sh.status = refresh_plot!(sh)
+    console!(sh, sh.status)
+    return sh.status
 end
 
 # The target list's own columns, in the panel's order.
@@ -5772,6 +5946,7 @@ function shell_gantt(facility::AbstractString, name::AbstractString, ra::Real, d
     sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p; time_system = tsys)
 
     sh.plan = p          # the hover readout reads this; see shell_gantt_hover
+    empty!(NIGHT_PLANS); NIGHT_PLANS[String(name)] = p
     h = observable_hours(p)
     console!(sh, "> night_plan(\"$(facility)\", \"$(name)\", $(round(Float64(ra); digits=4)), " *
                  "$(round(Float64(dec); digits=4)), DateTime(\"$(dateiso)\"))")
@@ -5991,6 +6166,8 @@ function shell_gantt_targets(facility::AbstractString, rows::AbstractString,
     end
     sh.delayplot === nothing || isempty(p.baselines) || update_delay_plot!(sh.delayplot, p; time_system = tsys)
     sh.plan = p
+    empty!(NIGHT_PLANS)
+    for (t, q) in zip(targets, plans); NIGHT_PLANS[t.name] = q; end
     hours = join((@sprintf("%s %.1f", t.name, observable_hours(q)) for (t, q) in zip(targets, plans)), " · ")
     line = string(title, ": ", hours)
     console!(sh, "  " * line)
@@ -6697,6 +6874,10 @@ shell_imaging_summary() =
 # for a list of targets under one shared POP plan, with `cal`, `shared` (the
 # `TargetsPopPlan`) and `config`; `nothing` when it shows one plan.
 const GANTT_STACK = Ref{Any}(nothing)
+
+# The night plan of each target the Gantt shows, by name: the selected one for a single target,
+# every target for a list. What "epochs from the plan" simulates.
+const NIGHT_PLANS = Dict{String,NightPlan}()
 
 # Draw a `GANTT_STACK` value on a Gantt.
 function draw_gantt_stack!(g, st; time_system::Symbol = :lst, cal::Bool = false)

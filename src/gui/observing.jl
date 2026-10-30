@@ -1677,6 +1677,26 @@ function epochs_for_hour_angles(f, ra_deg::Real, date::Date,
 end
 
 """
+    plan_epochs(plan::NightPlan, step_minutes) -> Vector{DateTime}
+
+The UTC timestamps of a night plan's observable samples ([`observable_indices`](@ref)), at least
+`step_minutes` apart: what the chart shows as observable, as `simulate` takes it.
+"""
+function plan_epochs(p::NightPlan, step_minutes::Real)
+    step_minutes > 0 || throw(ArgumentError("the epoch step must be positive"))
+    base = DateTime(Date(p.date))               # `utc` counts hours from 00:00 UT on `date`
+    out = DateTime[]
+    last_h = -Inf
+    for i in sort(collect(observable_indices(p)))
+        h = p.utc[i]
+        (h - last_h) * 60 >= step_minutes - 1e-6 || continue
+        push!(out, base + Millisecond(round(Int, h * 3.6e6)))
+        last_h = h
+    end
+    return out
+end
+
+"""
     simulate_source_info(kind, path) -> (; ok, kind, summary, ndims, nx, nwav, detail)
 
 Describe the sky a simulation would use, and whether it is usable.

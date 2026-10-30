@@ -18,7 +18,7 @@ function __init__()
                      shell_image_defaults, shell_ft_setup, shell_chi2_breakdown,
                      shell_facilities, shell_telescopes, shell_telescope_order, shell_central_telescope, shell_gantt, shell_pop_timeline, shell_plans_gantt, shell_best_pops, shell_pop_plans, shell_gantt_targets, shell_pop_plans_targets,
                      shell_save_targets, shell_load_targets,
-                     shell_shift_date, shell_sim_source, shell_simulate,
+                     shell_shift_date, shell_sim_source, shell_simulate, shell_simulate_targets, shell_open_simulated,
                      shell_model_image, shell_simbad, shell_ui_scale,
                      shell_fit_model, shell_fit_values, shell_fit_rows, shell_fit_correlation,
                      shell_corner_plot, shell_save_corner,

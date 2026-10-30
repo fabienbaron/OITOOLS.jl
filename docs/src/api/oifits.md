@@ -16,7 +16,7 @@
 | `model_image_vis(image, uv; wl, mjd)` | Its complex visibilities at uv points, plane by plane |
 | `fits_pixsize(file)` | Pixel scale of a FITS image in mas, from its WCS keywords, or `nothing` |
 | `oifits_prep(data; kwargs...)` | Inflate error bars (additive/relative floors, multiplicative scaling) |
-| `write_oifits(path, data; overwrite)` | Write a dataset, filtered or binned, to an OIFITS v2 file |
+| `write_oifits(path, data; targetname, overwrite)` | Write a dataset, filtered or binned, to an OIFITS v2 file |
 | `merge_oidata(datas)`, `readoifits(files::Vector)` | Several files as one dataset: stations matched by name, every point kept |
 | `updatefits_aspro(in, out, pixsize)` | Add ASPRO-compatible WCS headers to a FITS image |
 | `OITOOLS.load_oifits(file; notes)` | The file as an `OIDataSet`, read table by table (below) |
@@ -71,6 +71,7 @@ its phase. When a point has only one half, the other is stored as `0 ± Inf`: it
 | `split_by_time(data; gap, binwidth, edges)` | One `OIdata` per epoch, the epochs taken from every observable's times |
 | `split_by_instrument(data)` | One `OIdata` per instrument, from the table each point was read from |
 | `split_by_target(file; kwargs...)` | One dataset per target, each read with `targetname` |
+| `join_targets(files, out)` | Several OIFITS files written as one, a target per file listed in one OI_TARGET |
 | `fits_set_keywords(file, out; pixsize, east_left, axis3, wavelengths, mjds, refpix)` | A FITS image or cube written with the keywords `read_model_image` reads; the file's reference pixel and other cards kept |
 | `fits_refpix(file)` | Its reference pixel `(CRPIX1, CRPIX2)`, or `nothing` |
 | `fits_keyword_cube(file; east_left, axis3)` | Its array as an `(East, North, wavelength, epoch)` cube |
@@ -83,6 +84,7 @@ repair_oifits
 split_by_time
 split_by_instrument
 split_by_target
+join_targets
 fits_set_keywords
 fits_keyword_cube
 fits_refpix

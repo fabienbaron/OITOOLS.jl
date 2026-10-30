@@ -54,12 +54,38 @@ holds SIMBAD's answer for that name (its dot is green). **Save…** writes the l
 one not known, `simbad` 1 for a row SIMBAD resolved, `cal` 1 for a calibrator, `for` the science
 targets a calibrator is for, `;` between them); **Load…** reads it
 back. A file with a header is read by column name, in any order, and its other columns are kept
-and written back on Save; one without is read in that order, and a file of names alone, one per
+and written back on Save (a target's model among them, below); one without is read in that order, and a file of names alone, one per
 line, loads as unresolved targets. An emptied magnitude field is a magnitude not known. **Cal**
 marks a target as a calibrator: the Gantt draws its bars in orange, and a field beside it takes
 the names of the science targets it is for, on a line under it.
 It opens on `demos/targets`, whose `bright_stars.csv` lists twelve bright stars across the year,
 resolved on SIMBAD.
+
+## Simulating targets (Observing)
+
+**Model** on a target's row sets what that target is simulated from, picked from one menu: none,
+the models held in the Modeling tab by name, a uniform disc of a given diameter, a FITS image
+(with its pixel size, taken from the header when it has one, and the image's channels), or a
+model file. The mark beside the button is ✓ for a target with a model, ○ for one without, and ✗
+for a model that cannot be read (a model since removed, a missing file); the model is named on a
+line under the target's name. Renaming a model in Modeling renames the reference. The CSV keeps
+the model in the columns `sim_kind` (`session`, `modelfile`, `image`, `ud`), `sim_path`,
+`sim_pixsize`, `sim_channels` and `sim_diam`.
+
+**Simulate** observes every target marked ✓; the count is shown beside it. One target is
+written to the output file. Several are written one file per target, `<output>_<name>.oifits`,
+or, with **one file per target** unticked, all to the output file, its OI_TARGET listing every
+target ([`join_targets`](@ref)). Each target takes its magnitude in the setup's band, or the
+panel's **mag** when it has none; a magnitude typed in **mag** applies to every target. The k-th
+target is seeded `seed + k − 1`. A calibrator is written with `CATEGORY = "CAL"` in `OI_TARGET`.
+**Open in Explore** opens what was written, one dataset per target, each labelled with its
+target's name.
+
+**epochs from the plan**: a target the Gantt shows is observed at the times it is observable on
+the chart, every **Step** minutes, instead of over the HA range.
+
+**Use existing OIFITS as template** observes each target through the loaded dataset's uv points
+and signal-to-noise instead, one file per target.
 
 ## POPs (Observing)
 

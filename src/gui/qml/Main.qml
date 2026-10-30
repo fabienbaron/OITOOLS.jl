@@ -1296,8 +1296,8 @@ ApplicationWindow {
                 // A simulated file becomes an ordinary dataset: the same load path a file
                 // chosen by hand takes, then the Exploring tab, because the point of the
                 // button is to LOOK at what was written.
-                onOpenRequested: function (path) {
-                    win.status = Julia.shell_open(path)
+                onOpenRequested: function (paths) {
+                    win.status = Julia.shell_open_simulated(paths)
                     win.refreshDatasets()
                     win.afterAction()
                     tabs.currentIndex = 0
@@ -1311,6 +1311,9 @@ ApplicationWindow {
                 fontScale:  win.fontScale
                 baseFontPt: win.baseFontPt
                 onConsoleChanged: win.refreshConsole()
+                // the targets simulated from a model of this tab follow it
+                onModelsChanged: observeTab.checkSimSources()
+                onModelRenamed: function (oldName, newName) { observeTab.renameSimModel(oldName, newName) }
             }
 
             // ── Image ────────────────────────────────────────────────────────

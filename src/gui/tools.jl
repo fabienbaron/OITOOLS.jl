@@ -597,9 +597,11 @@ function shell_tools_split(path::AbstractString, by::AbstractString, param::Real
         for x in entries
             out = joinpath(dir, string(stem, "_", replace(x.label, r"[^A-Za-z0-9._+-]+" => "_"), ".oifits"))
             OITOOLS._same_file(out, p) && continue
-            console!(sh, "write_oifits($(_literal(out)), $(x.name))"; kind = :cmd)
+            tn = String(get(x.readopts, :targetname, ""))
+            console!(sh, "write_oifits($(_literal(out)), $(x.name)" *
+                         (isempty(tn) ? "" : "; targetname = $(_literal(tn))") * ")"; kind = :cmd)
             try
-                OITOOLS.write_oifits(out, x.data)      # the console's record only, as Export's
+                OITOOLS.write_oifits(out, x.data; targetname = tn)      # the console's record only, as Export's
                 written += 1
             catch err
                 console!(sh, "! not written: " * _cause(err); kind = :err)

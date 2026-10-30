@@ -1191,13 +1191,16 @@ none (the error bars still filled in), or a [`FractionalNoise`](@ref) for fixed 
 `wavelength` is a `WaveConfig` (see [`read_wave_file`](@ref)), or `:image` for the cube's own
 channels ([`wave_from_image`](@ref)): one per plane of the image, or of the model's image cube,
 so the two match plane for plane. The combiner still sets the throughput and the noise.
+
+`category` is written to `OI_TARGET`'s `CATEGORY`: `"SCI"` for a science target, `"CAL"` for a
+calibrator.
 """
 function simulate(facility,target,combiner,wavelength,dates,out_file; image::Union{String, Array{Float64,1}, Array{Float64,2}, Array{Float64, 3}, Array{Float64,4}}="", pixsize::Union{Nothing,Real}=nothing, flat_model::Union{FlatModel,Nothing}=nothing, flat_params::Vector{Float64}=Float64[], dft=false,
                   noise::Union{Bool,FractionalNoise}=true, nonoise::Union{Nothing,Bool}=nothing, debias::Bool=true,
                   systematics::Bool=true, fringe_tracker::Bool=true,
                   mag=2.0, mag_ao::Union{Nothing,Real}=nothing,
                   n_samples::Int=100, rng::Union{Nothing,AbstractRNG}=nothing, seed::Union{Nothing,Integer}=nothing,
-                  observability=nothing)
+                  observability=nothing, category::AbstractString="SCI")
     # the cube's own channels: a setup taken from the image (or the model's cube)
     if wavelength === :image
         wavelength = image isa AbstractString && image != "" ? wave_from_image(image) :
@@ -1625,7 +1628,7 @@ function simulate(facility,target,combiner,wavelength,dates,out_file; image::Uni
         target.pmra,   target.pmdec,
         target.pmra_err, target.pmdec_err,
         target.parallax, target.para_err,
-        target.spectyp,  "SCI")]; revn=1)
+        target.spectyp,  String(category))]; revn=2)
 
     # OI_ARRAY
     arr = OIFITS.OI_ARRAY(undef)

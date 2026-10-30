@@ -1,6 +1,6 @@
 # The Tools tab's file operations: the header inspector (oifits_headers), the validator and its
 # repaired copy (validate_oifits, repair_oifits), the splits (split_by_time,
-# split_by_instrument, split_by_target) and a FITS image's keywords (fits_set_keywords).
+# split_by_instrument, split_by_target, join_targets) and a FITS image's keywords (fits_set_keywords).
 import AstroFITS
 
 @testset "OIFITS tools" begin
@@ -72,6 +72,9 @@ import AstroFITS
         @test_throws ArgumentError repair_oifits(joinpath(data, "HD140573.oifits"), joinpath(dir, "x.oifits"))
         @test isfile(repair_oifits(joinpath(data, "MWC275_4T.oifits"), joinpath(dir, "mwc.oifits");
                                    targetname = "MWC 275"))
+        # the second target written under its own name
+        @test list_oifits_targets(repair_oifits(joinpath(data, "MWC275_4T.oifits"),
+                                                joinpath(dir, "hd.oifits"); targetname = "HD163296")) == ["HD163296"]
     end
 
     @testset "splits" begin
@@ -101,6 +104,16 @@ import AstroFITS
         # by target, re-read
         t = split_by_target(joinpath(data, "MWC275_4T.oifits"); T = Float64, warn = false, verbose = false)
         @test first.(t) == ["MWC 275", "HD163296"] && t[1][2][1, 1].nv2 > 0
+        # one file per target, joined back into one
+        src = joinpath(data, "MWC275_4T.oifits")
+        one = [repair_oifits(src, joinpath(dir, "t$k.oifits"); targetname = n, overwrite = true)
+               for (k, n) in enumerate(first.(t))]
+        both = join_targets(one, joinpath(dir, "both.oifits"))
+        @test list_oifits_targets(both) == first.(t)
+        @test [rd(both; targetname = n)[1, 1].nv2 for n in first.(t)] == [x[1, 1].nv2 for x in last.(t)]
+        @test length(OITOOLS.load_oifits(both).array) == 1
+        @test_throws ArgumentError join_targets(one, both)
+        @test_throws ArgumentError join_targets(one, one[1]; overwrite = true)
     end
 
     @testset "oifits_table: the contents, per channel and as stored" begin

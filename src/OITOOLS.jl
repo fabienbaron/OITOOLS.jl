@@ -184,7 +184,7 @@ export readoifits, readoifits_multiepochs, list_oifits_targets, write_oifits, me
 export readfits, writefits, fits_pixsize, read_model_image, ModelImage, model_image_plane, model_image_vis
 export oifits_prep, updatefits_aspro
 export filter_data, set_data_filter
-export oifits_headers, oifits_table, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target,
+export oifits_headers, oifits_table, validate_oifits, repair_oifits, split_by_time, split_by_instrument, split_by_target, join_targets,
        fits_set_keywords, fits_keyword_cube, fits_refpix
 
 # ── Plotting ─────────────────────────────────────────────────────────────────

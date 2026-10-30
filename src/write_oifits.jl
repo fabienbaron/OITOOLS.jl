@@ -7,7 +7,7 @@
 # positions) is copied from the original file when it can still be read.
 
 """
-    write_oifits(path, data; template = :auto, overwrite = false) -> path
+    write_oifits(path, data; template = :auto, targetname = "", overwrite = false) -> path
 
 Write an `OIdata`, or an array of them (the bins `readoifits` returns), to an OIFITS v2 file
 that `readoifits` reads back to the same points.
@@ -19,13 +19,15 @@ that `readoifits` reads back to the same points.
   PHITYP pair. One row per epoch, stations and baseline (or triangle), spanning the
   instrument's channels; a channel without a point is written NaN and flagged, so it is
   dropped again on reading. OI_FLUX likewise, per epoch and station.
-- OI_TARGET is the original file's first target and OI_ARRAY the data's own stations, their
-  diameters and positions copied from the original file where the names match; both from
-  `template` (by default the file the data was read from), or minimal when it cannot be read.
+- OI_TARGET is the original file's target named `targetname`, or its first target when
+  `targetname` is empty, and OI_ARRAY the data's own stations, their diameters and positions
+  copied from the original file where the names match; both from `template` (by default the
+  file the data was read from), or minimal when it cannot be read.
 
 An existing file is refused unless `overwrite = true`.
 """
-function write_oifits(path::AbstractString, data; template = :auto, overwrite::Bool = false)
+function write_oifits(path::AbstractString, data; template = :auto, targetname::AbstractString = "",
+                      overwrite::Bool = false)
     bins = data isa OIdata ? [data] : [d for d in vec(collect(data))]
     isempty(bins) && throw(ArgumentError("no data to write"))
     d1 = first(bins)
@@ -147,7 +149,8 @@ function write_oifits(path::AbstractString, data; template = :auto, overwrite::B
     date_obs = string(Date(1858, 11, 17) + Day(floor(Int, minimum(mjd_all))))
 
     # ── the tables ───────────────────────────────────────────────────────────────────
-    t = hdr === nothing || isempty(hdr.target) ? nothing : hdr.target[1]
+    t = hdr === nothing || isempty(hdr.target) ? nothing :
+        hdr.target[something(findfirst(e -> String(e.target) == targetname, hdr.target.list), 1)]
     tgt = OIFITS.OI_TARGET([t === nothing ?
         OIFITS.OITargetEntry(1, "unknown", 0.0, 0.0, 2000.0, 0.0, 0.0, 0.0, "UNKNOWN",
                              "OPTICAL", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "UNKNOWN", "SCI") :
