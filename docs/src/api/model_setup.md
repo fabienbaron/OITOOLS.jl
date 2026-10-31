@@ -171,10 +171,11 @@ ld_nodes
 
 `fit_ld_profile_vi` (needs `using VarInf`) returns I(μ) with a band. The disc's profile is put
 on `ngrid` nodes (24) joined by straight lines, log I = log I₀ + f with I₀ the disc's current
-profile and f a Gaussian process (Matérn-3/2, length 0.3 in μ, amplitude 0.3 in log I); the
-diameter is log-normal about its current value with a 10 % width. The run starts at the
-posterior's maximum, found from a scan of the diameter over ±22 %, and draws its samples with
-geoVI (or MGVI).
+profile and f a correlated field whose amplitude and power spectrum are inferred with the
+profile (`prior = :learned`, VarInf's correlated field); the diameter is log-normal about its
+current value with a 10 % width. The run starts at the posterior's maximum, found from a scan
+of the diameter over ±22 %, draws its samples with geoVI (or MGVI), and is bagged over 20
+bootstrap replicates of the data.
 
 ```julia
 using OITOOLS, VarInf
@@ -182,8 +183,8 @@ m = Dict{String,Any}("star,ldlin" => 8.4, "star,u" => 0.3, "star,f" => 1.0)
 r0 = fit_model_lsqfit(m, ["star,ldlin", "star,u"], data)
 m["star,ldlin"], m["star,u"] = r0.x_opt
 r = fit_ld_profile_vi(m, "star", data; scale_errors = true)
-r.μ, r.I_mean, r.I_lo, r.I_hi          # I/I(1) and its 16–84 % band
-r.diameter, r.diameter_std
+r.μ, r.I_median, r.I_lo, r.I_hi        # I/I(1) and its 16–84 % band
+r.diameter_median, r.diameter_std
 ```
 
 - Start from a law fitted to the same data. The profile's prior is centred on that law.
@@ -192,26 +193,35 @@ r.diameter, r.diameter_std
   not converge.
 - The band assumes the error bars. With `scale_errors = true`, they are multiplied by √χ²r when
   the free-form profile's best fit has χ²r > 1 (`error_scale` in the result).
-- `bootstrap = n` (n ≥ 2) is bagged VI: the run is repeated on n block-bootstrap replicates
-  of the data (configurations drawn with replacement) and their samples pooled. The band then
-  holds the spread of the profile between replicates as well, which error bars or a model
-  that do not describe the data widen. `single` in the result is the run on the full data.
-  The replicates run on all threads; 20 replicates take about 3 s on 4 threads for α Cen A.
+- `bootstrap = 20` is bagged VI (0 for a single run): the run is repeated on 20
+  block-bootstrap replicates of the data (configurations drawn with replacement) and their
+  samples pooled. The band then holds the spread of the profile between replicates as well,
+  which error bars or a model that do not describe the data widen. `single` in the result is
+  the run on the full data. The replicates run on all threads; with the learned prior, 20
+  replicates take 12–19 s on 6 threads for α Cen A's coverage. A single run with the learned prior
+  is overconfident (the truth in its band at about half the nodes).
+- Quote the medians (`I_median`, `F_median`, `diameter_median`): the samples of log I are near
+  Gaussian, so the mean of I lies off the bulk of the samples where the data are weak.
 - Closure phases are not used by default: those of a symmetric disc are 0 or 180°, which V²
   already gives.
-- Calibration, on data simulated with α Cen A's uv coverage and noise (σ(V²) = 2.5 %·V² +
-  3.5e-4): with profiles drawn from the prior, the truth lies in the 16–84 % band at 66–68 % of
-  the nodes for a disc resolved into the third lobe, and at 57 % with data in the first lobe
-  only; against Hamiltonian Monte Carlo on the same posterior the band is 1.0–1.13 times as
-  wide and the mean within 0.25σ. For profiles from the usual laws the band is conservative
-  (90–98 %). Bagged over 20 replicates, the band holds the truth at 69–73 % of the nodes in
-  both cases (⟨z²⟩ 0.88–0.93), and at 96–100 % for the usual laws. On α Cen A, whose error
-  bars are too small by 2.2, the bagged band without `scale_errors` is 1.25 times the band of
-  a single run with it.
+- Calibration of the default, on data simulated with α Cen A's uv coverage and noise
+  (σ(V²) = 2.5 %·V² + 3.5e-4), for stars with power-law, square-root, quadratic and
+  4-coefficient (Claret) profiles at 3 to 14 mas. For μ ≥ 0.3, I/⟨I⟩ is within 0.8–2.5 % from
+  6 mas up (1–5 % at 3 mas), with the truth in the 16–84 % band at 68–100 % of the nodes;
+  from 6 mas up the diameter is within 0.2–0.6 %, in its band in 50–100 % of the stars. At
+  0.1 ≤ μ ≤ 0.2 the error is 6–16 % from 6 mas up and the band holds the truth at 19–100 % of
+  the nodes, the least for power-law and quadratic limbs; below μ = 0.1 the profile is the
+  prior's (0–100 %, mostly under 50 %). A power-law fit to the same stars, when they are not
+  power laws, misses the diameter by 0.3–1 % (0–12 % in its band from 6 mas up) and I/⟨I⟩ by
+  0.8–3.4 % for μ ≥ 0.3.
 - MGVI is faster; geoVI follows the curved posterior that the diameter and the limb
   intensity make together.
-- `prior = :learned` infers the Gaussian process's spectrum (VarInf's correlated field)
-  instead of fixing it. Its bands were not calibrated in the same tests (36–39 % coverage).
+- `prior = :fixed` fixes the Gaussian process instead (Matérn-3/2, `length_scale` 0.3 in μ,
+  `amplitude` 0.3 in log I). Its bands are wider: bagged, the truth is in them at 89–100 % of
+  the nodes for μ ≥ 0.3, at 2–6 % error, and at the limb more often than with the learned
+  prior.
+  Against Hamiltonian Monte Carlo on the same posterior its band is 1.0–1.13 times as wide and
+  the mean within 0.25σ.
 
 ```@docs
 fit_ld_profile_vi

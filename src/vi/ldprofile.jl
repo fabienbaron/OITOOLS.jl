@@ -30,15 +30,19 @@ mutable struct LDProfileProblem <: AbstractInferenceProblem
     JT      :: Matrix{Float64}          # ∂r/∂z
 end
 
-# f at the M nodes and ∂f/∂ξ_f.
+# f at the M nodes and ∂f/∂ξ_f. The correlated field's latents are held within ±8σ of their
+# prior, where the derivative is zero and the prior pulls back: its amplitude and slope are
+# exponentials of latents, and a wild Newton step overflows them.
 function _ld_field(p::LDProfileProblem, zf::AbstractVector)
     p.mcf === nothing && return p.L * zf, p.L
-    f = vec(p.mcf(zf))[1:p.M]
-    Jf = Matrix{Float64}(undef, p.M, p.nfield)
+    zc = clamp.(zf, -8.0, 8.0)
+    f = vec(p.mcf(zc))[1:p.M]
+    Jf = zeros(p.M, p.nfield)
     e = zeros(p.nfield)
     for j in 1:p.nfield
+        abs(zf[j]) < 8 || continue
         e[j] = 1.0
-        Jf[:, j] = vec(mcf_jvp(p.mcf, zf, e))[1:p.M]
+        Jf[:, j] = vec(mcf_jvp(p.mcf, zc, e))[1:p.M]
         e[j] = 0.0
     end
     return f, Jf
@@ -94,7 +98,7 @@ _matern32(d, ℓ, a) = (s = sqrt(3) * d / ℓ; a^2 * (1 + s) * exp(-s))
 # The problem for `component` of `model_dict` on `data`, with what the driver reports from it:
 # the model with the disc on the grid, its free parameters, the grid.
 function _ld_vi_problem(model_dict::AbstractDict, component::AbstractString, data::OIdata;
-                        ngrid::Integer = 24, prior::Symbol = :fixed,
+                        ngrid::Integer = 24, prior::Symbol = :learned,
                         length_scale::Real = 0.3, amplitude::Real = 0.3,
                         fluct = (0.3, 0.2), slope = (-4.0, 1.0), diameter_std::Real = 0.1,
                         weights = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -214,11 +218,8 @@ end
 # drawn with replacement), each from the full data's maximum with its error scale, the
 # replicates' samples pooled with equal weight. Replicate `b` is seeded `seed0 + b`, so the
 # pool does not depend on the threads.
-function _ld_vi_bagged(p::LDProfileProblem, zmap, model_dict, cn, data; nboot, seed0,
+function _ld_vi_bagged(p::LDProfileProblem, zmap, model_dict, cn, data, blocks; nboot, seed0,
                        method, n_iterations, n_samples, n_draws, kw, verb)
-    blocks = OITOOLS.data_blocks(data; granularity = :config)
-    length(blocks) >= 2 ||
-        throw(ArgumentError("bootstrap needs at least 2 configurations, the data have $(length(blocks))"))
     out = Vector{Any}(nothing, nboot)
     next = Threads.Atomic{Int}(1); done = Threads.Atomic{Int}(0)
     function work()
@@ -256,14 +257,14 @@ end
 
 function OITOOLS.fit_ld_profile_vi(model_dict::AbstractDict, component::AbstractString,
                                    data::OIdata;
-                                   ngrid::Integer = 24, prior::Symbol = :fixed,
+                                   ngrid::Integer = 24, prior::Symbol = :learned,
                                    length_scale::Real = 0.3, amplitude::Real = 0.3,
                                    fluct = (0.3, 0.2), slope = (-4.0, 1.0),
                                    diameter_std::Real = 0.1, method::Symbol = :geovi,
                                    n_iterations::Integer = 6, n_samples::Integer = 4,
                                    n_draws::Integer = 50,
                                    weights = [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                   scale_errors::Bool = false, bootstrap::Integer = 0,
+                                   scale_errors::Bool = false, bootstrap::Integer = 20,
                                    seed = nothing, verb::Bool = false)
     method in (:geovi, :mgvi) || throw(ArgumentError("method is :geovi or :mgvi, not :$method"))
     (bootstrap == 0 || bootstrap >= 2) ||
@@ -302,17 +303,22 @@ function OITOOLS.fit_ld_profile_vi(model_dict::AbstractDict, component::Abstract
     for k in 1:(M - 1); md["$cn,ld$k"] = xc[k+1]; end
     chi2r = sum(abs2, residuals_flat(fm, xc, data; weights = w)) / ndata
 
-    stats(A) = (vec(mean(A; dims = 2)), vec(std(A; dims = 2)),
+    stats(A) = (vec(mean(A; dims = 2)), vec(median(A; dims = 2)), vec(std(A; dims = 2)),
                 [quantile(A[i, :], 0.16) for i in axes(A, 1)],
                 [quantile(A[i, :], 0.84) for i in axes(A, 1)])
     result(Is, Fs, θs, nboot, single) =
         LDProfileVIResult(cn, method, prior, μ, stats(Is)..., Is, stats(Fs)..., Fs,
-                          mean(θs), std(θs), θs, chi2r, chi2r_map, error_scale, centre, ndata,
+                          mean(θs), median(θs), std(θs), θs, chi2r, chi2r_map, error_scale, centre, ndata,
                           md, free, nboot, single, time() - t0)
     bootstrap == 0 && return result(Is, Fs, θs, 0, nothing)
+    blocks = OITOOLS.data_blocks(data; granularity = :config)
+    if length(blocks) < 2
+        @warn "fit_ld_profile_vi: the data have one configuration, too few to bootstrap; a single run"
+        return result(Is, Fs, θs, 0, nothing)
+    end
 
     single = result(Is, Fs, θs, 0, nothing)
-    Ib, Fb, θb, nok = _ld_vi_bagged(p, zmap, model_dict, cn, data; nboot = Int(bootstrap),
+    Ib, Fb, θb, nok = _ld_vi_bagged(p, zmap, model_dict, cn, data, blocks; nboot = Int(bootstrap),
                                     seed0, method, n_iterations, n_samples,
                                     n_draws = max(4, cld(n_draws, bootstrap)), kw, verb)
     return result(Ib, Fb, θb, nok, single)

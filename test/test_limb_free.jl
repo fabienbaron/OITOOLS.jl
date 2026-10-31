@@ -99,6 +99,10 @@ const LF = OITOOLS
         ld_free!(md, free, "s"; n = 3, lb, ub)
         @test md["s,ld1"] ≈ 0.7 && !haskey(md, "s,ldq1") && free == ["s,ldspline", "s,ld1", "s,ld2"]
         @test_throws ArgumentError ld_free!(Dict{String,Any}("g,fwhm" => 2.0), String[], "g")
+        # a brightened limb past the nodes' bound starts on it, and the fit runs from there
+        mb = Dict{String,Any}("s,ldlin" => 8.4, "s,u" => -1.6, "s,f" => 1.0)
+        ld_free!(mb, String[], "s"; n = 3)
+        @test mb["s,ld1"] == 2.0 && mb["s,ld2"] ≈ 1.8
     end
 
     @testset "keys: no warning, bounds, a model file" begin

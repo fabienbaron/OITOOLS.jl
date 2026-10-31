@@ -3373,26 +3373,6 @@ Item {
                                         onValueModified: root.ldviNodes = value
                                         ToolTip.visible: hovered; ToolTip.text: "grid in μ, straight lines between"
                                     }
-                                    // The prior is a Gaussian process with a fixed Matérn-3/2 kernel: the
-                                    // one whose bands were calibrated (the learned spectrum was not).
-                                    Label { text: "GP length"; color: "#666" }
-                                    TextField {
-                                        objectName: "ldviLength"
-                                        Layout.preferredWidth: root.dp(56)
-                                        text: String(root.ldviLength)
-                                        validator: DoubleValidator { bottom: 0.01 }
-                                        onEditingFinished: { var v = parseFloat(text); if (v > 0) root.ldviLength = v }
-                                        ToolTip.visible: hovered; ToolTip.text: "correlation length, in μ"
-                                    }
-                                    Label { text: "σ"; color: "#666" }
-                                    TextField {
-                                        objectName: "ldviAmp"
-                                        Layout.preferredWidth: root.dp(56)
-                                        text: String(root.ldviAmp)
-                                        validator: DoubleValidator { bottom: 0.001 }
-                                        onEditingFinished: { var v = parseFloat(text); if (v > 0) root.ldviAmp = v }
-                                        ToolTip.visible: hovered; ToolTip.text: "prior spread of log I about the disc's law"
-                                    }
                                     ComboBox {
                                         objectName: "ldviMethod"
                                         Layout.preferredWidth: root.dp(90)
@@ -4314,18 +4294,15 @@ Item {
     property bool viAvailable: false
     property var ldviDiscs: []
     property int ldviNodes: 24
-    property real ldviLength: 0.3
-    property real ldviAmp: 0.3
     property string ldviMethod: "geovi"
     property int ldviDraws: 50
     property bool ldviScale: true
-    property int ldviBoot: 0
+    property int ldviBoot: 20
     property bool ldviPending: false
     property string ldviSummary: ""
     property string ldviNorm: "centre"
     function startLdvi() {
-        var e = Julia.shell_ldvi_start(ldviDiscBox.currentText, root.ldviNodes, "fixed",
-                                       root.ldviLength, root.ldviAmp, root.ldviAmp,
+        var e = Julia.shell_ldvi_start(ldviDiscBox.currentText, root.ldviNodes,
                                        root.ldviMethod, root.ldviDraws,
                                        root.useV2, root.useT3amp, root.useT3phi, root.ldviScale,
                                        root.ldviBoot)

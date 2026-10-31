@@ -64,6 +64,7 @@ try
         check(w, "the disc offered (1=yes)", locate(w, "ldviDisc").current == "star", 1; tol = 0)
         spin(w, "ldviNodes", 12)
         spin(w, "ldviDraws", 10)
+        check(w, "20 replicates by default (1=yes)", value(w, "ldviBoot") == "20", 1; tol = 0)
         spin(w, "ldviBoot", 4)
         click(w, "ldviRun"; pause = 2)
         waitfor(() -> value(w, "ldviRun") == "Run", "the VI run"; timeout = 600)

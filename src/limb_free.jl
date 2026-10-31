@@ -353,6 +353,7 @@ function ld_free!(md::AbstractDict, free::AbstractVector, component::AbstractStr
     x = ld_nodes(n)
     y = clamp.(ld_profile(md, cn, x), 0.0, Inf)
     y ./= y[end] > 0 ? y[end] : 1.0
+    clamp!(y, 0.0, 2.0)                        # within the nodes' bounds, so a fit can start
     for s in old
         k = "$cn,$s"
         delete!(md, k); filter!(!=(k), free)
@@ -387,9 +388,11 @@ end
 
 What [`fit_ld_profile_vi`](@ref) returns. `μ` is the grid; the profiles are `I(μ)/I(1)`
 (`I_*`) and `I(μ)/⟨I⟩`, normalised by the mean intensity over the disc (`F_*`), which the
-visibilities measure directly. `*_mean`/`*_std` are over the posterior samples (columns of
-`I_samples`, `F_samples`); `*_lo`/`*_hi` their 16th and 84th percentiles. `diameter` and
-`diameter_std` likewise. The samples are drawn about `centre`: `:mean`, the variational mean,
+visibilities measure directly. `*_mean`/`*_median`/`*_std` are over the posterior samples
+(columns of `I_samples`, `F_samples`); `*_lo`/`*_hi` their 16th and 84th percentiles. The
+median is the profile to quote: the samples of log I are near Gaussian, so those of I are
+skewed and their mean lies off the bulk where the data are weak. `diameter`,
+`diameter_median` and `diameter_std` likewise. The samples are drawn about `centre`: `:mean`, the variational mean,
 or `:map`, the posterior's maximum, when the variational mean diverged (χ²r more than twice the
 maximum's). `model` is the model with the disc as a `ldpiecewise` disc on the grid at that
 centre (a point of the posterior; the samples' mean need not be one), `free` its free
@@ -405,16 +408,19 @@ struct LDProfileVIResult
     prior        :: Symbol
     μ            :: Vector{Float64}
     I_mean       :: Vector{Float64}
+    I_median     :: Vector{Float64}
     I_std        :: Vector{Float64}
     I_lo         :: Vector{Float64}
     I_hi         :: Vector{Float64}
     I_samples    :: Matrix{Float64}
     F_mean       :: Vector{Float64}
+    F_median     :: Vector{Float64}
     F_std        :: Vector{Float64}
     F_lo         :: Vector{Float64}
     F_hi         :: Vector{Float64}
     F_samples    :: Matrix{Float64}
     diameter     :: Float64
+    diameter_median :: Float64
     diameter_std :: Float64
     diameter_samples :: Vector{Float64}
     chi2r        :: Float64
@@ -434,11 +440,12 @@ function Base.show(io::IO, ::MIME"text/plain", r::LDProfileVIResult)
             r.component, r.method, r.prior, size(r.I_samples, 2), r.chi2r, r.seconds,
             r.centre === :map ? "; drawn about the posterior's maximum" : "")
     r.bootstrap > 0 && @printf(io, "  bagged over %d bootstrap replicates\n", r.bootstrap)
-    @printf(io, "  diameter = %.4f ± %.4f mas", r.diameter, r.diameter_std)
+    @printf(io, "  diameter = %.4f ± %.4f mas (median %.4f)", r.diameter, r.diameter_std,
+            r.diameter_median)
     r.error_scale == 1 ? println(io) : @printf(io, "   (error bars × %.3f)\n", r.error_scale)
     for i in round.(Int, range(1, length(r.μ); length = min(length(r.μ), 9)))
-        @printf(io, "  μ = %.3f   I/I(1) = %.3f ± %.3f   I/⟨I⟩ = %.3f ± %.3f\n",
-                r.μ[i], r.I_mean[i], r.I_std[i], r.F_mean[i], r.F_std[i])
+        @printf(io, "  μ = %.3f   I/I(1) = %.3f ± %.3f   I/⟨I⟩ = %.3f ± %.3f   (medians)\n",
+                r.μ[i], r.I_median[i], r.I_std[i], r.F_median[i], r.F_std[i])
     end
 end
 
@@ -455,24 +462,26 @@ The rest of the model is held at its values.
 
 Keywords:
 - `ngrid = 24`: nodes of the profile.
-- `prior = :fixed`: f is a Gaussian process with a Matérn-3/2 kernel of length `length_scale`
-  (in μ, default 0.3) and amplitude `amplitude` (in log I, default 0.3). `prior = :learned`:
-  f is VarInf's correlated field, its power spectrum inferred, with the log-normal amplitude
-  prior `fluct = (mean, std)` (default `(0.3, 0.2)`) and the slope prior `slope = (mean, std)`
-  (default `(-4.0, 1.0)`), on a grid padded to twice its length.
+- `prior = :learned`: f is VarInf's correlated field, its power spectrum inferred, with the
+  log-normal amplitude prior `fluct = (mean, std)` (default `(0.3, 0.2)`, in log I) and the
+  slope prior `slope = (mean, std)` (default `(-4.0, 1.0)`), on a grid padded to twice its
+  length. `prior = :fixed`: f is a Gaussian process with a Matérn-3/2 kernel of length
+  `length_scale` (in μ, default 0.3) and amplitude `amplitude` (in log I, default 0.3).
 - `diameter_std = 0.1`: the prior's relative width on the diameter.
 - `method = :geovi` or `:mgvi`; `n_iterations = 6`, `n_samples = 4` per iteration;
-  `n_draws = 50`: antithetic pairs drawn about the final mean for the statistics.
+  `n_draws = 50`: antithetic pairs drawn about the final mean for the statistics (split
+  between the replicates when bagging).
 - `weights`: observables, as in [`fit_model`](@ref); by default V² and T3amp. Closure phases
   of a symmetric disc are 0 or 180° and add only the side of a null, which V² gives; their
   wrapped residuals are steps the samplers cannot follow.
 - `scale_errors = false`: with `true`, error bars too small for the free-form profile's best
   fit (χ²r > 1 there) are multiplied by √χ²r before sampling. The band assumes the error bars;
   without this, underestimated ones make the profile follow the calibration's systematics.
-- `bootstrap = 0`: with `n ≥ 2`, bagged VI. The run is repeated on `n` bootstrap replicates of
-  the data (configurations drawn with replacement), each from the full data's maximum and
-  with its error scale, and their samples pooled with equal weight, `max(4, cld(n_draws, n))`
-  antithetic pairs each. The pool's spread is the posterior's plus the spread of its centre
+- `bootstrap = 20`: bagged VI with `n ≥ 2` replicates, a single run with 0. The run is
+  repeated on `n` bootstrap replicates of the data (configurations drawn with replacement),
+  each from the full data's maximum and with its error scale, and their samples pooled with
+  equal weight, `max(4, cld(n_draws, n))` antithetic pairs each. Data with one configuration
+  get a single run. The pool's spread is the posterior's plus the spread of its centre
   between replicates, which grows when the error bars or the model do not describe the data.
   The replicates run on all threads.
 - `seed`, `verb`.

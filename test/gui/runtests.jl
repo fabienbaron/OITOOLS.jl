@@ -1832,18 +1832,18 @@ end
                                         "Limb_Darkened_Disk_Linear.toml"))
             m = G._model(sh)
             @test G.shell_ldvi_discs() == "star"
-            @test startswith(G.shell_ldvi_start("nope", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+            @test startswith(G.shell_ldvi_start("nope", 12, "geovi", 10,
                                                 true, true, true), "! nope is not a disc")
-            @test startswith(G.shell_ldvi_start("star", 2, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+            @test startswith(G.shell_ldvi_start("star", 2, "geovi", 10,
                                                 true, true, true), "! between")
-            @test startswith(G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+            @test startswith(G.shell_ldvi_start("star", 12, "geovi", 10,
                                                 false, false, true), "! the free-form profile needs")
-            @test startswith(G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+            @test startswith(G.shell_ldvi_start("star", 12, "geovi", 10,
                                                 true, true, false, true, 1), "! bootstrap")
-            @test G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+            @test G.shell_ldvi_start("star", 12, "geovi", 10,
                                      true, true, true, true, 4) == ""
             @test occursin("closure phases left out", join(sh.console, "\n"))
-            @test startswith(G.shell_ldvi_start("star", 12, "fixed", 0.3, 0.3, 0.3, "geovi", 10,
+            @test startswith(G.shell_ldvi_start("star", 12, "geovi", 10,
                                                 true, true, false), "! something is already running")
             line = ""
             for _ in 1:2400
@@ -1853,7 +1853,7 @@ end
             end
             @test startswith(line, "done\tstar: diameter")
             f = split(G.shell_ldvi_summary(), '\t')
-            @test f[1] == "star" && f[5] == "geovi" && f[6] == "fixed" && f[7] == "32" && f[9] == "4"
+            @test f[1] == "star" && f[5] == "geovi" && f[6] == "learned" && f[7] == "32" && f[9] == "4"
             @test parse(Float64, f[8]) > 1.5            # α Cen A's error bars are too small
             @test 8.0 < parse(Float64, f[2]) < 8.8 && 0 < parse(Float64, f[3]) < 0.5
             c = G.LDVI_CANVAS[]

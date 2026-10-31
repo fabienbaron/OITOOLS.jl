@@ -1,6 +1,7 @@
 # The free-form profile by variational inference (Modeling › Model Optimization › Free-form
-# profile): `fit_ld_profile_vi` on a disc of the model, run on a worker like a fit, its I(μ)
-# drawn with the band of the posterior samples under the fits table. Needs VarInf loaded.
+# profile): `fit_ld_profile_vi` on a disc of the model with its learned prior, bagged, run on a
+# worker like a fit; its I(μ) is drawn as the posterior median with the band of the samples
+# under the fits table. Needs VarInf loaded.
 
 # Its canvas, built by `gui()` before the window exists, and the last run.
 const LDVI_CANVAS = Ref{Any}(nothing)
@@ -10,7 +11,7 @@ const LDVI_START  = Ref{Any}(nothing)        # (μ, I/I(1), I/⟨I⟩) of the pr
 """
     build_ldvi_view(fig, ax) -> NamedTuple
 
-The band, the posterior mean and the starting profile, empty. **Call before the window is
+The band, the posterior median and the starting profile, empty. **Call before the window is
 shown.**
 """
 function build_ldvi_view(fig, ax)
@@ -38,7 +39,7 @@ function update_ldvi_view!(p, r, start, norm::Symbol)
     c = norm === :centre
     p.μ[]  = Float32.(r.μ)
     p.lo[] = Float32.(c ? r.I_lo : r.F_lo); p.hi[] = Float32.(c ? r.I_hi : r.F_hi)
-    p.m[]  = Float32.(c ? r.I_mean : r.F_mean)
+    p.m[]  = Float32.(c ? r.I_median : r.F_median)
     if start !== nothing
         p.μ0[] = Float32.(start[1]); p.i0[] = Float32.(c ? start[2] : start[3])
     end
@@ -59,16 +60,15 @@ function shell_ldvi_discs()
 end
 
 """
-    shell_ldvi_start(component, ngrid, prior, length_scale, amplitude, fluct, method, ndraws,
-                     v2, t3amp, t3phi, scale_errors, bootstrap) -> String
+    shell_ldvi_start(component, ngrid, method, ndraws, v2, t3amp, t3phi, scale_errors,
+                     bootstrap) -> String
 
-Start `fit_ld_profile_vi` on the current dataset, on a worker; `shell_job_poll` follows it.
-`prior` is `fixed` or `learned`, `method` `geovi` or `mgvi`; closure phases are not used.
-`bootstrap` is the number of replicates of bagged VI, 0 for none.
+Start `fit_ld_profile_vi` on the current dataset, on a worker, with its default (learned)
+prior; `shell_job_poll` follows it. `method` is `geovi` or `mgvi`; closure phases are not
+used. `bootstrap` is the number of replicates of bagged VI, 0 for none.
 Returns `""` or `!` and a reason.
 """
-function shell_ldvi_start(component::AbstractString, ngrid, prior::AbstractString,
-                          length_scale, amplitude, fluct, method::AbstractString, ndraws,
+function shell_ldvi_start(component::AbstractString, ngrid, method::AbstractString, ndraws,
                           v2::Bool, t3amp::Bool, t3phi::Bool, scale_errors::Bool = false,
                           bootstrap = 0)
     sh = _shell()
@@ -79,7 +79,6 @@ function shell_ldvi_start(component::AbstractString, ngrid, prior::AbstractStrin
     md = copy(_model(sh).dict)
     cn = String(component)
     isempty(OITOOLS._ld_law_keys(cn, md)) && return "! " * cn * " is not a disc"
-    String(prior) in ("fixed", "learned") || return "! unknown prior: " * String(prior)
     String(method) in ("geovi", "mgvi") || return "! unknown method: " * String(method)
     n = round(Int, Float64(ngrid))
     5 <= n <= 64 || return "! between 5 and 64 nodes"
@@ -91,17 +90,14 @@ function shell_ldvi_start(component::AbstractString, ngrid, prior::AbstractStrin
                               flux = false, diffvis = false)
     all(iszero, weights) && return "! the free-form profile needs V² or T3amp"
     t3phi && console!(sh, "  closure phases left out of the free-form profile (0 or 180° for a disc)")
-    kw = (; ngrid = n, prior = Symbol(prior), length_scale = Float64(length_scale),
-            amplitude = Float64(amplitude), fluct = (Float64(fluct), Float64(fluct) * 2 / 3),
-            method = Symbol(method), n_draws = round(Int, Float64(ndraws)), weights,
+    kw = (; ngrid = n, method = Symbol(method), n_draws = round(Int, Float64(ndraws)), weights,
             scale_errors, bootstrap = nb)
     μ = ld_nodes(n)
     I0 = ld_profile(md, cn, μ)
     g0 = OITOOLS._ld_table(:piecewise, n, 0.0).g0
     LDVI_START[] = (μ, I0, I0 ./ (2 * sum(g0 .* I0)))
     data = e.data[1, 1]
-    console!(sh, "fit_ld_profile_vi(model, " * _literal(cn) * ", data; ngrid = $n, prior = :" *
-                 String(prior) * ", length_scale = $(kw.length_scale), amplitude = $(kw.amplitude), " *
+    console!(sh, "fit_ld_profile_vi(model, " * _literal(cn) * ", data; ngrid = $n, " *
                  "method = :" * String(method) * ", n_draws = $(kw.n_draws), weights = $(weights), " *
                  "scale_errors = $(scale_errors), bootstrap = $nb)";
              kind = :cmd)
@@ -120,7 +116,7 @@ function finish_ldvi!(sh::ShellState, res)
     LDVI_RESULT[] = r
     LDVI_CANVAS[] === nothing || update_ldvi_view!(LDVI_CANVAS[], r, LDVI_START[], :centre)
     line = @sprintf("%s: diameter %.4f ± %.4f mas, χ²r %.3f, %d samples (%.1f s)", r.component,
-                    r.diameter, r.diameter_std, r.chi2r, size(r.I_samples, 2), r.seconds)
+                    r.diameter_median, r.diameter_std, r.chi2r, size(r.I_samples, 2), r.seconds)
     r.error_scale == 1 || (line *= @sprintf(", error bars × %.2f", r.error_scale))
     r.bootstrap > 0 && (line *= @sprintf(", bagged over %d replicates (θ ± %.4f on the full data alone)",
                                          r.bootstrap, r.single.diameter_std))
@@ -151,7 +147,8 @@ or `""`; replicates is 0 without bagging.
 function shell_ldvi_summary()
     r = LDVI_RESULT[]
     r === nothing && return ""
-    return join((r.component, @sprintf("%.5f", r.diameter), @sprintf("%.5f", r.diameter_std),
+    return join((r.component, @sprintf("%.5f", r.diameter_median),
+                 @sprintf("%.5f", r.diameter_std),
                  @sprintf("%.3f", r.chi2r), String(r.method), String(r.prior),
                  string(size(r.I_samples, 2)), @sprintf("%.3f", r.error_scale), string(r.bootstrap)), '\t')
 end
@@ -179,15 +176,15 @@ function shell_ldvi_adopt()
     end
     wasfree && push!(m.free, r.free[1])
     console!(sh, "  " * cn * ": the free-form profile adopted, " * string(length(r.μ)) *
-                 " nodes (fixed), diameter " * @sprintf("%.5f", r.diameter))
+                 " nodes (fixed), diameter " * @sprintf("%.5f", Float64(r.model[r.free[1]])))
     return ""
 end
 
 """
     shell_ldvi_save(path) -> String
 
-The last run's profile as CSV: μ, r/R, then I/I(1) and I/⟨I⟩, each as mean, σ, 16th and 84th
-percentiles; the diameter in a comment line.
+The last run's profile as CSV: μ, r/R, then I/I(1) and I/⟨I⟩, each as median, mean, σ, 16th
+and 84th percentiles; the diameter (median ± σ) in a comment line.
 """
 function shell_ldvi_save(path::AbstractString)
     r = LDVI_RESULT[]
@@ -196,13 +193,15 @@ function shell_ldvi_save(path::AbstractString)
     try
         open(p, "w") do io
             @printf(io, "# %s: diameter %.6f ± %.6f mas; %s, %s prior, %d samples; χ²r %.4f; error bars × %.4f; bagged over %d replicates\n",
-                    r.component, r.diameter, r.diameter_std, r.method, r.prior,
+                    r.component, r.diameter_median, r.diameter_std, r.method, r.prior,
                     size(r.I_samples, 2), r.chi2r, r.error_scale, r.bootstrap)
-            println(io, "mu,r_over_R,I,I_std,I_16,I_84,I_over_mean,I_over_mean_std,I_over_mean_16,I_over_mean_84")
+            println(io, "mu,r_over_R,I,I_mean,I_std,I_16,I_84,I_over_mean,I_over_mean_mean," *
+                        "I_over_mean_std,I_over_mean_16,I_over_mean_84")
             for k in eachindex(r.μ)
-                @printf(io, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", r.μ[k],
-                        sqrt(max(0.0, 1 - r.μ[k]^2)), r.I_mean[k], r.I_std[k], r.I_lo[k], r.I_hi[k],
-                        r.F_mean[k], r.F_std[k], r.F_lo[k], r.F_hi[k])
+                @printf(io, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n", r.μ[k],
+                        sqrt(max(0.0, 1 - r.μ[k]^2)), r.I_median[k], r.I_mean[k], r.I_std[k],
+                        r.I_lo[k], r.I_hi[k], r.F_median[k], r.F_mean[k], r.F_std[k], r.F_lo[k],
+                        r.F_hi[k])
             end
         end
     catch err

@@ -270,21 +270,21 @@ into the second, four to five past the third null. More free nodes than that lea
 undetermined; **monotonic** or fewer nodes keep the fit meaningful.
 
 **Free-form profile** (Model Optimization, shown when the model has a disc; needs VarInf) runs
-`fit_ld_profile_vi` on the disc chosen there: I(μ) on a grid of nodes with a Gaussian-process
-prior about the disc's current law, and a band from the posterior samples.
+`fit_ld_profile_vi` on the disc chosen there: I(μ) on a grid of nodes with a correlated-field
+prior about the disc's current law, its amplitude and spectrum inferred, and a band from the
+posterior samples.
 
 - **nodes**: the grid (24 by default).
-- **GP length** (in μ) and **σ** (in log I): the Matérn-3/2 kernel of the prior.
 - **geoVI** or **MGVI**, **samples**: antithetic pairs drawn for the band.
 - **scale errors**: multiply the error bars by √χ²r when the profile's best fit has χ²r > 1.
 - **bootstrap**: bagged VI, the run repeated on this many bootstrap replicates of the data
-  (configurations drawn with replacement), their samples pooled; 0 for a single run.
+  (configurations drawn with replacement), their samples pooled (20 by default); 0 for a single run.
 - **Run** uses V² and T3amp of the ticked observables; closure phases are left out.
 
 The result is the **Profile** view under the fits table: the band (16–84 %), the posterior
-mean and the starting law (dashed), normalised to I(1) = 1 or ⟨I⟩ = 1. **Adopt** makes the disc
+median and the starting law (dashed), normalised to I(1) = 1 or ⟨I⟩ = 1. **Adopt** makes the disc
 this profile (a straight-line free-form disc on the grid, nodes fixed); **Save profile…**
-writes μ, r/R and both normalisations with their bands as CSV.
+writes μ, r/R and both normalisations (median, mean, σ and the band) as CSV.
 
 ## Flux fractions
 

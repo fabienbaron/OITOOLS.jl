@@ -46,15 +46,20 @@ end
 end
 
 @testset "a μ^0.2 star at 8.4 mas" begin
+    # the default: the learned prior, bagged over 20 replicates (a single run of it is
+    # overconfident)
     r = fit_ld_profile_vi(start, "star", data; ngrid = 24, seed = 1)
-    @test r isa LDProfileVIResult && r.method === :geovi && r.prior === :fixed
-    @test size(r.I_samples) == (24, 100) && r.I_mean[end] == 1 && r.I_std[end] == 0
+    @test r isa LDProfileVIResult && r.method === :geovi && r.prior === :learned
+    @test r.I_median ≈ vec(median(r.I_samples; dims = 2))
+    @test r.diameter_median ≈ median(r.diameter_samples)
+    @test r.bootstrap == 20
+    @test size(r.I_samples) == (24, 160) && r.I_mean[end] == 1 && r.I_std[end] == 0
     @test r.chi2r < 1.3
-    @test abs(r.diameter - 8.4) < 2.5 * r.diameter_std
+    @test abs(r.diameter_median - 8.4) < 2.5 * r.diameter_std
     # the true profile within 2σ at the nodes the data constrain (the limb's μ^0.2 has an
     # infinite slope no grid follows, so μ < 0.1 is left out)
     sel = r.μ .>= 0.1 .&& r.μ .< 1
-    z = (r.I_mean[sel] .- r.μ[sel] .^ 0.2) ./ r.I_std[sel]
+    z = (r.I_median[sel] .- r.μ[sel] .^ 0.2) ./ r.I_std[sel]
     @test mean(abs.(z) .< 2) >= 0.9
     @test all(r.I_lo .<= r.I_hi) && all(r.F_lo .<= r.F_hi)
     # I/⟨I⟩ integrates to 1 over the disc
@@ -73,6 +78,7 @@ end
     s["star,ldlin"], s["star,u"] = rl.x_opt
     r = fit_ld_profile_vi(s, "star", real; scale_errors = true, seed = 1, n_draws = 20)
     @test r.error_scale > 1.5 && 0.8 < r.chi2r < 1.3 && r.chi2r_map < 1.1
+    @test r.bootstrap == 20 && size(r.I_samples, 2) == 160      # bagged by default
     # simulated data, whose error bars are right, are left as they are
     q = fit_ld_profile_vi(start, "star", data; scale_errors = true, seed = 1, n_draws = 20)
     @test q.error_scale < 1.1
@@ -89,6 +95,6 @@ end
     # the same seed, the same pool
     q = fit_ld_profile_vi(start, "star", data; ngrid = 12, seed = 1, n_draws = 10, bootstrap = 4)
     @test q.I_samples == r.I_samples
-    @test fit_ld_profile_vi(start, "star", data; ngrid = 12, seed = 1, n_draws = 10).bootstrap == 0
+    @test fit_ld_profile_vi(start, "star", data; ngrid = 12, seed = 1, n_draws = 10, bootstrap = 0).bootstrap == 0
     @test_throws ArgumentError fit_ld_profile_vi(start, "star", data; bootstrap = 1)
 end
