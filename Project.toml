@@ -127,7 +127,7 @@ Test = "1"
 ADTypes = "1.21.0"
 # VarInf is UNREGISTERED and has no public remote, so it cannot go in [sources] the way
 # Nautilus does: install it with `Pkg.develop(path = "…/VarInf.jl")`.
-VarInf = "0.1"
+VarInf = "0.2"
 CondaPkg = "0.2"
 Downloads = "1"
 FiniteDifferences = "0.12.33"
