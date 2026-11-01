@@ -20,10 +20,11 @@ const _GUI_PACKAGES = (("GLMakie",  "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"),
 # extensions (PythonPlot for matplotlib figures, PythonCall for UltraNest) are deliberately
 # absent: they pull a Conda environment, which is a much larger thing to install than any of
 # these, and the GUI works fully without them.
-# The fourth field is how to install it. Nautilus is UNREGISTERED -- `Pkg.add("Nautilus")`
-# cannot find it -- so it carries the same url `[sources]` uses in Project.toml, and a
-# suggestion that told you to add it by name would simply fail.
+# The fourth field is how to install it: `:registered` (by name), or the url of an
+# UNREGISTERED package, which `Pkg.add(name)` cannot find. Nautilus's is the url `[sources]`
+# uses in Project.toml.
 const NAUTILUS_URL = "https://github.com/fabienbaron/Nautilus.jl.git"
+const VARINF_URL   = "https://github.com/fabienbaron/VarInf.jl.git"
 
 const _GUI_OPTIONAL = (
     ("GLFW_jll",  "0656b61e-2033-5cc2-a64a-77c0f6c09b89",
@@ -31,19 +32,18 @@ const _GUI_OPTIONAL = (
      :registered),
     ("Nautilus",  "0c5b9d3e-7a41-4d2f-9e6c-8b1f4a2d5c73",
      "enables \"Nested sampling\" in the Model panel, which is greyed out without it",
-     :url),
+     NAUTILUS_URL),
     ("Pigeons",   "0eb8d820-af6a-4919-95ae-11206f830c31",
      "parallel tempering: reconstruct_squeeze_tempered, and the Image tab's \"Tempering\" " *
      "entry, which is greyed without it",
      :registered),
-    # Unregistered AND without a remote, so neither `Pkg.add(name)` nor `Pkg.add(url=)` can
-    # find it: it is developed from a local checkout. Loading it here is what ACTIVATES
+    # Unregistered, installed from its url. Loading it here is what ACTIVATES
     # OITOOLSVarInfExt -- an extension needs its trigger package loaded, not merely installed,
     # and the Image tab's "Variational inference" entry greys itself on exactly that check.
     ("VarInf",    "cd771066-68b7-4d72-889c-da7b55f139d5",
      "variational inference: the Image tab's \"Variational inference\" entry and the Model " *
      "tab's free-form profile, which are greyed without it",
-     :path),
+     VARINF_URL),
     ("PairPlots", "43a3c2be-4208-490b-832a-a21dcd55d7da",
      "corner plots: the Model tab's \"Corner\" view of a bootstrap or nested fit, and " *
      "plot_corner_makie from the REPL",
@@ -77,35 +77,10 @@ end
 """
     _install_hint(name, how) -> String
 
-The command that would install one optional package, in the form it actually needs.
-
-Three kinds, because three kinds exist: registered (`Pkg.add` by name), a URL (Nautilus, which
-is unregistered but has a remote), and a local path (VarInf, which has neither — it is
-developed from a checkout). A suggestion that told you to `Pkg.add("VarInf")` would simply
-fail, which is worse than saying nothing.
+The command that would install one optional package: `Pkg.add` by name for a registered one,
+by url for an unregistered one, which a suggestion to add it by name would fail to find.
 """
-function _install_hint(name, how)
-    how === :registered && return "Pkg.add(\"$name\")"
-    how === :url && return "Pkg.add(url = \"$(NAUTILUS_URL)\")"
-    p = _sibling_checkout(name)
-    return p === nothing ? "Pkg.develop(path = \"…/$name.jl\")   # a local checkout" :
-                           "Pkg.develop(path = \"$p\")"
-end
-
-"""
-    _sibling_checkout(name) -> String or nothing
-
-A `name.jl` checkout beside this package, which is where an unregistered dependency developed
-alongside OITOOLS normally sits. Returns `nothing` rather than guessing when it is not there.
-"""
-function _sibling_checkout(name)
-    root = pkgdir(@__MODULE__)
-    root === nothing && return nothing
-    for c in (joinpath(dirname(root), name * ".jl"), joinpath(dirname(root), name))
-        isfile(joinpath(c, "Project.toml")) && return c
-    end
-    return nothing
-end
+_install_hint(name, how) = how === :registered ? "Pkg.add(\"$name\")" : "Pkg.add(url = \"$how\")"
 
 """
     _offer_to_install(missing_pkgs; verbose) -> Bool
@@ -166,16 +141,8 @@ function _offer_to_install(missing_pkgs; verbose::Bool = true)
             @info "installing $name"
             if how === :registered
                 Base.invokelatest(pkg.add, name)
-            elseif how === :url
-                Base.invokelatest(pkg.add; url = NAUTILUS_URL)
             else
-                p = _sibling_checkout(name)
-                if p === nothing
-                    @warn "$name has no registry entry and no checkout beside OITOOLS; " *
-                          "install it by hand with Pkg.develop(path = \"…/$name.jl\")"
-                else
-                    Base.invokelatest(pkg.develop; path = p)
-                end
+                Base.invokelatest(pkg.add; url = how)
             end
             ok = true
         catch err

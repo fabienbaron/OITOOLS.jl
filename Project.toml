@@ -71,11 +71,13 @@ QMLMakie = "08f9cac3-3b11-4f1c-9d88-d0e81c500f64"
 #
 # Pkg REWRITES AND SORTS THIS BLOCK on any `Pkg.add`/`Pkg.resolve`, discarding comments inside
 # it. Anything explanatory therefore lives above the header, where it survives.
-# Nautilus.jl is not registered, so the weak dependency above needs a source. A URL rather
-# than a sibling path: a path only resolves on a machine that happens to have the checkout
-# next door, which rsyncing this repo elsewhere does not guarantee.
+# Nautilus.jl and VarInf.jl are not registered, so the weak dependencies above need a source
+# (and an [extras] entry, which Pkg requires of a source). A URL rather than a sibling path: a
+# path only resolves on a machine that happens to have the checkout next door, which rsyncing
+# this repo elsewhere does not guarantee.
 [sources]
 Nautilus = {url = "https://github.com/fabienbaron/Nautilus.jl.git"}
+VarInf = {url = "https://github.com/fabienbaron/VarInf.jl.git"}
 
 [extensions]
 OITOOLSGLFWExt = "GLFW_jll"
@@ -125,8 +127,7 @@ Statistics = "1"
 TOML = "1"
 Test = "1"
 ADTypes = "1.21.0"
-# VarInf is UNREGISTERED and has no public remote, so it cannot go in [sources] the way
-# Nautilus does: install it with `Pkg.develop(path = "…/VarInf.jl")`.
+# VarInf is UNREGISTERED; [sources] gives its url.
 VarInf = "0.2"
 CondaPkg = "0.2"
 Downloads = "1"
@@ -157,6 +158,7 @@ PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
 QuadGK = "1fd47b50-473d-5c70-9696-f719f8f3bcdc"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+VarInf = "cd771066-68b7-4d72-889c-da7b55f139d5"
 
 # The Conda environment every project in this repo shares, at
 # <depot>/conda_environments/oitools.
