@@ -1,11 +1,11 @@
 # Variational inference: the suites that came across with OIVI.
 #
-# Gated on VarInf the way the tempering tests are gated on Pigeons. VarInf is UNREGISTERED and
-# has no remote, so CI cannot install it and these cannot be a hard requirement — but they are
-# the real check on the merge, and in particular on the shared adjoint: the FD / JVP / VJP
-# suite fails on a wrong sign long before any image looks odd.
+# Gated on VarInf the way the tempering tests are gated on Pigeons, and skipped on CI
+# (`CI=true`, which GitHub Actions sets): the limb-darkening profile's bagged runs take most of
+# an hour on a 2-core runner. They are the real check on the shared adjoint (the FD / JVP / VJP
+# suite fails on a wrong sign long before any image looks odd) and on VarInf's correlated field,
+# so run them locally after changing either:
 #
-#     julia --project=bin -e 'using Pkg; Pkg.develop(path="…/VarInf.jl")'
 #     julia --project=bin test/vi/runtests.jl
 
 using Test
@@ -21,6 +21,9 @@ end
 
 if !_HAVE_VARINF
     @info "VarInf not available — skipping the VI suites (unregistered weak dependency)"
+    @test true
+elseif get(ENV, "CI", "") == "true"
+    @info "CI — skipping the VI suites; run test/vi/runtests.jl locally"
     @test true
 else
     for f in ("test_core.jl", "test_precision.jl", "test_diffphase.jl", "test_pointsource.jl",
