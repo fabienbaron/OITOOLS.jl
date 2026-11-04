@@ -4,10 +4,18 @@
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+FFTA = "b86e33f2-c0db-4aa1-a6e0-ab43e668529e"
 OITOOLS = "3fc04337-ac9e-422b-9e4b-9feddb92e93f"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 PythonPlot = "274fc56d-3b97-40fa-a1cd-1b4a50311bf9"
+
+# FFTA is here only to be held below 0.3.2. PairPlots reaches it through KernelDensity, and
+# FFTA 0.3.2's `plan_rfft(::AbstractArray{<:Real}, region::Union{Int,Tuple,AbstractVector{Int}})`
+# is ambiguous with FFTW's `plan_rfft(::StridedArray{Float64}, region)` whenever both are loaded:
+# OITOOLSPairPlotsExt then fails to precompile and corner_figure goes undocumented.
+[compat]
+FFTA = "=0.3.1"
 
 # The Conda environment every project in this repo shares, at
 # <depot>/conda_environments/oitools.

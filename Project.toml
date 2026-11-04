@@ -185,4 +185,4 @@ env = "@oitools"
 # PythonCall is named as well as PythonPlot even though PythonPlot depends on it: the tests
 # `using PythonCall` directly for `pyimport`/`pyconvert`, and `using` a package requires it to
 # be a direct dependency of the active project, not merely a loaded one.
-test = ["Test", "Serialization", "PythonPlot", "PythonCall", "Nautilus", "FiniteDifferences", "Aqua", "QuadGK"]
+test = ["Test", "Serialization", "PythonPlot", "PythonCall", "Nautilus", "VarInf", "FiniteDifferences", "Aqua", "QuadGK"]
