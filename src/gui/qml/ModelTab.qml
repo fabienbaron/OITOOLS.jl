@@ -3769,15 +3769,22 @@ Item {
                                 scene: orbitPlot
                             }
 
+                            // The profile's bar above its plot, not over it: the summary is a long
+                            // line and would cross the axes.
                             MakieArea {
                                 id: ldviArea
-                                anchors.fill: parent
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                anchors.top: ldviBar.bottom
                                 anchors.margins: root.dp(1)
                                 visible: root.diagView === "ldvi"
                                 scene: ldviPlot
                             }
                             RowLayout {
+                                id: ldviBar
                                 visible: root.diagView === "ldvi"
+                                anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.top: parent.top
                                 anchors.margins: root.dp(6)
@@ -3785,6 +3792,8 @@ Item {
                                 spacing: root.dp(6)
                                 Label {
                                     objectName: "ldviText"
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
                                     text: {
                                         var f = root.ldviSummary.split("\t")
                                         return f.length < 8 ? "" : f[0] + ": θ = " + f[1] + " ± " + f[2] +
@@ -3795,13 +3804,25 @@ Item {
                                     color: "#333"
                                 }
                                 ComboBox {
+                                    objectName: "ldviAxis"
+                                    Layout.preferredWidth: root.dp(80)
+                                    model: ["I(μ)", "I(r)"]
+                                    currentIndex: root.ldviAxis === "r" ? 1 : 0
+                                    onActivated: function (index) {
+                                        root.ldviAxis = index === 1 ? "r" : "mu"
+                                        Julia.shell_ldvi_draw(root.ldviNorm, root.ldviAxis)
+                                        ldviArea.update()
+                                    }
+                                    ToolTip.visible: hovered; ToolTip.text: "against μ or r/R"
+                                }
+                                ComboBox {
                                     objectName: "ldviNorm"
-                                    Layout.preferredWidth: root.dp(100)
-                                    model: ["I(1) = 1", "⟨I⟩ = 1"]
+                                    Layout.preferredWidth: root.dp(110)
+                                    model: ["centre = 1", "⟨I⟩ = 1"]
                                     currentIndex: root.ldviNorm === "mean" ? 1 : 0
                                     onActivated: function (index) {
                                         root.ldviNorm = index === 1 ? "mean" : "centre"
-                                        Julia.shell_ldvi_draw(root.ldviNorm)
+                                        Julia.shell_ldvi_draw(root.ldviNorm, root.ldviAxis)
                                         ldviArea.update()
                                     }
                                 }
@@ -4301,6 +4322,7 @@ Item {
     property bool ldviPending: false
     property string ldviSummary: ""
     property string ldviNorm: "centre"
+    property string ldviAxis: "mu"
     function startLdvi() {
         var e = Julia.shell_ldvi_start(ldviDiscBox.currentText, root.ldviNodes,
                                        root.ldviMethod, root.ldviDraws,

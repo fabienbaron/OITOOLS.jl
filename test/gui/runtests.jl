@@ -1858,10 +1858,16 @@ end
             @test 8.0 < parse(Float64, f[2]) < 8.8 && 0 < parse(Float64, f[3]) < 0.5
             c = G.LDVI_CANVAS[]
             @test length(c.μ[]) == 12 && all(c.lo[] .<= c.m[] .<= c.hi[]) && c.m[][end] ≈ 1
+            @test c.axis.limits[][1] == (0.0, 1.0)      # the abscissa spans the disc
             @test G.shell_ldvi_draw("mean") == "" && c.axis.ylabel[] == "I(μ)/⟨I⟩"
+            # I(r): r/R = √(1 − μ²), the centre at r = 0
+            @test G.shell_ldvi_draw("centre", "r") == "" && c.axis.xlabel[] == "r/R" &&
+                  c.axis.ylabel[] == "I(r)/I(centre)"
+            @test c.μ[][end] ≈ 0 && c.μ[][1] ≈ 1 && c.m[][end] ≈ 1
             # drawn after the window is up, so only from the glyphs rasterised before it
-            @test all(ch -> ch in G.PLOT_GLYPHS, c.axis.ylabel[] * c.axis.xlabel[] * "I(μ)/I(1)")
-            @test G.shell_ldvi_draw("centre") == "" && c.axis.ylabel[] == "I(μ)/I(1)"
+            @test all(ch -> ch in G.PLOT_GLYPHS, "I(μ)/⟨I⟩ I(r)/I(centre) r/R μ")
+            @test G.shell_ldvi_draw("centre") == "" && c.axis.ylabel[] == "I(μ)/I(centre)" &&
+                  c.axis.xlabel[] == "μ"
 
             csv = tempname() * ".csv"
             @test G.shell_ldvi_save(csv) == ""

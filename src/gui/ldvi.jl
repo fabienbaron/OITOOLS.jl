@@ -7,6 +7,7 @@
 const LDVI_CANVAS = Ref{Any}(nothing)
 const LDVI_RESULT = Ref{Any}(nothing)
 const LDVI_START  = Ref{Any}(nothing)        # (μ, I/I(1), I/⟨I⟩) of the profile it started from
+const LDVI_DRAW   = Ref((:centre, :mu))      # the normalisation and the abscissa on screen
 
 """
     build_ldvi_view(fig, ax) -> NamedTuple
@@ -26,25 +27,31 @@ function build_ldvi_view(fig, ax)
     Makie.lines!(ax, μ, m; color = :royalblue, linewidth = 2)
     Makie.lines!(ax, μ0, i0; color = :gray30, linestyle = :dash, linewidth = 1.2)
     # No title: the panel's own line above the plot names the run.
-    ax.xlabel = "μ"; ax.ylabel = "I(μ)/I(1)"
+    ax.xlabel = "μ"; ax.ylabel = "I(μ)/I(centre)"
     return (; figure = fig, axis = ax, μ, lo, hi, m, μ0, i0)
 end
 
 """
-    update_ldvi_view!(panel, r, start, norm) -> panel
+    update_ldvi_view!(panel, r, start, norm, axis = :mu) -> panel
 
-`norm` is `:centre` (I/I(1)) or `:mean` (I/⟨I⟩). Assignment only, as on every live canvas.
+`norm` is `:centre` (I/I(1), the centre at 1) or `:mean` (I/⟨I⟩); `axis` is `:mu` (I(μ)) or
+`:r` (I(r), r/R = √(1 − μ²)). The abscissa spans [0, 1]; the ordinate fits the band.
+Assignment only, as on every live canvas.
 """
-function update_ldvi_view!(p, r, start, norm::Symbol)
+function update_ldvi_view!(p, r, start, norm::Symbol, axis::Symbol = :mu)
     c = norm === :centre
-    p.μ[]  = Float32.(r.μ)
+    x(μ) = axis === :r ? sqrt.(max.(0.0, 1 .- μ .^ 2)) : μ
+    p.μ[]  = Float32.(x(r.μ))
     p.lo[] = Float32.(c ? r.I_lo : r.F_lo); p.hi[] = Float32.(c ? r.I_hi : r.F_hi)
     p.m[]  = Float32.(c ? r.I_median : r.F_median)
     if start !== nothing
-        p.μ0[] = Float32.(start[1]); p.i0[] = Float32.(c ? start[2] : start[3])
+        p.μ0[] = Float32.(x(start[1])); p.i0[] = Float32.(c ? start[2] : start[3])
     end
-    p.axis.ylabel = c ? "I(μ)/I(1)" : "I(μ)/⟨I⟩"
-    Makie.autolimits!(p.axis)
+    v = axis === :r ? "r" : "μ"
+    p.axis.xlabel = axis === :r ? "r/R" : "μ"
+    p.axis.ylabel = c ? "I($v)/I(centre)" : "I($v)/⟨I⟩"
+    p.axis.limits[] = ((0.0, 1.0), nothing)
+    Makie.reset_limits!(p.axis)
     return p
 end
 
@@ -114,7 +121,7 @@ function finish_ldvi!(sh::ShellState, res)
     sh.fitlog = _collapse_cr(res.output)
     r = res.result
     LDVI_RESULT[] = r
-    LDVI_CANVAS[] === nothing || update_ldvi_view!(LDVI_CANVAS[], r, LDVI_START[], :centre)
+    LDVI_CANVAS[] === nothing || update_ldvi_view!(LDVI_CANVAS[], r, LDVI_START[], LDVI_DRAW[]...)
     line = @sprintf("%s: diameter %.4f ± %.4f mas, χ²r %.3f, %d samples (%.1f s)", r.component,
                     r.diameter_median, r.diameter_std, r.chi2r, size(r.I_samples, 2), r.seconds)
     r.error_scale == 1 || (line *= @sprintf(", error bars × %.2f", r.error_scale))
@@ -126,15 +133,16 @@ function finish_ldvi!(sh::ShellState, res)
 end
 
 """
-    shell_ldvi_draw(norm) -> String
+    shell_ldvi_draw(norm, axis = "mu") -> String
 
-Redraw the last run normalised by the centre (`centre`) or by the mean intensity (`mean`).
+Redraw the last run normalised by the centre (`centre`) or by the mean intensity (`mean`),
+against μ (`mu`) or r/R (`r`). The choice is kept for the next run.
 """
-function shell_ldvi_draw(norm::AbstractString)
+function shell_ldvi_draw(norm::AbstractString, axis::AbstractString = "mu")
+    LDVI_DRAW[] = (String(norm) == "mean" ? :mean : :centre, String(axis) == "r" ? :r : :mu)
     r = LDVI_RESULT[]
     r === nothing && return "! no free-form profile yet"
-    LDVI_CANVAS[] === nothing || update_ldvi_view!(LDVI_CANVAS[], r, LDVI_START[],
-                                                    String(norm) == "mean" ? :mean : :centre)
+    LDVI_CANVAS[] === nothing || update_ldvi_view!(LDVI_CANVAS[], r, LDVI_START[], LDVI_DRAW[]...)
     return ""
 end
 
